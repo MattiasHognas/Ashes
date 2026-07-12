@@ -12,6 +12,10 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
+Current tally: **13 FIXED**, **1 PARTIAL** (#3, the `List(ADT)` accumulator half), **3 OPEN**
+(#4/#5 — the ownership / in-place-reuse milestone; #6 — Knuth Algorithm D division). Everything
+point-fixable has been fixed; the remaining items need milestone-scale work.
+
 Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
 
@@ -84,18 +88,18 @@ extend `CanDeepCopyOutAdt` / the copy-out to **tuples** and to **lists whose ele
 (non-recursive) ADT/tuple**, then admit them to the fixed-watermark qualification. *Workaround:*
 stream output per line (fasta) instead of accumulating.
 
-### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory
+### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory — [OPEN]
 A list that grows by more than one fresh cons cell per iteration (or a whole-program list built via a
 returned accumulator) cannot use the fixed watermark because its shared tail must stay below an
 advancing mark. `reverse-complement`'s list-of-single-char-`Str` (~117 bytes/base) and any
 list-building fold hit this. Needs ownership / in-place reuse (the FLAWS #2 milestone), not a point fix.
 
-### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call
+### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN]
 Nesting a list-builder helper inside a loop (`outer` threads a list through `inner` that returns it)
 makes each call deep-copy the whole growing list -> O(N^2). Found while writing `mandelbrot` (worked
 around by keeping the bit-packer a single flat loop). Same ownership milestone as #4.
 
-### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant)
+### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [OPEN]
 Binary long-division dominates; needs Knuth Algorithm D / Karatsuba multiply. Not a memory issue.
 
 ## Standard library
