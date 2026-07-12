@@ -18,7 +18,7 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 
   | Challenge | State |
   |---|---|
-  | [pidigits](pidigits/README.md) | **Benchmarked** — per-iteration BigInt garbage now reclaimed (N=1000 172 MB → 60 MB); residual accumulator growth is the memory-model milestone |
+  | [pidigits](pidigits/README.md) | **Benchmarked** — resident memory now **constant** 0.25 MB at every N (was O(N²), 168 MB at N=1000); only the O(N³) division *time* remains |
   | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
   | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
   | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=7→228/16 … N=10→73196/38); memory-bound at large N |
@@ -47,15 +47,21 @@ a regression test under `tests/`.
   - [x] **Recursive numeric accumulator typed off its first operand** — same seeding fix.
   - [x] **(feature) Raw-bytes stdout write** — added `Ashes.IO.writeBytes : Bytes -> Unit`; mandelbrot
     now emits the real binary `P4` PBM instead of a pixel count.
-- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, per-iteration garbage reclaimed:
+- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, memory now **constant**:
   - [x] **Per-iteration `BigInt` garbage now reclaimed** — a BigInt is a self-contained buffer, so it
     is copied out across the TCO reset like a `String`; the reset fires and reclaims the spigot's
-    intermediate `BigInt`s (N=1000 172 MB → 60 MB).
-  - [ ] **Residual O(N²) accumulator growth** *(memory-model milestone, still open)* — a *growing*
-    heap accumulator (BigInt or String) threaded through a loop still accumulates: each iteration's
-    whole-value copy is preserved below the advancing watermark, and a helper that *returns* a growing
-    list deep-copies it out of its arena scope on every call. This is the same root as fannkuch's
-    memory growth at large N, and needs ownership / in-place-reuse (FLAWS #2), not a point fix.
+    intermediate `BigInt`s.
+  - [x] **Growing whole-value accumulator is now O(N), not O(N²)** — a loop threading only non-sharing
+    whole-value accumulators (`String` / `BigInt`, no cons-lists) resets to a **fixed** loop-entry
+    watermark, so each grown accumulator overwrites the previous one instead of being stranded below an
+    advancing watermark. pidigits resident memory dropped from 168 MB (N=1000) to a **constant 0.25 MB
+    at every N**. Only the ~`O(N³)` *time* remains (binary long-division — a bignum-algorithm follow-up).
+- **fannkuch / general pointer-bearing accumulators** *(memory-model milestone, still open)* — a
+  *growing* accumulator that is a **cons-list or a pointer-bearing ADT** (fannkuch's `State(perm,
+  count)`) still grows: a list's shared tail forces the advancing watermark (so the fixed-mark reset
+  above cannot apply), and a helper that *returns* a growing list deep-copies it out of its arena scope
+  on every call. Removing this needs ownership / in-place reuse (FLAWS #2), not a point fix — it is why
+  fannkuch is memory-bound at large N.
 - **binary-trees** — no fix needed; the **positive baseline**: the per-iteration arena reset fires
   correctly for a discarded pointer-bearing ADT (constant memory, no OOM).
 

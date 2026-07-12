@@ -61,18 +61,20 @@ use `Ashes.Parallel`):
 
 | N (digits) | Time | Peak RSS |
 |------------|------|----------|
-| 100 | 0.00 s | 0.5 MB |
-| 250 | 0.04 s | 3.0 MB |
-| 500 | 0.40 s | 13.0 MB |
-| 750 | 1.50 s | 32.5 MB |
-| 1,000 | 3.64 s | 60.4 MB |
+| 250 | 0.03 s | 0.25 MB |
+| 500 | 0.36 s | 0.25 MB |
+| 1,000 | 3.50 s | 0.25 MB |
+| 2,000 | 31.7 s | 0.25 MB |
 
-The per-iteration `BigInt` garbage is now **reclaimed**: a `BigInt` is a self-contained buffer, so it
-is copied out across the TCO back-edge reset like a `String`, letting the reset fire and free the
-spigot's intermediate values. That cut resident set ~2.8× (`N=1000` 168 MB → 60 MB) at the same wall
-time. The headline finding is still the **scaling**: doubling `N` from 500 to 1,000 costs ~9× the time
-and ~4.5× the memory — roughly `O(N³)` time and `O(N²)` resident set. What remains is the *growing
-accumulator* itself: the spigot's `q, r, t` widen with the digit count and each iteration's whole-value
-copy is preserved below the advancing watermark, so both time and memory still climb super-linearly.
-Removing that residual is the ownership / in-place-reuse memory-model milestone (`FLAWS.md`), so the
-Benchmarks Game standard `N=10000` remains impractical and the table stops at `N=1000`.
+Resident memory is now **constant** (0.25 MB) at every `N` — down from `O(N²)` (`N=1000` was 168 MB).
+Two changes did it: (1) a `BigInt` is a self-contained buffer, so it is copied out across the TCO
+back-edge reset like a `String`, letting the reset fire and free the spigot's intermediate values; and
+(2) a loop threading only non-sharing whole-value accumulators (here `q, r, t` `BigInt`s plus the
+`String` output — no cons-lists) resets to a **fixed** loop-entry watermark, so each iteration's
+grown accumulator overwrites the previous one instead of being stranded below an advancing watermark.
+The growing accumulator now stays `O(current width)`, not `O(sum of all widths)`.
+
+What remains is **time**: it is still ~`O(N³)` (doubling `N` is ~9×), driven by the binary long-
+division in the digit-extraction step. That is a bignum-algorithm follow-up (Knuth Algorithm D /
+Karatsuba), not a memory-model issue — the standard `N=10000` is now memory-feasible but still
+time-bound, so the table stops where the wall time does.
