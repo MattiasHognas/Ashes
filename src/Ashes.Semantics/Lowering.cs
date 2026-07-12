@@ -2640,12 +2640,49 @@ public sealed partial class Lowering
                 }
                 else
                 {
+                    // A list copy-out (shallow single-cell CopyOutArena(16), or TcoListCell for
+                    // String/InnerList heads) preserves only the list's TOP cons cell across the reset,
+                    // on the assumption that its tail already lives below the watermark. That holds only
+                    // when the argument is literally `head :: <loop accumulator param>`: exactly one
+                    // fresh cell, tail = the previous iteration's accumulator (below the watermark). Any
+                    // other shape — `a :: b :: acc` (two fresh cells), a rebuilt list from
+                    // setAt/map/reverse, or an opaque function result — has interior fresh cells the
+                    // single-cell copy leaves dangling, so the reset reclaims still-referenced memory
+                    // (wrong branch taken at best, segfault at worst). Detect the safe shape (through one
+                    // level of let-binding, since accumulators are usually named) and disqualify the
+                    // reset for every other list arg; those iterations then simply don't reclaim.
+                    bool IsSingleFreshConsListArg(int i)
+                    {
+                        if (Prune(newArgTypes[i]) is not TypeRef.TList)
+                        {
+                            return false;
+                        }
+
+                        var argExpr = collectedArgs[i];
+                        if (argExpr is Expr.Var v
+                            && Lookup(v.Name) is Binding.Local local
+                            && _letBindingValues.TryGetValue(local.Slot, out var bound))
+                        {
+                            argExpr = bound;
+                        }
+
+                        return argExpr is Expr.Cons cons
+                            && cons.Tail is Expr.Var tailVar
+                            && tco.ParamNames.Contains(tailVar.Name);
+                    }
+
                     // Check whether every heap-type arg can be copy-outed.
                     bool allCopyable = true;
                     for (int i = 0; i < newArgTypes.Length; i++)
                     {
                         if (!CanArenaReset(newArgTypes[i])
                             && GetTcoCopyOutKind(newArgTypes[i], out _, out _) == CopyOutKind.None)
+                        {
+                            allCopyable = false;
+                            break;
+                        }
+
+                        if (Prune(newArgTypes[i]) is TypeRef.TList && !IsSingleFreshConsListArg(i))
                         {
                             allCopyable = false;
                             break;
