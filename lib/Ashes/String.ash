@@ -19,13 +19,39 @@ let recursive take text count =
             | None -> ""
             | Some((head, tail)) -> head + take(tail)(count - 1)
 
+let recursive cpByteOffset bytes i cpSeen targetCp limit = 
+    if i >= limit
+    then limit
+    else 
+        let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i))
+        in 
+            let isStart = 
+                if b < 128
+                then true
+                else b >= 192
+            in 
+                if isStart
+                then 
+                    if cpSeen == targetCp
+                    then i
+                    else cpByteOffset(bytes)(i + 1)(cpSeen + 1)(targetCp)(limit)
+                else cpByteOffset(bytes)(i + 1)(cpSeen)(targetCp)(limit)
+
 let substring text start count = 
     if start <= -1
     then ""
     else 
         if count <= 0
         then ""
-        else take(drop(text)(start))(count)
+        else 
+            let bytes = Ashes.Bytes.fromText(text)
+            in 
+                let limit = Ashes.Bytes.length(bytes)
+                in 
+                    let byteStart = cpByteOffset(bytes)(0)(0)(start)(limit)
+                    in 
+                        let byteEnd = cpByteOffset(bytes)(0)(0)(start + count)(limit)
+                        in Ashes.Bytes.subText(bytes)(byteStart)(byteEnd - byteStart)
 
 let recursive countCodepoints bytes i limit acc = 
     if i >= limit

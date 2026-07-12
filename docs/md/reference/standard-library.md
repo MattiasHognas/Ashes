@@ -585,7 +585,10 @@ collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes p
 ### `Ashes.String`
 
 - `length` — `Str -> Int`, number of characters
-- `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`
+- `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`. Codepoint-
+  indexed, so it walks the string to the `start`-th codepoint — `O(start + count)`. For repeated
+  indexed slicing of the same buffer (e.g. a sliding k-mer window), materialize it once with
+  `Ashes.Bytes.fromText` and use the byte-indexed `Ashes.Bytes.subText` (`O(count)` per slice)
 - `take` — `Str -> Int -> Str`, the first `count` characters
 - `drop` — `Str -> Int -> Str`, all but the first `count` characters
 - `indexOf` — `Str -> Str -> Int`, index of the first occurrence of `needle`, or `-1` if absent
