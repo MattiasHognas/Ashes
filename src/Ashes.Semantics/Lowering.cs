@@ -912,14 +912,17 @@ public sealed partial class Lowering
             _reuseBindingSeenBySlot[seenLocal.Slot]++;
         }
 
-        if (b is null && (_inSpecialization || _inParallelSpecialization) && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
+        if (b is null && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
-            // Reuse specialization: this name is a non-inlined top-level helper (e.g. an AVL height/max
-            // reader) referenced from the spec's isolated scope, where its generation-site slot is gone.
-            // It has an empty closure environment, so reconstruct its closure directly from the label with
-            // a null env, and instantiate its type scheme fresh for this use (polymorphic helpers unify
-            // against the concrete call). This is what lets non-allocating helpers stay out of the inline
-            // set without hitting the Model-A forward-reference check (ASH014).
+            // This name is a non-inlined top-level helper (e.g. an AVL height/max reader, or a plain
+            // helper called from an inlined/specialized body) referenced from an isolated scope where its
+            // generation-site slot is gone. Membership in _topLevelFunctionRefs is proof it was already
+            // lowered — i.e. declared earlier — so this is a genuine backward reference, NOT the Model-A
+            // forward reference the ASH014 check below would otherwise (wrongly) report. It has an empty
+            // closure environment, so reconstruct its closure directly from the label with a null env, and
+            // instantiate its type scheme fresh for this use (polymorphic helpers unify against the
+            // concrete call). Reached only when Lookup fails; normal top-level references resolve via the
+            // scope and never get here, so this cannot change well-scoped code.
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
