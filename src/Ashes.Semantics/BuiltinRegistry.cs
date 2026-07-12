@@ -36,6 +36,8 @@ public static class BuiltinRegistry
         TextFromFloat,
         TextFormatFloat,
         TextToHex,
+        TextAsciiUpper,
+        TextAsciiLower,
         BigIntFromInt,
         BigIntToString,
         BigIntToInt,
@@ -301,7 +303,9 @@ public static class BuiltinRegistry
                     ["fromBigInt"] = new("fromBigInt", BuiltinValueKind.BigIntToString, IsCallable: true, Arity: 1),
                     ["parseBigInt"] = new("parseBigInt", BuiltinValueKind.BigIntFromString, IsCallable: true, Arity: 1),
                     ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1),
-                    ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1)
+                    ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1),
+                    ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1),
+                    ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.BigInt"] = new(
                 "Ashes.BigInt",

@@ -2194,6 +2194,50 @@ internal static partial class LlvmCodegen
         return stringRef;
     }
 
+    /// <summary>
+    /// ASCII-only case map: copies the source string and flips bit 0x20 on every ASCII letter of
+    /// the source case (a-z for <paramref name="upper"/>, A-Z otherwise). Every byte of a multibyte
+    /// UTF-8 sequence is >= 0x80 and never matches the letter range, so non-ASCII text passes
+    /// through byte-identical — the transform is UTF-8 safe without decoding.
+    /// </summary>
+    private static LlvmValueHandle EmitAsciiCaseString(LlvmCodegenState state, LlvmValueHandle sourceRef, bool upper, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, sourceRef, prefix + "_len");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, sourceRef, prefix + "_src");
+        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, srcBytes, len, prefix);
+        LlvmValueHandle destBytes = GetStringBytesPointer(state, result, prefix + "_dest");
+
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_idx");
+        LlvmValueHandle more = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, idx, len, prefix + "_more");
+        LlvmApi.BuildCondBr(builder, more, bodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [idx], prefix + "_byte_ptr");
+        LlvmValueHandle byteVal = LlvmApi.BuildLoad2(builder, state.I8, bytePtr, prefix + "_byte");
+        ulong lowBound = upper ? (byte)'a' : (byte)'A';
+        ulong highBound = upper ? (byte)'z' : (byte)'Z';
+        LlvmValueHandle geLow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, byteVal, LlvmApi.ConstInt(state.I8, lowBound, 0), prefix + "_ge_low");
+        LlvmValueHandle leHigh = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, byteVal, LlvmApi.ConstInt(state.I8, highBound, 0), prefix + "_le_high");
+        LlvmValueHandle isLetter = LlvmApi.BuildAnd(builder, geLow, leHigh, prefix + "_is_letter");
+        LlvmValueHandle flipped = LlvmApi.BuildXor(builder, byteVal, LlvmApi.ConstInt(state.I8, 0x20, 0), prefix + "_flipped");
+        LlvmValueHandle mapped = LlvmApi.BuildSelect(builder, isLetter, flipped, byteVal, prefix + "_mapped");
+        LlvmApi.BuildStore(builder, mapped, bytePtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), idxSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return result;
+    }
+
     private static void EmitConditionalWrite(LlvmCodegenState state, LlvmValueHandle condition, string whenTrue, string whenFalse, bool appendNewline)
     {
         var trueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bool_true");

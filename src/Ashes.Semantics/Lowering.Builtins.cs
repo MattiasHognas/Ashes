@@ -834,6 +834,35 @@ public sealed partial class Lowering
         return (target, new TypeRef.TStr());
     }
 
+    private (int, TypeRef) LowerTextAsciiCase(Expr textArg, bool upper)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(textArg);
+        var (textTemp, textType) = LowerExpr(textArg);
+        var loweredType = Prune(textType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (textTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            var name = upper ? "asciiUpper" : "asciiLower";
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Text.{name}() expects Str but got {Pretty(loweredType)}.");
+            return (textTemp, loweredType);
+        }
+
+        var target = NewTemp();
+        Emit(new IrInst.TextAsciiCase(target, textTemp, upper));
+        return (target, new TypeRef.TStr());
+    }
+
     private TypeRef.TNamedType CreateStringResultType(TypeRef successType)
     {
         if (!_typeSymbols.TryGetValue("Result", out var resultSymbol) || resultSymbol.TypeParameters.Count != 2)
@@ -2545,6 +2574,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.TextToHex,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TStr()))
+        );
+    }
+
+    private Binding.Intrinsic CreateTextAsciiCaseBinding(bool upper)
+    {
+        return new Binding.Intrinsic(
+            upper ? IntrinsicKind.TextAsciiUpper : IntrinsicKind.TextAsciiLower,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TStr()))
         );
     }
 

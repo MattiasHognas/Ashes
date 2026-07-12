@@ -138,9 +138,17 @@ in let s1 = Ashes.Regex.replace(...W...)(seq)("(a|t)")
 ```
 (The constant ~28 GB across runs suggests a size miscalculation in the substitute buffer sizing.)
 
-### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive. — [OPEN]
-An efficient version needs a `Bytes` byte-map primitive (only `subText` exists for `Bytes -> Str`) plus
-an ASCII-vs-Unicode design decision, so deferred.
+### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive. — [FIXED]
+**[FIXED]** (`string_ascii_case`): shipped as **ASCII-scoped** case conversion, decided after surveying
+the ecosystem (UTF-16/dual-encoding rejected — Ashes strings are UTF-8 like Rust/Go/Swift/text-2.0, and
+case mapping is O(N) regardless of encoding, so a fixed-width representation buys nothing). Named
+explicitly for the scope, following OCaml `uppercase_ascii` / Rust `to_ascii_uppercase`:
+`Ashes.String.toAsciiUpper` / `toAsciiLower`, thin wrappers over new `Ashes.Text.asciiUpper` /
+`asciiLower` intrinsics (`TextAsciiCase` IR) — a single O(N) byte pass that flips bit `0x20` on ASCII
+letters; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through byte-identical, so
+the transform is UTF-8-safe without decoding. `toUpper`/`toLower` stay free for a possible future
+Unicode-aware (tabled) version. The old blocker (no `Bytes` byte-map primitive) was sidestepped by
+doing the map in the intrinsic itself.
 
 ### 10. (P3) Missing `Ashes.List.sort` — [FIXED]
 **[FIXED]** (`7dcad83`): added `Ashes.List.sortBy : (a -> a -> Bool) -> List(a) -> List(a)`, a stable
