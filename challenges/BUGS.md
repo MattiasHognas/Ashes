@@ -157,21 +157,31 @@ comparator).
 
 ## Diagnostics & formatter
 
-### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs — [OPEN, diagnosed]
-Propagated/secondary type errors are reported at coordinates **past EOF** (e.g. line 71 in a 66-line
-file, columns ~2000+ that look like byte offsets into the internally stitched single line), and
-sometimes blame an unrelated later declaration. Primary errors locate correctly. Surfaced by
-`spectral-norm` and `n-body`; makes multi-error files very hard to debug. **Diagnosis:** compilation
-runs on `layout.Source` (the stitched **combined** source), so diagnostic spans are offsets into *it*,
-but `PrintCompilerDiagnostics` renders them against the **original** file text (`Program.cs` passes
-`source`, not `prepared.Layout.Source`). For a flat top-level file the combined source is not the
-original text — `TryShapeFlatModule` **reconstructs** the module from extracted binding-value fragments
-(imports consumed, type/`external`/`provide` decls hoisted, body parenthesized), so offsets shift by
-the stripped prefix and the two texts no longer line up. **Fix direction:** carry a combined→original
-source map (extend `ModuleOffsets` with each region's original offset, tracked as fragments are
-extracted) and map spans back before rendering; the non-flat path already blanks hoisted decls to keep
-line numbers, but the flat reconstruction loses them entirely. Needs care — real source-map
-infrastructure, not a point fix.
+### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs — [FIXED]
+**[FIXED]** (CLI): `ProjectSupport.MapDiagnosticsToOriginal` maps diagnostic spans from combined-source
+offsets (what compilation runs on) back to the entry file's own coordinates before rendering. The key
+insight making this a contained fix: the **entry region** of the combined source is
+**line/column-preserving** with respect to the user's file (imports are blanked keeping newlines,
+hoisted declarations are blanked via `BlankSpans`, alias preludes overwrite blank import lines) — so
+entry-region spans map exactly by line/column arithmetic, no byte-offset bookkeeping. Hoisted entry
+`type`/`capability`/`provide` declarations map **exactly** through a new fragment table
+(`CombinedCompilationLayout.EntryTypeDeclFragments`, recorded as `TryShapeFlatModule` extracts them —
+the "extend ModuleOffsets with original offsets" direction). Spans inside a stitched (reconstructed)
+non-entry module region can't be positioned — they render header-only, attributed to the **owning
+file** via `ModuleOffsets`, instead of garbage coordinates in the entry file. Verified: the
+`x + "oops"` repro behind a stitched `Ashes.List` import went from `9:2568` (past EOF, blank caret
+line) to the exact `6:9` with the right line text and underline; the simple builtin-imports case went
+from `1:22` to the exact `5:9`; multi-error files locate every error. Unit tests cover all three
+mapping paths (`ProjectSupportTests.MapDiagnosticsToOriginal_*`). Remaining (minor): selector-import
+renames can drift columns on the renamed line, and LSP/TestRunner still use their own (header-only or
+approximate) paths.
+
+Propagated/secondary type errors were reported at coordinates **past EOF** (e.g. line 71 in a 66-line
+file, columns ~2000+ — byte offsets into the internally stitched single line), sometimes blaming an
+unrelated later declaration. Surfaced by `spectral-norm` and `n-body`; made multi-error files very
+hard to debug. Root cause: compilation runs on `layout.Source` (the stitched **combined** source), so
+diagnostic spans are offsets into *it*, but `PrintCompilerDiagnostics` rendered them against the
+**original** file text.
 
 ### 12. (P2) `fmt` silently strips all non-leading comments
 `fmt -w` deletes every `//` comment that is not in the leading header block (and reshapes one-line
