@@ -226,8 +226,18 @@ oriented diagnostic (annotate the parameter) instead of the misleading module-ex
 `match b with | Rec(x, ...) ->`, or a full type signature `let f : Rec -> T = given (b) -> b.x` all
 work. Surfaced by `n-body`.
 
-### 16. (P3) Inline parameter type annotation `(b: Body)` is unsupported (`ASH003`); annotate the whole
-binding instead.
+### 16. (P3) Inline parameter type annotation `(b: Body)` is unsupported — [FIXED]
+**[FIXED]** (`param_inline_annotation`): both forms now parse and type-check — `given (x: Type) -> ...`
+(per parenthesized lambda parameter) and the parenthesized annotated sugar parameter
+`let f (b: Body) = ...` (desugars to a `given` layer carrying the annotation; parens required exactly
+when an annotation is present). `Expr.Lambda` gained `ParamAnnotation`, unified with the parameter's
+type variable before the body is lowered — so record dot-access on the parameter and Float operator
+selection resolve without annotating the whole binding. The formatter renders both forms canonically
+and round-trips them. Gotcha fixed en route: the stitcher's two text-based flat-let header scanners
+(`TryScanFlatLetHeader`, `TrySplitLeadingTopLevelBinding`) only accepted bare-ident sugar params, so an
+annotated parameter in a file importing a source stdlib module (paren-wrapped flat entry) broke shaping
+with a misleading `<std:...>` ASH003 — both now capture `(name: Type)` verbatim. Spec updated
+(language.md sections 7 and 7.2).
 ### 17. (P3) `given xs ->` requires parenthesized params `given (xs) ->` — [FIXED]
 **[FIXED]** (`lambda_bare_param`): `ParseLambda` now makes the parentheses optional for a single
 parameter — `given x -> body` parses the same as `given (x) -> body`. The parenthesized form (and its

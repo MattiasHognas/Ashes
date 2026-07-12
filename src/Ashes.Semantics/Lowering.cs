@@ -1769,6 +1769,13 @@ public sealed partial class Lowering
             _annotationParamCursor++;
         }
 
+        // An inline parameter annotation (`given (x: T) ->`, or the lambda a `let f (x: T) = ...`
+        // sugar parameter desugars to) pins the parameter's type before the body is lowered.
+        if (lam.ParamAnnotation is { } inlineAnnotation)
+        {
+            Unify(paramTy, ResolveAnnotationType(inlineAnnotation));
+        }
+
         // Compute free variables for capture
         var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
         if (selfName is not null)

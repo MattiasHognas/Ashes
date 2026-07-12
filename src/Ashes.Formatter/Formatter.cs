@@ -306,16 +306,41 @@ public static class Formatter
         var value = decl.Value;
         foreach (var p in decl.SugarParams)
         {
-            sb.Append(' ');
-            sb.Append(p);
-            if (value is Expr.Lambda lam)
-            {
-                value = lam.Body;
-            }
+            value = AppendSugarParam(sb, p, value);
         }
 
         sb.Append(" = ");
         WriteTopLevelValue(sb, value, preferPipelines, options);
+    }
+
+    /// <summary>
+    /// Renders one ML-style sugar parameter and unwraps its lambda layer. An annotated parameter
+    /// (the desugared lambda carries <see cref="Expr.Lambda.ParamAnnotation"/>) renders
+    /// parenthesized as <c>(name: Type)</c>; a plain one renders bare.
+    /// </summary>
+    private static Expr AppendSugarParam(StringBuilder sb, string name, Expr value)
+    {
+        sb.Append(' ');
+        if (value is Expr.Lambda lam)
+        {
+            if (lam.ParamAnnotation is { } annotation)
+            {
+                sb.Append('(');
+                sb.Append(name);
+                sb.Append(": ");
+                WriteTypeExpr(sb, annotation);
+                sb.Append(')');
+            }
+            else
+            {
+                sb.Append(name);
+            }
+
+            return lam.Body;
+        }
+
+        sb.Append(name);
+        return value;
     }
 
     private static void WriteRecursiveGroup(StringBuilder sb, TopLevelItem.RecursiveGroup group, bool preferPipelines, FormattingOptions options)
@@ -334,12 +359,7 @@ public static class Formatter
             {
                 foreach (var p in group.SugarParams[i])
                 {
-                    sb.Append(' ');
-                    sb.Append(p);
-                    if (value is Expr.Lambda lam)
-                    {
-                        value = lam.Body;
-                    }
+                    value = AppendSugarParam(sb, p, value);
                 }
             }
 
@@ -678,13 +698,7 @@ public static class Formatter
         {
             foreach (var p in l.SugarParams)
             {
-                sb.Append(' ');
-                sb.Append(p);
-                // Unwrap the corresponding lambda layer
-                if (value is Expr.Lambda lam)
-                {
-                    value = lam.Body;
-                }
+                value = AppendSugarParam(sb, p, value);
             }
         }
 
@@ -750,13 +764,7 @@ public static class Formatter
         {
             foreach (var p in l.SugarParams)
             {
-                sb.Append(' ');
-                sb.Append(p);
-                // Unwrap the corresponding lambda layer
-                if (value is Expr.Lambda lam)
-                {
-                    value = lam.Body;
-                }
+                value = AppendSugarParam(sb, p, value);
             }
         }
 
@@ -903,6 +911,12 @@ public static class Formatter
 
         sb.Append("given (");
         sb.Append(lam.ParamName);
+        if (lam.ParamAnnotation is { } paramAnnotation)
+        {
+            sb.Append(": ");
+            WriteTypeExpr(sb, paramAnnotation);
+        }
+
         sb.Append(") -> ");
 
         if (IsSingleLine(lam.Body, preferPipelines))

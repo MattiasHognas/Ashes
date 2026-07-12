@@ -890,15 +890,33 @@ public sealed class Parser
 
         // ML-style function sugar: let f x y = body => let f = given (x) -> given (y) -> body
         // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = given x -> ...`)
+        // A parenthesized parameter carries an inline type annotation: let f (b: Body) = body.
+        // The parentheses are required exactly when an annotation is present, so a bare ident and
+        // `(ident:` are the only two shapes here.
         var sugarParams = new List<string>();
         var sugarParamTokens = new List<Token>();
+        var sugarParamAnnotations = new List<TypeExpr?>();
         if (typeAnnotation is null)
         {
-            while (_current.Kind == TokenKind.Ident)
+            while (_current.Kind is TokenKind.Ident or TokenKind.LParen)
             {
+                if (_current.Kind == TokenKind.LParen)
+                {
+                    Consume(TokenKind.LParen);
+                    var annotatedToken = Consume(TokenKind.Ident);
+                    Consume(TokenKind.Colon);
+                    var annotation = ParseTypeExpr();
+                    Consume(TokenKind.RParen);
+                    sugarParams.Add(annotatedToken.Text);
+                    sugarParamTokens.Add(annotatedToken);
+                    sugarParamAnnotations.Add(annotation);
+                    continue;
+                }
+
                 var paramToken = Consume(TokenKind.Ident);
                 sugarParams.Add(paramToken.Text);
                 sugarParamTokens.Add(paramToken);
+                sugarParamAnnotations.Add(null);
             }
         }
 
@@ -931,7 +949,7 @@ public sealed class Parser
         // Desugar ML-style parameters into nested lambdas
         for (int i = sugarParams.Count - 1; i >= 0; i--)
         {
-            var lambda = RegisterExpr(new Expr.Lambda(sugarParams[i], value), start, AstSpans.GetOrDefault(value).End);
+            var lambda = RegisterExpr(new Expr.Lambda(sugarParams[i], value) { ParamAnnotation = sugarParamAnnotations[i] }, start, AstSpans.GetOrDefault(value).End);
             AstSpans.SetLambdaParameter(lambda, sugarParamTokens[i].Span);
             value = lambda;
         }
@@ -1082,15 +1100,19 @@ public sealed class Parser
             var start = _current.Position;
             Consume(TokenKind.Given);
             var extraParamTokens = new List<Token>();
+            var extraParamAnnotations = new List<TypeExpr?>();
             Token paramToken;
+            TypeExpr? paramAnnotation = null;
             if (_current.Kind == TokenKind.LParen)
             {
                 Consume(TokenKind.LParen);
                 paramToken = Consume(TokenKind.Ident);
+                paramAnnotation = TryParseParamAnnotation();
                 while (_current.Kind == TokenKind.Comma)
                 {
                     Consume(TokenKind.Comma);
                     extraParamTokens.Add(Consume(TokenKind.Ident));
+                    extraParamAnnotations.Add(TryParseParamAnnotation());
                 }
 
                 Consume(TokenKind.RParen);
@@ -1107,17 +1129,30 @@ public sealed class Parser
             // Desugar multi-param lambdas: given (x, y) -> body => given (x) -> given (y) -> body
             for (int i = extraParamTokens.Count - 1; i >= 0; i--)
             {
-                var lambda = RegisterExpr(new Expr.Lambda(extraParamTokens[i].Text, body), start, AstSpans.GetOrDefault(body).End);
+                var lambda = RegisterExpr(new Expr.Lambda(extraParamTokens[i].Text, body) { ParamAnnotation = extraParamAnnotations[i] }, start, AstSpans.GetOrDefault(body).End);
                 AstSpans.SetLambdaParameter(lambda, extraParamTokens[i].Span);
                 body = lambda;
             }
 
-            var outerLambda = RegisterExpr(new Expr.Lambda(param, body), start, AstSpans.GetOrDefault(body).End);
+            var outerLambda = RegisterExpr(new Expr.Lambda(param, body) { ParamAnnotation = paramAnnotation }, start, AstSpans.GetOrDefault(body).End);
             AstSpans.SetLambdaParameter(outerLambda, paramToken.Span);
             return outerLambda;
         }
 
         return ParseWith();
+    }
+
+    /// <summary>Parses an optional inline parameter type annotation (<c>: Type</c>) inside a lambda
+    /// or sugar-parameter parenthesis. Returns null when the next token is not a colon.</summary>
+    private TypeExpr? TryParseParamAnnotation()
+    {
+        if (_current.Kind != TokenKind.Colon)
+        {
+            return null;
+        }
+
+        Consume(TokenKind.Colon);
+        return ParseTypeExpr();
     }
 
     /// <summary>

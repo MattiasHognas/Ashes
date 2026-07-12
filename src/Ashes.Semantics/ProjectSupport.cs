@@ -2425,8 +2425,49 @@ public static class ProjectSupport
         }
 
         var collected = new List<string>();
-        while (token.Kind == TokenKind.Ident)
+        while (token.Kind is TokenKind.Ident or TokenKind.LParen)
         {
+            if (token.Kind == TokenKind.LParen)
+            {
+                // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
+                // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
+                token = lexer.Next();
+                if (token.Kind != TokenKind.Ident)
+                {
+                    return false;
+                }
+
+                var innerStart = from + token.Position;
+                token = lexer.Next();
+                if (token.Kind != TokenKind.Colon)
+                {
+                    return false;
+                }
+
+                var parenDepth = 1;
+                while (parenDepth > 0)
+                {
+                    token = lexer.Next();
+                    if (token.Kind == TokenKind.EOF)
+                    {
+                        return false;
+                    }
+
+                    if (token.Kind is TokenKind.LParen or TokenKind.LBracket)
+                    {
+                        parenDepth++;
+                    }
+                    else if (token.Kind is TokenKind.RParen or TokenKind.RBracket)
+                    {
+                        parenDepth--;
+                    }
+                }
+
+                collected.Add(source[innerStart..(from + token.Position)].Trim());
+                token = lexer.Next();
+                continue;
+            }
+
             collected.Add(token.Text);
             token = lexer.Next();
         }
@@ -2500,10 +2541,51 @@ public static class ProjectSupport
         // only the body and drop the parameters (binding `f` to an open expression referencing the
         // undefined parameter names).
         var sugarParams = new List<string>();
-        if (equals.Kind == TokenKind.Ident)
+        if (equals.Kind is TokenKind.Ident or TokenKind.LParen)
         {
-            while (equals.Kind == TokenKind.Ident)
+            while (equals.Kind is TokenKind.Ident or TokenKind.LParen)
             {
+                if (equals.Kind == TokenKind.LParen)
+                {
+                    // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
+                    // verbatim so the `given ({param}) ->` re-wrap keeps the annotation.
+                    equals = lexer.Next();
+                    if (equals.Kind != TokenKind.Ident)
+                    {
+                        return false;
+                    }
+
+                    var innerStart = equals.Position;
+                    equals = lexer.Next();
+                    if (equals.Kind != TokenKind.Colon)
+                    {
+                        return false;
+                    }
+
+                    var parenDepth = 1;
+                    while (parenDepth > 0)
+                    {
+                        equals = lexer.Next();
+                        if (equals.Kind == TokenKind.EOF)
+                        {
+                            return false;
+                        }
+
+                        if (equals.Kind is TokenKind.LParen or TokenKind.LBracket)
+                        {
+                            parenDepth++;
+                        }
+                        else if (equals.Kind is TokenKind.RParen or TokenKind.RBracket)
+                        {
+                            parenDepth--;
+                        }
+                    }
+
+                    sugarParams.Add(source[innerStart..equals.Position].Trim());
+                    equals = lexer.Next();
+                    continue;
+                }
+
                 sugarParams.Add(equals.Text);
                 equals = lexer.Next();
             }

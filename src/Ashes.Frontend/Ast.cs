@@ -55,7 +55,13 @@ public abstract record Expr
 
     public sealed record If(Expr Cond, Expr Then, Expr Else) : Expr;
 
-    public sealed record Lambda(string ParamName, Expr Body) : Expr; // given (x) -> expr
+    public sealed record Lambda(string ParamName, Expr Body) : Expr // given (x) -> expr
+    {
+        /// <summary>Inline parameter type annotation: <c>given (x: Type) -> expr</c> (also carried by
+        /// the lambda a parenthesized annotated sugar parameter desugars to). Unifies with the
+        /// parameter's inferred type during lowering.</summary>
+        public TypeExpr? ParamAnnotation { get; init; }
+    }
     public sealed record Call(Expr Func, Expr Arg) : Expr           // f(x) or f x
     {
         /// <summary>When true, the formatter prints <c>f x</c> instead of <c>f(x)</c>.</summary>
