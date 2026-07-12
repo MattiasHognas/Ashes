@@ -175,7 +175,13 @@ emitted single-line with escaped `\n`, so a line never ends inside a literal). B
 canonical output of **~391 committed `.ash` files** (all of `lib/Ashes`, `tests`, `examples` currently
 carry the trailing whitespace), so it must land with a coordinated repo-wide `fmt -w` reformat in the
 same change — deferred as a deliberate bulk commit rather than bundled here.
-### 14. (P3) `import M.binding` selector renders as `import M as binding` under `fmt` (rendering-only).
+### 14. (P3) `import M.binding` selector renders as `import M as binding` under `fmt` — [FIXED]
+**[FIXED]** (verified, no longer reproduces): `ExtractImports` (`Program.cs`) already classifies the
+lowercase `.binding` selector as its own regex group (`ImportModulePattern` group 2) and renders it as
+`import M.binding` (with an optional ` as alias`), distinct from the `as`-alias group. `import
+Ashes.List.map` and `import Ashes.List.filter as keep` both round-trip through `fmt -w` unchanged and
+compile/run. (An uppercase `M.Type` selector is absorbed into the module-path group and likewise
+renders identically.)
 
 ## Records & syntax
 
