@@ -380,6 +380,14 @@ public sealed partial class Lowering
     // into the to-space can fire. Null when not generating a spec.
     private IReadOnlyList<TypeRef>? _specializationConcreteParamTypes;
     private int _specializationParamCursor;
+    // Parameter arg-types peeled from a `let f : A -> B -> ... = <lambda>` annotation, seeded into each
+    // curried lambda's parameter type BEFORE its body is lowered (bidirectional checking). Without this,
+    // a numeric operator on an annotated-Float parameter is lowered while the parameter is still an
+    // unbound type variable, so ResolveNumericOperandTypes defaults it to Int (then the annotation
+    // clashes). Consumed one per lambda via the cursor, exactly like the specialization seeding above,
+    // and limited to the definition's curried-lambda count so body lambdas never consume a leftover.
+    private IReadOnlyList<TypeRef>? _annotationParamTypes;
+    private int _annotationParamCursor;
     // Outer (non-accumulator) parameter names of the reuse specialization currently being lowered — e.g.
     // compare/newKey/newValue for Map.set. A constructor field whose argument is one of these is a FRESH
     // heap input (materialize it into the persistent blob so it survives the per-iteration reset); a field
@@ -1137,6 +1145,21 @@ public sealed partial class Lowering
         return ptrTemp;
     }
 
+    // Peel the leading argument types from a function-type annotation, one per curried parameter, up to
+    // `maxCount` (the definition's lambda-chain length so a body lambda never consumes a leftover).
+    private List<TypeRef> PeelAnnotationParamTypes(TypeRef annotated, int maxCount)
+    {
+        var args = new List<TypeRef>();
+        var t = Prune(annotated);
+        while (args.Count < maxCount && t is TypeRef.TFun fun)
+        {
+            args.Add(fun.Arg);
+            t = Prune(fun.Ret);
+        }
+
+        return args;
+    }
+
     private (int, TypeRef) LowerLet(Expr.Let let)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -1147,14 +1170,27 @@ public sealed partial class Lowering
         EmitArenaWatermark();
 
         int depth0Before = _depth0LambdaCount;
+
+        // Seed parameter types from the annotation (if any) before lowering the value, so operators on
+        // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
+        var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
+        var savedAnnotParams = _annotationParamTypes;
+        var savedAnnotCursor = _annotationParamCursor;
+        if (annotatedLetType is not null && let.Value is Expr.Lambda letLambda)
+        {
+            _annotationParamTypes = PeelAnnotationParamTypes(annotatedLetType, CountLambdaChain(letLambda));
+            _annotationParamCursor = 0;
+        }
+
         var (valueTemp, valueType) = LowerLetValue(let);
+        _annotationParamTypes = savedAnnotParams;
+        _annotationParamCursor = savedAnnotCursor;
 
         // If the user wrote a type annotation, verify it matches the inferred type.
-        if (let.TypeAnnotation is { } letAnnotation)
+        if (annotatedLetType is not null)
         {
             using var annotationSpan = PushDiagnosticSpan(GetSpan(let.Value));
-            var annotatedType = ResolveAnnotationType(letAnnotation);
-            Unify(annotatedType, valueType);
+            Unify(annotatedLetType, valueType);
         }
 
         int slot = NewLocal();
@@ -1366,6 +1402,23 @@ public sealed partial class Lowering
         };
         _scopes.Push(child);
 
+        // Seed the recursive function's parameter types from its declared annotation BEFORE lowering
+        // the body, so that operator-overload resolution inside the body (e.g. `a * b` on Float
+        // params) sees the annotated types rather than defaulting an unresolved type var to Int.
+        // Resolving the annotation against recursiveType up front also makes self-calls type-check
+        // against the declared arrow. Restored after the value branches so nested lets don't inherit it.
+        var savedAnnotationParamTypes = _annotationParamTypes;
+        var savedAnnotationParamCursor = _annotationParamCursor;
+        _annotationParamTypes = null;
+        _annotationParamCursor = 0;
+        if (letRecursive.TypeAnnotation is { } seedAnnotation && innerLambda is not null)
+        {
+            var seedAnnotationType = ResolveAnnotationType(seedAnnotation);
+            Unify(recursiveType, seedAnnotationType);
+            _annotationParamTypes = PeelAnnotationParamTypes(seedAnnotationType, CountLambdaChain(innerLambda));
+            _annotationParamCursor = 0;
+        }
+
         (int valTemp, TypeRef valType) valueAndType;
         bool helperMarkerAdded = false;
         if (letRecursive.Value is Expr.Lambda lam
@@ -1474,6 +1527,9 @@ public sealed partial class Lowering
             ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
             valueAndType = LowerExpr(letRecursive.Value);
         }
+
+        _annotationParamTypes = savedAnnotationParamTypes;
+        _annotationParamCursor = savedAnnotationParamCursor;
 
         Unify(recursiveType, valueAndType.valType);
 
@@ -1640,6 +1696,15 @@ public sealed partial class Lowering
         {
             Unify(paramTy, concreteParamTypes[_specializationParamCursor]);
             _specializationParamCursor++;
+        }
+
+        // Seed this parameter from the enclosing let's type annotation before lowering the body, so an
+        // operator on an annotated-Float parameter resolves against Float instead of defaulting to Int.
+        if (_annotationParamTypes is { } annotationParamTypes
+            && _annotationParamCursor < annotationParamTypes.Count)
+        {
+            Unify(paramTy, annotationParamTypes[_annotationParamCursor]);
+            _annotationParamCursor++;
         }
 
         // Compute free variables for capture
