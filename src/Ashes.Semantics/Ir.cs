@@ -364,13 +364,26 @@ public abstract record IrInst
     /// and memcpy's the entire string (length word + inline bytes).
     /// </para>
     /// <para>
+    /// <b>BigInt (<see cref="StaticSizeBytes"/> == <see cref="CopyOutArena.BigIntSize"/>):</b>
+    /// The total size is read at runtime from the source object's header limb count
+    /// (<c>total = 8 + (header &amp; 0xFFFFFFFF) * 8</c>). A BigInt is a self-contained
+    /// <c>{ header, limb… }</c> buffer with no internal pointers, so a flat memcpy of the
+    /// normalized prefix is a valid independent value — this is what lets a BigInt accumulator
+    /// survive the TCO back-edge arena reset so the per-iteration BigInt garbage is reclaimed.
+    /// </para>
+    /// <para>
     /// <b>Fixed-size objects (<see cref="StaticSizeBytes"/> &gt; 0):</b>
     /// Allocates exactly <see cref="StaticSizeBytes"/> bytes and memcpy's them.
     /// Used for cons cells (16 bytes: head + tail) when the head is a copy type,
     /// ensuring the tail pointer to a pre-watermark cell is preserved.
     /// </para>
     /// </summary>
-    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst;
+    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst
+    {
+        /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from
+        /// the header limb count). Distinct from -1 (string, size from the length word).</summary>
+        public const int BigIntSize = -2;
+    }
 
     /// <summary>
     /// Like <see cref="CopyOutArena"/> but the fresh copy is allocated in the persistent to-space

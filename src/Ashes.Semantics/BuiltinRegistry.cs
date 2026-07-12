@@ -125,6 +125,7 @@ public static class BuiltinRegistry
         RegexCaptures,
         RegexSubstitute,
         FileWriteBytes,
+        IoWriteBytes,
         IoReadExact,
         TextByteLength,
         SpawnProcess,
@@ -173,6 +174,7 @@ public static class BuiltinRegistry
                     ["panic"] = new("panic", BuiltinValueKind.Panic, IsCallable: true, Arity: 1),
                     ["args"] = new("args", BuiltinValueKind.Args, IsCallable: false, Arity: 0),
                     ["write"] = new("write", BuiltinValueKind.Write, IsCallable: true, Arity: 1),
+                    ["writeBytes"] = new("writeBytes", BuiltinValueKind.IoWriteBytes, IsCallable: true, Arity: 1),
                     ["writeLine"] = new("writeLine", BuiltinValueKind.WriteLine, IsCallable: true, Arity: 1),
                     ["readLine"] = new("readLine", BuiltinValueKind.ReadLine, IsCallable: true, Arity: 1),
                     ["readExact"] = new("readExact", BuiltinValueKind.IoReadExact, IsCallable: true, Arity: 1)

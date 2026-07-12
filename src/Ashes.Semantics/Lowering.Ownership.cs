@@ -1175,6 +1175,13 @@ public sealed partial class Lowering
                 staticSizeBytes = -1; // dynamic: 8 + length
                 return CopyOutKind.Shallow;
 
+            case TypeRef.TBigInt:
+                // Self-contained { header, limb… } buffer, no internal pointers — copy the normalized
+                // prefix (size from the header) so a threaded BigInt accumulator survives the reset and
+                // the iteration's BigInt garbage is reclaimed.
+                staticSizeBytes = IrInst.CopyOutArena.BigIntSize;
+                return CopyOutKind.Shallow;
+
             case TypeRef.TList list:
                 {
                     var elemPruned = Prune(list.Element);

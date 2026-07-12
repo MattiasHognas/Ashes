@@ -25,6 +25,9 @@ These types are always available without imports:
 - `panic(message)` returning `a` — print `message` and abort the program; never returns, so it is usable at any type
 - `args` returning `List(Str)` — the command-line arguments passed to the program
 - `write(text)` returning `Unit` — write `text` to stdout with no trailing newline
+- `writeBytes(bytes)` returning `Unit` — write a raw `Bytes` buffer to stdout verbatim, with no trailing
+  newline and no UTF-8 constraint (unlike `write`, which takes a `Str`). Use this for binary output such
+  as a packed image or any non-text byte stream
 - `writeLine(text)` returning `Unit` — write `text` to stdout followed by a newline
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin

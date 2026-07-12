@@ -739,6 +739,13 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
 
+        // BigInt: size read from the header's limb count. Source is always a valid pointer (zero is a
+        // {header:0} heap object, never null), like strings — no nil guard needed.
+        if (staticSizeBytes == IrInst.CopyOutArena.BigIntSize)
+        {
+            return EmitCopyOutBigIntValue(state, srcPtr);
+        }
+
         // Fixed-size objects (e.g. cons cells) may have a nil source pointer —
         // for example, an empty list tail in a TCO iteration. Guard against
         // copying from address 0 by branching around the alloc+memcpy.
@@ -799,6 +806,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle dynDestBytes = GetStringBytesPointer(state, dynDest, "copy_out_dest");
         EmitCopyBytes(state, dynDestBytes, srcBytes, length, "copy_out");
         return dynDest;
+    }
+
+    /// <summary>
+    /// Copies a BigInt value out of the arena to a fresh allocation. A BigInt is
+    /// <c>{ i64 header = (negFlag&lt;&lt;32)|limbCount, i64 limb… }</c> in sign-magnitude, base 2^64 —
+    /// a self-contained buffer with no internal pointers. The total size is <c>8 + limbCount * 8</c>
+    /// (the normalized prefix), read from the header, and the whole thing is memcpy'd. The source
+    /// pointer is always non-nil (BigInt zero is a header-0 heap object).
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutBigIntValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headerPtr = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I64Ptr, "copy_out_bigint_hdr_ptr");
+        LlvmValueHandle header = LlvmApi.BuildLoad2(builder, state.I64, headerPtr, "copy_out_bigint_hdr");
+        LlvmValueHandle limbCount = LlvmApi.BuildAnd(builder, header, LlvmApi.ConstInt(state.I64, 0xFFFFFFFF, 0), "copy_out_bigint_limbs");
+        LlvmValueHandle limbBytes = LlvmApi.BuildMul(builder, limbCount, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_bigint_limb_bytes");
+        LlvmValueHandle size = LlvmApi.BuildAdd(builder, limbBytes, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_bigint_size");
+        LlvmValueHandle dest = EmitAllocDynamic(state, size);
+        LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_bigint_src");
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "copy_out_bigint_dest");
+        EmitCopyBytes(state, destBytes, srcBytes, size, "copy_out_bigint");
+        return dest;
     }
 
     /// <summary>

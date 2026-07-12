@@ -77,6 +77,37 @@ public sealed partial class Lowering
         return LowerUnitValue();
     }
 
+    // Ashes.IO.writeBytes : Bytes -> Unit. Writes a raw Bytes buffer to stdout verbatim (no UTF-8
+    // constraint, unlike write, which takes a Str). Bytes and Str share the same [len][payload] heap
+    // layout and WriteStr writes exactly `len` bytes with no encoding validation, so it carries the raw
+    // buffer correctly -- this is what lets binary output (e.g. a packed PBM image) reach stdout.
+    private (int, TypeRef) LowerWriteBytes(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var loweredType = Prune(valueType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TBytes());
+            loweredType = new TypeRef.TBytes();
+        }
+
+        if (loweredType is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(arg), $"writeBytes() expects Bytes but got {Pretty(loweredType)}.");
+            return (valueTemp, loweredType);
+        }
+
+        Emit(new IrInst.WriteStr(valueTemp));
+        return LowerUnitValue();
+    }
+
     private (int, TypeRef) LowerReadLine(Expr arg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(arg);
@@ -2200,6 +2231,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.Write,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]))
+        );
+    }
+
+    private Binding.Intrinsic CreateWriteBytesBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.WriteBytes,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), _resolvedTypes["Unit"]))
         );
     }
 
