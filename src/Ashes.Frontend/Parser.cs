@@ -1322,8 +1322,28 @@ public sealed class Parser
         {
             var start = _current.Position;
             Consume(TokenKind.Minus);
-            var zero = RegisterExpr(new Expr.IntLit(0), start, start + 1);
             var right = ParseUnary();
+
+            // Fold a negated float literal into the literal itself. Unary minus otherwise desugars to
+            // `0 - right`, and the synthesized `0` is a concrete Int literal that forces the subtraction
+            // to resolve as Int — so `-0.5` mis-typed as Int (ASH002). A negated Int literal keeps the
+            // `0 - n` form (both sides Int, correct); only the Float case needs folding. The formatter
+            // already prints `Subtract(0, x)` as `-x`, and prints a Float literal via its text, so this
+            // round-trips to the same source.
+            if (right is Expr.FloatLit floatLit)
+            {
+                // Toggle the sign of the preserved source text (a raw lexed literal carries no sign;
+                // only an already-folded one does, e.g. from `- -0.5`), so the text stays canonical.
+                var foldedText = floatLit.Text switch
+                {
+                    "" => "",
+                    ['-', .. var rest] => rest,
+                    var t => "-" + t,
+                };
+                return RegisterExpr(new Expr.FloatLit(-floatLit.Value, foldedText), start, AstSpans.GetOrDefault(right).End);
+            }
+
+            var zero = RegisterExpr(new Expr.IntLit(0), start, start + 1);
             return RegisterExpr(new Expr.Subtract(zero, right), start, AstSpans.GetOrDefault(right).End);
         }
 
