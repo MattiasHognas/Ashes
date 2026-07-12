@@ -848,11 +848,27 @@ Anonymous functions are declared using `given`.
 Syntax:
 
 given (param1, param2, ...) -> expr
+given param -> expr
 
 Example:
 
 let add = given (x, y) -> x + y
 in Ashes.IO.print(add(10, 5))
+
+For a single parameter the parentheses may be omitted: `given x -> x + 1`. The
+parenthesized form is canonical (the formatter re-parenthesizes the bare form).
+
+Each parenthesized parameter may carry an inline type annotation:
+
+given (x: Int) -> x + 1
+given (b: Body, dt: Float) -> advance(b)(dt)
+
+The annotation unifies with the parameter's inferred type — it pins the
+parameter to that type exactly like a whole-binding annotation would, so it can
+resolve otherwise-ambiguous code (record field access on the parameter, Float
+operator selection) as well as document intent. A mismatch between the
+annotation and how the parameter is used is a compile error. The bare
+(unparenthesized) single-parameter form does not take an annotation.
 
 Functions:
 
@@ -993,6 +1009,15 @@ in Ashes.IO.print(sum([1, 2, 3])(0))
 The sugar applies to plain `let`, `let recursive`, and nested `let ... in` bindings
 alike. Parameter sugar is the idiomatic way to write a named function; the
 explicit `given` form remains valid and is what the sugar expands to.
+
+A sugar parameter may carry an inline type annotation by parenthesizing it:
+
+let energy (b: Body) = b.mass * speedSquared(b)
+let scale (v: Float) n = v * Ashes.Math.toFloat(n)
+
+An annotated sugar parameter desugars to a `given` layer carrying the same
+annotation (`let energy = given (b: Body) -> ...`); unannotated parameters stay
+bare. The parentheses are required exactly when an annotation is present.
 
 ---
 

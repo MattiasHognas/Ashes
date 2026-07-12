@@ -6,7 +6,7 @@ type Shape =
     | Circle(Int)
     | Square(Int)
 
-let area s = 
+let area s =
     match s with
         | Circle(r) -> 3 * r * r
         | Square(w) -> w * w
@@ -14,12 +14,12 @@ let area s =
 type Tagged =
     | Tagged(Str, Int)
 
-let tag s = 
+let tag s =
     match s with
         | Circle(r) -> Tagged("Circle")(area(Circle(r)))
         | Square(w) -> Tagged("Square")(area(Square(w)))
 
-let describe t = 
+let describe t =
     match t with
         | Tagged(name, value) -> name + ":" + Ashes.Text.fromInt(value)
 

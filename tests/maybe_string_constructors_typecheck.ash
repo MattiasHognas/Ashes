@@ -1,5 +1,5 @@
 // expect: ok
 let a = None
-in 
+in
     let b = Some("x")
     in Ashes.IO.writeLine("ok")

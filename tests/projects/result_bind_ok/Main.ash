@@ -1,11 +1,11 @@
 // expect: 6
 import Ashes.Result
-let addOneIfSmall = 
-    given (x) -> 
+let addOneIfSmall =
+    given (x) ->
         if x <= 5
         then Ok(x + 1)
         else Error(0)
-in 
+in
     match Result.bind(addOneIfSmall)(Ok(5)) with
         | Ok(x) -> Ashes.IO.print(x)
         | Error(_) -> Ashes.IO.print(0)

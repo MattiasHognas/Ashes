@@ -643,14 +643,16 @@ async Task<int> RunCompileAsync(string[] a)
     {
         var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
         var displayPath = inputFile ?? "<expr>";
+        CombinedCompilationLayout? diagnosticLayout = null;
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
+            diagnosticLayout = prepared.Layout;
             image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
         }
         catch (CompileDiagnosticException ex)
         {
-            PrintCompilerDiagnostics(ex, source, displayPath);
+            PrintCompilerDiagnostics(ex, source, displayPath, diagnosticLayout);
             return 1;
         }
         catch (InvalidOperationException ex)
@@ -762,14 +764,16 @@ async Task<int> RunRunAsync(string[] a)
     {
         var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
         var displayPath = inputFile ?? "<expr>";
+        CombinedCompilationLayout? diagnosticLayout = null;
         try
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
+            diagnosticLayout = prepared.Layout;
             image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
         }
         catch (CompileDiagnosticException ex)
         {
-            PrintCompilerDiagnostics(ex, source, displayPath);
+            PrintCompilerDiagnostics(ex, source, displayPath, diagnosticLayout);
             return 1;
         }
         catch (InvalidOperationException ex)
@@ -1099,6 +1103,9 @@ async Task<int> RunFmtAsync(string[] a)
                 || sourceWithoutImports.Contains("|?>", StringComparison.Ordinal)
                 || sourceWithoutImports.Contains("|!>", StringComparison.Ordinal),
             options: formattingOptions);
+        // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
+        // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
+        formattedBody = CommentReinserter.ReinsertStandaloneCommentLines(sourceWithoutImports, formattedBody, lineEnding);
         var formattedWithoutComments = imports.Count == 0
             ? formattedBody
             : string.Join(lineEnding, imports) + lineEnding + formattedBody;
@@ -1205,8 +1212,44 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
     return (imports, string.Join(lineEnding, sourceLines));
 }
 
-static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? source, string displayPath)
+static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? source, string displayPath, CombinedCompilationLayout? layout = null)
 {
+    // Compilation runs on the combined (stitched) source, so diagnostic spans are offsets into it.
+    // With the layout at hand, map them back to the entry file's own coordinates before rendering;
+    // spans inside stitched module regions render header-only, attributed to the owning file.
+    if (layout is { } combinedLayout && source is not null)
+    {
+        string stripped;
+        try
+        {
+            stripped = ProjectSupport.ParseImportHeader(source, displayPath).SourceWithoutImports;
+        }
+        catch (InvalidOperationException)
+        {
+            stripped = source;
+        }
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(combinedLayout, ex.StructuredErrors, displayPath, source, stripped)
+            .OrderBy(m => m.HasPosition ? 0 : 1)
+            .ThenBy(m => m.Entry.Start)
+            .ToArray();
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < mapped.Length; i++)
+        {
+            sb.Append(DiagnosticTextRenderer.RenderCompilerDiagnostics(
+                [mapped[i].Entry],
+                mapped[i].HasPosition ? source : null,
+                mapped[i].FilePath));
+            if (i < mapped.Length - 1)
+            {
+                sb.AppendLine();
+            }
+        }
+
+        Console.Error.Write(sb.ToString());
+        return;
+    }
+
     Console.Error.Write(DiagnosticTextRenderer.RenderCompilerDiagnostics(ex, source, displayPath));
 }
 

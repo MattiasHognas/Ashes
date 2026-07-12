@@ -2,15 +2,15 @@
 type Box =
     | Box(Str)
 
-let fromField = 
+let fromField =
     match Box("nope") with
         | Box(s) -> Ashes.Text.byteLength(s)
 
-let viaLet = 
+let viaLet =
     (let s2 = "héllo"
     in Ashes.Text.byteLength(s2))
 
-let inBody b = 
+let inBody b =
     match b with
         | Box(s3) -> Ashes.Text.byteLength(s3)
 

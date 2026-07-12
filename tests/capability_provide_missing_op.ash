@@ -4,7 +4,7 @@ capability KV =
     | put : Str -> Int -> Int
 
 provide KV =
-    | get = 
+    | get =
         given (_) -> 0
 
 Ashes.IO.print(0)

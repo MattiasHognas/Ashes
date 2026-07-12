@@ -2,8 +2,8 @@
 // skip-on: win-x64
 match Ashes.Process.spawn("/usr/bin/sleep")(["100"]) with
     | Error(msg) -> Ashes.IO.print(msg)
-    | Ok(proc) -> 
+    | Ok(proc) ->
         let _ = Ashes.Process.kill(proc)
-        in 
+        in
             let _ = Ashes.Process.waitForExit(proc)
             in Ashes.IO.print("ok")

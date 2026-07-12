@@ -91,7 +91,7 @@ public sealed class FormatterTests
                 new Expr.Let("y", new Expr.IntLit(1), new Expr.Var("y")),
                 new Expr.Var("x")));
 
-        formatted.ShouldBe("let x = \n    let y = 1\n    in y\nin x\n");
+        formatted.ShouldBe("let x =\n    let y = 1\n    in y\nin x\n");
     }
 
     [Test]
@@ -103,7 +103,7 @@ public sealed class FormatterTests
                 new Expr.IntLit(1),
                 new Expr.Let("y", new Expr.IntLit(2), new Expr.Var("y"))));
 
-        formatted.ShouldBe("let x = 1\nin \n    let y = 2\n    in y\n");
+        formatted.ShouldBe("let x = 1\nin\n    let y = 2\n    in y\n");
     }
 
     [Test]
@@ -115,7 +115,7 @@ public sealed class FormatterTests
                 new Expr.Call(new Expr.Var("parse"), new Expr.StrLit("42")),
                 new Expr.LetResult("y", new Expr.Call(new Expr.Var("Ok"), new Expr.Var("x")), new Expr.Call(new Expr.Var("Ok"), new Expr.Var("y")))));
 
-        formatted.ShouldBe("let? x = parse(\"42\")\nin \n    let? y = Ok(x)\n    in Ok(y)\n");
+        formatted.ShouldBe("let? x = parse(\"42\")\nin\n    let? y = Ok(x)\n    in Ok(y)\n");
     }
 
     [Test]
@@ -127,7 +127,7 @@ public sealed class FormatterTests
                 new Expr.Let("x", new Expr.IntLit(1), new Expr.Var("x")),
                 new Expr.Let("y", new Expr.IntLit(2), new Expr.Var("y"))));
 
-        formatted.ShouldBe("if true\nthen \n    let x = 1\n    in x\nelse \n    let y = 2\n    in y\n");
+        formatted.ShouldBe("if true\nthen\n    let x = 1\n    in x\nelse\n    let y = 2\n    in y\n");
     }
 
     [Test]
@@ -137,7 +137,7 @@ public sealed class FormatterTests
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("let x = \n    let y = 1\n    in y\nin x\n");
+        formatted.ShouldBe("let x =\n    let y = 1\n    in y\nin x\n");
     }
 
     [Test]
@@ -147,7 +147,7 @@ public sealed class FormatterTests
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("if true\nthen \n    let x = 1\n    in x\nelse \n    let y = 2\n    in y\n");
+        formatted.ShouldBe("if true\nthen\n    let x = 1\n    in x\nelse\n    let y = 2\n    in y\n");
     }
 
     [Test]
@@ -157,7 +157,7 @@ public sealed class FormatterTests
 
         var formatted = FormatFixtureSource(source);
 
-        formatted.ShouldBe("match xs with\n    | [] -> 0\n    | head :: tail -> \n        match tail with\n            | [] -> head\n            | _ -> head\n");
+        formatted.ShouldBe("match xs with\n    | [] -> 0\n    | head :: tail ->\n        match tail with\n            | [] -> head\n            | _ -> head\n");
     }
 
     [Test]
@@ -180,7 +180,7 @@ public sealed class FormatterTests
                 "x",
                 new Expr.Let("y", new Expr.IntLit(1), new Expr.Var("y"))));
 
-        formatted.ShouldBe("given (x) -> \n    let y = 1\n    in y\n");
+        formatted.ShouldBe("given (x) ->\n    let y = 1\n    in y\n");
     }
 
     [Test]
@@ -316,7 +316,7 @@ public sealed class FormatterTests
                 new Expr.Lambda("i", new Expr.Var("i")),
                 new Expr.Var("loop")));
 
-        formatted.ShouldBe("let recursive loop = \n    given (i) -> i\nin loop\n");
+        formatted.ShouldBe("let recursive loop =\n    given (i) -> i\nin loop\n");
     }
 
     [Test]
@@ -408,7 +408,7 @@ public sealed class FormatterTests
                 new Expr.Var("x")),
             options: new Ashes.Formatter.FormattingOptions { IndentSize = 2, UseTabs = false, NewLine = "\n" });
 
-        formatted.ShouldBe("let x = \n  let y = 1\n  in y\nin x\n");
+        formatted.ShouldBe("let x =\n  let y = 1\n  in y\nin x\n");
     }
 
     [Test]
@@ -421,7 +421,7 @@ public sealed class FormatterTests
                 new Expr.Var("x")),
             options: new Ashes.Formatter.FormattingOptions { IndentSize = 4, UseTabs = true, NewLine = "\n" });
 
-        formatted.ShouldBe("let x = \n\tlet y = 1\n\tin y\nin x\n");
+        formatted.ShouldBe("let x =\n\tlet y = 1\n\tin y\nin x\n");
     }
 
     [Test]
@@ -497,7 +497,7 @@ public sealed class FormatterTests
     [Test]
     public void Format_rec_let_sugar_is_preserved()
     {
-        const string source = "let recursive loop i = \n    if i >= 10\n    then i\n    else loop(i + 1)\nin Ashes.IO.print(loop(0))\n";
+        const string source = "let recursive loop i =\n    if i >= 10\n    then i\n    else loop(i + 1)\nin Ashes.IO.print(loop(0))\n";
         var diag = new Ashes.Frontend.Diagnostics();
         var program = new Ashes.Frontend.Parser(source, diag).ParseExpression();
         var formatted = Ashes.Formatter.Formatter.Format(program);
@@ -516,7 +516,7 @@ public sealed class FormatterTests
                     new Expr.Lambda("y", new Expr.Add(new Expr.Var("x"), new Expr.Var("y")))),
                 new Expr.Var("add")));
 
-        formatted.ShouldBe("let add = \n    given (x) -> \n        given (y) -> x + y\nin add\n");
+        formatted.ShouldBe("let add =\n    given (x) ->\n        given (y) -> x + y\nin add\n");
     }
 
     [Test]

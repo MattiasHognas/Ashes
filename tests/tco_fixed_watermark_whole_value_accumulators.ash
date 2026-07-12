@@ -10,7 +10,7 @@
 import Ashes.IO as io
 import Ashes.Text as text
 import Ashes.BigInt as big
-let recursive go i n s pow acc = 
+let recursive go i n s pow acc =
     if i == n
     then s + " " + text.fromBigInt(pow) + " " + text.fromInt(acc)
     else go(i + 1)(n)(s + "a")(pow * 2N)(acc + i)

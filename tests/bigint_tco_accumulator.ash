@@ -7,7 +7,7 @@
 import Ashes.IO as io
 import Ashes.Text as text
 import Ashes.BigInt as big
-let recursive run fac pow i n = 
+let recursive run fac pow i n =
     if i > n
     then text.fromBigInt(fac) + " " + text.fromBigInt(pow)
     else run(fac * big.fromInt(i))(pow * 2N)(i + 1)(n)

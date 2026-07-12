@@ -8,15 +8,15 @@ type Tree =
     | Leaf
     | Node(Tree, Int, Tree)
 
-let recursive loop n t = 
+let recursive loop n t =
     if n <= 0
     then t
-    else 
+    else
         match t with
             | Leaf -> loop(n - 1)(Node(Leaf)(n)(Leaf))
             | Node(l, v, r) -> loop(n - 1)(Node(l)(v + n)(r))
 
-let rootVal t = 
+let rootVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> v

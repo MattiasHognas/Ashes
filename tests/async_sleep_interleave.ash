@@ -7,24 +7,24 @@
 // with a blocking sleep (which would produce A1 A2 B1 B2, running the tasks to completion in turn).
 // Writes (no newline) keep the observable ordering on a single line.
 import Ashes.IO
-let taskA = 
+let taskA =
     async(let _ = Ashes.IO.write("A1")
-    in 
+    in
         match await Ashes.Async.sleep(50) with
             | Error(_) -> 0
-            | Ok(_) -> 
+            | Ok(_) ->
                 let _ = Ashes.IO.write("A2")
                 in 1)
 
-let taskB = 
+let taskB =
     async(let _ = Ashes.IO.write("B1")
-    in 
+    in
         match await Ashes.Async.sleep(10) with
             | Error(_) -> 0
-            | Ok(_) -> 
+            | Ok(_) ->
                 let _ = Ashes.IO.write("B2")
                 in 1)
-in 
+in
     match Ashes.Async.run(Ashes.Async.all([taskA, taskB])) with
         | Ok(_) -> Ashes.IO.write("done")
         | Error(_) -> Ashes.IO.write("err")

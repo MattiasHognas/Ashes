@@ -12,19 +12,19 @@ import Ashes.Map
 import Ashes.String
 import Ashes.Bytes
 import Ashes.UInt
-let recursive loop tag i n m = 
+let recursive loop tag i n m =
     if i >= n
     then m
-    else 
+    else
         let b0 = Ashes.UInt.toInt(Ashes.Bytes.get(tag)(0))
-        in 
+        in
             let key = Ashes.Text.fromInt(i)
             in loop(tag)(i + 1)(n)(Ashes.Map.set(Ashes.String.compare)(key)(b0 + i)(m))
 
 let tag = Ashes.Bytes.fromText("Z")
 
 let final = loop(tag)(0)(400000)(Ashes.Map.empty)
-in 
+in
     Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + "|" + (match Ashes.Map.get(Ashes.String.compare)("399999")(final) with
         | Some(v) -> Ashes.Text.fromInt(v)
         | None -> "?"))

@@ -16,58 +16,58 @@ type R =
     | Base
     | Hit(Int)
 
-let recursive getAt i xs = 
+let recursive getAt i xs =
     match xs with
         | [] -> 0
-        | h :: t -> 
+        | h :: t ->
             if i == 0
             then h
             else getAt(i - 1)(t)
 
-let recursive setAt i v xs = 
+let recursive setAt i v xs =
     match xs with
         | [] -> []
-        | h :: t -> 
+        | h :: t ->
             if i == 0
             then v :: t
             else h :: setAt(i - 1)(v)(t)
 
-let recursive show xs = 
+let recursive show xs =
     match xs with
         | [] -> ""
         | h :: t -> text.fromInt(h) + "," + show(t)
 
-let recursive bump r n count = 
+let recursive bump r n count =
     if r == n
     then show(count)
     else bump(r + 1)(n)(setAt(r)(getAt(r)(count) + 10)(count))
 
-let recursive scan r n perm count = 
+let recursive scan r n perm count =
     if r == n
     then Base
-    else 
+    else
         let cr = getAt(r)(count) - 1
-        in 
+        in
             if cr > 0
             then Hit(r)
             else scan(r + 1)(n)(r :: perm)(setAt(r)(cr)(count))
 
-let recursive twin r n acc = 
+let recursive twin r n acc =
     if r == n
     then show(acc)
     else twin(r + 1)(n)(r :: r :: acc)
 
-let recursive range i n acc = 
+let recursive range i n acc =
     if i == n
     then acc
     else range(i + 1)(n)(i :: acc)
 
-let recursive sum xs acc = 
+let recursive sum xs acc =
     match xs with
         | [] -> acc
         | h :: t -> sum(t)(acc + h)
 
-let scanResult = 
+let scanResult =
     match scan(1)(3)([2, 1, 3])([0, 1, 3]) with
         | Base -> "BASE"
         | Hit(r) -> "HIT " + text.fromInt(r)

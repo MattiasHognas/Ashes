@@ -4,22 +4,22 @@ import Ashes.Text
 import Ashes.IO
 let nums = 1 :: 2 :: 3 :: 4 :: 5 :: []
 
-let recursive showList xs = 
+let recursive showList xs =
     match xs with
         | [] -> ""
         | h :: t -> Ashes.Text.fromInt(h) + "," + showList(t)
 
-let doubledCoarse = 
+let doubledCoarse =
     Ashes.Parallel.mapGrained(16)(given (x) -> x * 2)(nums)
 
-let doubledDefault = 
+let doubledDefault =
     Ashes.Parallel.map(given (x) -> x * 2)(nums)
 
-let sumCoarse = 
-    Ashes.Parallel.reduceGrained(16)(given (a) -> 
+let sumCoarse =
+    Ashes.Parallel.reduceGrained(16)(given (a) ->
         given (b) -> a + b)(0)(given (x) -> x)(nums)
 
-let sumDefault = 
-    Ashes.Parallel.reduce(given (a) -> 
+let sumDefault =
+    Ashes.Parallel.reduce(given (a) ->
         given (b) -> a + b)(0)(given (x) -> x)(nums)
 in Ashes.IO.print(showList(doubledCoarse) + "| " + Ashes.Text.fromInt(sumCoarse) + " | " + showList(doubledDefault) + "| " + Ashes.Text.fromInt(sumDefault))

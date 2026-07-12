@@ -66,7 +66,7 @@ public static class Formatter
         {
             sb.Append('\n');
         }
-        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return FinishOutput(sb, formattingOptions);
     }
 
     public static string Format(Expr expr)
@@ -89,7 +89,49 @@ public static class Formatter
             sb.Append('\n');
         }
 
-        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return FinishOutput(sb, formattingOptions);
+    }
+
+    /// <summary>
+    /// Strips trailing spaces/tabs from every line, then applies the configured newline. The tree
+    /// writers append structural padding (e.g. the space after <c>=</c> or <c>-&gt;</c>) before
+    /// deciding to break the line, which would otherwise leave trailing whitespace. Trimming at the
+    /// line level is safe because string literals are emitted on a single line with escaped
+    /// <c>\n</c>, so a physical line never ends inside a literal.
+    /// </summary>
+    private static string FinishOutput(StringBuilder sb, FormattingOptions options)
+    {
+        var result = new StringBuilder(sb.Length);
+        int lineStart = 0;
+        for (int i = 0; i < sb.Length; i++)
+        {
+            if (sb[i] != '\n')
+            {
+                continue;
+            }
+
+            int lineEnd = i;
+            while (lineEnd > lineStart && (sb[lineEnd - 1] == ' ' || sb[lineEnd - 1] == '\t'))
+            {
+                lineEnd--;
+            }
+
+            for (int j = lineStart; j < lineEnd; j++)
+            {
+                result.Append(sb[j]);
+            }
+
+            result.Append('\n');
+            lineStart = i + 1;
+        }
+
+        for (int j = lineStart; j < sb.Length; j++)
+        {
+            result.Append(sb[j]);
+        }
+
+        string text = result.ToString();
+        return string.Equals(options.NewLine, "\n", StringComparison.Ordinal) ? text : text.Replace("\n", options.NewLine, StringComparison.Ordinal);
     }
 
     private static void WriteTypeDecl(StringBuilder sb, TypeDecl decl, FormattingOptions options)
@@ -264,16 +306,41 @@ public static class Formatter
         var value = decl.Value;
         foreach (var p in decl.SugarParams)
         {
-            sb.Append(' ');
-            sb.Append(p);
-            if (value is Expr.Lambda lam)
-            {
-                value = lam.Body;
-            }
+            value = AppendSugarParam(sb, p, value);
         }
 
         sb.Append(" = ");
         WriteTopLevelValue(sb, value, preferPipelines, options);
+    }
+
+    /// <summary>
+    /// Renders one ML-style sugar parameter and unwraps its lambda layer. An annotated parameter
+    /// (the desugared lambda carries <see cref="Expr.Lambda.ParamAnnotation"/>) renders
+    /// parenthesized as <c>(name: Type)</c>; a plain one renders bare.
+    /// </summary>
+    private static Expr AppendSugarParam(StringBuilder sb, string name, Expr value)
+    {
+        sb.Append(' ');
+        if (value is Expr.Lambda lam)
+        {
+            if (lam.ParamAnnotation is { } annotation)
+            {
+                sb.Append('(');
+                sb.Append(name);
+                sb.Append(": ");
+                WriteTypeExpr(sb, annotation);
+                sb.Append(')');
+            }
+            else
+            {
+                sb.Append(name);
+            }
+
+            return lam.Body;
+        }
+
+        sb.Append(name);
+        return value;
     }
 
     private static void WriteRecursiveGroup(StringBuilder sb, TopLevelItem.RecursiveGroup group, bool preferPipelines, FormattingOptions options)
@@ -292,12 +359,7 @@ public static class Formatter
             {
                 foreach (var p in group.SugarParams[i])
                 {
-                    sb.Append(' ');
-                    sb.Append(p);
-                    if (value is Expr.Lambda lam)
-                    {
-                        value = lam.Body;
-                    }
+                    value = AppendSugarParam(sb, p, value);
                 }
             }
 
@@ -636,13 +698,7 @@ public static class Formatter
         {
             foreach (var p in l.SugarParams)
             {
-                sb.Append(' ');
-                sb.Append(p);
-                // Unwrap the corresponding lambda layer
-                if (value is Expr.Lambda lam)
-                {
-                    value = lam.Body;
-                }
+                value = AppendSugarParam(sb, p, value);
             }
         }
 
@@ -708,13 +764,7 @@ public static class Formatter
         {
             foreach (var p in l.SugarParams)
             {
-                sb.Append(' ');
-                sb.Append(p);
-                // Unwrap the corresponding lambda layer
-                if (value is Expr.Lambda lam)
-                {
-                    value = lam.Body;
-                }
+                value = AppendSugarParam(sb, p, value);
             }
         }
 
@@ -861,6 +911,12 @@ public static class Formatter
 
         sb.Append("given (");
         sb.Append(lam.ParamName);
+        if (lam.ParamAnnotation is { } paramAnnotation)
+        {
+            sb.Append(": ");
+            WriteTypeExpr(sb, paramAnnotation);
+        }
+
         sb.Append(") -> ");
 
         if (IsSingleLine(lam.Body, preferPipelines))

@@ -9,36 +9,36 @@
 import Ashes.IO
 import Ashes.HashTrie
 import Ashes.Text
-let recursive fill i acc = 
+let recursive fill i acc =
     if i >= 200
     then acc
-    else 
+    else
         let key = "k" + Ashes.Text.fromInt(i)
-        in 
+        in
             fill(i + 1)(Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(key))(key)((i, i))(given (old) -> old)(acc))
 
-let recursive bump i acc = 
+let recursive bump i acc =
     if i >= 200
     then acc
-    else 
+    else
         let key = "k" + Ashes.Text.fromInt(i)
-        in 
-            bump(i + 1)(Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(key))(key)((-1, -1))(given (old) -> 
+        in
+            bump(i + 1)(Ashes.HashTrie.upsertHashed(Ashes.HashTrie.hashText(key))(key)((-1, -1))(given (old) ->
                 match old with
                     | (a, b) -> (a + 1000, b))(acc))
 
 let t = bump(0)(fill(0)(Ashes.HashTrie.empty))
 
-let recursive verify i bad = 
+let recursive verify i bad =
     if i >= 200
     then bad
-    else 
+    else
         let key = "k" + Ashes.Text.fromInt(i)
-        in 
+        in
             match Ashes.HashTrie.getHashed(Ashes.HashTrie.hashText(key))(key)(t) with
-                | Some((a, b)) -> 
+                | Some((a, b)) ->
                     if a == i + 1000
-                    then 
+                    then
                         if b == i
                         then verify(i + 1)(bad)
                         else verify(i + 1)(bad + 1)

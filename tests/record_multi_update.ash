@@ -4,6 +4,6 @@ type Point =
     | y: Int
 
 let p = Point(x = 1, y = 2)
-in 
+in
     let q = p with x = 5, y = 6
     in Ashes.IO.print(q.x + q.y)

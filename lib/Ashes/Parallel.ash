@@ -36,66 +36,66 @@
 //
 // Uses core language features plus `Ashes.Bytes` (indexOf/length) for the chunker.
 import Ashes.Bytes
-let recursive plLength xs = 
+let recursive plLength xs =
     match xs with
         | [] -> 0
         | _h :: t -> 1 + plLength(t)
 
-let recursive plTake xs n = 
+let recursive plTake xs n =
     if n <= 0
     then []
-    else 
+    else
         match xs with
             | [] -> []
             | h :: t -> h :: plTake(t)(n - 1)
 
-let recursive plDrop xs n = 
+let recursive plDrop xs n =
     if n <= 0
     then xs
-    else 
+    else
         match xs with
             | [] -> []
             | _h :: t -> plDrop(t)(n - 1)
 
-let recursive plAppend xs ys = 
+let recursive plAppend xs ys =
     match xs with
         | [] -> ys
         | h :: t -> h :: plAppend(t)(ys)
 
-let recursive plSeqMap f xs = 
+let recursive plSeqMap f xs =
     match xs with
         | [] -> []
         | h :: t -> f(h) :: plSeqMap(f)(t)
 
-let recursive plSeqReduce combine identity f xs = 
+let recursive plSeqReduce combine identity f xs =
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
         | h :: t -> combine(f(h))(plSeqReduce(combine)(identity)(f)(t))
 
-let recursive mapGrained grain f xs = 
+let recursive mapGrained grain f xs =
     match xs with
         | [] -> []
         | h :: [] -> f(h) :: []
-        | _ -> 
+        | _ ->
             if plLength(xs) <= grain
             then plSeqMap(f)(xs)
-            else 
+            else
                 let half = plLength(xs) / 2
-                in 
+                in
                     match Ashes.Parallel.both(given (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(given (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> plAppend(leftRes)(rightRes)
 
-let recursive reduceGrained grain combine identity f xs = 
+let recursive reduceGrained grain combine identity f xs =
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
-        | _ -> 
+        | _ ->
             if plLength(xs) <= grain
             then plSeqReduce(combine)(identity)(f)(xs)
-            else 
+            else
                 let half = plLength(xs) / 2
-                in 
+                in
                     match Ashes.Parallel.both(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> combine(leftRes)(rightRes)
 
@@ -103,32 +103,32 @@ let map f xs = mapGrained(1)(f)(xs)
 
 let reduce combine identity f xs = reduceGrained(1)(combine)(identity)(f)(xs)
 
-let bothWithWorkers count left right = 
+let bothWithWorkers count left right =
     Ashes.Parallel.withWorkers(count)(given (_u) -> Ashes.Parallel.both(left)(right))
 
-let mapWithWorkers count f xs = 
+let mapWithWorkers count f xs =
     Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(1)(f)(xs))
 
-let mapGrainedWithWorkers count grain f xs = 
+let mapGrainedWithWorkers count grain f xs =
     Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(grain)(f)(xs))
 
-let reduceWithWorkers count combine identity f xs = 
+let reduceWithWorkers count combine identity f xs =
     Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(1)(combine)(identity)(f)(xs))
 
-let reduceGrainedWithWorkers count grain combine identity f xs = 
+let reduceGrainedWithWorkers count grain combine identity f xs =
     Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(xs))
 
-let recursive splitChunksGo bytes len sep lo n acc = 
+let recursive splitChunksGo bytes len sep lo n acc =
     if n <= 1
     then (bytes, lo, len) :: acc
-    else 
+    else
         let target = lo + (len - lo) / n
-        in 
+        in
             let nl = Ashes.Bytes.indexOf(bytes)(sep)(target)
-            in 
+            in
                 if nl < 0
                 then (bytes, lo, len) :: acc
-                else 
+                else
                     if nl + 1 >= len
                     then (bytes, lo, len) :: acc
                     else splitChunksGo(bytes)(len)(sep)(nl + 1)(n - 1)((bytes, lo, nl + 1) :: acc)

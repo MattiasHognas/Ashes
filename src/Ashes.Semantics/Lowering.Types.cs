@@ -110,6 +110,8 @@ public sealed partial class Lowering
         TextFromFloat,
         TextFormatFloat,
         TextToHex,
+        TextAsciiUpper,
+        TextAsciiLower,
         RegexCompile,
         RegexCompileError,
         RegexFind,

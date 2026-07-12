@@ -16,44 +16,44 @@ type Step =
     | Done(List(Int), List(Int))
     | Hit(Int, List(Int), List(Int))
 
-let recursive getAt i xs = 
+let recursive getAt i xs =
     match xs with
         | [] -> 0
-        | h :: t -> 
+        | h :: t ->
             if i == 0
             then h
             else getAt(i - 1)(t)
 
-let recursive setAt i v xs = 
+let recursive setAt i v xs =
     match xs with
         | [] -> []
-        | h :: t -> 
+        | h :: t ->
             if i == 0
             then v :: t
             else h :: setAt(i - 1)(v)(t)
 
-let recursive show xs = 
+let recursive show xs =
     match xs with
         | [] -> ""
         | h :: t -> text.fromInt(h) + "," + show(t)
 
-let recursive walk r n st = 
+let recursive walk r n st =
     match st with
-        | S(perm, count) -> 
+        | S(perm, count) ->
             if r == n
             then Done(perm)(count)
-            else 
+            else
                 let perm2 = r :: perm
-                in 
+                in
                     let cr = getAt(r)(count) + 10
-                    in 
+                    in
                         let count2 = setAt(r)(cr)(count)
-                        in 
+                        in
                             if r == 2
                             then Hit(r)(perm2)(count2)
                             else walk(r + 1)(n)(S(perm2)(count2))
 
-let result = 
+let result =
     match walk(0)(5)(S([])([0, 1, 3])) with
         | Done(p, c) -> "DONE perm=" + show(p) + " count=" + show(c)
         | Hit(r, p, c) -> "HIT r=" + text.fromInt(r) + " perm=" + show(p) + " count=" + show(c)

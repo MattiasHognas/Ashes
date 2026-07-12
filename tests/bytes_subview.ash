@@ -8,7 +8,7 @@ let view = Ashes.Bytes.subView(bytes)(2)(3)
 
 let copy = Ashes.Bytes.subText(bytes)(2)(3)
 
-let eq = 
+let eq =
     if view == copy
     then 1
     else 0

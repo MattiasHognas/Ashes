@@ -6,17 +6,17 @@
 // expect: 12.0 0.5
 import Ashes.IO as io
 import Ashes.Text as text
-let mul : Float -> Float -> Float = 
-    given (a) -> 
+let mul : Float -> Float -> Float =
+    given (a) ->
         given (b) -> a * b
 
-let recursive shrink : Float -> Float -> Int -> Float = 
-    given (acc) -> 
-        given (x) -> 
-            given (n) -> 
+let recursive shrink : Float -> Float -> Int -> Float =
+    given (acc) ->
+        given (x) ->
+            given (n) ->
                 if n == 0
                 then acc
-                else 
+                else
                     let x2 = x * x
                     in shrink(acc + x2 - x)(x)(n - 1)
 

@@ -1,11 +1,11 @@
 // expect: ok
 let flip f b a = f(a)(b)
-in 
+in
     let keepLeft a b = a
-    in 
+    in
         let _a = flip(keepLeft)(1)("x")
-        in 
+        in
             let keepRight a b = b
-            in 
+            in
                 let _b = flip(keepRight)(true)(0)
                 in Ashes.IO.print("ok")

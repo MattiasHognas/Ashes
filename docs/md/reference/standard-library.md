@@ -127,6 +127,11 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
   same scientific notation as `fromFloat`.
 - `toHex(value)` returning `Str`
 - `byteLength(text)` returning `Int` — UTF-8 byte length of a string
+- `asciiUpper(text)` returning `Str` — ASCII-only uppercase: `a`–`z` map to `A`–`Z` in a single
+  O(N) byte pass; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through
+  byte-identical, so non-ASCII text is untouched (no Unicode case folding — the ASCII scope is in
+  the name, following OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`)
+- `asciiLower(text)` returning `Str` — ASCII-only lowercase, the inverse of `asciiUpper`
  
 ### `Ashes.Process`
 

@@ -2,124 +2,124 @@
 // Pure Ashes: no native payload, no new intrinsics. Float and transcendental
 // layers (sqrt, toFloat, sin, ...) are added separately.
 
-let abs n = 
+let abs n =
     if n < 0
     then -n
     else n
 
-let signum n = 
+let signum n =
     if n < 0
     then -1
-    else 
+    else
         if n > 0
         then 1
         else 0
 
-let min a b = 
+let min a b =
     if a < b
     then a
     else b
 
-let max a b = 
+let max a b =
     if a > b
     then a
     else b
 
-let clamp lo hi n = 
+let clamp lo hi n =
     if n < lo
     then lo
-    else 
+    else
         if n > hi
         then hi
         else n
 
 let remOf a b = a - a / b * b
 
-let recursive gcdGo a b = 
+let recursive gcdGo a b =
     if b == 0
     then a
     else gcdGo(b)(remOf(a)(b))
 
 let gcd a b = gcdGo(abs(a))(abs(b))
 
-let lcm a b = 
+let lcm a b =
     if a == 0
     then 0
-    else 
+    else
         if b == 0
         then 0
         else abs(a / gcd(a)(b) * b)
 
-let divMod a b = 
+let divMod a b =
     (let q0 = a / b
-    in 
+    in
         let r0 = a - q0 * b
-        in 
+        in
             if r0 < 0
-            then 
+            then
                 if b > 0
                 then (q0 - 1, r0 + b)
                 else (q0 + 1, r0 - b)
             else (q0, r0))
 
-let recursive powGo acc base exp = 
+let recursive powGo acc base exp =
     if exp == 0
     then acc
-    else 
+    else
         let halfExp = exp / 2
-        in 
+        in
             let squared = base * base
-            in 
+            in
                 if exp - halfExp * 2 == 1
                 then powGo(acc * base)(squared)(halfExp)
                 else powGo(acc)(squared)(halfExp)
 
 let pow base exp = powGo(1)(base)(exp)
 
-let recursive isqrtGo x n = 
+let recursive isqrtGo x n =
     (let y = (x + n / x) / 2
-    in 
+    in
         if y < x
         then isqrtGo(y)(n)
         else x)
 
-let isqrt n = 
+let isqrt n =
     if n == 0
     then 0
     else isqrtGo(n)(n)
 
-let absF x = 
+let absF x =
     if x < 0.0
     then 0.0 - x
     else x
 
-let signumF x = 
+let signumF x =
     if x < 0.0
     then 0.0 - 1.0
-    else 
+    else
         if x > 0.0
         then 1.0
         else 0.0
 
-let asFloat x = 
+let asFloat x =
     if x < 0.0
     then x
     else x
 
-let minF a b = 
+let minF a b =
     if asFloat(a) < asFloat(b)
     then a
     else b
 
-let maxF a b = 
+let maxF a b =
     if asFloat(a) > asFloat(b)
     then a
     else b
 
-let clampF lo hi x = 
+let clampF lo hi x =
     if asFloat(x) < asFloat(lo)
     then lo
-    else 
+    else
         if asFloat(x) > asFloat(hi)
         then hi
         else x

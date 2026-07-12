@@ -1,8 +1,8 @@
 // expect: 2
 import Ashes.Result
-let inc = 
+let inc =
     given (x) -> x + 1
-in 
+in
     match Result.map(inc)(Ok(1)) with
         | Ok(x) -> Ashes.IO.print(x)
         | Error(_) -> Ashes.IO.print(0)

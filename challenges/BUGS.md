@@ -12,17 +12,25 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
+Current tally: **13 FIXED**, **1 PARTIAL** (#3, the `List(ADT)` accumulator half), **3 OPEN**
+(#4/#5 — the ownership / in-place-reuse milestone; #6 — Knuth Algorithm D division). Everything
+point-fixable has been fixed; the remaining items need milestone-scale work.
+
 Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
 
 ## Type inference & operators
 
-### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free) — [PARTIAL]
-**[PARTIAL]** main case FIXED (`c4556bd`): `+`'s left-operand resolution switch was missing the `Float`
-case (it had `Str`/`BigInt`/`UInt`), so `acc + x * 2.0` froze the accumulator to `Int`; adding
-`TFloat -> TFloat` fixes n-body / spectral-norm `avRow`. **Still open:** a bare `x * y` with *both*
-operands unresolved defaults to `Int` (`Multiply` has no deferred-resolution path like `Add`'s
-`ResolveDeferredAdds`) — a pure polymorphic dot product still needs a signature.
+### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free) — [FIXED]
+**[FIXED]** in two parts. Main case (`c4556bd`): `+`'s left-operand resolution switch was missing the
+`Float` case (it had `Str`/`BigInt`/`UInt`), so `acc + x * 2.0` froze the accumulator to `Int`; adding
+`TFloat -> TFloat` fixes n-body / spectral-norm `avRow`. Second case: a bare `x * y` with *both*
+operands unresolved defaulted to `Int` because `Multiply` had no deferred-resolution path. `*` now
+mirrors `+` — both-unconstrained operands emit a provisional `MulInt` with the shared operand var kept
+monomorphic (`_mulConstrainedVars`), patched to `MulFloat` / `BigIntBinary` / `MulInt` once inference
+resolves it (`ResolveDeferredMuls`). A generic dot product (`… acc + x * y`) works at Float, Int, or
+BigInt with no signature. (Like `+`, a generic multiply is monomorphic — using the *same* one at two
+types in a single program still needs the non-recursive overload-generic path, tracked elsewhere.)
 
 A numeric operator whose result type is not yet grounded defaults an unbound operand to `Int`, so a
 recursive Float accumulator on the **left** of `+`/`*` with a compound Float right operand is rejected.
@@ -67,24 +75,31 @@ fixed watermark (constant memory). Two more fixed-shape shapes are still exclude
   growing `String` field grows O(N^2) (N=20000 -> 3.97 GB).
 - **`List(record)` accumulator** — `n-body` threads a fixed-size `List(Body)` (5 records) rebuilt each
   step; `List(ADT)` is not copy-outable, so it grows O(N) (N=1e6 -> 4.27 GB) for a constant-state loop.
+  A synthesized recursive list-of-ADT deep-copier (`EmitDeepCopy` `TList` branch + `DeepAdt` copy-out +
+  fixed watermark) was prototyped and gives constant memory for the *non-async* n-body loop, but it
+  miscompiles `List(ADT)` accumulators threaded through `async.task` (`readme_showcase`'s `priceAll`
+  inside `async.all` yielded 41.00 instead of 12.50). The deep-copy-out interacts badly with the
+  per-task arena / join deep-copy: the list is copied against the wrong watermark. Reverted pending a
+  fix that makes the list deep-copier arena-aware under coroutine joins. Isolation: nullary-ADT Int/Float
+  fields and the capability-no-async path are all correct; only `List(ADT) + async` regresses.
 
 Both are fixed-shape and deep-copyable, exactly like the `State(perm, count)` case already handled —
 extend `CanDeepCopyOutAdt` / the copy-out to **tuples** and to **lists whose element is a fixed-shape
 (non-recursive) ADT/tuple**, then admit them to the fixed-watermark qualification. *Workaround:*
 stream output per line (fasta) instead of accumulating.
 
-### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory
+### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory — [OPEN]
 A list that grows by more than one fresh cons cell per iteration (or a whole-program list built via a
 returned accumulator) cannot use the fixed watermark because its shared tail must stay below an
 advancing mark. `reverse-complement`'s list-of-single-char-`Str` (~117 bytes/base) and any
 list-building fold hit this. Needs ownership / in-place reuse (the FLAWS #2 milestone), not a point fix.
 
-### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call
+### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN]
 Nesting a list-builder helper inside a loop (`outer` threads a list through `inner` that returns it)
 makes each call deep-copy the whole growing list -> O(N^2). Found while writing `mandelbrot` (worked
 around by keeping the bit-packer a single flat loop). Same ownership milestone as #4.
 
-### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant)
+### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [OPEN]
 Binary long-division dominates; needs Knuth Algorithm D / Karatsuba multiply. Not a memory issue.
 
 ## Standard library
@@ -101,11 +116,23 @@ Surfaced by `k-nucleotide`. *Workaround:* `Ashes.Bytes.fromText` once + `Ashes.B
 indexed, O(k)). *Fix direction:* make `substring` byte-backed, or document it as O(N) and steer k-mer
 work to `Bytes`.
 
-### 8. (P1) Chained `Ashes.Regex.replace` / `substituteAll` OOMs (~28 GB)
-Feeding a `substituteAll` result larger than ~1.5 MB into another `substituteAll` allocates ~28 GB and
-is killed. The second call OOMs even with a **non-matching** pattern, so the blowup is in *accepting*
+### 8. (P1) Chained `Ashes.Regex.replace` / `substituteAll` OOMs (~28 GB) — [FIXED]
+**[FIXED]** (`regex_large_subject_chain`): the root cause was not regex-specific. The substitute output
+buffer (`2*subject + 256`) is allocated from the main arena; a heap chunk was a **fixed** 4 MiB, and
+`EmitHeapEnsureSpace` looped `grow`→`recheck` — but `EmitHeapGrow` always allocated exactly one 4 MiB
+chunk, so a single allocation larger than 4 MiB never fit and grew one chunk per iteration forever until
+the OS refused (the "~28 GB constant"). Any >4 MiB allocation (large string/`Bytes` too) hit this, not
+just regex. Chunks are now **variable-sized**: `EmitHeapGrow` sizes an oversized chunk to
+`max(4 MiB, request + overhead)`. To keep the reclaim linked-list walk working without a fixed size, each
+chunk carries a header (previous chunk's end) and a footer at its usable end (its own base), so the walk
+recovers a chunk's base from its end pointer. All chunk sites (main init/grow/reclaim and the parallel
+worker setup + worker-chunk free walk in `Lowering`/`LlvmCodegenParallel`) share one format via
+`EmitHeapChunkSetup`. Verified: the ~5 MiB chain completes in bounded memory, and 1000 iterations of a
+>4 MiB reclaimed temporary stay under a 2 GB cap (no leak/corruption) on all three targets.
+Feeding a `substituteAll` result larger than ~1.5 MB into another `substituteAll` allocated ~28 GB and
+was killed. The second call OOMed even with a **non-matching** pattern, so the blowup was in *accepting*
 the large subject, not in substitution work. Surfaced by `regex-redux` (its canonical substitution
-chain); no user workaround. Minimal repro:
+chain). Minimal repro:
 ```ash
 let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
 let seq = grow("acgtWacgtWacgtWacgtW")(17)              // ~2.6 MB
@@ -115,9 +142,17 @@ in let s1 = Ashes.Regex.replace(...W...)(seq)("(a|t)")
 ```
 (The constant ~28 GB across runs suggests a size miscalculation in the substitute buffer sizing.)
 
-### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive. — [OPEN]
-An efficient version needs a `Bytes` byte-map primitive (only `subText` exists for `Bytes -> Str`) plus
-an ASCII-vs-Unicode design decision, so deferred.
+### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive. — [FIXED]
+**[FIXED]** (`string_ascii_case`): shipped as **ASCII-scoped** case conversion, decided after surveying
+the ecosystem (UTF-16/dual-encoding rejected — Ashes strings are UTF-8 like Rust/Go/Swift/text-2.0, and
+case mapping is O(N) regardless of encoding, so a fixed-width representation buys nothing). Named
+explicitly for the scope, following OCaml `uppercase_ascii` / Rust `to_ascii_uppercase`:
+`Ashes.Text.asciiUpper` / `asciiLower` intrinsics (`TextAsciiCase` IR) — a single O(N) byte pass that
+flips bit `0x20` on ASCII letters; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes
+through byte-identical, so the transform is UTF-8-safe without decoding. Exposed on `Ashes.Text` only
+(no `Ashes.String` wrappers — one public spelling, per review); `toUpper`/`toLower` stay free for a
+possible future Unicode-aware (tabled) version. The old blocker (no `Bytes` byte-map primitive) was
+sidestepped by doing the map in the intrinsic itself.
 
 ### 10. (P3) Missing `Ashes.List.sort` — [FIXED]
 **[FIXED]** (`7dcad83`): added `Ashes.List.sortBy : (a -> a -> Bool) -> List(a) -> List(a)`, a stable
@@ -126,33 +161,61 @@ comparator).
 
 ## Diagnostics & formatter
 
-### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs — [OPEN, diagnosed]
-Propagated/secondary type errors are reported at coordinates **past EOF** (e.g. line 71 in a 66-line
-file, columns ~2000+ that look like byte offsets into the internally stitched single line), and
-sometimes blame an unrelated later declaration. Primary errors locate correctly. Surfaced by
-`spectral-norm` and `n-body`; makes multi-error files very hard to debug. **Diagnosis:** compilation
-runs on `layout.Source` (the stitched **combined** source), so diagnostic spans are offsets into *it*,
-but `PrintCompilerDiagnostics` renders them against the **original** file text (`Program.cs` passes
-`source`, not `prepared.Layout.Source`). For a flat top-level file the combined source is not the
-original text — `TryShapeFlatModule` **reconstructs** the module from extracted binding-value fragments
-(imports consumed, type/`external`/`provide` decls hoisted, body parenthesized), so offsets shift by
-the stripped prefix and the two texts no longer line up. **Fix direction:** carry a combined→original
-source map (extend `ModuleOffsets` with each region's original offset, tracked as fragments are
-extracted) and map spans back before rendering; the non-flat path already blanks hoisted decls to keep
-line numbers, but the flat reconstruction loses them entirely. Needs care — real source-map
-infrastructure, not a point fix.
+### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs — [FIXED]
+**[FIXED]** (CLI): `ProjectSupport.MapDiagnosticsToOriginal` maps diagnostic spans from combined-source
+offsets (what compilation runs on) back to the entry file's own coordinates before rendering. The key
+insight making this a contained fix: the **entry region** of the combined source is
+**line/column-preserving** with respect to the user's file (imports are blanked keeping newlines,
+hoisted declarations are blanked via `BlankSpans`, alias preludes overwrite blank import lines) — so
+entry-region spans map exactly by line/column arithmetic, no byte-offset bookkeeping. Hoisted entry
+`type`/`capability`/`provide` declarations map **exactly** through a new fragment table
+(`CombinedCompilationLayout.EntryTypeDeclFragments`, recorded as `TryShapeFlatModule` extracts them —
+the "extend ModuleOffsets with original offsets" direction). Spans inside a stitched (reconstructed)
+non-entry module region can't be positioned — they render header-only, attributed to the **owning
+file** via `ModuleOffsets`, instead of garbage coordinates in the entry file. Verified: the
+`x + "oops"` repro behind a stitched `Ashes.List` import went from `9:2568` (past EOF, blank caret
+line) to the exact `6:9` with the right line text and underline; the simple builtin-imports case went
+from `1:22` to the exact `5:9`; multi-error files locate every error. Unit tests cover all three
+mapping paths (`ProjectSupportTests.MapDiagnosticsToOriginal_*`). Remaining (minor): selector-import
+renames can drift columns on the renamed line, and LSP/TestRunner still use their own (header-only or
+approximate) paths.
 
-### 12. (P2) `fmt` silently strips all non-leading comments
-`fmt -w` deletes every `//` comment that is not in the leading header block (and reshapes one-line
-curried `given` chains). Output still compiles, but inline documentation is lost with no warning.
+Propagated/secondary type errors were reported at coordinates **past EOF** (e.g. line 71 in a 66-line
+file, columns ~2000+ — byte offsets into the internally stitched single line), sometimes blaming an
+unrelated later declaration. Surfaced by `spectral-norm` and `n-body`; made multi-error files very
+hard to debug. Root cause: compilation runs on `layout.Source` (the stitched **combined** source), so
+diagnostic spans are offsets into *it*, but `PrintCompilerDiagnostics` rendered them against the
+**original** file text.
 
-### 13. (P3) Formatter emits trailing whitespace after `=`, `->`, `in`, `else` (idempotent; cosmetic). — [OPEN]
-The formatter fix is small (a per-line `TrimEnd` of the final output — safe because string literals are
-emitted single-line with escaped `\n`, so a line never ends inside a literal). But it changes the
-canonical output of **~391 committed `.ash` files** (all of `lib/Ashes`, `tests`, `examples` currently
-carry the trailing whitespace), so it must land with a coordinated repo-wide `fmt -w` reformat in the
-same change — deferred as a deliberate bulk commit rather than bundled here.
-### 14. (P3) `import M.binding` selector renders as `import M as binding` under `fmt` (rendering-only).
+### 12. (P2) `fmt` silently strips all non-leading comments — [FIXED]
+**[FIXED]** (standalone comment lines): the anchor-based comment reinsertion the LSP's format-document
+path already had (`ReinsertStandaloneCommentLines`) was formatter-domain logic living in the LSP —
+moved to `Ashes.Formatter.CommentReinserter` (per the boundary rule: LSP consumes compiler logic,
+never implements it) and wired into CLI `fmt`, so both format paths now behave identically. Every
+standalone `//` comment line is re-anchored to the surrounding significant lines by a
+whitespace-insensitive token signature and reinserted after formatting; comments whose anchor
+disappears fall back to the previous anchor, then the top of the file — never silently dropped.
+Verified: between-declaration, multi-line, and inside-expression comment lines all survive `fmt -w`,
+the result is idempotent, and a repo-wide `fmt -w` over `lib`/`tests`/`examples`/`challenges` is a
+no-op. **Remaining (minor):** trailing same-line comments (`let x = 1 // note`) still need real trivia
+in the AST — the reinserter is line-based.
+
+### 13. (P3) Formatter emits trailing whitespace after `=`, `->`, `in`, `else` — [FIXED]
+**[FIXED]**: `Formatter.FinishOutput` strips trailing spaces/tabs from every line before applying the
+configured newline — safe because string literals are emitted single-line with escaped `\n`, so a
+physical line never ends inside a literal. Landed with the coordinated repo-wide `fmt -w` reformat
+(~400 `.ash` files across `lib`, `tests`, `examples`, `challenges`; verified whitespace-only via
+`git diff --ignore-space-at-eol` = empty, and idempotent — a second `fmt -w` pass changes nothing).
+Formatter/LSP unit-test expectations updated to the trimmed output. Gotcha found en route: `fmt -w`
+itself does NOT honor `// fmt-skip:` (only `scripts/verify.sh`'s format check does), so the four
+fmt-skip fixtures were restored after the bulk pass — a bulk `fmt -w` over `tests/` must exclude them.
+### 14. (P3) `import M.binding` selector renders as `import M as binding` under `fmt` — [FIXED]
+**[FIXED]** (verified, no longer reproduces): `ExtractImports` (`Program.cs`) already classifies the
+lowercase `.binding` selector as its own regex group (`ImportModulePattern` group 2) and renders it as
+`import M.binding` (with an optional ` as alias`), distinct from the `as`-alias group. `import
+Ashes.List.map` and `import Ashes.List.filter as keep` both round-trip through `fmt -w` unchanged and
+compile/run. (An uppercase `M.Type` selector is absorbed into the module-path group and likewise
+renders identically.)
 
 ## Records & syntax
 
@@ -167,10 +230,23 @@ oriented diagnostic (annotate the parameter) instead of the misleading module-ex
 `match b with | Rec(x, ...) ->`, or a full type signature `let f : Rec -> T = given (b) -> b.x` all
 work. Surfaced by `n-body`.
 
-### 16. (P3) Inline parameter type annotation `(b: Body)` is unsupported (`ASH003`); annotate the whole
-binding instead.
-### 17. (P3) `given xs ->` requires parenthesized params `given (xs) ->`; the error (`ASH003 Expected
-LParen`) is opaque.
+### 16. (P3) Inline parameter type annotation `(b: Body)` is unsupported — [FIXED]
+**[FIXED]** (`param_inline_annotation`): both forms now parse and type-check — `given (x: Type) -> ...`
+(per parenthesized lambda parameter) and the parenthesized annotated sugar parameter
+`let f (b: Body) = ...` (desugars to a `given` layer carrying the annotation; parens required exactly
+when an annotation is present). `Expr.Lambda` gained `ParamAnnotation`, unified with the parameter's
+type variable before the body is lowered — so record dot-access on the parameter and Float operator
+selection resolve without annotating the whole binding. The formatter renders both forms canonically
+and round-trips them. Gotcha fixed en route: the stitcher's two text-based flat-let header scanners
+(`TryScanFlatLetHeader`, `TrySplitLeadingTopLevelBinding`) only accepted bare-ident sugar params, so an
+annotated parameter in a file importing a source stdlib module (paren-wrapped flat entry) broke shaping
+with a misleading `<std:...>` ASH003 — both now capture `(name: Type)` verbatim. Spec updated
+(language.md sections 7 and 7.2).
+### 17. (P3) `given xs ->` requires parenthesized params `given (xs) ->` — [FIXED]
+**[FIXED]** (`lambda_bare_param`): `ParseLambda` now makes the parentheses optional for a single
+parameter — `given x -> body` parses the same as `given (x) -> body`. The parenthesized form (and its
+multi-parameter `given (x, y) ->` desugaring) is unchanged, and remains the canonical form the
+formatter emits (it re-parenthesizes the bare input).
 
 ## Open questions (not yet classified)
 - Does `Ashes.IO.write` buffer, or issue a syscall per call? `fasta`/`reverse-complement` streaming

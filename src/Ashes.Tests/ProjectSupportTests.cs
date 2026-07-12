@@ -661,6 +661,76 @@ public sealed class ProjectSupportTests
         diag.StructuredErrors.ShouldBeEmpty("declarations-only entries must stitch into a parseable layout");
     }
 
+    [Test]
+    public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
+    {
+        // The Ashes.List import stitches a source stdlib module, so the entry body sits behind a
+        // long combined prefix; without mapping, the '+' error's span would render as a bogus
+        // position (offsets into the stitched prefix against the user's file).
+        var original = "import Ashes.IO as io\nimport Ashes.List as list\nlet x = 1\n\nlet y = x + \"oops\"\n\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        layout.EntryOffset.ShouldBeGreaterThan(0, "the stitched stdlib module must create a prefix");
+
+        var diag = new Diagnostics();
+        var program = new Parser(layout.Source, diag).ParseProgram();
+        var importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
+        _ = new Lowering(diag, importedStdModules, parsed.ImportAliases).Lower(program);
+        diag.StructuredErrors.ShouldNotBeEmpty();
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, diag.StructuredErrors, "<memory>", original, parsed.SourceWithoutImports);
+        var positioned = mapped.Where(m => m.HasPosition).ToArray();
+        positioned.ShouldNotBeEmpty();
+
+        // The error points at the left operand of `x + "oops"` on line 5, column 9 of the user's file.
+        var expectedStart = original.IndexOf("let y = x", StringComparison.Ordinal) + 8;
+        positioned.ShouldContain(m => m.Entry.Start == expectedStart);
+        positioned.ShouldAllBe(m => m.Entry.Start >= 0 && m.Entry.End <= original.Length);
+    }
+
+    [Test]
+    public void MapDiagnosticsToOriginal_attributes_module_region_spans_to_the_owning_file_without_position()
+    {
+        var original = "import Ashes.IO as io\nimport Ashes.List as list\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        layout.EntryOffset.ShouldBeGreaterThan(0);
+
+        // A synthetic diagnostic inside the stitched module prefix: exact positions are not
+        // recoverable from reconstructed module text, but the owning file must be attributed.
+        var moduleRegion = layout.ModuleOffsets.First(m => !string.Equals(m.FilePath, "<memory>", StringComparison.Ordinal));
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(moduleRegion.StartOffset + 1, moduleRegion.StartOffset + 2), "synthetic");
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, [entry], "<memory>", original, parsed.SourceWithoutImports);
+
+        mapped.Count.ShouldBe(1);
+        mapped[0].HasPosition.ShouldBeFalse();
+        mapped[0].FilePath.ShouldBe(moduleRegion.FilePath);
+    }
+
+    [Test]
+    public void MapDiagnosticsToOriginal_maps_hoisted_type_declaration_spans_exactly()
+    {
+        // The type declaration is hoisted to the top of the combined source (before the module
+        // prefix); the fragment table maps a span inside it back to the declaration's position in
+        // the user's file.
+        var original = "import Ashes.IO as io\nimport Ashes.List as list\nlet a = 1\n\ntype Pair = | MkPair(Int, Int)\n\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        layout.BodyStart.ShouldBeGreaterThan(0, "the type declaration must be hoisted");
+        layout.EntryTypeDeclFragments.ShouldNotBeNull();
+        layout.EntryTypeDeclFragments!.Count.ShouldBe(1);
+
+        var fragment = layout.EntryTypeDeclFragments[0];
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(fragment.CombinedStart, fragment.CombinedStart + 4), "synthetic");
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, [entry], "<memory>", original, parsed.SourceWithoutImports);
+
+        mapped.Count.ShouldBe(1);
+        mapped[0].HasPosition.ShouldBeTrue();
+        mapped[0].Entry.Start.ShouldBe(original.IndexOf("type Pair", StringComparison.Ordinal));
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), $"ashes-tests-{Guid.NewGuid():N}");

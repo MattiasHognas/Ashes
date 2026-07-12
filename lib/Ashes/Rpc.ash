@@ -1,85 +1,85 @@
-let recursive rpcStartsWith text prefix = 
+let recursive rpcStartsWith text prefix =
     match Ashes.Text.uncons(prefix) with
         | None -> true
-        | Some((ph, pt)) -> 
+        | Some((ph, pt)) ->
             match Ashes.Text.uncons(text) with
                 | None -> false
-                | Some((th, tt)) -> 
+                | Some((th, tt)) ->
                     if th == ph
                     then rpcStartsWith(tt)(pt)
                     else false
 
-let recursive rpcDrop text n = 
+let recursive rpcDrop text n =
     if n <= 0
     then text
-    else 
+    else
         match Ashes.Text.uncons(text) with
             | None -> ""
             | Some((_h, t)) -> rpcDrop(t)(n - 1)
 
-let recursive rpcStrLen text = 
+let recursive rpcStrLen text =
     match Ashes.Text.uncons(text) with
         | None -> 0
         | Some((_h, t)) -> 1 + rpcStrLen(t)
 
-let recursive rpcTrimStart text = 
+let recursive rpcTrimStart text =
     match Ashes.Text.uncons(text) with
         | None -> ""
-        | Some((h, t)) -> 
+        | Some((h, t)) ->
             if h == " "
             then rpcTrimStart(t)
-            else 
+            else
                 if h == "\t"
                 then rpcTrimStart(t)
                 else text
 
-let parseContentLength line = 
+let parseContentLength line =
     (let prefix = "Content-Length: "
-    in 
+    in
         let lb = Ashes.Bytes.fromText(line)
-        in 
+        in
             let plen = Ashes.Text.byteLength(prefix)
-            in 
+            in
                 let llen = Ashes.Bytes.length(lb)
-                in 
+                in
                     if llen < plen
                     then None
-                    else 
+                    else
                         if Ashes.Bytes.subView(lb)(0)(plen) == prefix
-                        then 
+                        then
                             let valueStr = Ashes.Bytes.subText(lb)(plen)(llen - plen)
-                            in 
+                            in
                                 match Ashes.Text.parseInt(rpcTrimStart(valueStr)) with
                                     | Ok(n) -> Some(n)
                                     | Error(_) -> None
                         else None)
 
-let recursive readHeaders contentLength = 
+let recursive readHeaders contentLength =
     match Ashes.IO.readLine(Unit) with
         | None -> Error("unexpected EOF reading RPC headers")
-        | Some(line) -> 
+        | Some(line) ->
             if line == ""
-            then 
+            then
                 if contentLength < 0
                 then Error("missing Content-Length header")
                 else Ok(contentLength)
-            else 
+            else
                 match parseContentLength(line) with
                     | Some(n) -> readHeaders(n)
                     | None -> readHeaders(contentLength)
 
-let readMessage unit = 
+let readMessage unit =
     match readHeaders(-1) with
         | Error(e) -> Error(e)
-        | Ok(n) -> 
+        | Ok(n) ->
             if n < 0
             then Error("invalid Content-Length")
             else Ashes.IO.readExact(n)
 
-let writeMessage msg = 
+let writeMessage msg =
     (let len = Ashes.Text.byteLength(msg)
-    in 
+    in
         let header = "Content-Length: " + Ashes.Text.fromInt(len) + "\r\n\r\n"
-        in 
+        in
             let _h = Ashes.IO.write(header)
             in Ashes.IO.write(msg))

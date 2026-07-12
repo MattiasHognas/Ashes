@@ -1,6 +1,6 @@
 // expect: 2
 let x = Some([])
-in 
+in
     Ashes.IO.print(match x with
         | None -> 0
         | Some([]) -> 2

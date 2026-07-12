@@ -17,29 +17,29 @@ type Tree =
     | Leaf
     | Node(Tree, Int, Tree)
 
-let rootVal t = 
+let rootVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let leftVal t = 
+let leftVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> rootVal(l)
 
-let share k = 
+let share k =
     (let x = Node(Leaf)(k)(Leaf)
     in Node(x)(0)(x))
 
-let recursive sgrow n t = 
+let recursive sgrow n t =
     if n <= 0
     then t
-    else 
+    else
         match t with
             | Leaf -> sgrow(n - 1)(Node(Leaf)(1)(Leaf))
             | Node(l, v, r) -> sgrow(n - 1)(Node(l)(v + 1)(r))
 
-let recursive souter b nb t = 
+let recursive souter b nb t =
     if b >= nb
     then t
     else souter(b + 1)(nb)(sgrow(3)(t))

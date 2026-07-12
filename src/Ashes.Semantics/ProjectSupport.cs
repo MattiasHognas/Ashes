@@ -80,7 +80,8 @@ public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
     int BodyStart,
-    IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets
+    IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets,
+    IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null
 );
 
 public static class ProjectSupport
@@ -134,7 +135,12 @@ public static class ProjectSupport
         IReadOnlyList<ModuleBindingGroup> TopLevelBindings,
         string? LegacyExportName,
         bool IsFlat,
-        bool HasTrailingExpression = true);
+        bool HasTrailingExpression = true,
+        // Original position of each hoisted declaration fragment inside TypeDeclarationsSource:
+        // (offset within TypeDeclarationsSource, offset in the module's imports-stripped source,
+        // fragment length). Lets diagnostics that land in the hoisted-declaration region of the
+        // combined source map back to exact original offsets.
+        IReadOnlyList<(int FragmentStart, int OriginalStart, int Length)>? TypeDeclFragments = null);
 
     public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\.([a-z_][A-Za-z0-9_]*))?(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
@@ -1160,6 +1166,137 @@ public static class ProjectSupport
         }
     }
 
+    /// <summary>A diagnostic mapped from combined-source coordinates back to a user-visible location:
+    /// the owning file, and — when the region is position-preserving — a span rebased into the entry
+    /// file's original text. <see cref="HasPosition"/> is false for spans inside stitched
+    /// (reconstructed) module regions, where only the owning file is recoverable.</summary>
+    public readonly record struct MappedDiagnostic(DiagnosticEntry Entry, string FilePath, bool HasPosition);
+
+    /// <summary>
+    /// Maps diagnostic spans from combined-source offsets (what compilation ran on) back to the entry
+    /// file's original text, so errors render at the coordinates the user sees. The entry region of
+    /// the combined source is line/column-preserving with respect to the original file (imports and
+    /// hoisted declarations are blanked keeping newlines; alias preludes overwrite blank lines), so
+    /// entry-region spans map by line/column rather than byte offset. Hoisted entry declarations map
+    /// exactly via <see cref="CombinedCompilationLayout.EntryTypeDeclFragments"/>. Spans inside a
+    /// stitched (reconstructed) module region cannot be positioned — they are attributed to the
+    /// owning file with <c>HasPosition = false</c>.
+    /// </summary>
+    public static IReadOnlyList<MappedDiagnostic> MapDiagnosticsToOriginal(
+        CombinedCompilationLayout layout,
+        IReadOnlyList<DiagnosticEntry> entries,
+        string entryFilePath,
+        string entryOriginalSource,
+        string entryStrippedSource)
+    {
+        var combined = layout.Source;
+        var originalLineStarts = BuildLineStarts(entryOriginalSource);
+        var results = new List<MappedDiagnostic>(entries.Count);
+
+        foreach (var entry in entries)
+        {
+            var start = Math.Clamp(entry.Span.Start, 0, combined.Length);
+            var length = Math.Max(entry.Span.End - entry.Span.Start, 0);
+
+            if (start >= layout.EntryOffset)
+            {
+                var (line, column) = OffsetToLineColumn(combined, layout.EntryOffset, start);
+                var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                results.Add(new MappedDiagnostic(
+                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
+                    entryFilePath,
+                    HasPosition: true));
+                continue;
+            }
+
+            if (layout.EntryTypeDeclFragments is { } fragments && start < layout.BodyStart)
+            {
+                var mapped = false;
+                foreach (var (fragmentStart, originalStart, fragmentLength) in fragments)
+                {
+                    if (start >= fragmentStart && start < fragmentStart + fragmentLength)
+                    {
+                        // Fragment offsets are relative to the imports-stripped source, which shares
+                        // the original file's line structure but not its byte offsets — hop via
+                        // line/column.
+                        var strippedOffset = Math.Min(originalStart + (start - fragmentStart), entryStrippedSource.Length);
+                        var (line, column) = OffsetToLineColumn(entryStrippedSource, 0, strippedOffset);
+                        var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                        results.Add(new MappedDiagnostic(
+                            entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
+                            entryFilePath,
+                            HasPosition: true));
+                        mapped = true;
+                        break;
+                    }
+                }
+
+                if (mapped)
+                {
+                    continue;
+                }
+            }
+
+            var filePath = entryFilePath;
+            foreach (var (path, regionStart, regionEnd) in layout.ModuleOffsets)
+            {
+                if (start >= regionStart && start < regionEnd)
+                {
+                    filePath = path;
+                    break;
+                }
+            }
+
+            results.Add(new MappedDiagnostic(entry, filePath, HasPosition: false));
+        }
+
+        return results;
+    }
+
+    private static int[] BuildLineStarts(string text)
+    {
+        var starts = new List<int> { 0 };
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\n')
+            {
+                starts.Add(i + 1);
+            }
+        }
+
+        return [.. starts];
+    }
+
+    /// <summary>1-based line/column of <paramref name="offset"/> within <paramref name="text"/>,
+    /// counting from <paramref name="regionStart"/> (the region's first character is line 1, column 1).</summary>
+    private static (int Line, int Column) OffsetToLineColumn(string text, int regionStart, int offset)
+    {
+        var line = 1;
+        var lineStart = regionStart;
+        var limit = Math.Min(offset, text.Length);
+        for (var i = regionStart; i < limit; i++)
+        {
+            if (text[i] == '\n')
+            {
+                line++;
+                lineStart = i + 1;
+            }
+        }
+
+        return (line, limit - lineStart + 1);
+    }
+
+    /// <summary>Offset of 1-based (<paramref name="line"/>, <paramref name="column"/>) in
+    /// <paramref name="text"/>, clamping the line to the available range and the column to the
+    /// line's length (so a mapped span never points past the rendered line).</summary>
+    private static int LineColumnToOffset(string text, int[] lineStarts, int line, int column)
+    {
+        var lineIndex = Math.Clamp(line - 1, 0, lineStarts.Length - 1);
+        var lineStart = lineStarts[lineIndex];
+        var lineEnd = lineIndex + 1 < lineStarts.Length ? lineStarts[lineIndex + 1] - 1 : text.Length;
+        return Math.Clamp(lineStart + column - 1, lineStart, Math.Max(lineEnd, lineStart));
+    }
+
     public static string SanitizeModuleBindingName(string moduleName)
     {
         return moduleName.Replace('.', '_');
@@ -1298,7 +1435,7 @@ public static class ProjectSupport
             prefix.Append(entryExpression);
             prefix.Append(')');
             moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
-            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets);
+            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
@@ -1313,7 +1450,7 @@ public static class ProjectSupport
         var offset = prefix.Length;
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
-        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets);
+        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments);
     }
 
     /// <summary>
@@ -1904,7 +2041,12 @@ public static class ProjectSupport
             .ToArray();
         var legacyExportName = topLevelBindings.Length == 0 ? TryInferExportName(source) : null;
 
-        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false);
+        // The legacy path hoists the contiguous leading type-declaration prefix verbatim, so the
+        // whole region is one identity fragment.
+        var legacyFragments = typeDeclarationsSource.Length > 0
+            ? new[] { (0, 0, typeDeclarationsSource.Length) }
+            : null;
+        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false, TypeDeclFragments: legacyFragments);
     }
 
     /// <summary>
@@ -1935,6 +2077,7 @@ public static class ProjectSupport
         }
 
         var typeDeclarations = new StringBuilder();
+        var typeDeclFragments = new List<(int FragmentStart, int OriginalStart, int Length)>();
         var groups = new List<ModuleBindingGroup>();
         // Spans of declarations hoisted out of the entry expression (type decls, which the stitcher
         // emits up front, and `external`, which is never part of the body). Removing exactly these from
@@ -1958,6 +2101,7 @@ public static class ProjectSupport
 
                         // Each declaration carries a trailing newline so concatenated type sources (and the
                         // bindings that follow them in the combined source) stay lexically separated.
+                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
                         typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
                         cursor = span.End;
@@ -1975,6 +2119,7 @@ public static class ProjectSupport
                             return false;
                         }
 
+                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
                         typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
                         hoistedCapabilityOrProvide = true;
@@ -1991,6 +2136,7 @@ public static class ProjectSupport
                             return false;
                         }
 
+                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
                         typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
                         hoistedCapabilityOrProvide = true;
@@ -2072,7 +2218,8 @@ public static class ProjectSupport
             TopLevelBindings: groups,
             LegacyExportName: null,
             IsFlat: true,
-            HasTrailingExpression: program.Body is not null);
+            HasTrailingExpression: program.Body is not null,
+            TypeDeclFragments: typeDeclFragments);
         return true;
     }
 
@@ -2278,8 +2425,49 @@ public static class ProjectSupport
         }
 
         var collected = new List<string>();
-        while (token.Kind == TokenKind.Ident)
+        while (token.Kind is TokenKind.Ident or TokenKind.LParen)
         {
+            if (token.Kind == TokenKind.LParen)
+            {
+                // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
+                // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
+                token = lexer.Next();
+                if (token.Kind != TokenKind.Ident)
+                {
+                    return false;
+                }
+
+                var innerStart = from + token.Position;
+                token = lexer.Next();
+                if (token.Kind != TokenKind.Colon)
+                {
+                    return false;
+                }
+
+                var parenDepth = 1;
+                while (parenDepth > 0)
+                {
+                    token = lexer.Next();
+                    if (token.Kind == TokenKind.EOF)
+                    {
+                        return false;
+                    }
+
+                    if (token.Kind is TokenKind.LParen or TokenKind.LBracket)
+                    {
+                        parenDepth++;
+                    }
+                    else if (token.Kind is TokenKind.RParen or TokenKind.RBracket)
+                    {
+                        parenDepth--;
+                    }
+                }
+
+                collected.Add(source[innerStart..(from + token.Position)].Trim());
+                token = lexer.Next();
+                continue;
+            }
+
             collected.Add(token.Text);
             token = lexer.Next();
         }
@@ -2353,10 +2541,51 @@ public static class ProjectSupport
         // only the body and drop the parameters (binding `f` to an open expression referencing the
         // undefined parameter names).
         var sugarParams = new List<string>();
-        if (equals.Kind == TokenKind.Ident)
+        if (equals.Kind is TokenKind.Ident or TokenKind.LParen)
         {
-            while (equals.Kind == TokenKind.Ident)
+            while (equals.Kind is TokenKind.Ident or TokenKind.LParen)
             {
+                if (equals.Kind == TokenKind.LParen)
+                {
+                    // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
+                    // verbatim so the `given ({param}) ->` re-wrap keeps the annotation.
+                    equals = lexer.Next();
+                    if (equals.Kind != TokenKind.Ident)
+                    {
+                        return false;
+                    }
+
+                    var innerStart = equals.Position;
+                    equals = lexer.Next();
+                    if (equals.Kind != TokenKind.Colon)
+                    {
+                        return false;
+                    }
+
+                    var parenDepth = 1;
+                    while (parenDepth > 0)
+                    {
+                        equals = lexer.Next();
+                        if (equals.Kind == TokenKind.EOF)
+                        {
+                            return false;
+                        }
+
+                        if (equals.Kind is TokenKind.LParen or TokenKind.LBracket)
+                        {
+                            parenDepth++;
+                        }
+                        else if (equals.Kind is TokenKind.RParen or TokenKind.RBracket)
+                        {
+                            parenDepth--;
+                        }
+                    }
+
+                    sugarParams.Add(source[innerStart..equals.Position].Trim());
+                    equals = lexer.Next();
+                    continue;
+                }
+
                 sugarParams.Add(equals.Text);
                 equals = lexer.Next();
             }

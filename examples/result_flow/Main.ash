@@ -1,5 +1,5 @@
 import Ashes.Result
-let parseOr x = 
+let parseOr x =
     if x >= 0
     then Ok(x)
     else Error("neg")

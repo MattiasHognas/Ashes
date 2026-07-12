@@ -3,7 +3,7 @@
 capability Clock =
     | now : Unit -> Int
 
-let x = 
+let x =
     handle Clock.now(Unit) with
         | Clock.now(_) -> resume(42)
         | return(r) -> r

@@ -1,9 +1,9 @@
-let unwrapOr opt def = 
+let unwrapOr opt def =
     match opt with
         | None -> def
         | Some(x) -> x
-in 
-    let getOrDefault res def = 
+in
+    let getOrDefault res def =
         match res with
             | Ok(v) -> v
             | Error(_) -> def

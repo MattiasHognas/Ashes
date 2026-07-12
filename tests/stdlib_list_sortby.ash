@@ -5,7 +5,7 @@
 import Ashes.List as list
 import Ashes.IO as io
 import Ashes.Text as text
-let recursive show xs = 
+let recursive show xs =
     match xs with
         | [] -> ""
         | h :: t -> text.fromInt(h) + "," + show(t)

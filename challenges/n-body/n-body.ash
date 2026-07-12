@@ -37,99 +37,99 @@ let uranus = Body(x = 12.8943695621391310, y = -15.1111514016986312, z = -0.2233
 
 let neptune = Body(x = 15.3796971148509165, y = -25.9193146099879641, z = 0.179258772950371181, vx = 0.00268067772490389322 * daysPerYear, vy = 0.00162824170038242295 * daysPerYear, vz = -0.0000951592254519715870 * daysPerYear, mass = 0.0000515138902046611451 * solarMass)
 
-let recursive sumMomentum bodies px py pz = 
+let recursive sumMomentum bodies px py pz =
     match bodies with
         | [] -> (px, py, pz)
-        | b :: rest -> 
+        | b :: rest ->
             match b with
                 | Body(x, y, z, vx, vy, vz, mass) -> sumMomentum(rest)(vx * mass + px)(vy * mass + py)(vz * mass + pz)
 
-let offsetSun system = 
+let offsetSun system =
     match sumMomentum(system)(0.0)(0.0)(0.0) with
-        | (px, py, pz) -> 
+        | (px, py, pz) ->
             match system with
-                | s :: rest -> 
+                | s :: rest ->
                     match s with
                         | Body(x, y, z, vx, vy, vz, mass) -> Body(x = x, y = y, z = z, vx = (0.0 - px) / solarMass, vy = (0.0 - py) / solarMass, vz = (0.0 - pz) / solarMass, mass = mass) :: rest
                 | [] -> system
 
-let recursive accel dt bx by bz i j others avx avy avz = 
+let recursive accel dt bx by bz i j others avx avy avz =
     match others with
         | [] -> (avx, avy, avz)
-        | o :: rest -> 
+        | o :: rest ->
             if i == j
             then accel(dt)(bx)(by)(bz)(i)(j + 1)(rest)(avx)(avy)(avz)
-            else 
+            else
                 match o with
-                    | Body(ox, oy, oz, ovx, ovy, ovz, omass) -> 
+                    | Body(ox, oy, oz, ovx, ovy, ovz, omass) ->
                         let dx = bx - ox
-                        in 
+                        in
                             let dy = by - oy
-                            in 
+                            in
                                 let dz = bz - oz
-                                in 
+                                in
                                     let d2 = dx * dx + dy * dy + dz * dz
-                                    in 
+                                    in
                                         let mag = dt / (d2 * math.sqrt(d2))
                                         in accel(dt)(bx)(by)(bz)(i)(j + 1)(rest)(avx - dx * omass * mag)(avy - dy * omass * mag)(avz - dz * omass * mag)
 
-let recursive updateVel dt allBodies i remaining = 
+let recursive updateVel dt allBodies i remaining =
     match remaining with
         | [] -> []
-        | b :: rest -> 
+        | b :: rest ->
             match b with
-                | Body(x, y, z, vx, vy, vz, mass) -> 
+                | Body(x, y, z, vx, vy, vz, mass) ->
                     match accel(dt)(x)(y)(z)(i)(0)(allBodies)(0.0)(0.0)(0.0) with
                         | (dvx, dvy, dvz) -> Body(x = x, y = y, z = z, vx = vx + dvx, vy = vy + dvy, vz = vz + dvz, mass = mass) :: updateVel(dt)(allBodies)(i + 1)(rest)
 
-let recursive updatePos dt bodies = 
+let recursive updatePos dt bodies =
     match bodies with
         | [] -> []
-        | b :: rest -> 
+        | b :: rest ->
             match b with
                 | Body(x, y, z, vx, vy, vz, mass) -> Body(x = x + dt * vx, y = y + dt * vy, z = z + dt * vz, vx = vx, vy = vy, vz = vz, mass = mass) :: updatePos(dt)(rest)
 
 let advance dt bodies = updatePos(dt)(updateVel(dt)(bodies)(0)(bodies))
 
-let recursive potential bx by bz bmass rest acc = 
+let recursive potential bx by bz bmass rest acc =
     match rest with
         | [] -> acc
-        | o :: more -> 
+        | o :: more ->
             match o with
-                | Body(ox, oy, oz, ovx, ovy, ovz, omass) -> 
+                | Body(ox, oy, oz, ovx, ovy, ovz, omass) ->
                     let dx = bx - ox
-                    in 
+                    in
                         let dy = by - oy
-                        in 
+                        in
                             let dz = bz - oz
-                            in 
+                            in
                                 let dist = math.sqrt(dx * dx + dy * dy + dz * dz)
                                 in potential(bx)(by)(bz)(bmass)(more)(acc - bmass * omass / dist)
 
-let recursive energy bodies acc = 
+let recursive energy bodies acc =
     match bodies with
         | [] -> acc
-        | b :: rest -> 
+        | b :: rest ->
             match b with
-                | Body(x, y, z, vx, vy, vz, mass) -> 
+                | Body(x, y, z, vx, vy, vz, mass) ->
                     let kinetic = 0.5 * mass * (vx * vx + vy * vy + vz * vz)
                     in energy(rest)(potential(x)(y)(z)(mass)(rest)(kinetic + acc))
 
-let recursive run n dt bodies = 
+let recursive run n dt bodies =
     if n == 0
     then bodies
     else run(n - 1)(dt)(advance(dt)(bodies))
 
 let system = offsetSun([sun, jupiter, saturn, uranus, neptune])
 
-let simulate n = 
+let simulate n =
     (let final = run(n)(dt)(system)
-    in 
+    in
         let _ = io.print(text.formatFloat(energy(system)(0.0))(9))
         in io.print(text.formatFloat(energy(final)(0.0))(9)))
 
 match io.args with
-    | arg :: _ -> 
+    | arg :: _ ->
         match text.parseInt(arg) with
             | Ok(n) -> simulate(n)
             | Error(_) -> simulate(1000)

@@ -3,7 +3,7 @@ import Ashes.IO as io
 import Ashes.BigInt as big
 let sp = " "
 
-let recursive fact n acc = 
+let recursive fact n acc =
     if n == 0
     then acc
     else fact(n - 1)(big.mul(acc)(big.fromInt(n)))

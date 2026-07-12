@@ -1,10 +1,10 @@
 // expect: ok
-let firstOrNone xs = 
+let firstOrNone xs =
     match xs with
         | [] -> None
         | x :: _ -> Some(x)
-in 
+in
     let _a = firstOrNone([1, 2, 3])
-    in 
+    in
         let _b = firstOrNone(["a", "b"])
         in Ashes.IO.print("ok")

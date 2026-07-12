@@ -85,7 +85,10 @@ public abstract record IrInst
     // once inference finishes. It is carried on the record so the TCO `with`-based remap preserves it.
     public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
-    public sealed record MulInt(int Target, int Left, int Right) : IrInst;
+    // DeferredType mirrors AddInt: non-null only for a provisional '*' whose operand type was still
+    // unresolved at lowering time; ResolveDeferredMuls patches such muls to MulFloat / BigIntBinary
+    // (or a plain MulInt) once inference finishes.
+    public sealed record MulInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
     public sealed record DivInt(int Target, int Left, int Right) : IrInst;
     public sealed record DivUInt(int Target, int Left, int Right) : IrInst;
     public sealed record AndInt(int Target, int Left, int Right) : IrInst;
@@ -234,6 +237,8 @@ public abstract record IrInst
     public sealed record TextFromFloat(int Target, int ValueTemp) : IrInst;
     public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp) : IrInst;
     public sealed record TextToHex(int Target, int ValueTemp) : IrInst;
+    // ASCII-only case map (a-z <-> A-Z by flipping bit 0x20); multibyte UTF-8 (>= 0x80) untouched.
+    public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper) : IrInst;
     public sealed record HttpGet(int Target, int UrlTemp) : IrInst;
     public sealed record HttpPost(int Target, int UrlTemp, int BodyTemp) : IrInst;
     public sealed record NetTcpConnect(int Target, int HostTemp, int PortTemp) : IrInst;

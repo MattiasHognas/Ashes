@@ -16,36 +16,36 @@ type Receipt =
     | total: Int
     | stamp: Int
 
-let taxFor = 
+let taxFor =
     given (cents) -> cents / 10
 
-let priceOf = 
+let priceOf =
     given (item) -> Prices.lookup(item)
 
-let processOrder = 
-    given (item) -> 
+let processOrder =
+    given (item) ->
         let _ = Log.log("processing " + item)
-        in 
+        in
             let base = Prices.lookup(item)
-            in 
+            in
                 let tax = taxFor(base)
-                in 
+                in
                     let total = base + tax
-                    in 
+                    in
                         let _ = Log.log("total " + Ashes.Text.fromInt(total))
-                        in 
+                        in
                             let t = Clock.now(Unit)
                             in Receipt(item = item, base = base, tax = tax, total = total, stamp = t)
 
-let runTest = 
-    given (work) -> 
+let runTest =
+    given (work) ->
         handle work(Unit) with
             | Prices.lookup(item) -> resume(200)
             | Clock.now(_) -> resume(1000)
             | Log.log(msg) -> resume(Unit)
             | return(r) -> r
 
-let receipt = 
+let receipt =
     runTest(given (_) -> processOrder("widget"))
 
 Ashes.IO.print(receipt.item + " total=" + Ashes.Text.fromInt(receipt.total) + " stamp=" + Ashes.Text.fromInt(receipt.stamp))

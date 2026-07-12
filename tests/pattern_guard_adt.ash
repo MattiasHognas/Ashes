@@ -3,7 +3,7 @@ type Outcome =
     | Good(Int)
     | Bad(Str)
 
-let describe r = 
+let describe r =
     match r with
         | Good(n) when n >= 11 -> "big ok"
         | Good(n) -> "small ok"

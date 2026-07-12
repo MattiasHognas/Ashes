@@ -1,10 +1,10 @@
 // expect: 3
-let add = 
-    given (x) -> 
+let add =
+    given (x) ->
         given (y) -> x + y
-in 
+in
     let add1 = add(1)
-    in 
+    in
         2
         |> add1
         |> Ashes.IO.print

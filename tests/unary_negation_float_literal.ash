@@ -6,7 +6,7 @@
 // expect: -0.5 3.5 -1.0 -5.0 5
 import Ashes.IO as io
 import Ashes.Text as text
-let neg : Float -> Float = 
+let neg : Float -> Float =
     given (x) -> 0.0 - x
 
 let a = -0.5

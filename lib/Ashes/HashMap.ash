@@ -19,126 +19,126 @@ let empty = HEmpty
 
 let hashKey key = Ashes.Bytes.hash(Ashes.Bytes.fromText(key))
 
-let strCompare a b = 
+let strCompare a b =
     (let ab = Ashes.Bytes.fromText(a)
-    in 
+    in
         let bb = Ashes.Bytes.fromText(b)
-        in 
+        in
             let alen = Ashes.Bytes.length(ab)
-            in 
+            in
                 let blen = Ashes.Bytes.length(bb)
-                in 
-                    let recursive go i = 
+                in
+                    let recursive go i =
                         if i >= alen
-                        then 
+                        then
                             if i >= blen
                             then 0
                             else -1
-                        else 
+                        else
                             if i >= blen
                             then 1
-                            else 
+                            else
                                 let x = Ashes.Bytes.get(ab)(i)
-                                in 
+                                in
                                     let y = Ashes.Bytes.get(bb)(i)
-                                    in 
+                                    in
                                         if x == y
                                         then go(i + 1)
-                                        else 
+                                        else
                                             if x < y
                                             then -1
                                             else 1
                     in go(0))
 
-let compareComposite targetHash targetKey nodeHash nodeKey = 
+let compareComposite targetHash targetKey nodeHash nodeKey =
     if targetHash == nodeHash
     then strCompare(targetKey)(nodeKey)
-    else 
+    else
         if targetHash <= nodeHash - 1
         then -1
         else 1
 
-let hHeight tree = 
+let hHeight tree =
     match tree with
         | HEmpty -> 0
         | HNode(h, _l, _hk, _k, _v, _r) -> h
 
-let hMax a b = 
+let hMax a b =
     if a >= b
     then a
     else b
 
 let hMake left hash key value right = HNode(hMax(hHeight(left))(hHeight(right)) + 1)(left)(hash)(key)(value)(right)
 
-let hRotateLeft tree = 
+let hRotateLeft tree =
     match tree with
         | HNode(_h, left, hash, key, value, HNode(_rh, rl, rhash, rkey, rvalue, rr)) -> hMake(hMake(left)(hash)(key)(value)(rl))(rhash)(rkey)(rvalue)(rr)
         | _ -> tree
 
-let hRotateRight tree = 
+let hRotateRight tree =
     match tree with
         | HNode(_h, HNode(_lh, ll, lhash, lkey, lvalue, lr), hash, key, value, right) -> hMake(ll)(lhash)(lkey)(lvalue)(hMake(lr)(hash)(key)(value)(right))
         | _ -> tree
 
-let hBalance tree = 
+let hBalance tree =
     match tree with
         | HEmpty -> HEmpty
-        | HNode(_h, left, hash, key, value, right) -> 
+        | HNode(_h, left, hash, key, value, right) ->
             let normalized = hMake(left)(hash)(key)(value)(right)
-            in 
+            in
                 if hHeight(left) >= hHeight(right) + 2
-                then 
+                then
                     match left with
                         | HEmpty -> normalized
-                        | HNode(_lh, ll, _lhash, _lkey, _lvalue, lr) -> 
+                        | HNode(_lh, ll, _lhash, _lkey, _lvalue, lr) ->
                             if hHeight(ll) >= hHeight(lr)
                             then hRotateRight(normalized)
                             else hRotateRight(hMake(hRotateLeft(left))(hash)(key)(value)(right))
-                else 
+                else
                     if hHeight(right) >= hHeight(left) + 2
-                    then 
+                    then
                         match right with
                             | HEmpty -> normalized
-                            | HNode(_rh, rl, _rhash, _rkey, _rvalue, rr) -> 
+                            | HNode(_rh, rl, _rhash, _rkey, _rvalue, rr) ->
                                 if hHeight(rr) >= hHeight(rl)
                                 then hRotateLeft(normalized)
                                 else hRotateLeft(hMake(left)(hash)(key)(value)(hRotateRight(right)))
                     else normalized
 
-let get searchKey map = 
+let get searchKey map =
     (let target = hashKey(searchKey)
-    in 
-        let recursive go tree = 
+    in
+        let recursive go tree =
             match tree with
                 | HEmpty -> None
-                | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) -> 
+                | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) ->
                     let ordering = compareComposite(target)(searchKey)(nodeHash)(nodeKey)
-                    in 
+                    in
                         if ordering == 0
                         then Some(nodeValue)
-                        else 
+                        else
                             if ordering <= -1
                             then go(left)
                             else go(right)
         in go(map))
 
-let contains searchKey map = 
+let contains searchKey map =
     match get(searchKey)(map) with
         | None -> false
         | Some(_) -> true
 
-let set newKey newValue map = 
+let set newKey newValue map =
     (let target = hashKey(newKey)
-    in 
-        let recursive go tree = 
+    in
+        let recursive go tree =
             match tree with
                 | HEmpty -> hMake(HEmpty)(target)(newKey)(newValue)(HEmpty)
-                | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) -> 
+                | HNode(_h, left, nodeHash, nodeKey, nodeValue, right) ->
                     let ordering = compareComposite(target)(newKey)(nodeHash)(nodeKey)
-                    in 
+                    in
                         if ordering == 0
                         then hMake(left)(nodeHash)(nodeKey)(newValue)(right)
-                        else 
+                        else
                             if ordering <= -1
                             then hBalance(hMake(go(left))(nodeHash)(nodeKey)(nodeValue)(right))
                             else hBalance(hMake(left)(nodeHash)(nodeKey)(nodeValue)(go(right)))
@@ -146,18 +146,18 @@ let set newKey newValue map =
 
 let insert = set
 
-let recursive size map = 
+let recursive size map =
     match map with
         | HEmpty -> 0
         | HNode(_h, left, _hk, _k, _v, right) -> 1 + size(left) + size(right)
 
-let foldLeft folder state map = 
-    (let recursive go acc tree = 
+let foldLeft folder state map =
+    (let recursive go acc tree =
         match tree with
             | HEmpty -> acc
-            | HNode(_h, left, _hk, key, value, right) -> 
+            | HNode(_h, left, _hk, key, value, right) ->
                 let afterLeft = go(acc)(left)
-                in 
+                in
                     let afterNode = folder(afterLeft)(key)(value)
                     in go(afterNode)(right)
     in go(state)(map))

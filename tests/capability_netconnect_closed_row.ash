@@ -3,8 +3,8 @@
 capability Clock =
     | now : Unit -> Int
 
-let bad : Str -> Int needs {Clock} = 
-    given (url) -> 
+let bad : Str -> Int needs {Clock} =
+    given (url) ->
         let _t = Ashes.Http.get(url)
         in 42
 

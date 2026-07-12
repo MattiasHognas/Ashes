@@ -10,40 +10,40 @@
 type Regex =
     | Regex(Int)
 
-let compile pattern = 
+let compile pattern =
     (let code = Ashes.Regex.compileRaw(pattern)
-    in 
+    in
         if code == 0
         then Error(Ashes.Regex.compileError(pattern))
         else Ok(Regex(code)))
 
-let isMatch regex text = 
+let isMatch regex text =
     match regex with
-        | Regex(code) -> 
+        | Regex(code) ->
             match Ashes.Regex.findFrom(code)(text)(0) with
                 | Some(_span) -> true
                 | None -> false
 
-let find regex text = 
+let find regex text =
     match regex with
         | Regex(code) -> Ashes.Regex.findFrom(code)(text)(0)
 
-let captures regex text = 
+let captures regex text =
     match regex with
         | Regex(code) -> Ashes.Regex.capturesFrom(code)(text)(0)
 
-let findAll regex text = 
+let findAll regex text =
     match regex with
-        | Regex(code) -> 
-            let recursive go start = 
+        | Regex(code) ->
+            let recursive go start =
                 match Ashes.Regex.findFrom(code)(text)(start) with
                     | None -> []
-                    | Some((s, e)) -> 
+                    | Some((s, e)) ->
                         (s, e) :: go(if e > s
                         then e
                         else e + 1)
             in go(0)
 
-let replace regex text replacement = 
+let replace regex text replacement =
     match regex with
         | Regex(code) -> Ashes.Regex.substituteAll(code)(text)(replacement)

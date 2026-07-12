@@ -7,15 +7,15 @@
 import Ashes.File
 import Ashes.Maybe
 import Ashes.IO
-let wrapped = 
+let wrapped =
     match Ashes.File.open("agg_escape_input.txt") with
         | Error(_e) -> None
         | Ok(h) -> Some(h)
 
-let result = 
+let result =
     match wrapped with
         | None -> "none"
-        | Some(h2) -> 
+        | Some(h2) ->
             match Ashes.File.readChunk(h2)(5) with
                 | Error(_) -> "read-err"
                 | Ok(chunk) -> chunk

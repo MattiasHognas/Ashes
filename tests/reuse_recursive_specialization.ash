@@ -11,17 +11,17 @@ type Tree(A) =
     | Leaf
     | Node(Tree, A, Tree)
 
-let recursive incAll t = 
+let recursive incAll t =
     match t with
         | Leaf -> Leaf
         | Node(l, v, r) -> Node(incAll(l))(v + 1)(incAll(r))
 
-let rootVal t = 
+let rootVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let recursive loop n t = 
+let recursive loop n t =
     if n <= 0
     then t
     else loop(n - 1)(incAll(t))

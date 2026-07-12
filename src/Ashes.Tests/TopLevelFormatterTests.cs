@@ -124,7 +124,7 @@ public sealed class TopLevelFormatterTests
     {
         var formatted = Format("let recursive even = given (n) -> n\nand odd = given (n) -> n\n");
 
-        formatted.ShouldBe("let recursive even = \n    given (n) -> n\nand odd = \n    given (n) -> n\n");
+        formatted.ShouldBe("let recursive even =\n    given (n) -> n\nand odd =\n    given (n) -> n\n");
     }
 
     [Test]
@@ -132,7 +132,7 @@ public sealed class TopLevelFormatterTests
     {
         var formatted = Format("let x = let y = 1 in y in x\n");
 
-        formatted.ShouldBe("let x = \n    let y = 1\n    in y\nin x\n");
+        formatted.ShouldBe("let x =\n    let y = 1\n    in y\nin x\n");
     }
 
     [Test]
@@ -140,7 +140,7 @@ public sealed class TopLevelFormatterTests
     {
         var formatted = Format("let b = (let y = 2 in y)\n");
 
-        formatted.ShouldBe("let b = \n    (let y = 2\n    in y)\n");
+        formatted.ShouldBe("let b =\n    (let y = 2\n    in y)\n");
     }
 
     [Test]

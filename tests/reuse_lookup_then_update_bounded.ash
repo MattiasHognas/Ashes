@@ -10,43 +10,43 @@ type T(A) =
     | Lf
     | Br(T, A, A, T)
 
-let recursive uget m k = 
+let recursive uget m k =
     match m with
         | Lf -> None
-        | Br(l, key, v, r) -> 
+        | Br(l, key, v, r) ->
             if k == key
             then Some(v)
-            else 
+            else
                 if k <= key
                 then uget(l)(k)
                 else uget(r)(k)
 
-let recursive uset m k v = 
+let recursive uset m k v =
     match m with
         | Lf -> Br(Lf)(k)(v)(Lf)
-        | Br(l, key, ov, r) -> 
+        | Br(l, key, ov, r) ->
             if k == key
             then Br(l)(k)(v)(r)
-            else 
+            else
                 if k <= key
                 then Br(uset(l)(k)(v))(key)(ov)(r)
                 else Br(l)(key)(ov)(uset(r)(k)(v))
 
-let recursive usum m = 
+let recursive usum m =
     match m with
         | Lf -> 0
         | Br(l, _k, v, r) -> v + usum(l) + usum(r)
 
 let key i = i * 48271 & 8191
 
-let addRow m i = 
+let addRow m i =
     (let k = key(i)
-    in 
+    in
         match uget(m)(k) with
             | None -> uset(m)(k)(i)
             | Some(prev) -> uset(m)(k)(prev + i))
 
-let recursive loop i m = 
+let recursive loop i m =
     if i <= 0
     then m
     else loop(i - 1)(addRow(m)(i))

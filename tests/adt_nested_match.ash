@@ -1,12 +1,12 @@
 // expect: 10
-let unwrapOr opt def = 
+let unwrapOr opt def =
     match opt with
         | None -> def
         | Some(x) -> x
-in 
+in
     let inner = Some(Some(10))
-    in 
-        let outer = 
+    in
+        let outer =
             match inner with
                 | None -> None
                 | Some(x) -> x

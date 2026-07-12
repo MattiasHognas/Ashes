@@ -14,23 +14,23 @@ let text = "az\nbz\ncz\ndz\nez\nfz\ngz\nhz\niz\n"
 
 let bytes = Ashes.Bytes.fromText(text)
 
-let recursive countZ i hi acc = 
+let recursive countZ i hi acc =
     if i >= hi
     then acc
-    else 
+    else
         if Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i)) == 122
         then countZ(i + 1)(hi)(acc + 1)
         else countZ(i + 1)(hi)(acc)
 
-let foldZ triple = 
+let foldZ triple =
     match triple with
         | (_b, lo, hi) -> countZ(lo)(hi)(0)
 
-let foldSpan triple = 
+let foldSpan triple =
     match triple with
         | (_b, lo, hi) -> hi - lo
 
-let recursive len xs acc = 
+let recursive len xs acc =
     match xs with
         | [] -> acc
         | _h :: t -> len(t)(acc + 1)

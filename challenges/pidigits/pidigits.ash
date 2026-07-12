@@ -9,32 +9,32 @@
 // Usage: ./pidigits 10000   (defaults to 27 digits when no argument is given)
 import Ashes.IO as io
 import Ashes.BigInt as big
-let recursive padRight s n = 
+let recursive padRight s n =
     if n == 0
     then s
     else padRight(s + " ")(n - 1)
 
-let recursive spigot q r t k n l remaining lineBuf lineLen total output = 
+let recursive spigot q r t k n l remaining lineBuf lineLen total output =
     if remaining == 0
-    then 
+    then
         if lineLen == 0
         then output
         else output + padRight(lineBuf)(10 - lineLen) + "\t:" + Ashes.Text.fromInt(total) + "\n"
-    else 
+    else
         if 4N * q + r - t < n * t
-        then 
+        then
             let lineBuf2 = lineBuf + Ashes.Text.fromBigInt(n)
-            in 
+            in
                 let lineLen2 = lineLen + 1
-                in 
+                in
                     let total2 = total + 1
-                    in 
+                    in
                         let q2 = 10N * q
-                        in 
+                        in
                             let r2 = 10N * (r - n * t)
-                            in 
+                            in
                                 let n2 = 10N * (3N * q + r) / t - 10N * n
-                                in 
+                                in
                                     if lineLen2 == 10
                                     then spigot(q2)(r2)(t)(k)(n2)(l)(remaining - 1)("")(0)(total2)(output + lineBuf2 + "\t:" + Ashes.Text.fromInt(total2) + "\n")
                                     else spigot(q2)(r2)(t)(k)(n2)(l)(remaining - 1)(lineBuf2)(lineLen2)(total2)(output)
@@ -43,7 +43,7 @@ let recursive spigot q r t k n l remaining lineBuf lineLen total output =
 let pidigits count = spigot(1N)(0N)(1N)(1N)(3N)(3N)(count)("")(0)(0)("")
 
 match Ashes.IO.args with
-    | arg :: _ -> 
+    | arg :: _ ->
         match Ashes.Text.parseInt(arg) with
             | Ok(count) -> io.print(pidigits(count))
             | Error(_) -> io.print(pidigits(27))

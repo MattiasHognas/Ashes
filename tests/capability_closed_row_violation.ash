@@ -6,10 +6,10 @@ capability Prices =
 capability Clock =
     | now : Unit -> Int
 
-let priceOf : Str -> Int needs {Prices} = 
+let priceOf : Str -> Int needs {Prices} =
     given (item) -> Prices.lookup(item)
 
-let bad : Str -> Int needs {Prices} = 
+let bad : Str -> Int needs {Prices} =
     given (item) -> priceOf(item) + Clock.now(Unit)
 
 Ashes.IO.print("unreachable")

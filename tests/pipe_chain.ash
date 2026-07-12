@@ -1,8 +1,8 @@
 // expect: 4
 let inc x = x + 1
-in 
+in
     let double x = x + x
-    in 
+    in
         1
         |> inc
         |> double

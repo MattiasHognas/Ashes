@@ -7,7 +7,7 @@ let space = " "
 
 let dm = math.divMod(17)(3)
 
-let dmStr = 
+let dmStr =
     match dm with
         | (q, r) -> "(" + intToStr(q) + ", " + intToStr(r) + ")"
 

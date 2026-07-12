@@ -452,6 +452,7 @@ public static class IrOptimizer
             IrInst.BigIntBinary t => t with { Left = R(t.Left), Right = R(t.Right) },
             IrInst.BigIntCompare t => t with { Left = R(t.Left), Right = R(t.Right) },
             IrInst.TextToHex t => t with { ValueTemp = R(t.ValueTemp) },
+            IrInst.TextAsciiCase t => t with { SourceTemp = R(t.SourceTemp) },
             IrInst.TextByteLength t => t with { TextTemp = R(t.TextTemp) },
             IrInst.ReadExact r => r with { CountTemp = R(r.CountTemp) },
             IrInst.FileReadAllBytes f => f with { PathTemp = R(f.PathTemp) },
@@ -1401,6 +1402,7 @@ public static class IrOptimizer
             case IrInst.BigIntBinary t: usedTemps.Add(t.Left); usedTemps.Add(t.Right); break;
             case IrInst.BigIntCompare t: usedTemps.Add(t.Left); usedTemps.Add(t.Right); break;
             case IrInst.TextToHex t: usedTemps.Add(t.ValueTemp); break;
+            case IrInst.TextAsciiCase t: usedTemps.Add(t.SourceTemp); break;
             case IrInst.TextByteLength t: usedTemps.Add(t.TextTemp); break;
             case IrInst.ReadExact r: usedTemps.Add(r.CountTemp); break;
             case IrInst.FileReadAllBytes f: usedTemps.Add(f.PathTemp); break;

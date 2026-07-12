@@ -11,8 +11,8 @@ import Ashes.UInt
 import Ashes.String
 match Ashes.File.mmap("mm.txt") with
     | Error(_e) -> Ashes.IO.print("err")
-    | Ok(b) -> 
-        let ok = 
+    | Ok(b) ->
+        let ok =
             if Ashes.String.substring(Ashes.Bytes.subText(b)(0)(5))(0)(5) == "hello"
             then "zero-copy"
             else "bad"

@@ -10,15 +10,15 @@ type Tree =
 
 let mk l v r = Node(l)(v)(r)
 
-let recursive loop n t = 
+let recursive loop n t =
     if n <= 0
     then t
-    else 
+    else
         match t with
             | Leaf -> loop(n - 1)(mk(Leaf)(n)(Leaf))
             | Node(l, v, r) -> loop(n - 1)(mk(l)(v + n)(r))
 
-let rootVal t = 
+let rootVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> v

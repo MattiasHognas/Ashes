@@ -477,19 +477,46 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildIntToPtr(builder, endAddr, state.I64Ptr, "tcb_end_ptr"));
     }
 
+    // Each OS chunk carries an 8-byte header (at its base) and an 8-byte footer (at its usable end):
+    //   header [base + 0]              = the previous chunk's stored end value (0 for the first chunk),
+    //                                    forming a linked list walked backwards by EmitReclaimArenaChunks.
+    //   footer [base + size - 8]       = the chunk's own base address, so the reclaim walk can recover a
+    //                                    chunk's base from its end pointer WITHOUT assuming a fixed size.
+    // Usable allocations occupy [base + 8, base + size - 8); the end slot holds base + size - 8. Chunks
+    // are normally HeapChunkBytes, but a single allocation larger than that grows the chunk to fit
+    // (see EmitHeapGrow) — the footer is what lets variable-sized chunks still be reclaimed.
+    private const int ChunkHeaderBytes = 8;
+    private const int ChunkFooterBytes = 8;
+    private const int ChunkOverheadBytes = ChunkHeaderBytes + ChunkFooterBytes;
+
+    /// <summary>
+    /// Initializes a freshly OS-allocated chunk: writes the header (previous chunk's end) and the
+    /// footer (self base), then points the given cursor/end slots at the usable region.
+    /// </summary>
+    private static void EmitHeapChunkSetup(LlvmCodegenState state, LlvmValueHandle chunkBase, LlvmValueHandle chunkSize, LlvmValueHandle prevEnd, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Header: link to the previous chunk's end (0 for the first chunk).
+        StoreMemory(state, chunkBase, 0, prevEnd, prefix + "_prev_end");
+        // Usable end = base + size - footer; allocations run from base + header up to (not into) it.
+        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.BuildSub(builder, chunkSize, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), prefix + "_usable_span"),
+            prefix + "_end");
+        // Footer at the usable end records this chunk's own base, so reclaim can go end -> base.
+        StoreMemory(state, chunkEnd, 0, chunkBase, prefix + "_self_base");
+        LlvmValueHandle cursorStart = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, ChunkHeaderBytes, 0), prefix + "_cursor_start");
+        LlvmApi.BuildStore(builder, cursorStart, cursorSlot);
+        LlvmApi.BuildStore(builder, chunkEnd, endSlot);
+    }
+
     private static void EmitHeapChunkInit(LlvmCodegenState state)
     {
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
-        // Write prev_base = 0 into the chunk header (first chunk has no predecessor).
-        StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "init_heap_prev_base");
-        // Allocations start at offset 8 (after the header).
-        LlvmValueHandle cursorStart = LlvmApi.BuildAdd(state.Target.Builder, chunkBase,
-            LlvmApi.ConstInt(state.I64, 8, 0), "init_heap_cursor_start");
-        LlvmApi.BuildStore(state.Target.Builder, cursorStart, state.HeapCursorSlot);
-        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(state.Target.Builder, chunkBase,
-            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "init_heap_end");
-        LlvmApi.BuildStore(state.Target.Builder, chunkEnd, state.HeapEndSlot);
+        // First chunk has no predecessor (prev end = 0).
+        EmitHeapChunkSetup(state, chunkBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0),
+            LlvmApi.ConstInt(state.I64, 0, 0), state.HeapCursorSlot, state.HeapEndSlot, "init_heap");
     }
 
     /// <summary>
@@ -517,7 +544,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
-        EmitHeapGrow(state, cursorSlot, endSlot);
+        EmitHeapGrow(state, cursorSlot, endSlot, sizeBytes);
         LlvmApi.BuildBr(builder, checkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
@@ -532,28 +559,30 @@ internal static partial class LlvmCodegen
     /// <see cref="EmitRestoreArenaState"/> can walk back and reclaim abandoned chunks.
     /// </summary>
     private static void EmitHeapGrow(LlvmCodegenState state)
-        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot);
+        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot, LlvmApi.ConstInt(state.I64, 0, 0));
 
-    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
+    /// <summary>
+    /// Allocates a new heap chunk large enough to satisfy an allocation of <paramref name="neededBytes"/>
+    /// and links it after the current chunk. The chunk is normally <see cref="HeapChunkBytes"/>, but a
+    /// single request larger than a standard chunk (e.g. a multi-megabyte regex substitution buffer)
+    /// grows the chunk to <c>neededBytes + overhead</c> so the request fits — without this, the
+    /// ensure-space loop would allocate one fixed chunk per iteration forever and exhaust memory.
+    /// </summary>
+    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, LlvmValueHandle neededBytes)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        // Capture the current chunk's base before allocating the new one.
+        // Header link = the current chunk's end (0 on the to-space's first grow — harmless, to-space is
+        // never reclaimed so the chain is never walked).
         LlvmValueHandle prevEnd = LlvmApi.BuildLoad2(builder, state.I64, endSlot, "grow_heap_prev_end");
-        LlvmValueHandle prevBase = LlvmApi.BuildSub(builder, prevEnd,
-            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_prev_base");
-        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap");
+        // chunkSize = max(HeapChunkBytes, neededBytes + header + footer).
+        LlvmValueHandle fitSize = LlvmApi.BuildAdd(builder, neededBytes,
+            LlvmApi.ConstInt(state.I64, ChunkOverheadBytes, 0), "grow_heap_fit_size");
+        LlvmValueHandle standard = LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0);
+        LlvmValueHandle fitsStandard = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, fitSize, standard, "grow_heap_fits_standard");
+        LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder, fitsStandard, standard, fitSize, "grow_heap_chunk_size");
+        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, chunkSize, "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
-        // Store prevBase into the new chunk's header (linked-list link). On the to-space's first grow
-        // the slot is 0, so prevBase is garbage — harmless: to-space is never reclaimed, so the chunk
-        // header chain is never walked.
-        StoreMemory(state, chunkBase, 0, prevBase, "grow_heap_prev_base_hdr");
-        // Allocations start at offset 8 (after the header).
-        LlvmValueHandle cursorStart = LlvmApi.BuildAdd(builder, chunkBase,
-            LlvmApi.ConstInt(state.I64, 8, 0), "grow_heap_cursor_start");
-        LlvmApi.BuildStore(builder, cursorStart, cursorSlot);
-        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
-            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "grow_heap_end");
-        LlvmApi.BuildStore(builder, chunkEnd, endSlot);
+        EmitHeapChunkSetup(state, chunkBase, chunkSize, prevEnd, cursorSlot, endSlot, "grow_heap");
     }
 
     /// <summary>
@@ -692,11 +721,16 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "reclaim_loop_cur_end");
-        LlvmValueHandle curBase = LlvmApi.BuildSub(builder, curEnd, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_cur_base");
-        // Read prev_base from the chunk header (first 8 bytes of the chunk), then free the chunk.
-        LlvmValueHandle prevBase = LoadMemory(state, curBase, 0, "reclaim_loop_prev_base");
-        EmitFreeOsMemory(state, curBase, HeapChunkBytes, "reclaim_free_chunk");
-        LlvmValueHandle nextEnd = LlvmApi.BuildAdd(builder, prevBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "reclaim_loop_next_end");
+        // curEnd points at the chunk's footer, which records the chunk's own base (chunks are
+        // variable-sized, so the base cannot be reconstructed from a fixed size). The header at that
+        // base links to the previous chunk's end. size = (curEnd + footer) - base.
+        LlvmValueHandle curBase = LoadMemory(state, curEnd, 0, "reclaim_loop_cur_base");
+        LlvmValueHandle prevEnd = LoadMemory(state, curBase, 0, "reclaim_loop_prev_end");
+        LlvmValueHandle curSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, curEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "reclaim_loop_cur_top"),
+            curBase, "reclaim_loop_cur_size");
+        EmitFreeOsMemory(state, curBase, curSize, "reclaim_free_chunk");
+        LlvmValueHandle nextEnd = prevEnd;
         LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
         LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "reclaim_loop_done");
         LlvmApi.BuildCondBr(builder, doneFreeing, reclaimDoneBlock, loopBlock);
@@ -1292,12 +1326,15 @@ internal static partial class LlvmCodegen
     ///   for <c>MEM_RELEASE</c>.
     /// </summary>
     private static void EmitFreeOsMemory(LlvmCodegenState state, LlvmValueHandle basePtr, long sizeBytes, string prefix)
+        => EmitFreeOsMemory(state, basePtr, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), prefix);
+
+    private static void EmitFreeOsMemory(LlvmCodegenState state, LlvmValueHandle basePtr, LlvmValueHandle sizeBytes, string prefix)
     {
         if (IsLinuxFlavor(state.Flavor))
         {
             EmitLinuxSyscall(state, SyscallMunmap,
                 basePtr,
-                LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0),
+                sizeBytes,
                 LlvmApi.ConstInt(state.I64, 0, 0), // unused third arg
                 prefix + "_munmap");
         }
@@ -2155,6 +2192,50 @@ internal static partial class LlvmCodegen
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
         EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
         return stringRef;
+    }
+
+    /// <summary>
+    /// ASCII-only case map: copies the source string and flips bit 0x20 on every ASCII letter of
+    /// the source case (a-z for <paramref name="upper"/>, A-Z otherwise). Every byte of a multibyte
+    /// UTF-8 sequence is >= 0x80 and never matches the letter range, so non-ASCII text passes
+    /// through byte-identical — the transform is UTF-8 safe without decoding.
+    /// </summary>
+    private static LlvmValueHandle EmitAsciiCaseString(LlvmCodegenState state, LlvmValueHandle sourceRef, bool upper, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, sourceRef, prefix + "_len");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, sourceRef, prefix + "_src");
+        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, srcBytes, len, prefix);
+        LlvmValueHandle destBytes = GetStringBytesPointer(state, result, prefix + "_dest");
+
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, prefix + "_idx");
+        LlvmValueHandle more = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, idx, len, prefix + "_more");
+        LlvmApi.BuildCondBr(builder, more, bodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [idx], prefix + "_byte_ptr");
+        LlvmValueHandle byteVal = LlvmApi.BuildLoad2(builder, state.I8, bytePtr, prefix + "_byte");
+        ulong lowBound = upper ? (byte)'a' : (byte)'A';
+        ulong highBound = upper ? (byte)'z' : (byte)'Z';
+        LlvmValueHandle geLow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, byteVal, LlvmApi.ConstInt(state.I8, lowBound, 0), prefix + "_ge_low");
+        LlvmValueHandle leHigh = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, byteVal, LlvmApi.ConstInt(state.I8, highBound, 0), prefix + "_le_high");
+        LlvmValueHandle isLetter = LlvmApi.BuildAnd(builder, geLow, leHigh, prefix + "_is_letter");
+        LlvmValueHandle flipped = LlvmApi.BuildXor(builder, byteVal, LlvmApi.ConstInt(state.I8, 0x20, 0), prefix + "_flipped");
+        LlvmValueHandle mapped = LlvmApi.BuildSelect(builder, isLetter, flipped, byteVal, prefix + "_mapped");
+        LlvmApi.BuildStore(builder, mapped, bytePtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), idxSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return result;
     }
 
     private static void EmitConditionalWrite(LlvmCodegenState state, LlvmValueHandle condition, string whenTrue, string whenFalse, bool appendNewline)

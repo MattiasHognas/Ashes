@@ -60,6 +60,27 @@ public sealed partial class Lowering
 
         return ids;
     }
+
+    // Same mechanism as the '+'-constrained vars above, but for '*' operand types (Int / Float /
+    // BigInt / UInt, no type classes). When both operands are still type variables we emit a
+    // provisional MulInt and keep the shared var monomorphic so a later use resolves it. See
+    // ResolveDeferredMuls.
+    private bool _hasDeferredMuls;
+    private readonly List<TypeRef.TVar> _mulConstrainedVars = new();
+
+    private HashSet<int> ConstrainedMulVarRepIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var v in _mulConstrainedVars)
+        {
+            if (Prune(v) is TypeRef.TVar rep)
+            {
+                ids.Add(rep.Id);
+            }
+        }
+
+        return ids;
+    }
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
@@ -665,6 +686,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Return(resultTemp));
 
         ResolveDeferredAdds();
+        ResolveDeferredMuls();
         ResolveDeferredEqs();
 
         // Any concrete capability left in the entry expression's row after inference has no handler
@@ -749,6 +771,46 @@ public sealed partial class Lowering
     {
         _usesConcatStr = true;
         return inst;
+    }
+
+    // Patches the provisional MulInts emitted for '*' with two unconstrained operands, now that
+    // inference is complete. Any operand var still unbound defaults to Int. Then each provisional
+    // multiply becomes MulFloat (Float), BigIntBinary "mul" (BigInt), or stays MulInt.
+    private void ResolveDeferredMuls()
+    {
+        if (!_hasDeferredMuls)
+        {
+            return;
+        }
+
+        ResolveDeferredMulsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredMulsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredMulsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.MulInt { DeferredType: { } operandType } mul)
+            {
+                continue;
+            }
+
+            if (Prune(operandType) is TypeRef.TVar)
+            {
+                Unify(operandType, new TypeRef.TInt());
+            }
+
+            instructions[i] = Prune(operandType) switch
+            {
+                TypeRef.TFloat => new IrInst.MulFloat(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
+                TypeRef.TBigInt => new IrInst.BigIntBinary(mul.Target, mul.Left, mul.Right, "mul") { Location = mul.Location },
+                _ => new IrInst.MulInt(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
+            };
+        }
     }
 
     // Patches the provisional CmpIntEq/CmpIntNe emitted for '==' / '!=' with two unconstrained
@@ -1707,6 +1769,13 @@ public sealed partial class Lowering
             _annotationParamCursor++;
         }
 
+        // An inline parameter annotation (`given (x: T) ->`, or the lambda a `let f (x: T) = ...`
+        // sugar parameter desugars to) pins the parameter's type before the body is lowered.
+        if (lam.ParamAnnotation is { } inlineAnnotation)
+        {
+            Unify(paramTy, ResolveAnnotationType(inlineAnnotation));
+        }
+
         // Compute free variables for capture
         var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
         if (selfName is not null)
@@ -2373,10 +2442,10 @@ public sealed partial class Lowering
 
         if (current is TypeRef.TVar resultVar)
         {
-            // A '+'-constrained var is Int/Float/Str (a scalar, never a function), so the arity is
+            // A '+'- or '*'-constrained var is a numeric scalar (never a function), so the arity is
             // exact even though it is not yet a concrete type. This keeps oversaturated-call
-            // detection working for functions like `add a b = a + b`.
-            if (ConstrainedAddVarRepIds().Contains(resultVar.Id))
+            // detection working for functions like `add a b = a + b` / `mul a b = a * b`.
+            if (ConstrainedAddVarRepIds().Contains(resultVar.Id) || ConstrainedMulVarRepIds().Contains(resultVar.Id))
             {
                 return true;
             }
@@ -2893,6 +2962,8 @@ public sealed partial class Lowering
                 IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
                 IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
                 IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
+                IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
+                IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
                 IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                 IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
                 IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
@@ -3026,6 +3097,8 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
                     BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
                     BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
+                    BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
+                    BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
                     BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
                     BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),

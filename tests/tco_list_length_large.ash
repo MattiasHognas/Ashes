@@ -1,10 +1,10 @@
 // expect: 100000
-let recursive len xs acc = 
+let recursive len xs acc =
     match xs with
         | [] -> acc
         | _ :: rest -> len(rest)(acc + 1)
-in 
-    let recursive build n acc = 
+in
+    let recursive build n acc =
         if n <= 0
         then acc
         else build(n - 1)(1 :: acc)

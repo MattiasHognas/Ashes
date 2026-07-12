@@ -200,6 +200,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerQualifiedBuiltinFunctionReference(name, CreateBigIntBinaryBinding(IntrinsicKind.BigIntMod).S.Body),
             BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerQualifiedBuiltinFunctionReference(name, CreateBigIntCompareBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextToHex => LowerQualifiedBuiltinFunctionReference(name, CreateTextToHexBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerQualifiedBuiltinFunctionReference(name, CreateTextAsciiCaseBinding(upper: true).S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerQualifiedBuiltinFunctionReference(name, CreateTextAsciiCaseBinding(upper: false).S.Body),
             BuiltinRegistry.BuiltinValueKind.HttpGet => LowerQualifiedBuiltinFunctionReference(name, CreateHttpGetBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.HttpPost => LowerQualifiedBuiltinFunctionReference(name, CreateHttpPostBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpConnectBinding().S.Body),

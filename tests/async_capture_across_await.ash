@@ -1,6 +1,6 @@
 // expect: 15
 let x = 5
-in 
+in
     Ashes.IO.print(match Ashes.Async.run(async(match await async 10 with
         | Error(_) -> 0
         | Ok(a) -> x + a)) with

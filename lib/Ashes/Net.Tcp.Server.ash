@@ -11,28 +11,28 @@
 // reactor (Error).
 import Ashes.Net.Tcp
 import Ashes.Async
-let serveOne port handler = 
-    async(let recursive loop listener = 
+let serveOne port handler =
+    async(let recursive loop listener =
         match await Ashes.Net.Tcp.Server.accept(listener) with
-            | Error(e) -> 
+            | Error(e) ->
                 if e == "__ashes_server_shutdown"
                 then Ok(0)
                 else Error(e)
-            | Ok(client) -> 
+            | Ok(client) ->
                 let _ = Ashes.Async.spawn(handler(client))
                 in loop(listener)
-    in 
+    in
         match await Ashes.Net.Tcp.Server.listen(port) with
             | Error(e2) -> Error(e2)
             | Ok(listener) -> loop(listener))
 
-let serveParallel port workers handler = 
+let serveParallel port workers handler =
     async(match await Ashes.Net.Tcp.Server.forkWorkers(port)(workers) with
         | Error(e) -> Error(e)
         | Ok(_idx) -> await serveOne(port)(handler))
 
 let serve port handler = serveParallel(port)(0)(handler)
 
-let serveWithDrainTimeout port drainMs handler = 
+let serveWithDrainTimeout port drainMs handler =
     (let _set = Ashes.Net.Tcp.Server.setDrainTimeout(drainMs)
     in serveParallel(port)(0)(handler))

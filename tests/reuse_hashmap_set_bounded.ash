@@ -11,26 +11,26 @@
 import Ashes.HashMap
 import Ashes.Text
 import Ashes.IO
-let recursive build i n m = 
+let recursive build i n m =
     if i >= n
     then m
     else build(i + 1)(n)(Ashes.HashMap.set("k" + Ashes.Text.fromInt(i))(i * 3)(m))
 
-let recursive bump i n m = 
+let recursive bump i n m =
     if i >= n
     then m
-    else 
-        let m2 = 
+    else
+        let m2 =
             if i - i / 7 * 7 == 0
             then Ashes.HashMap.set("k" + Ashes.Text.fromInt(i))(i * 3 + 1000000)(m)
             else m
         in bump(i + 1)(n)(m2)
 
-let recursive checksum i n m acc = 
+let recursive checksum i n m acc =
     if i >= n
     then acc
-    else 
-        let v = 
+    else
+        let v =
             match Ashes.HashMap.get("k" + Ashes.Text.fromInt(i))(m) with
                 | Some(x) -> x
                 | None -> -1

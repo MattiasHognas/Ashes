@@ -3,25 +3,25 @@ import Ashes.HashMap
 import Ashes.IO
 let m = Ashes.HashMap.set("zebra")(26)(Ashes.HashMap.set("apple")(1)(Ashes.HashMap.set("mango")(13)(Ashes.HashMap.set("apple")(99)(Ashes.HashMap.empty))))
 
-let appleVal = 
+let appleVal =
     match Ashes.HashMap.get("apple")(m) with
         | Some(v) -> v
         | None -> -1
 
-let summary = 
-    Ashes.HashMap.foldLeft(given (acc) -> 
-        given (_k) -> 
+let summary =
+    Ashes.HashMap.foldLeft(given (acc) ->
+        given (_k) ->
             given (v) -> acc + v)(0)(m)
-in 
+in
     if Ashes.HashMap.size(m) == 3
-    then 
+    then
         if appleVal == 1
-        then 
+        then
             if Ashes.HashMap.contains("mango")(m)
-            then 
+            then
                 if Ashes.HashMap.contains("nope")(m)
                 then Ashes.IO.print("fail-contains")
-                else 
+                else
                     if summary == 40
                     then Ashes.IO.print("ok")
                     else Ashes.IO.print("fail-fold")

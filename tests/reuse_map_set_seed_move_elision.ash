@@ -15,20 +15,20 @@
 import Ashes.Map
 import Ashes.IO
 import Ashes.Text
-let cmp a b = 
+let cmp a b =
     if a == b
     then 0
-    else 
+    else
         if a <= b
         then -1
         else 1
 
-let recursive inner i lim m = 
+let recursive inner i lim m =
     if i > lim
     then m
     else inner(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 10)(m))
 
-let recursive outer b nb m = 
+let recursive outer b nb m =
     if b >= nb
     then m
     else outer(b + 1)(nb)(inner(0)(4)(Ashes.Map.set(cmp)(0)(0)(m)))
@@ -36,7 +36,7 @@ let recursive outer b nb m =
 let seeded = Ashes.Map.set(cmp)(0)(0)(Ashes.Map.empty)
 
 let final = outer(0)(3)(seeded)
-in 
+in
     match Ashes.Map.get(cmp)(4)(final) with
         | None -> Ashes.IO.print("fail")
         | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + " " + Ashes.Text.fromInt(v))

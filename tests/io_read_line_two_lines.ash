@@ -1,12 +1,12 @@
 // stdin: a\nb\n
 // expect: a:b
 let first = Ashes.IO.readLine(Unit)
-in 
+in
     let second = Ashes.IO.readLine(Unit)
-    in 
+    in
         match first with
             | None -> Ashes.IO.print("missing-first")
-            | Some(a) -> 
+            | Some(a) ->
                 match second with
                     | Some(b) -> Ashes.IO.print(a + ":" + b)
                     | None -> Ashes.IO.print("missing-second")

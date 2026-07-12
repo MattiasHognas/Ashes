@@ -9,7 +9,7 @@
 // flush the pending reverse-complement and pass through unchanged.
 import Ashes.IO as io
 import Ashes.Text as text
-let complement c = 
+let complement c =
     match c with
         | "A" -> "T"
         | "C" -> "G"
@@ -29,32 +29,32 @@ let complement c =
         | "N" -> "N"
         | other -> other
 
-let recursive compLine line acc = 
+let recursive compLine line acc =
     match text.uncons(line) with
         | None -> acc
         | Some((c, rest)) -> compLine(rest)(complement(c) :: acc)
 
-let recursive emit chars col buf = 
+let recursive emit chars col buf =
     match chars with
-        | [] -> 
+        | [] ->
             if col == 0
             then Unit
             else io.write(buf + "\n")
-        | c :: rest -> 
+        | c :: rest ->
             if col == 60
-            then 
+            then
                 let _ = io.write(buf + "\n")
                 in emit(chars)(0)("")
             else emit(rest)(col + 1)(buf + c)
 
-let recursive loop revcomp = 
+let recursive loop revcomp =
     match io.readLine(Unit) with
         | None -> emit(revcomp)(0)("")
-        | Some(line) -> 
+        | Some(line) ->
             match text.uncons(line) with
-                | Some((">", _)) -> 
+                | Some((">", _)) ->
                     let _ = emit(revcomp)(0)("")
-                    in 
+                    in
                         let _ = io.writeLine(line)
                         in loop([])
                 | _ -> loop(compLine(line)(revcomp))

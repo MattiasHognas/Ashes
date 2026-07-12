@@ -142,6 +142,7 @@ public sealed partial class Lowering
         // lambda's result var). Same reasoning applies to '==' / '!=' operand vars.
         typeFtv.ExceptWith(ConstrainedAddVarRepIds());
         typeFtv.ExceptWith(ConstrainedEqVarRepIds());
+        typeFtv.ExceptWith(ConstrainedMulVarRepIds());
 
         var quantified = typeFtv
             .OrderBy(id => id)

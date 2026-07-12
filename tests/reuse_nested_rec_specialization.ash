@@ -12,19 +12,19 @@ type Tree(A) =
 
 let mk l v r = Node(l)(v)(r)
 
-let upd by = 
-    (let recursive go t = 
+let upd by =
+    (let recursive go t =
         match t with
             | Leaf -> Leaf
             | Node(l, v, r) -> mk(go(l))(v + by)(go(r))
     in go)
 
-let rootVal t = 
+let rootVal t =
     match t with
         | Leaf -> -1
         | Node(l, v, r) -> v
 
-let recursive loop n t = 
+let recursive loop n t =
     if n <= 0
     then t
     else loop(n - 1)(upd(1)(t))

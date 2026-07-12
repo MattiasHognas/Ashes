@@ -14,28 +14,28 @@ type Choice =
     | Even
     | Odd(Int)
 
-let recursive build i n m = 
+let recursive build i n m =
     if i >= n
     then m
-    else 
+    else
         let k = i - i / 30000 * 30000
-        in 
-            let tag = 
+        in
+            let tag =
                 if k - k / 2 * 2 == 0
                 then Even
                 else Odd(k)
-            in 
-                let m2 = 
+            in
+                let m2 =
                     match tag with
                         | Even -> Ashes.Map.setStr(Ashes.Text.fromInt(k))(i)(m)
                         | Odd(kk) -> Ashes.Map.setStr(Ashes.Text.fromInt(kk))(i + 7)(m)
                 in build(i + 1)(n)(m2)
 
-let recursive checksum i n m acc = 
+let recursive checksum i n m acc =
     if i >= n
     then acc
-    else 
-        let v = 
+    else
+        let v =
             match Ashes.Map.getStr(Ashes.Text.fromInt(i))(m) with
                 | Some(x) -> x
                 | None -> -1

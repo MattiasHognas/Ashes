@@ -3,10 +3,10 @@ capability Clock =
     | now : Unit -> Int
 
 provide Clock =
-    | now = 
+    | now =
         given (_) -> 1
 
-let r = 
+let r =
     handle Clock.now(Unit) with
         | Clock.now(_) -> resume(2)
         | return(x) -> x
