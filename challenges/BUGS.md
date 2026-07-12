@@ -71,6 +71,13 @@ fixed watermark (constant memory). Two more fixed-shape shapes are still exclude
   growing `String` field grows O(N^2) (N=20000 -> 3.97 GB).
 - **`List(record)` accumulator** — `n-body` threads a fixed-size `List(Body)` (5 records) rebuilt each
   step; `List(ADT)` is not copy-outable, so it grows O(N) (N=1e6 -> 4.27 GB) for a constant-state loop.
+  A synthesized recursive list-of-ADT deep-copier (`EmitDeepCopy` `TList` branch + `DeepAdt` copy-out +
+  fixed watermark) was prototyped and gives constant memory for the *non-async* n-body loop, but it
+  miscompiles `List(ADT)` accumulators threaded through `async.task` (`readme_showcase`'s `priceAll`
+  inside `async.all` yielded 41.00 instead of 12.50). The deep-copy-out interacts badly with the
+  per-task arena / join deep-copy: the list is copied against the wrong watermark. Reverted pending a
+  fix that makes the list deep-copier arena-aware under coroutine joins. Isolation: nullary-ADT Int/Float
+  fields and the capability-no-async path are all correct; only `List(ADT) + async` regresses.
 
 Both are fixed-shape and deep-copyable, exactly like the `State(perm, count)` case already handled —
 extend `CanDeepCopyOutAdt` / the copy-out to **tuples** and to **lists whose element is a fixed-shape
