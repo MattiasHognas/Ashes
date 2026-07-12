@@ -735,11 +735,30 @@ public sealed partial class Lowering
     /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
     /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
     /// stable-accumulator) are evaluated eagerly, since the scope is gone by resolution time.</summary>
+    /// <summary>
+    /// True when a tail-call argument expression rebuilds its list THIS iteration: a call result
+    /// (a function's list result is copied out of the callee's arena scope on return, so it is
+    /// self-contained), a list literal, or a cons spine ending in one of those. Only such an arg
+    /// may take the whole-list DeepAdt clone at the back-edge — the body already paid O(length)
+    /// to construct it, so the clone at most doubles that. Anything else (bare var, pattern tail,
+    /// cons onto the accumulator param) may share unbounded structure with the previous iteration.
+    /// </summary>
+    private static bool IsFreshListRebuildExpr(Expr expr)
+        => expr switch
+        {
+            Expr.Call => true,
+            Expr.ListLit => true,
+            Expr.Cons cons => IsFreshListRebuildExpr(cons.Tail),
+            Expr.Let let => IsFreshListRebuildExpr(let.Body),
+            _ => false,
+        };
+
     private sealed record PendingTcoReset(
         int[] ArgTemps,
         TypeRef[] ArgTypes,
         bool[] PassThrough,
         bool[] SingleFreshCons,
+        bool[] FreshListRebuild,
         bool[] StableAccArg,
         int[] ParamSlots,
         int FixedCursorSlot,
@@ -803,6 +822,25 @@ public sealed partial class Lowering
         // `head :: <loop accumulator param>` shape (captured in SingleFreshCons); any other list
         // shape — except a DeepAdt list, which the synthesized copier clones WHOLE — disqualifies
         // the reset (those iterations simply don't reclaim).
+        // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
+        // at every back-edge, affordable only when the body already paid O(length) rebuilding the
+        // list this iteration (info.FreshListRebuild). A threaded/consumed list (a bare var, a
+        // pattern-derived tail, a cons onto the accumulator) can share unbounded structure with
+        // the previous iteration — cloning it per back-edge multiplies the loop's cost by the
+        // list length (1brc's merge phase regressed ~400x) — so it downgrades to None here.
+        CopyOutKind ArgCopyOutKind(int i, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy)
+        {
+            var argKind = GetTcoCopyOutKind(argTypes[i], out sizeBytes, out headCopy);
+            if (argKind == CopyOutKind.DeepAdt
+                && Prune(argTypes[i]) is TypeRef.TList
+                && !info.FreshListRebuild[i])
+            {
+                return CopyOutKind.None;
+            }
+
+            return argKind;
+        }
+
         bool allCopyable = true;
         for (int i = 0; i < argTypes.Length; i++)
         {
@@ -812,14 +850,14 @@ public sealed partial class Lowering
             }
 
             if (!CanArenaReset(argTypes[i])
-                && GetTcoCopyOutKind(argTypes[i], out _, out _) == CopyOutKind.None)
+                && ArgCopyOutKind(i, out _, out _) == CopyOutKind.None)
             {
                 allCopyable = false;
                 break;
             }
 
             if (Prune(argTypes[i]) is TypeRef.TList
-                && GetTcoCopyOutKind(argTypes[i], out _, out _) != CopyOutKind.DeepAdt
+                && ArgCopyOutKind(i, out _, out _) != CopyOutKind.DeepAdt
                 && !info.SingleFreshCons[i])
             {
                 allCopyable = false;
@@ -842,7 +880,7 @@ public sealed partial class Lowering
                 || Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBigInt
                 || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
                 || (Prune(argTypes[i]) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(argTypes[i])))
-                || (Prune(argTypes[i]) is TypeRef.TList && GetTcoCopyOutKind(argTypes[i], out _, out _) == CopyOutKind.DeepAdt));
+                || (Prune(argTypes[i]) is TypeRef.TList && ArgCopyOutKind(i, out _, out _) == CopyOutKind.DeepAdt));
         int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
 
@@ -945,7 +983,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            var kind = GetTcoCopyOutKind(argTypes[i], out int sizeBytes, out var headCopy);
+            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
             if (kind == CopyOutKind.None)
             {
                 upCopyTemps[i] = -1;
@@ -998,7 +1036,7 @@ public sealed partial class Lowering
             if (upCopyTemps[i] < 0)
                 continue;
 
-            var kind = GetTcoCopyOutKind(argTypes[i], out int sizeBytes, out var headCopy);
+            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
             int copyDest;
             if (kind == CopyOutKind.DeepAdt)
             {
@@ -3177,6 +3215,7 @@ public sealed partial class Lowering
                 // may have to wait until inference finishes (see below).
                 var passThrough = new bool[newArgTypes.Length];
                 var singleFreshCons = new bool[newArgTypes.Length];
+                var freshListRebuild = new bool[newArgTypes.Length];
                 var stableAccArg = new bool[newArgTypes.Length];
                 for (int i = 0; i < newArgTypes.Length; i++)
                 {
@@ -3207,6 +3246,11 @@ public sealed partial class Lowering
                         && cons.Tail is Expr.Var tailVar
                         && tco.ParamNames.Contains(tailVar.Name);
 
+                    // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
+                    // licensed only when the list was freshly REBUILT this iteration (see
+                    // IsFreshListRebuildExpr); a threaded/consumed shape falls back to no reset.
+                    freshListRebuild[i] = IsFreshListRebuildExpr(argExpr);
+
                     // A fully-reusing specialized accumulator is rewritten in place below the
                     // watermark, so it survives a plain reset.
                     stableAccArg[i] = i < tco.ParamNames.Count
@@ -3221,6 +3265,7 @@ public sealed partial class Lowering
                     newArgTypes,
                     passThrough,
                     singleFreshCons,
+                    freshListRebuild,
                     stableAccArg,
                     tco.ParamSlots.ToArray(),
                     tco.FixedCursorSlot,
