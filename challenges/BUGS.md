@@ -12,8 +12,8 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
-Current tally: **14 FIXED**, **3 OPEN**
-(#4/#5 — the ownership / in-place-reuse milestone; #6 — Knuth Algorithm D division). Everything
+Current tally: **15 FIXED**, **2 OPEN**
+(#4/#5 — the ownership / in-place-reuse milestone). Everything
 point-fixable has been fixed; the remaining items need milestone-scale work.
 
 Reproduce any snippet with the prebuilt compiler:
@@ -109,8 +109,19 @@ Nesting a list-builder helper inside a loop (`outer` threads a list through `inn
 makes each call deep-copy the whole growing list -> O(N^2). Found while writing `mandelbrot` (worked
 around by keeping the bit-packer a single flat loop). Same ownership milestone as #4.
 
-### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [OPEN]
-Binary long-division dominates; needs Knuth Algorithm D / Karatsuba multiply. Not a memory issue.
+### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [FIXED]
+**[FIXED]** (`bigint_divmod_algorithm_d`): `bignum_divmod` rewritten from bit-by-bit binary long
+division (one compare/subtract pass over the divisor per DIVIDEND BIT) to **Knuth Algorithm D in
+base 2^32** — the Hacker's Delight `divmnu64` formulation, one quotient DIGIT per outer iteration.
+Digits are the 32-bit halves of the 64-bit limbs, so every intermediate (two-digit dividends, digit
+products, signed borrows) fits native i64 arithmetic — no i128 division, hence no `__udivti3`
+libcall in the freestanding binary. Single-digit divisors take a short-division path (one native
+64/32 divide per digit). The caller passes a scratch buffer (normalized divisor + working dividend,
+`la+lb+4` words). **pidigits N=1000: 3.46 s -> 0.027 s (~128x); N=500: 0.41 s -> 0.007 s; N=2000 now
+0.11 s** — output byte-identical to the old implementation. Edge coverage includes the canonical
+add-back trigger, the qhat correction loop, odd digit counts, exact/equal/short/negative cases,
+verified on all three targets. Karatsuba multiply remains unimplemented (schoolbook `mul` is now the
+next asymptotic ceiling, but no benchmark currently hits it).
 
 ## Standard library
 

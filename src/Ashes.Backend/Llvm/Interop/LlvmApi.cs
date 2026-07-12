@@ -323,6 +323,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildLShr", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildLShr(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildAShr", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle BuildAShr(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
+
     // ── Comparison instructions ─────────────────────────────────────────
     [LibraryImport(Lib, EntryPoint = "LLVMBuildICmp", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildICmp(LlvmBuilderHandle b, LlvmIntPredicate op, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);

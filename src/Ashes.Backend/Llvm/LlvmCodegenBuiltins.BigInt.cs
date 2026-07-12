@@ -70,13 +70,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle lb = BigIntLimbCount(state, right, "bigint_dr");
         LlvmValueHandle qAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, la, 2)));
         LlvmValueHandle rAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, lb, 2)));
+        // Algorithm D scratch: normalized divisor (2*lb digits) + working dividend (2*la + 1 digits),
+        // as 32-bit digits — la + lb + 4 words covers both with slack.
+        LlvmValueHandle laLb = LlvmApi.BuildAdd(state.Target.Builder, la, lb, "bigint_dsw");
+        LlvmValueHandle scratchAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, laLb, 4)));
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
-        LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr]);
+        LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr]);
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, BigIntDivModFn);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, fn,
             [BigIntAsPtr(state, left, "bigint_da"), BigIntAsPtr(state, right, "bigint_db"),
-             BigIntAsPtr(state, qAddress, "bigint_q"), BigIntAsPtr(state, rAddress, "bigint_r")], "");
+             BigIntAsPtr(state, qAddress, "bigint_q"), BigIntAsPtr(state, rAddress, "bigint_r"),
+             BigIntAsPtr(state, scratchAddress, "bigint_dscratch")], "");
         return returnQuotient ? qAddress : rAddress;
     }
 
@@ -214,6 +219,7 @@ internal static partial class LlvmCodegen
         internal readonly LlvmBuilderHandle B = target.Builder;
         internal readonly LlvmContextHandle Ctx = target.Context;
         internal readonly LlvmTypeHandle I8 = LlvmApi.Int8TypeInContext(target.Context);
+        internal readonly LlvmTypeHandle I32 = LlvmApi.Int32TypeInContext(target.Context);
         internal readonly LlvmTypeHandle I64 = LlvmApi.Int64TypeInContext(target.Context);
         internal readonly LlvmTypeHandle I128 = LlvmApi.IntTypeInContext(target.Context, 128);
         internal readonly LlvmTypeHandle Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
@@ -251,6 +257,18 @@ internal static partial class LlvmCodegen
         internal void StW(LlvmValueHandle basePtr, LlvmValueHandle idx, LlvmValueHandle val) => LlvmApi.BuildStore(B, val, WordPtr(basePtr, idx, "wp"));
         internal LlvmValueHandle Count(LlvmValueHandle p, string n) => And(LdW(p, K(0), n + "_h"), K(0xFFFFFFFF), n);
         internal LlvmValueHandle Neg(LlvmValueHandle p, string n) => And(Lshr(LdW(p, K(0), n + "_h2"), K(32), n + "_s"), K(1), n);
+        internal LlvmValueHandle Ashr(LlvmValueHandle a, LlvmValueHandle b, string n) => LlvmApi.BuildAShr(B, a, b, n);
+        internal LlvmValueHandle URem(LlvmValueHandle a, LlvmValueHandle b, string n) => LlvmApi.BuildURem(B, a, b, n);
+
+        // 32-bit digit view of a magnitude: base-2^32 digits, little-endian (digit 0 = the low half of
+        // limb 1). For a bignum pointer the digits start at i32 index 2 (past the 8-byte header);
+        // for a raw scratch buffer they start at index 0 — the caller passes the bias.
+        internal LlvmValueHandle DigPtr(LlvmValueHandle basePtr, LlvmValueHandle idx, long bias, string n)
+            => LlvmApi.BuildGEP2(B, I32, basePtr, [Add(idx, K(bias), n + "_i")], n);
+        internal LlvmValueHandle LdDig(LlvmValueHandle basePtr, LlvmValueHandle idx, long bias, string n)
+            => ZExt64(LlvmApi.BuildLoad2(B, I32, DigPtr(basePtr, idx, bias, n + "_p"), n + "_32"), n);
+        internal void StDig(LlvmValueHandle basePtr, LlvmValueHandle idx, long bias, LlvmValueHandle val64)
+            => LlvmApi.BuildStore(B, LlvmApi.BuildTrunc(B, val64, I32, "dig_tr"), DigPtr(basePtr, idx, bias, "dig_dst"));
 
         internal LlvmValueHandle Declare(string name, LlvmTypeHandle ret, LlvmTypeHandle[] ps)
         {
@@ -778,11 +796,18 @@ internal static partial class LlvmCodegen
         e.RetVoid();
     }
 
-    // divmod(a, b, q, r): binary long division, truncated toward zero.
+    // divmod(a, b, q, r, scratch): Knuth Algorithm D in base 2^32 (the Hacker's Delight divmnu64
+    // formulation), truncated toward zero. Digits are 32-bit halves of the 64-bit limbs, so every
+    // intermediate (two-digit dividends, digit products, signed borrows) fits native i64 arithmetic —
+    // no i128 division, hence no __udivti3 libcall in the freestanding binary. Replaces the previous
+    // bit-by-bit binary long division: the outer loop runs once per QUOTIENT DIGIT instead of once
+    // per DIVIDEND BIT (~32x fewer iterations at the same O(n) inner cost). scratch holds the
+    // normalized divisor and working dividend: vn digits at [0..n-1], un digits at [n..n+m]
+    // (la + lb + 4 words, allocated by the caller).
     private static void EmitBiDivMod(Bi e)
     {
-        var fn = e.Declare(BigIntDivModFn, e.Void, [e.Ptr, e.Ptr, e.Ptr, e.Ptr]);
-        LlvmValueHandle a = e.Param(fn, 0), b = e.Param(fn, 1), q = e.Param(fn, 2), r = e.Param(fn, 3);
+        var fn = e.Declare(BigIntDivModFn, e.Void, [e.Ptr, e.Ptr, e.Ptr, e.Ptr, e.Ptr]);
+        LlvmValueHandle a = e.Param(fn, 0), b = e.Param(fn, 1), q = e.Param(fn, 2), r = e.Param(fn, 3), scratch = e.Param(fn, 4);
         var entry = e.Blk(fn, "entry");
         var trivial = e.Blk(fn, "trivial");
         var copyR = e.Blk(fn, "copy_r");
@@ -790,8 +815,8 @@ internal static partial class LlvmCodegen
         var proceed = e.Blk(fn, "proceed");
 
         var cmpTy = LlvmApi.FunctionType(e.I64, [e.Ptr, e.I64, e.Ptr, e.I64]);
-        var magTy = LlvmApi.FunctionType(e.I64, [e.Ptr, e.I64, e.Ptr, e.I64, e.Ptr]);
         var normTy = LlvmApi.FunctionType(e.Void, [e.Ptr, e.I64, e.I64]);
+        var big = e.K(0x100000000); // the base, 2^32
 
         e.At(entry);
         var na = e.Count(a, "na");
@@ -818,131 +843,270 @@ internal static partial class LlvmCodegen
         e.RetVoid();
 
         e.At(proceed);
-        // q limbs = 0 for [1..na]; r starts empty (rn=0)
         var qInitLoop = e.Blk(fn, "qinit_loop");
         var qInitBody = e.Blk(fn, "qinit_body");
-        var bitLoop = e.Blk(fn, "bit_loop");
-        var bitBody = e.Blk(fn, "bit_body");
-        var reduce = e.Blk(fn, "reduce");
-        var noReduce = e.Blk(fn, "no_reduce");
+        var countDigits = e.Blk(fn, "count_digits");
+        var shortDiv = e.Blk(fn, "short_div");
+        var longDiv = e.Blk(fn, "long_div");
         var finish = e.Blk(fn, "finish");
 
-        var kSlot = e.Slot("k");
-        var bitSlot = e.Slot("bit");
+        var idxSlot = e.Slot("idx");
         var rnSlot = e.Slot("rn");
-        // bit length of a: (na-1)*64 + bits(top limb)
-        var topLimb = e.LdW(a, na, "top");
-        // compute high bit index of topLimb via a small loop
-        var bl = EmitBiBitLength(e, fn, na, topLimb);
 
-        e.St(e.K(1), kSlot);
+        // q limbs = 0 for [1..na] — quotient digits are written as 32-bit stores below, so the
+        // whole limb area must start zeroed.
+        e.St(e.K(1), idxSlot);
         e.Br(qInitLoop);
         e.At(qInitLoop);
-        e.CBr(e.Cmp(LlvmIntPredicate.Sle, e.Ld(kSlot, "k"), na, "k_le"), qInitBody, bitLoop);
+        e.CBr(e.Cmp(LlvmIntPredicate.Sle, e.Ld(idxSlot, "k"), na, "k_le"), qInitBody, countDigits);
         e.At(qInitBody);
-        var kv = e.Ld(kSlot, "kv");
+        var kv = e.Ld(idxSlot, "kv");
         e.StW(q, kv, e.K(0));
-        e.St(e.Add(kv, e.K(1), "kinc"), kSlot);
+        e.St(e.Add(kv, e.K(1), "kinc"), idxSlot);
         e.Br(qInitLoop);
 
-        e.At(bitLoop);
-        e.St(e.K(0), rnSlot);
-        e.St(e.Sub(bl, e.K(1), "bl_1"), bitSlot); // bit = abits-1
-        e.Br(bitBody);
-        e.At(bitBody);
-        var bit = e.Ld(bitSlot, "bit");
-        var moreBits = e.Cmp(LlvmIntPredicate.Sge, bit, e.K(0), "bit_ge0");
-        var bitStep = e.Blk(fn, "bit_step");
-        e.CBr(moreBits, bitStep, finish);
-        e.At(bitStep);
-        // ab = (a[1 + bit/64] >> (bit%64)) & 1
-        var limbIdx = e.Add(e.K(1), e.UDiv(bit, e.K(64), "bit_div"), "limb_idx");
-        var off = e.Sub(bit, e.Mul(e.UDiv(bit, e.K(64), "bd2"), e.K(64), "bd2m"), "off"); // bit%64
-        var abit = e.And(e.Lshr(e.LdW(a, limbIdx, "alimb"), off, "ash"), e.K(1), "abit");
-        // r = r*2 + abit  (shl1_or)
-        EmitBiShl1Or(e, fn, r, rnSlot, abit);
-        // if cmp_mag(r, rn, b, nb) >= 0: r -= b; set q bit
-        var rn = e.Ld(rnSlot, "rn");
-        var c2 = LlvmApi.BuildCall2(e.B, cmpTy, e.Get("bi_cmp_mag"), [r, rn, b, nb], "c2");
-        e.CBr(e.Cmp(LlvmIntPredicate.Sge, c2, e.K(0), "r_ge_b"), reduce, noReduce);
-        e.At(reduce);
-        var rn2 = LlvmApi.BuildCall2(e.B, magTy, e.Get("bi_sub_mag"), [r, e.Ld(rnSlot, "rn2"), b, nb, r], "rsub");
-        e.St(rn2, rnSlot);
-        EmitBiStripZeros(e, fn, r, rnSlot, "rstrip");
-        // set bit in q: q[1+bit/64] |= (1 << (bit%64))
-        var qIdx = e.Add(e.K(1), e.UDiv(bit, e.K(64), "qd"), "q_idx");
-        var qcur = e.LdW(q, qIdx, "qcur");
-        e.StW(q, qIdx, e.Or(qcur, e.Shl(e.K(1), off, "qbit"), "qset"));
-        e.Br(noReduce);
-        e.At(noReduce);
-        e.St(e.Sub(e.Ld(bitSlot, "bd"), e.K(1), "bit_dec"), bitSlot);
-        e.Br(bitBody);
+        // Digit counts: m/n = 2*limbs, minus one when the top 32-bit digit is zero (Algorithm D
+        // requires a non-zero top divisor digit; |a| >= |b| here, so m >= n >= 1).
+        e.At(countDigits);
+        var m0 = e.Mul(na, e.K(2), "m0");
+        var mTop = e.LdDig(a, e.Sub(m0, e.K(1), "m0_1"), 2, "m_top");
+        var m = e.Sel(e.Cmp(LlvmIntPredicate.Eq, mTop, e.K(0), "mtz"), e.Sub(m0, e.K(1), "m_dec"), m0, "m");
+        var n0 = e.Mul(nb, e.K(2), "n0");
+        var nTop = e.LdDig(b, e.Sub(n0, e.K(1), "n0_1"), 2, "n_top");
+        var n = e.Sel(e.Cmp(LlvmIntPredicate.Eq, nTop, e.K(0), "ntz"), e.Sub(n0, e.K(1), "n_dec"), n0, "n");
+        e.CBr(e.Cmp(LlvmIntPredicate.Eq, n, e.K(1), "n_is_1"), shortDiv, longDiv);
+
+        // ── Short division: single-digit divisor, one native 64/32 divide per dividend digit ──
+        {
+            e.At(shortDiv);
+            var sdLoop = e.Blk(fn, "sd_loop");
+            var sdBody = e.Blk(fn, "sd_body");
+            var sdDone = e.Blk(fn, "sd_done");
+            var v0 = e.LdDig(b, e.K(0), 2, "v0");
+            var remSlot = e.Slot("sd_rem");
+            e.St(e.K(0), remSlot);
+            e.St(e.Sub(m, e.K(1), "sd_j0"), idxSlot);
+            e.Br(sdLoop);
+            e.At(sdLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Sge, e.Ld(idxSlot, "sd_j"), e.K(0), "sd_more"), sdBody, sdDone);
+            e.At(sdBody);
+            var j = e.Ld(idxSlot, "sd_jv");
+            var cur = e.Or(e.Shl(e.Ld(remSlot, "sd_r"), e.K(32), "sd_rs"), e.LdDig(a, j, 2, "sd_u"), "sd_cur");
+            e.StDig(q, j, 2, e.UDiv(cur, v0, "sd_qd"));
+            e.St(e.URem(cur, v0, "sd_rr"), remSlot);
+            e.St(e.Sub(j, e.K(1), "sd_jd"), idxSlot);
+            e.Br(sdLoop);
+            e.At(sdDone);
+            var remV = e.Ld(remSlot, "sd_remf");
+            e.StW(r, e.K(1), remV);
+            e.St(e.Sel(e.Cmp(LlvmIntPredicate.Eq, remV, e.K(0), "sd_rz"), e.K(0), e.K(1), "sd_rn"), rnSlot);
+            e.Br(finish);
+        }
+
+        // ── Algorithm D proper (n >= 2) ──────────────────────────────────────────────────────
+        {
+            e.At(longDiv);
+            // s = nlz32(vn top digit): shift so the divisor's top digit has its high bit set.
+            var sSlot = e.Slot("d_s");
+            var tSlot = e.Slot("d_t");
+            var nlzLoop = e.Blk(fn, "nlz_loop");
+            var nlzBody = e.Blk(fn, "nlz_body");
+            var nlzDone = e.Blk(fn, "nlz_done");
+            e.St(e.K(0), sSlot);
+            e.St(e.LdDig(b, e.Sub(n, e.K(1), "vt_i"), 2, "vt"), tSlot);
+            e.Br(nlzLoop);
+            e.At(nlzLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Ult, e.Ld(tSlot, "t"), e.K(0x80000000), "t_lo"), nlzBody, nlzDone);
+            e.At(nlzBody);
+            e.St(e.Shl(e.Ld(tSlot, "t2"), e.K(1), "t_shl"), tSlot);
+            e.St(e.Add(e.Ld(sSlot, "s2"), e.K(1), "s_inc"), sSlot);
+            e.Br(nlzLoop);
+            e.At(nlzDone);
+            var s = e.Ld(sSlot, "s");
+            var rs = e.Sub(e.K(32), s, "rs"); // right-shift amount; a zext'd digit >> 32 is 0, so s == 0 is uniform
+
+            // vn (normalized divisor) at scratch digits [0..n-1].
+            var vnLoop = e.Blk(fn, "vn_loop");
+            var vnBody = e.Blk(fn, "vn_body");
+            var vnDone = e.Blk(fn, "vn_done");
+            e.St(e.Sub(n, e.K(1), "vn_i0"), idxSlot);
+            e.Br(vnLoop);
+            e.At(vnLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Sge, e.Ld(idxSlot, "vn_i"), e.K(1), "vn_more"), vnBody, vnDone);
+            e.At(vnBody);
+            var vi = e.Ld(idxSlot, "vn_iv");
+            var vnVal = e.Or(
+                e.Shl(e.LdDig(b, vi, 2, "vn_hi"), s, "vn_hs"),
+                e.Lshr(e.LdDig(b, e.Sub(vi, e.K(1), "vn_i1"), 2, "vn_lo"), rs, "vn_ls"), "vn_val");
+            e.StDig(scratch, vi, 0, vnVal);
+            e.St(e.Sub(vi, e.K(1), "vn_id"), idxSlot);
+            e.Br(vnLoop);
+            e.At(vnDone);
+            e.StDig(scratch, e.K(0), 0, e.Shl(e.LdDig(b, e.K(0), 2, "vn_b0"), s, "vn_b0s"));
+
+            // un (normalized dividend, m+1 digits) at scratch digits [n..n+m].
+            var unLoop = e.Blk(fn, "un_loop");
+            var unBody = e.Blk(fn, "un_body");
+            var unDone = e.Blk(fn, "un_done");
+            e.StDig(scratch, e.Add(n, m, "un_top_i"), 0, e.Lshr(e.LdDig(a, e.Sub(m, e.K(1), "un_m1"), 2, "un_top_src"), rs, "un_top"));
+            e.St(e.Sub(m, e.K(1), "un_i0"), idxSlot);
+            e.Br(unLoop);
+            e.At(unLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Sge, e.Ld(idxSlot, "un_i"), e.K(1), "un_more"), unBody, unDone);
+            e.At(unBody);
+            var ui = e.Ld(idxSlot, "un_iv");
+            var unVal = e.Or(
+                e.Shl(e.LdDig(a, ui, 2, "un_hi"), s, "un_hs"),
+                e.Lshr(e.LdDig(a, e.Sub(ui, e.K(1), "un_i1"), 2, "un_lo"), rs, "un_ls"), "un_val");
+            e.StDig(scratch, e.Add(n, ui, "un_di"), 0, unVal);
+            e.St(e.Sub(ui, e.K(1), "un_id"), idxSlot);
+            e.Br(unLoop);
+            e.At(unDone);
+            e.StDig(scratch, n, 0, e.Shl(e.LdDig(a, e.K(0), 2, "un_a0"), s, "un_a0s"));
+
+            // Main loop: one quotient digit per iteration, j = m-n down to 0.
+            var jSlot = e.Slot("d_j");
+            var qhatSlot = e.Slot("d_qhat");
+            var rhatSlot = e.Slot("d_rhat");
+            var kSlot = e.Slot("d_k");
+            var iSlot = e.Slot("d_i");
+            var jLoop = e.Blk(fn, "j_loop");
+            var jBody = e.Blk(fn, "j_body");
+            var corrCheck = e.Blk(fn, "corr_check");
+            var corrMul = e.Blk(fn, "corr_mul");
+            var corrDec = e.Blk(fn, "corr_dec");
+            var mulSub = e.Blk(fn, "mul_sub");
+            var msLoop = e.Blk(fn, "ms_loop");
+            var msBody = e.Blk(fn, "ms_body");
+            var msDone = e.Blk(fn, "ms_done");
+            var addBack = e.Blk(fn, "add_back");
+            var abLoop = e.Blk(fn, "ab_loop");
+            var abBody = e.Blk(fn, "ab_body");
+            var abDone = e.Blk(fn, "ab_done");
+            var jNext = e.Blk(fn, "j_next");
+            var denorm = e.Blk(fn, "denorm");
+
+            var vtn = e.LdDig(scratch, e.Sub(n, e.K(1), "vtn_i"), 0, "vtn");
+            var vtn2 = e.LdDig(scratch, e.Sub(n, e.K(2), "vtn2_i"), 0, "vtn2");
+
+            e.St(e.Sub(m, n, "j0"), jSlot);
+            e.Br(jLoop);
+            e.At(jLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Sge, e.Ld(jSlot, "j"), e.K(0), "j_more"), jBody, denorm);
+
+            e.At(jBody);
+            var jv = e.Ld(jSlot, "jv");
+            // qhat = (un[j+n]*B + un[j+n-1]) / vn[n-1]; rhat = the remainder. Both dividend digits
+            // fit one i64, and vtn >= 2^31 after normalization.
+            var numHi = e.LdDig(scratch, e.Add(n, e.Add(jv, n, "jn"), "jn_i"), 0, "num_hi");
+            var numLo = e.LdDig(scratch, e.Add(n, e.Sub(e.Add(jv, n, "jn2"), e.K(1), "jn_1"), "jn1_i"), 0, "num_lo");
+            var num = e.Or(e.Shl(numHi, e.K(32), "num_hs"), numLo, "num");
+            e.St(e.UDiv(num, vtn, "qhat0"), qhatSlot);
+            e.St(e.URem(num, vtn, "rhat0"), rhatSlot);
+            e.Br(corrCheck);
+
+            // Correct qhat down (at most twice): while qhat >= B, or qhat*vn[n-2] overshoots
+            // rhat*B + un[j+n-2]. The multiply is only evaluated once qhat < B (else it could
+            // overflow i64) — the short-circuit mirrors the C formulation.
+            e.At(corrCheck);
+            e.CBr(e.Cmp(LlvmIntPredicate.Uge, e.Ld(qhatSlot, "qh_c"), big, "qh_big"), corrDec, corrMul);
+            e.At(corrMul);
+            var prod = e.Mul(e.Ld(qhatSlot, "qh_m"), vtn2, "corr_prod");
+            var rhs = e.Or(e.Shl(e.Ld(rhatSlot, "rh_m"), e.K(32), "rh_s"), e.LdDig(scratch, e.Add(n, e.Sub(e.Add(e.Ld(jSlot, "j_m"), n, "jn3"), e.K(2), "jn_2"), "jn2_i"), 0, "un_jn2"), "corr_rhs");
+            e.CBr(e.Cmp(LlvmIntPredicate.Ugt, prod, rhs, "overshoot"), corrDec, mulSub);
+            e.At(corrDec);
+            e.St(e.Sub(e.Ld(qhatSlot, "qh_d"), e.K(1), "qh_dec"), qhatSlot);
+            var rhNew = e.Add(e.Ld(rhatSlot, "rh_d"), vtn, "rh_inc");
+            e.St(rhNew, rhatSlot);
+            e.CBr(e.Cmp(LlvmIntPredicate.Ult, rhNew, big, "rh_small"), corrCheck, mulSub);
+
+            // Multiply-and-subtract qhat*vn from un[j..j+n], tracking a SIGNED borrow k
+            // (p's high half via logical shift, t's sign via arithmetic shift).
+            e.At(mulSub);
+            e.St(e.K(0), kSlot);
+            e.St(e.K(0), iSlot);
+            e.Br(msLoop);
+            e.At(msLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Slt, e.Ld(iSlot, "ms_i"), n, "ms_more"), msBody, msDone);
+            e.At(msBody);
+            var msI = e.Ld(iSlot, "ms_iv");
+            var msJ = e.Ld(jSlot, "ms_j");
+            var p = e.Mul(e.Ld(qhatSlot, "ms_qh"), e.LdDig(scratch, msI, 0, "ms_vn"), "ms_p");
+            var unIj = e.Add(n, e.Add(msI, msJ, "ms_ij"), "ms_ij_i");
+            var t = e.Sub(e.Sub(e.LdDig(scratch, unIj, 0, "ms_un"), e.Ld(kSlot, "ms_k"), "ms_t1"), e.And(p, e.K(0xFFFFFFFF), "ms_pl"), "ms_t");
+            e.StDig(scratch, unIj, 0, t);
+            e.St(e.Sub(e.Lshr(p, e.K(32), "ms_ph"), e.Ashr(t, e.K(32), "ms_ts"), "ms_k2"), kSlot);
+            e.St(e.Add(msI, e.K(1), "ms_inc"), iSlot);
+            e.Br(msLoop);
+            e.At(msDone);
+            var jvd = e.Ld(jSlot, "msd_j");
+            var unJn = e.Add(n, e.Add(jvd, n, "msd_jn"), "msd_jn_i");
+            var t2 = e.Sub(e.LdDig(scratch, unJn, 0, "msd_un"), e.Ld(kSlot, "msd_k"), "msd_t2");
+            e.StDig(scratch, unJn, 0, t2);
+            e.StDig(q, jvd, 2, e.Ld(qhatSlot, "msd_qh"));
+            e.CBr(e.Cmp(LlvmIntPredicate.Slt, t2, e.K(0), "underflow"), addBack, jNext);
+
+            // Rare add-back (qhat was one too large): q[j]--, un += vn.
+            e.At(addBack);
+            e.StDig(q, e.Ld(jSlot, "ab_j"), 2, e.Sub(e.Ld(qhatSlot, "ab_qh"), e.K(1), "ab_dec"));
+            e.St(e.K(0), kSlot);
+            e.St(e.K(0), iSlot);
+            e.Br(abLoop);
+            e.At(abLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Slt, e.Ld(iSlot, "ab_i"), n, "ab_more"), abBody, abDone);
+            e.At(abBody);
+            var abI = e.Ld(iSlot, "ab_iv");
+            var abIj = e.Add(n, e.Add(abI, e.Ld(jSlot, "ab_j2"), "ab_ij"), "ab_ij_i");
+            var t3 = e.Add(e.Add(e.LdDig(scratch, abIj, 0, "ab_un"), e.LdDig(scratch, abI, 0, "ab_vn"), "ab_s1"), e.Ld(kSlot, "ab_k"), "ab_t3");
+            e.StDig(scratch, abIj, 0, t3);
+            e.St(e.Lshr(t3, e.K(32), "ab_carry"), kSlot);
+            e.St(e.Add(abI, e.K(1), "ab_inc"), iSlot);
+            e.Br(abLoop);
+            e.At(abDone);
+            var abJn = e.Add(n, e.Add(e.Ld(jSlot, "ab_j3"), n, "ab_jn"), "ab_jn_i");
+            e.StDig(scratch, abJn, 0, e.Add(e.LdDig(scratch, abJn, 0, "ab_top"), e.Ld(kSlot, "ab_kf"), "ab_top2"));
+            e.Br(jNext);
+
+            e.At(jNext);
+            e.St(e.Sub(e.Ld(jSlot, "j_d"), e.K(1), "j_dec"), jSlot);
+            e.Br(jLoop);
+
+            // Remainder: denormalize un[0..n-1] >> s into r's digits (the i64 shifts make the
+            // s == 0 case uniform: << 32 truncates away, >> 32 zeroes).
+            e.At(denorm);
+            var dnLoop = e.Blk(fn, "dn_loop");
+            var dnBody = e.Blk(fn, "dn_body");
+            var dnDone = e.Blk(fn, "dn_done");
+            e.St(e.K(0), idxSlot);
+            e.Br(dnLoop);
+            e.At(dnLoop);
+            e.CBr(e.Cmp(LlvmIntPredicate.Slt, e.Ld(idxSlot, "dn_i"), n, "dn_more"), dnBody, dnDone);
+            e.At(dnBody);
+            var di = e.Ld(idxSlot, "dn_iv");
+            var rd = e.Or(
+                e.Lshr(e.LdDig(scratch, e.Add(n, di, "dn_di"), 0, "dn_lo"), s, "dn_lsh"),
+                e.Shl(e.LdDig(scratch, e.Add(n, e.Add(di, e.K(1), "dn_i1"), "dn_di1"), 0, "dn_hi"), rs, "dn_hsh"), "dn_val");
+            e.StDig(r, di, 2, rd);
+            e.St(e.Add(di, e.K(1), "dn_inc"), idxSlot);
+            e.Br(dnLoop);
+            e.At(dnDone);
+            // Odd digit count: zero the top half of r's top limb, which the digit loop never wrote.
+            var padBlk = e.Blk(fn, "dn_pad");
+            var rnBlk = e.Blk(fn, "dn_rn");
+            e.CBr(e.Cmp(LlvmIntPredicate.Ne, e.And(n, e.K(1), "n_odd"), e.K(0), "is_odd"), padBlk, rnBlk);
+            e.At(padBlk);
+            e.StDig(r, n, 2, e.K(0));
+            e.Br(rnBlk);
+            e.At(rnBlk);
+            e.St(e.Lshr(e.Add(n, e.K(1), "n_1"), e.K(1), "rn_limbs"), rnSlot);
+            e.Br(finish);
+        }
 
         e.At(finish);
         var qneg = e.And(LlvmApi.BuildXor(e.B, e.Neg(a, "san"), e.Neg(b, "sbn"), "qx"), e.K(1), "qneg");
         LlvmApi.BuildCall2(e.B, normTy, e.Get("bi_normalize"), [q, qneg, na], "");
         LlvmApi.BuildCall2(e.B, normTy, e.Get("bi_normalize"), [r, e.Neg(a, "ran"), e.Ld(rnSlot, "rnf")], "");
         e.RetVoid();
-    }
-
-    // bit length of magnitude with na limbs whose top limb is topLimb: (na-1)*64 + highbit(topLimb)+1.
-    private static LlvmValueHandle EmitBiBitLength(Bi e, LlvmValueHandle fn, LlvmValueHandle na, LlvmValueHandle topLimb)
-    {
-        var pre = e.Blk(fn, "bl_pre");
-        var loop = e.Blk(fn, "bl_loop");
-        var body = e.Blk(fn, "bl_body");
-        var doneBB = e.Blk(fn, "bl_done");
-        e.Br(pre);
-        e.At(pre);
-        var bitsSlot = e.Slot("bl_bits");
-        var topSlot = e.Slot("bl_top");
-        e.St(e.Mul(e.Sub(na, e.K(1), "na_1"), e.K(64), "base_bits"), bitsSlot);
-        e.St(topLimb, topSlot);
-        e.Br(loop);
-        e.At(loop);
-        e.CBr(e.Cmp(LlvmIntPredicate.Ne, e.Ld(topSlot, "t"), e.K(0), "t_nz"), body, doneBB);
-        e.At(body);
-        e.St(e.Add(e.Ld(bitsSlot, "bb"), e.K(1), "binc"), bitsSlot);
-        e.St(e.Lshr(e.Ld(topSlot, "tt"), e.K(1), "tsh"), topSlot);
-        e.Br(loop);
-        e.At(doneBB);
-        return e.Ld(bitsSlot, "bl_result");
-    }
-
-    // r = r*2 + bit (bit in {0,1}); r has *rnSlot limbs with room for one more.
-    private static void EmitBiShl1Or(Bi e, LlvmValueHandle fn, LlvmValueHandle r, LlvmValueHandle rnSlot, LlvmValueHandle bit)
-    {
-        var pre = e.Blk(fn, "shl_pre");
-        var loop = e.Blk(fn, "shl_loop");
-        var body = e.Blk(fn, "shl_body");
-        var after = e.Blk(fn, "shl_after");
-        var grow = e.Blk(fn, "shl_grow");
-        var doneBB = e.Blk(fn, "shl_done");
-        e.Br(pre);
-        e.At(pre);
-        var iSlot = e.Slot("shl_i");
-        var carrySlot = e.Slot("shl_carry");
-        e.St(e.K(1), iSlot);
-        e.St(e.And(bit, e.K(1), "bit1"), carrySlot);
-        e.Br(loop);
-        e.At(loop);
-        e.CBr(e.Cmp(LlvmIntPredicate.Sle, e.Ld(iSlot, "i"), e.Ld(rnSlot, "rn"), "i_le"), body, after);
-        e.At(body);
-        var i2 = e.Ld(iSlot, "iv");
-        var x = e.LdW(r, i2, "x");
-        var carry = e.Ld(carrySlot, "carry");
-        e.StW(r, i2, e.Or(e.Shl(x, e.K(1), "xsh"), carry, "xor"));
-        e.St(e.Lshr(x, e.K(63), "newc"), carrySlot);
-        e.St(e.Add(i2, e.K(1), "inc"), iSlot);
-        e.Br(loop);
-        e.At(after);
-        e.CBr(e.Cmp(LlvmIntPredicate.Ne, e.Ld(carrySlot, "cf"), e.K(0), "has_c"), grow, doneBB);
-        e.At(grow);
-        var nn = e.Add(e.Ld(rnSlot, "rn2"), e.K(1), "rn_inc");
-        e.St(nn, rnSlot);
-        e.StW(r, nn, e.Ld(carrySlot, "cc"));
-        e.Br(doneBB);
-        e.At(doneBB);
     }
 
     // to_decimal(a, scratch, out): write { i64 len, ascii bytes } into out.
