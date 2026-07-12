@@ -1,8 +1,8 @@
 import Ashes.List
 let inc x = x + 1
-in 
+in
     let digits acc x = acc * 10 + x
-    in 
+    in
         [1, 2, 3]
         |> List.map(inc)
         |> List.reverse

@@ -12,20 +12,20 @@
 import Ashes.Map
 import Ashes.IO
 import Ashes.Text
-let cmp a b = 
+let cmp a b =
     if a == b
     then 0
-    else 
+    else
         if a <= b
         then -1
         else 1
 
-let valOf d k m = 
+let valOf d k m =
     match Ashes.Map.get(cmp)(k)(m) with
         | None -> d
         | Some(v) -> v
 
-let recursive bump n acc = 
+let recursive bump n acc =
     if n <= 0
     then acc
     else bump(n - 1)(Ashes.Map.set(cmp)(0)(999)(acc))

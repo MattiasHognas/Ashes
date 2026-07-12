@@ -66,7 +66,7 @@ public static class Formatter
         {
             sb.Append('\n');
         }
-        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return FinishOutput(sb, formattingOptions);
     }
 
     public static string Format(Expr expr)
@@ -89,7 +89,49 @@ public static class Formatter
             sb.Append('\n');
         }
 
-        return string.Equals(formattingOptions.NewLine, "\n", StringComparison.Ordinal) ? sb.ToString() : sb.ToString().Replace("\n", formattingOptions.NewLine, StringComparison.Ordinal);
+        return FinishOutput(sb, formattingOptions);
+    }
+
+    /// <summary>
+    /// Strips trailing spaces/tabs from every line, then applies the configured newline. The tree
+    /// writers append structural padding (e.g. the space after <c>=</c> or <c>-&gt;</c>) before
+    /// deciding to break the line, which would otherwise leave trailing whitespace. Trimming at the
+    /// line level is safe because string literals are emitted on a single line with escaped
+    /// <c>\n</c>, so a physical line never ends inside a literal.
+    /// </summary>
+    private static string FinishOutput(StringBuilder sb, FormattingOptions options)
+    {
+        var result = new StringBuilder(sb.Length);
+        int lineStart = 0;
+        for (int i = 0; i < sb.Length; i++)
+        {
+            if (sb[i] != '\n')
+            {
+                continue;
+            }
+
+            int lineEnd = i;
+            while (lineEnd > lineStart && (sb[lineEnd - 1] == ' ' || sb[lineEnd - 1] == '\t'))
+            {
+                lineEnd--;
+            }
+
+            for (int j = lineStart; j < lineEnd; j++)
+            {
+                result.Append(sb[j]);
+            }
+
+            result.Append('\n');
+            lineStart = i + 1;
+        }
+
+        for (int j = lineStart; j < sb.Length; j++)
+        {
+            result.Append(sb[j]);
+        }
+
+        string text = result.ToString();
+        return string.Equals(options.NewLine, "\n", StringComparison.Ordinal) ? text : text.Replace("\n", options.NewLine, StringComparison.Ordinal);
     }
 
     private static void WriteTypeDecl(StringBuilder sb, TypeDecl decl, FormattingOptions options)

@@ -3,17 +3,17 @@
 import Ashes.File
 import Ashes.IO
 import Ashes.Text
-let recursive go fh acc count = 
+let recursive go fh acc count =
     match Ashes.File.readLine(fh) with
         | None -> acc + "<count=" + Ashes.Text.fromInt(count) + ">"
         | Some(line) -> go(fh)(acc + line + "|")(count + 1)
 
-let result = 
+let result =
     match Ashes.File.open("lines.txt") with
         | Error(_e) -> "open-failed"
-        | Ok(fh) -> 
+        | Ok(fh) ->
             let text = go(fh)("")(0)
-            in 
+            in
                 let _closed = Ashes.File.close(fh)
                 in text
 in Ashes.IO.writeLine(result)

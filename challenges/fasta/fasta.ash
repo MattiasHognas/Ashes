@@ -19,106 +19,106 @@ let ic = 29573
 
 let alu = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACGAGGTCAGGAGATCGAGACCATCCTGGCTAACACGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAAAA"
 
-let iub r = 
+let iub r =
     if r < 0.27
     then "a"
-    else 
+    else
         if r < 0.39
         then "c"
-        else 
+        else
             if r < 0.51
             then "g"
-            else 
+            else
                 if r < 0.78
                 then "t"
-                else 
+                else
                     if r < 0.80
                     then "B"
-                    else 
+                    else
                         if r < 0.82
                         then "D"
-                        else 
+                        else
                             if r < 0.84
                             then "H"
-                            else 
+                            else
                                 if r < 0.86
                                 then "K"
-                                else 
+                                else
                                     if r < 0.88
                                     then "M"
-                                    else 
+                                    else
                                         if r < 0.90
                                         then "N"
-                                        else 
+                                        else
                                             if r < 0.92
                                             then "R"
-                                            else 
+                                            else
                                                 if r < 0.94
                                                 then "S"
-                                                else 
+                                                else
                                                     if r < 0.96
                                                     then "V"
-                                                    else 
+                                                    else
                                                         if r < 0.98
                                                         then "W"
                                                         else "Y"
 
-let homo r = 
+let homo r =
     if r < 0.3029549426680
     then "a"
-    else 
+    else
         if r < 0.5009432431601
         then "c"
-        else 
+        else
             if r < 0.6984905497992
             then "g"
             else "t"
 
-let recursive repeatFasta src remaining col out = 
+let recursive repeatFasta src remaining col out =
     if remaining == 0
-    then 
+    then
         if col == 0
         then out
         else out + "\n"
-    else 
+    else
         match text.uncons(src) with
             | None -> repeatFasta(alu)(remaining)(col)(out)
-            | Some((h, t)) -> 
+            | Some((h, t)) ->
                 if col == 60
                 then repeatFasta(t)(remaining - 1)(1)(out + "\n" + h)
                 else repeatFasta(t)(remaining - 1)(col + 1)(out + h)
 
-let recursive randomFasta table remaining col seed out = 
+let recursive randomFasta table remaining col seed out =
     if remaining == 0
-    then 
+    then
         if col == 0
         then (seed, out)
         else (seed, out + "\n")
-    else 
+    else
         let seed2 = (seed * ia + ic) % im
-        in 
+        in
             let r = math.toFloat(seed2) / math.toFloat(im)
-            in 
+            in
                 let ch = table(r)
-                in 
+                in
                     if col == 60
                     then randomFasta(table)(remaining - 1)(1)(seed2)(out + "\n" + ch)
                     else randomFasta(table)(remaining - 1)(col + 1)(seed2)(out + ch)
 
-let fasta n = 
+let fasta n =
     (let one = ">ONE Homo sapiens alu\n" + repeatFasta(alu)(2 * n)(0)("")
-    in 
+    in
         match randomFasta(iub)(3 * n)(0)(42)("") with
-            | (seed2, two) -> 
+            | (seed2, two) ->
                 match randomFasta(homo)(5 * n)(0)(seed2)("") with
-                    | (_, three) -> 
+                    | (_, three) ->
                         let _ = io.write(one)
-                        in 
+                        in
                             let _ = io.write(">TWO IUB ambiguity codes\n" + two)
                             in io.write(">THREE Homo sapiens frequency\n" + three))
 
 match io.args with
-    | arg :: _ -> 
+    | arg :: _ ->
         match text.parseInt(arg) with
             | Ok(n) -> fasta(n)
             | Error(_) -> fasta(1000)

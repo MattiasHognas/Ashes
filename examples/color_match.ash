@@ -4,7 +4,7 @@ type Color =
     | Blue
 
 let c = Blue
-in 
+in
     Ashes.IO.print(match c with
         | Red -> 1
         | Blue -> 2

@@ -7,9 +7,9 @@
 // expect: len=30 seed=61356 str=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 import Ashes.IO as io
 import Ashes.Text as text
-let recursive go i n st = 
+let recursive go i n st =
     match st with
-        | (seed, out) -> 
+        | (seed, out) ->
             if i == n
             then "len=" + text.fromInt(text.byteLength(out)) + " seed=" + text.fromInt(seed) + " str=" + out
             else go(i + 1)(n)((seed * 3877 + 29573 - (seed * 3877 + 29573) / 139968 * 139968, out + "a"))

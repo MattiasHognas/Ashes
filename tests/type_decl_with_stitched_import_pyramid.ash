@@ -5,7 +5,7 @@ type Box =
     | Full(Int)
     | Empty
 
-let unbox b = 
+let unbox b =
     match b with
         | Full(v) -> "Some:" + Ashes.Text.fromInt(v)
         | Empty -> "None"

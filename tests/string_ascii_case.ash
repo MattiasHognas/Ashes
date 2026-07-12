@@ -15,7 +15,7 @@ let up2 = text.asciiUpper("mixed Åäö grüße 日本 abcZ")
 
 let low2 = text.asciiLower("MIXED Åäö GRÜSSE 日本 ABCz")
 
-let emptyOk = 
+let emptyOk =
     if str.toAsciiUpper("") == ""
     then "ok"
     else "bad"

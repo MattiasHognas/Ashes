@@ -1,32 +1,32 @@
 // expect: ok
 import Ashes.Maybe
 import Ashes.IO
-let mapped = 
+let mapped =
     Ashes.Maybe.map(given (x) -> x + 1)(Some(41))
-in 
-    let flatMapped = 
+in
+    let flatMapped =
         Ashes.Maybe.flatMap(given (x) -> Some(x + 1))(Some(41))
-    in 
+    in
         let fallback = Ashes.Maybe.getOrElse(99)(None)
-        in 
+        in
             let hasValue = Ashes.Maybe.isSome(Some(1))
-            in 
+            in
                 let missingValue = Ashes.Maybe.isNone(None)
-                in 
+                in
                     match mapped with
                         | None -> Ashes.IO.print("fail")
-                        | Some(mappedValue) -> 
+                        | Some(mappedValue) ->
                             match flatMapped with
                                 | None -> Ashes.IO.print("fail")
-                                | Some(flatMappedValue) -> 
+                                | Some(flatMappedValue) ->
                                     if mappedValue == 42
-                                    then 
+                                    then
                                         if flatMappedValue == 42
-                                        then 
+                                        then
                                             if fallback == 99
-                                            then 
+                                            then
                                                 if hasValue
-                                                then 
+                                                then
                                                     if missingValue
                                                     then Ashes.IO.print("ok")
                                                     else Ashes.IO.print("fail")

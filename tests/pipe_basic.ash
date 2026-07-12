@@ -1,6 +1,6 @@
 // expect: 3
 let inc x = x + 1
-in 
+in
     2
     |> inc
     |> Ashes.IO.print

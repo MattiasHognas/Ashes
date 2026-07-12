@@ -1,4 +1,4 @@
-let recursive loop i acc = 
+let recursive loop i acc =
     if i >= 10000
     then acc
     else loop(i + 1)(acc + 1)

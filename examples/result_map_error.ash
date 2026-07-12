@@ -2,7 +2,7 @@ type AppError =
     | Wrapped(Str)
 
 let x = Error("boom") |!> Wrapped
-in 
+in
     match x with
         | Ok(_) -> Ashes.IO.print("ok")
         | Error(Wrapped(msg)) -> Ashes.IO.print(msg)

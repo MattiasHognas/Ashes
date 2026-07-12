@@ -14,26 +14,26 @@
 import Ashes.Map
 import Ashes.IO
 import Ashes.Text
-let cmp a b = 
+let cmp a b =
     if a == b
     then 0
-    else 
+    else
         if a <= b
         then -1
         else 1
 
-let recursive setFold i lim m = 
+let recursive setFold i lim m =
     if i > lim
     then m
     else setFold(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 3)(m))
 
-let recursive outer batch nbatch m = 
+let recursive outer batch nbatch m =
     if batch >= nbatch
     then m
     else outer(batch + 1)(nbatch)(setFold(0)(99)(m))
 
 let final = outer(0)(30)(Ashes.Map.empty)
-in 
+in
     match Ashes.Map.get(cmp)(50)(final) with
         | None -> Ashes.IO.print("fail")
         | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + " " + Ashes.Text.fromInt(v))

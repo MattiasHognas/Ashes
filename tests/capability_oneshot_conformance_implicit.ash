@@ -16,43 +16,43 @@ type Receipt =
     | total: Int
     | stamp: Int
 
-let taxFor = 
+let taxFor =
     given (cents) -> cents / 10
 
-let priceOf = 
+let priceOf =
     given (item) -> Prices.lookup(item)
 
-let processOrder = 
-    given (item) -> 
+let processOrder =
+    given (item) ->
         let _ = Log.log("processing " + item)
-        in 
+        in
             let base = Prices.lookup(item)
-            in 
+            in
                 let tax = taxFor(base)
-                in 
+                in
                     let total = base + tax
-                    in 
+                    in
                         let _ = Log.log("total " + Ashes.Text.fromInt(total))
-                        in 
+                        in
                             let t = Clock.now(Unit)
                             in Receipt(item = item, base = base, tax = tax, total = total, stamp = t)
 
-let runTest = 
-    given (work) -> 
+let runTest =
+    given (work) ->
         handle work(Unit) with
-            | Prices.lookup(item) -> 
+            | Prices.lookup(item) ->
                 match item with
                     | "widget" -> resume(200)
                     | _ -> resume(0)
             | Clock.now(_) -> resume(1000)
-            | Log.log(msg) -> 
+            | Log.log(msg) ->
                 match resume(Unit) with
                     | (r, rest) -> (r, msg :: rest)
             | return(r) -> (r, [])
 
-let result = 
+let result =
     match runTest(given (_) -> processOrder("widget")) with
-        | (r, logs) -> 
+        | (r, logs) ->
             match (r.base == 200, r.tax == 20, r.total == 220, r.stamp == 1000, logs) with
                 | (true, true, true, true, "processing widget" :: "total 220" :: []) -> "PASS"
                 | _ -> "FAIL"

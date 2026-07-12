@@ -6,15 +6,15 @@
 // expect: 213
 import Ashes.IO as io
 import Ashes.Text as text
-let recursive insertAt i v xs = 
+let recursive insertAt i v xs =
     if i == 0
     then v :: xs
-    else 
+    else
         match xs with
             | [] -> v :: []
             | h :: t -> h :: insertAt(i - 1)(v)(t)
 
-let rotateFirst r xs = 
+let rotateFirst r xs =
     match xs with
         | [] -> []
         | h :: t -> insertAt(r)(h)(t)
@@ -22,14 +22,14 @@ let rotateFirst r xs =
 type Box =
     | B(List(Int))
 
-let recursive spin n box = 
+let recursive spin n box =
     if n == 0
     then box
-    else 
+    else
         match box with
             | B(xs) -> spin(n - 1)(B(rotateFirst(1)(xs)))
 
-let recursive show xs = 
+let recursive show xs =
     match xs with
         | [] -> ""
         | h :: t -> text.fromInt(h) + show(t)

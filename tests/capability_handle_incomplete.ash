@@ -4,7 +4,7 @@ capability State(a) =
     | get : Unit -> a
     | set : a -> Unit
 
-let r = 
+let r =
     handle State.get(Unit) + 1 with
         | State.get(_) -> resume(41)
         | return(r) -> r

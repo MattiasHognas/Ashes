@@ -1,5 +1,5 @@
 // expect: 1
-let last xs = 
+let last xs =
     match xs with
         | [] -> Ashes.IO.panic("empty")
         | x :: rest -> x

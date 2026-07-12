@@ -6,10 +6,10 @@
 // fd-release guarantee itself is verified directly under a low `ulimit -n`.
 import Ashes.Process
 import Ashes.IO
-let recursive loop n = 
+let recursive loop n =
     if n <= 0
     then "ok"
-    else 
+    else
         match Ashes.Process.spawn("/bin/true")([]) with
             | Error(_e) -> "spawn-failed"
             | Ok(_proc) -> loop(n - 1)

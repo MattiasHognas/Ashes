@@ -4,20 +4,20 @@ import Ashes.Bytes
 import Ashes.Text
 let b = Ashes.Bytes.fromText("Hamburg;12.0")
 
-let r = 
+let r =
     match Ashes.Bytes.scanHash(b)(59)(0) with
-        | (idx, h) -> 
+        | (idx, h) ->
             let want = Ashes.Bytes.hash(Ashes.Bytes.fromText("Hamburg"))
-            in 
+            in
                 if h == want
                 then "idx=" + Ashes.Text.fromInt(idx) + " hash-ok"
                 else "idx=" + Ashes.Text.fromInt(idx) + " HASH-MISMATCH"
 
-let r2 = 
+let r2 =
     match Ashes.Bytes.scanHash(b)(88)(0) with
-        | (idx, h) -> 
+        | (idx, h) ->
             if idx == -1
-            then 
+            then
                 if h == Ashes.Bytes.hash(b)
                 then " missing-ok"
                 else " missing-HASH-BAD"

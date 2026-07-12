@@ -4,11 +4,11 @@
 // legitimate use and must still compile and run.
 match Ashes.File.open("greeting.txt") with
     | Error(_) -> Ashes.IO.print("error")
-    | Ok(fh) -> 
+    | Ok(fh) ->
         match Ashes.File.readLine(fh) with
-            | None -> 
+            | None ->
                 let _ = Ashes.File.close(fh)
                 in Ashes.IO.print("none")
-            | Some(line) -> 
+            | Some(line) ->
                 let _ = Ashes.File.close(fh)
                 in Ashes.IO.print(line)

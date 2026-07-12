@@ -8,16 +8,16 @@
 import Ashes.File
 import Ashes.IO
 import Ashes.Text
-let recursive loop n acc = 
+let recursive loop n acc =
     if n <= 0
     then acc
-    else 
-        let reader = 
+    else
+        let reader =
             match Ashes.File.open("cdc_input.txt") with
-                | Error(_e) -> 
+                | Error(_e) ->
                     given (x) -> 0
-                | Ok(h) -> 
-                    given (x) -> 
+                | Ok(h) ->
+                    given (x) ->
                         match Ashes.File.readChunk(h)(1) with
                             | Error(_) -> 0
                             | Ok(_c) -> 1

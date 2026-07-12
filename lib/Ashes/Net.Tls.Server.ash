@@ -11,14 +11,14 @@ import Ashes.Net.Tcp
 import Ashes.Net.Tcp.Server
 import Ashes.File
 import Ashes.Async
-let serveTls port certPath keyPath handler = 
+let serveTls port certPath keyPath handler =
     match Ashes.File.readText(certPath) with
         | Error(certErr) -> Ashes.Async.fromResult(Error("tls certificate: " + certErr))
-        | Ok(certPem) -> 
+        | Ok(certPem) ->
             match Ashes.File.readText(keyPath) with
                 | Error(keyErr) -> Ashes.Async.fromResult(Error("tls private key: " + keyErr))
-                | Ok(keyPem) -> 
-                    Ashes.Net.Tcp.Server.serve(port)(given (client) -> 
+                | Ok(keyPem) ->
+                    Ashes.Net.Tcp.Server.serve(port)(given (client) ->
                         async(match await Ashes.Net.Tls.Server.handshake(client)(certPem)(keyPem) with
                             | Error(hsErr) -> Error(hsErr)
                             | Ok(tls) -> await handler(tls)))

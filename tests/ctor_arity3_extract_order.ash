@@ -3,13 +3,13 @@ type Triple =
     | Triple(Int, Int, Int)
 
 let t = Triple(1)(2)(3)
-in 
+in
     match t with
-        | Triple(a, b, c) -> 
+        | Triple(a, b, c) ->
             Ashes.IO.print(if a == 1
-            then 
+            then
                 if b == 2
-                then 
+                then
                     if c == 3
                     then 123
                     else 0

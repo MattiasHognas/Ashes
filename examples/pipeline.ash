@@ -4,7 +4,7 @@ let inc x = x + 1
 
 let double x = x + x
 
-let result = 
+let result =
     1
     |> inc
     |> double

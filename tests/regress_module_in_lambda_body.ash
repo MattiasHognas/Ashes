@@ -6,11 +6,11 @@ import Ashes.String
 import Ashes.IO
 import Ashes.Text
 let firstB s = Ashes.String.indexOf(s)("b")
-in 
-    let recursive countUntilSemi text n = 
+in
+    let recursive countUntilSemi text n =
         match Ashes.Text.uncons(text) with
             | None -> n
-            | Some((head, tail)) -> 
+            | Some((head, tail)) ->
                 if head == ";"
                 then n
                 else countUntilSemi(tail)(n + 1)

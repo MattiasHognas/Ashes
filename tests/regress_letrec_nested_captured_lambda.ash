@@ -8,9 +8,9 @@
 //
 // total(4)(0) = 4 + 3 + 2 + 1 + 0 = 10
 // expect: 10
-let recursive total n acc = 
+let recursive total n acc =
     (let helper x = x + n
-    in 
+    in
         if n == 0
         then acc
         else total(n - 1)(helper(acc)))

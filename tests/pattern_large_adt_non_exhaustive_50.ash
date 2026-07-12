@@ -51,8 +51,8 @@ type BigInst =
     | Inst48
     | Inst49
 
-let instToInt = 
-    given (i) -> 
+let instToInt =
+    given (i) ->
         match i with
             | Inst00 -> 0
             | Inst04 -> 4

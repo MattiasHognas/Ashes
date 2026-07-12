@@ -4,7 +4,7 @@ import Ashes.List
 capability Tag =
     | tag : Int -> Int
 
-let tagged = 
+let tagged =
     handle Ashes.List.map(given (x) -> Tag.tag(x))(10 :: 20 :: 30 :: []) with
         | Tag.tag(n) -> resume(n)
         | return(r) -> r

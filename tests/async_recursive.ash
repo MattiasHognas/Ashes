@@ -1,5 +1,5 @@
 // expect: 3
-Ashes.IO.print(match Ashes.Async.run(async(let recursive countDown n = 
+Ashes.IO.print(match Ashes.Async.run(async(let recursive countDown n =
     if n == 0
     then 0
     else countDown(n - 1) + 1

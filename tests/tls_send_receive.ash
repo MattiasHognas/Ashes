@@ -8,17 +8,17 @@
 // expect: ok
 Ashes.IO.print(match Ashes.Async.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
     | Error(err) -> err
-    | Ok(sock) -> 
+    | Ok(sock) ->
         match await Ashes.Net.Tls.send(sock)("ping") with
             | Error(err) -> err
-            | Ok(sent) -> 
+            | Ok(sent) ->
                 match await Ashes.Net.Tls.receive(sock)(64) with
                     | Error(err) -> err
-                    | Ok(text) -> 
+                    | Ok(text) ->
                         let _ = await Ashes.Net.Tls.close(sock)
-                        in 
+                        in
                             if sent == 4
-                            then 
+                            then
                                 if text == "pong"
                                 then "ok"
                                 else "fail"

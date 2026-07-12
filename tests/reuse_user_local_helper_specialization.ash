@@ -13,60 +13,60 @@ import Ashes.Map
 import Ashes.Map.MapTree
 import Ashes.Text
 import Ashes.String
-let hgt t = 
+let hgt t =
     match t with
         | Empty -> 0
         | Node(h, _l, _k, _v, _r) -> h
 
-let mkNode l key value r = 
+let mkNode l key value r =
     (let hl = hgt(l)
-    in 
+    in
         let hr = hgt(r)
-        in 
-            let h = 
+        in
+            let h =
                 if hl > hr
                 then hl + 1
                 else hr + 1
             in Node(h)(l)(key)(value)(r))
 
-let upd newKey tenths = 
-    (let recursive go map = 
+let upd newKey tenths =
+    (let recursive go map =
         match map with
             | Empty -> mkNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
-            | Node(_height, left, key, value, right) -> 
+            | Node(_height, left, key, value, right) ->
                 let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
-                in 
+                in
                     if ordering == 0
-                    then 
+                    then
                         match value with
-                            | (mn, mx, sm, ct) -> 
-                                let newMin = 
+                            | (mn, mx, sm, ct) ->
+                                let newMin =
                                     if tenths < mn
                                     then tenths
                                     else mn
-                                in 
-                                    let newMax = 
+                                in
+                                    let newMax =
                                         if tenths > mx
                                         then tenths
                                         else mx
                                     in mkNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
-                    else 
+                    else
                         if ordering <= -1
                         then mkNode(go(left))(key)(value)(right)
                         else mkNode(left)(key)(value)(go(right))
     in go)
 
-let recursive loop i n map = 
+let recursive loop i n map =
     if i >= n
     then map
-    else 
+    else
         let key = "k" + Ashes.Text.fromInt(i - i / 50 * 50)
         in loop(i + 1)(n)(upd(key)(i)(map))
 
-let recursive readAll j m sumAcc ctAcc = 
+let recursive readAll j m sumAcc ctAcc =
     if j >= 50
     then (sumAcc, ctAcc)
-    else 
+    else
         match Ashes.Map.getStr("k" + Ashes.Text.fromInt(j))(m) with
             | Some((_mn, _mx, sm, ct)) -> readAll(j + 1)(m)(sumAcc + sm)(ctAcc + ct)
             | None -> readAll(j + 1)(m)(sumAcc)(ctAcc)
@@ -74,6 +74,6 @@ let recursive readAll j m sumAcc ctAcc =
 let n = 500000
 
 let final = loop(0)(n)(Empty)
-in 
+in
     match readAll(0)(final)(0)(0) with
         | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))

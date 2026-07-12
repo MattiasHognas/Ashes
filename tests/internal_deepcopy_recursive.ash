@@ -3,10 +3,10 @@ import Ashes.Map
 import Ashes.Internal
 import Ashes.Text
 import Ashes.IO
-let cmp a b = 
+let cmp a b =
     if a == b
     then 0
-    else 
+    else
         if a <= b
         then -1
         else 1
@@ -15,8 +15,8 @@ let m = Ashes.Map.set(cmp)(3)("three")(Ashes.Map.set(cmp)(1)("one")(Ashes.Map.se
 
 let copy = Ashes.Internal.deepCopy(m)
 
-let summary = 
-    Ashes.Map.foldLeft(given (acc) -> 
-        given (k) -> 
+let summary =
+    Ashes.Map.foldLeft(given (acc) ->
+        given (k) ->
             given (v) -> acc + Ashes.Text.fromInt(k) + "=" + v + ";")("")(copy)
 in Ashes.IO.print(summary + "|" + Ashes.Text.fromInt(Ashes.Map.size(copy)))

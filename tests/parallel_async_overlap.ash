@@ -13,30 +13,30 @@ import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
 import Ashes.Async
-let recursive sumRange lo hi acc = 
+let recursive sumRange lo hi acc =
     if lo >= hi
     then acc
     else sumRange(lo + 1)(hi)(acc + lo)
 
-let recursive tlen text acc = 
+let recursive tlen text acc =
     match Ashes.Text.uncons(text) with
         | None -> acc
         | Some((_h, t)) -> tlen(t)(acc + 1)
 
-let taskA = 
+let taskA =
     async(match await Ashes.Http.get("http://127.0.0.1:__TCP_PORT__/x") with
         | Ok(t) -> tlen(t)(0)
         | Error(_) -> -1)
 
-let taskB = 
+let taskB =
     async(match await Ashes.Async.task(0) with
         | Error(_) -> 0
-        | Ok(_) -> 
+        | Ok(_) ->
             match Ashes.Parallel.both(given (u) -> sumRange(0)(500000)(0))(given (u) -> sumRange(500000)(1000000)(0)) with
                 | (a, b) -> a + b)
-in 
+in
     match Ashes.Async.run(Ashes.Async.all([taskA, taskB])) with
-        | Ok(results) -> 
+        | Ok(results) ->
             match results with
                 | ra :: rb :: [] -> Ashes.IO.print(Ashes.Text.fromInt(ra) + "|" + Ashes.Text.fromInt(rb))
                 | _ -> Ashes.IO.print("bad")

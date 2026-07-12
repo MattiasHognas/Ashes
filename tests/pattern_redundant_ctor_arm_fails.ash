@@ -5,7 +5,7 @@ type Color =
     | Blue
 
 let c = Red
-in 
+in
     match c with
         | Red -> 1
         | Red -> 2

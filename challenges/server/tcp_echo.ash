@@ -7,14 +7,14 @@ import Ashes.IO
 import Ashes.Net.Tcp
 import Ashes.Net.Tcp.Server
 import Ashes.Async
-let handleConn client = 
+let handleConn client =
     async(match await Ashes.Net.Tcp.receive(client)(4096) with
         | Error(e) -> Error(e)
-        | Ok(msg) -> 
+        | Ok(msg) ->
             match await Ashes.Net.Tcp.send(client)(msg) with
                 | Error(e2) -> Error(e2)
                 | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-in 
+in
     match Ashes.Async.run(Ashes.Net.Tcp.Server.serve(18080)(handleConn)) with
         | Ok(_u) -> Ashes.IO.writeLine("server stopped")
         | Error(e) -> Ashes.IO.writeLine(e)

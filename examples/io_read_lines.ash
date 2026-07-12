@@ -1,10 +1,10 @@
 let first = Ashes.IO.readLine(Unit)
-in 
+in
     let second = Ashes.IO.readLine(Unit)
-    in 
+    in
         match first with
             | None -> Ashes.IO.writeLine("no first line")
-            | Some(a) -> 
+            | Some(a) ->
                 match second with
                     | None -> Ashes.IO.writeLine(a)
                     | Some(b) -> Ashes.IO.writeLine(a + ":" + b)

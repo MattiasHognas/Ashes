@@ -1,8 +1,8 @@
 // expect: 42
 let value = async 42
-in 
+in
     let wrapper = async await value
-    in 
+    in
         Ashes.IO.print(match Ashes.Async.run(wrapper) with
             | Ok(Ok(n)) -> n
             | Ok(Error(_)) -> 0

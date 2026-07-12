@@ -13,58 +13,58 @@ type Tree =
     | Leaf
     | Node(Tree, Tree)
 
-let recursive make depth = 
+let recursive make depth =
     if depth == 0
     then Leaf
     else Node(make(depth - 1))(make(depth - 1))
 
-let recursive check tree = 
+let recursive check tree =
     match tree with
         | Leaf -> 1
         | Node(l, r) -> 1 + check(l) + check(r)
 
-let recursive pow2 k = 
+let recursive pow2 k =
     if k == 0
     then 1
     else 2 * pow2(k - 1)
 
-let recursive sumChecks depth n acc = 
+let recursive sumChecks depth n acc =
     if n == 0
     then acc
     else sumChecks depth(n - 1)(check(make(depth)) + acc)
 
-let recursive depthLoop depth maxDepth minDepth out = 
+let recursive depthLoop depth maxDepth minDepth out =
     if depth > maxDepth
     then out
-    else 
+    else
         let iterations = pow2(maxDepth - depth + minDepth)
-        in 
+        in
             let sum = sumChecks depth iterations 0
-            in 
+            in
                 let line = text.fromInt(iterations) + "\t trees of depth " + text.fromInt(depth) + "\t check: " + text.fromInt(sum) + "\n"
                 in depthLoop(depth + 2)(maxDepth)(minDepth)(out + line)
 
-let run n = 
+let run n =
     (let minDepth = 4
-    in 
-        let maxDepth = 
+    in
+        let maxDepth =
             if minDepth + 2 > n
             then minDepth + 2
             else n
-        in 
+        in
             let stretchDepth = maxDepth + 1
-            in 
+            in
                 let longLived = make(maxDepth)
-                in 
+                in
                     let stretchLine = "stretch tree of depth " + text.fromInt(stretchDepth) + "\t check: " + text.fromInt(check(make(stretchDepth))) + "\n"
-                    in 
+                    in
                         let body = depthLoop(minDepth)(maxDepth)(minDepth)("")
-                        in 
+                        in
                             let longLine = "long lived tree of depth " + text.fromInt(maxDepth) + "\t check: " + text.fromInt(check(longLived)) + "\n"
                             in stretchLine + body + longLine)
 
 match io.args with
-    | arg :: _ -> 
+    | arg :: _ ->
         match text.parseInt(arg) with
             | Ok(n) -> io.print(run(n))
             | Error(_) -> io.print(run(10))

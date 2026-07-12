@@ -1,3 +1,3 @@
-let print = 
+let print =
     given (x) -> x
 in print

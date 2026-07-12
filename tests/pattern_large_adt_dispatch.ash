@@ -8,7 +8,7 @@ type Color =
     | Orange(Int)
 
 let color = Orange(0)
-in 
+in
     Ashes.IO.print(match color with
         | Red(_) -> "red"
         | Green(_) -> "green"

@@ -1,15 +1,15 @@
 // expect: ok
 let compose f g x = f(g(x))
-in 
+in
     let add1 n = n + 1
-    in 
+    in
         let add2 n = n + 2
-        in 
+        in
             let _a = compose(add2)(add1)(1)
-            in 
+            in
                 let bang s = s + "!"
-                in 
+                in
                     let wrap s = "[" + s + "]"
-                    in 
+                    in
                         let _b = compose(bang)(wrap)("x")
                         in Ashes.IO.print("ok")

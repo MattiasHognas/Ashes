@@ -9,12 +9,12 @@ type Tree =
     | Leaf
     | Node(Tree, Int, Tree)
 
-let recursive sumTree t = 
+let recursive sumTree t =
     match t with
         | Leaf -> 0
         | Node(l, v, r) -> sumTree(l) + v + sumTree(r)
 
-let recursive build n = 
+let recursive build n =
     if n <= 0
     then Leaf
     else Node(build(n - 1))(n)(Leaf)

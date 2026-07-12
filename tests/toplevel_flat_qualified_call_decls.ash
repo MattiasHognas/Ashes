@@ -5,22 +5,22 @@ import Ashes.Maybe
 import Ashes.Result
 let nums = [1, 2, 3, 4, 5]
 
-let doubled = 
+let doubled =
     Ashes.List.map(given (x) -> x * 2)(nums)
 
-let large = 
+let large =
     Ashes.List.filter(given (x) -> x >= 6)(doubled)
 
 let count = Ashes.List.length(large)
 
 let maybeTop = Ashes.List.head(Ashes.List.reverse(large))
 
-let adjusted = 
+let adjusted =
     Ashes.Maybe.map(given (x) -> x + count)(maybeTop)
 
 let safeValue = Ashes.Maybe.getOrElse(0)(adjusted)
 
-let resultValue = 
+let resultValue =
     Ashes.Result.map(given (x) -> x + 1)(Ok(safeValue))
 
 let final = Ashes.Result.getOrElse(0)(resultValue)

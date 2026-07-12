@@ -1,11 +1,11 @@
 // expect: 42
-let parse x = 
+let parse x =
     if x == "42"
     then Ok(42)
     else Error("bad")
-in 
+in
     let y = Ok("42") |?> parse
-    in 
+    in
         match y with
             | Ok(v) -> Ashes.IO.print(v)
             | Error(_) -> Ashes.IO.print(0)

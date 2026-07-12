@@ -7,18 +7,18 @@
 // expect: 32.0 32 1000000000000000000000000
 import Ashes.IO as io
 import Ashes.Text as text
-let recursive dotf xs ys acc = 
+let recursive dotf xs ys acc =
     match xs with
         | [] -> acc
-        | x :: xt -> 
+        | x :: xt ->
             match ys with
                 | [] -> acc
                 | y :: yt -> dotf(xt)(yt)(acc + x * y)
 
-let recursive doti xs ys acc = 
+let recursive doti xs ys acc =
     match xs with
         | [] -> acc
-        | x :: xt -> 
+        | x :: xt ->
             match ys with
                 | [] -> acc
                 | y :: yt -> doti(xt)(yt)(acc + x * y)

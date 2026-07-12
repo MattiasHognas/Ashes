@@ -5,12 +5,12 @@
 // Before the fix this read a closed fd and returned "read-err".
 import Ashes.File
 import Ashes.IO
-let reader = 
+let reader =
     match Ashes.File.open("escape_input.txt") with
-        | Error(_e) -> 
+        | Error(_e) ->
             given (x) -> "no-file"
-        | Ok(fh) -> 
-            given (x) -> 
+        | Ok(fh) ->
+            given (x) ->
                 match Ashes.File.readChunk(fh)(5) with
                     | Error(_) -> "read-err"
                     | Ok(chunk) -> chunk

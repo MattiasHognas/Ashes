@@ -1,9 +1,9 @@
 // expect: c
-let recursive lastOr xs default = 
-    let recursive loop ys = 
+let recursive lastOr xs default =
+    let recursive loop ys =
         match ys with
             | [] -> default
-            | x :: rest -> 
+            | x :: rest ->
                 match rest with
                     | [] -> x
                     | _ -> loop(rest)

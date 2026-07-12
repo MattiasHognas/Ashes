@@ -12,16 +12,16 @@ import Ashes.String
 import Ashes.Json
 import Ashes.IO
 let long = "abcdefghijklmnopqrstuvwxyz0123456789"
-in 
+in
     let startsWithOk = Ashes.String.startsWith(long)(long)
-    in 
-        let consumeExactOk = 
+    in
+        let consumeExactOk =
             match Ashes.Json.consumeExact(long)(long) with
                 | Ok(_) -> true
                 | Error(_) -> false
-        in 
+        in
             Ashes.IO.print(if startsWithOk
-            then 
+            then
                 if consumeExactOk
                 then "pass"
                 else "fail-consumeExact"

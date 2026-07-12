@@ -10,19 +10,19 @@ import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
 import Ashes.Async
-let recursive sumRange lo hi acc = 
+let recursive sumRange lo hi acc =
     if lo >= hi
     then acc
     else sumRange(lo + 1)(hi)(acc + lo)
 
-let halves = 
-    given (u) -> 
+let halves =
+    given (u) ->
         match Ashes.Parallel.both(given (v) -> sumRange(0)(500000)(0))(given (v) -> sumRange(500000)(1000000)(0)) with
             | (a, b) -> a + b
 
 let before = halves(0)
 
-let slept = 
+let slept =
     match Ashes.Async.run(async(let ok = await Ashes.Async.sleep(1)
     in "slept")) with
         | Ok(text) -> text

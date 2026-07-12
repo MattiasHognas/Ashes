@@ -135,12 +135,12 @@ public sealed class LspDocumentServiceTests
         var formatted = DocumentService.Format("let x = if true then 1 else 2 in Ashes.IO.print(x)");
 
         formatted.ShouldBe("""
-                           let x = 
+                           let x =
                                if true
                                then 1
                                else 2
                            in Ashes.IO.print(x)
-                           
+
                            """);
     }
 

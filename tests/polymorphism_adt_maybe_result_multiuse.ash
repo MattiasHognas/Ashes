@@ -1,19 +1,19 @@
 // expect: ok
-let unwrapOr opt def = 
+let unwrapOr opt def =
     match opt with
         | None -> def
         | Some(x) -> x
-in 
-    let getOrDefault res def = 
+in
+    let getOrDefault res def =
         match res with
             | Ok(x) -> x
             | Error(_) -> def
-    in 
+    in
         let _a = unwrapOr(Some(1))(0)
-        in 
+        in
             let _b = unwrapOr(None)("fallback")
-            in 
+            in
                 let _c = getOrDefault(Ok("value"))("default")
-                in 
+                in
                     let _d = getOrDefault(Error(42))(0)
                     in Ashes.IO.print("ok")

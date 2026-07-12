@@ -1,5 +1,5 @@
 // expect: medium
-let classify x = 
+let classify x =
     match x with
         | n when n >= 101 -> "big"
         | n when n >= 11 -> "medium"

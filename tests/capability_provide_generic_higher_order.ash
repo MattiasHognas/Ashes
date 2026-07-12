@@ -4,15 +4,15 @@ capability Ord(a) =
     | compare : a -> a -> Int
 
 provide Ord(Int) =
-    | compare = 
-        given (a) -> 
+    | compare =
+        given (a) ->
             given (b) -> a - b
 
-let minOf = 
-    given (first) -> 
-        given (items) -> 
-            Ashes.List.foldLeft(given (best) -> 
-                given (next) -> 
+let minOf =
+    given (first) ->
+        given (items) ->
+            Ashes.List.foldLeft(given (best) ->
+                given (next) ->
                     if Ord.compare(next)(best) < 0
                     then next
                     else best)(first)(items)

@@ -12,36 +12,36 @@ import Ashes.String
 import Ashes.Bytes
 import Ashes.UInt
 import Ashes.Parallel
-let recursive countInto bytes i hi map = 
+let recursive countInto bytes i hi map =
     if i >= hi
     then map
-    else 
+    else
         let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i))
-        in 
-            let key = 
+        in
+            let key =
                 if b == 59
                 then "semi"
                 else "a"
-            in 
-                let bump = 
+            in
+                let bump =
                     if b == 59
                     then true
                     else b == 97
-                in 
+                in
                     if bump
-                    then 
-                        let map2 = 
+                    then
+                        let map2 =
                             match Ashes.Map.get(Ashes.String.compare)(key)(map) with
                                 | None -> Ashes.Map.set(Ashes.String.compare)(key)(1)(map)
                                 | Some(c) -> Ashes.Map.set(Ashes.String.compare)(key)(c + 1)(map)
                         in countInto(bytes)(i + 1)(hi)(map2)
                     else countInto(bytes)(i + 1)(hi)(map)
 
-let foldChunk triple = 
+let foldChunk triple =
     match triple with
         | (bytes, lo, hi) -> countInto(bytes)(lo)(hi)(Ashes.Map.empty)
 
-let mergeOne acc key value = 
+let mergeOne acc key value =
     match Ashes.Map.get(Ashes.String.compare)(key)(acc) with
         | None -> Ashes.Map.set(Ashes.String.compare)(key)(value)(acc)
         | Some(e) -> Ashes.Map.set(Ashes.String.compare)(key)(e + value)(acc)
@@ -54,12 +54,12 @@ let chunks = (bytes, 0, 8) :: (bytes, 8, 16) :: (bytes, 16, 24) :: (bytes, 24, 3
 
 let total = Ashes.Parallel.reduce(merge)(Ashes.Map.empty)(foldChunk)(chunks)
 
-let semi = 
+let semi =
     match Ashes.Map.get(Ashes.String.compare)("semi")(total) with
         | Some(v) -> v
         | None -> 0
 
-let acount = 
+let acount =
     match Ashes.Map.get(Ashes.String.compare)("a")(total) with
         | Some(v) -> v
         | None -> 0

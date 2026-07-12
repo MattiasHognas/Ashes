@@ -16,27 +16,27 @@ import Ashes.Text
 import Ashes.IO
 import Ashes.Async
 import Ashes.Net.Tls
-let recursive psum lo hi = 
+let recursive psum lo hi =
     if hi - lo <= 1
     then lo
-    else 
+    else
         let mid = lo + (hi - lo) / 2
-        in 
+        in
             match Ashes.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
                 | (a, b) -> a + b
 
 let before = psum(0)(1000000)
 
-let tlsResult = 
+let tlsResult =
     match Ashes.Async.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
         | Error(err) -> err
-        | Ok(sock) -> 
+        | Ok(sock) ->
             match await Ashes.Net.Tls.send(sock)("ping") with
                 | Error(err) -> err
-                | Ok(sent) -> 
+                | Ok(sent) ->
                     match await Ashes.Net.Tls.receive(sock)(64) with
                         | Error(err) -> err
-                        | Ok(text) -> 
+                        | Ok(text) ->
                             let _ = await Ashes.Net.Tls.close(sock)
                             in text)) with
         | Ok(text) -> text

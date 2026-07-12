@@ -4,22 +4,22 @@
 type ParseError =
     | NotAnInt(Str)
 
-let trim x = 
+let trim x =
     if x == " 42 "
     then "42"
     else x
 
-let parse x = 
+let parse x =
     if x == "42"
     then Ok(42)
     else Error(NotAnInt(x))
 
-let x = 
+let x =
     Ok(" 42 ")
     |?> trim
     |?> parse
     |?> (given (n) -> n + 1)
-in 
+in
     match x with
         | Ok(v) -> Ashes.IO.print(v)
         | Error(NotAnInt(_)) -> Ashes.IO.print(0)

@@ -1,32 +1,32 @@
 // expect: ok
 import Ashes.Result
 import Ashes.IO
-let mapped = 
+let mapped =
     Ashes.Result.map(given (x) -> x + 1)(Ok(41))
-in 
-    let flatMapped = 
+in
+    let flatMapped =
         Ashes.Result.flatMap(given (x) -> Ok(x + 1))(Ok(41))
-    in 
+    in
         let fallback = Ashes.Result.getOrElse(99)(Error("bad"))
-        in 
+        in
             let okState = Ashes.Result.isOk(Ok(1))
-            in 
+            in
                 let errorState = Ashes.Result.isError(Error("bad"))
-                in 
+                in
                     match mapped with
                         | Error(_) -> Ashes.IO.print("fail")
-                        | Ok(mappedValue) -> 
+                        | Ok(mappedValue) ->
                             match flatMapped with
                                 | Error(_) -> Ashes.IO.print("fail")
-                                | Ok(flatMappedValue) -> 
+                                | Ok(flatMappedValue) ->
                                     if mappedValue == 42
-                                    then 
+                                    then
                                         if flatMappedValue == 42
-                                        then 
+                                        then
                                             if fallback == 99
-                                            then 
+                                            then
                                                 if okState
-                                                then 
+                                                then
                                                     if errorState
                                                     then Ashes.IO.print("ok")
                                                     else Ashes.IO.print("fail")

@@ -2,59 +2,59 @@
 import Ashes.List
 import Ashes.IO
 let nums = [1, 2, 3]
-in 
-    let mapped = 
+in
+    let mapped =
         Ashes.List.map(given (x) -> x + 1)(nums)
-    in 
-        let filtered = 
+    in
+        let filtered =
             Ashes.List.filter(given (x) -> x >= 2)(nums)
-        in 
-            let folded = 
-                Ashes.List.foldLeft(given (acc) -> 
+        in
+            let folded =
+                Ashes.List.foldLeft(given (acc) ->
                     given (x) -> acc + x)(0)(nums)
-            in 
+            in
                 let reversed = Ashes.List.reverse(nums)
-                in 
+                in
                     let appended = Ashes.List.append(nums)([4, 5])
-                    in 
+                    in
                         match Ashes.List.head(nums) with
                             | None -> Ashes.IO.print("fail")
-                            | Some(first) -> 
+                            | Some(first) ->
                                 match Ashes.List.tail(nums) with
                                     | None -> Ashes.IO.print("fail")
-                                    | Some(rest) -> 
+                                    | Some(rest) ->
                                         match Ashes.List.head(mapped) with
                                             | None -> Ashes.IO.print("fail")
-                                            | Some(mappedFirst) -> 
+                                            | Some(mappedFirst) ->
                                                 match Ashes.List.head(filtered) with
                                                     | None -> Ashes.IO.print("fail")
-                                                    | Some(filteredFirst) -> 
+                                                    | Some(filteredFirst) ->
                                                         match Ashes.List.head(reversed) with
                                                             | None -> Ashes.IO.print("fail")
-                                                            | Some(reversedFirst) -> 
+                                                            | Some(reversedFirst) ->
                                                                 match Ashes.List.head(appended) with
                                                                     | None -> Ashes.IO.print("fail")
-                                                                    | Some(appendedFirst) -> 
+                                                                    | Some(appendedFirst) ->
                                                                         if first == 1
-                                                                        then 
+                                                                        then
                                                                             if Ashes.List.length(nums) == 3
-                                                                            then 
+                                                                            then
                                                                                 if mappedFirst == 2
-                                                                                then 
+                                                                                then
                                                                                     if filteredFirst == 2
-                                                                                    then 
+                                                                                    then
                                                                                         if folded == 6
-                                                                                        then 
+                                                                                        then
                                                                                             if reversedFirst == 3
-                                                                                            then 
+                                                                                            then
                                                                                                 if appendedFirst == 1
-                                                                                                then 
+                                                                                                then
                                                                                                     if Ashes.List.length(rest) == 2
-                                                                                                    then 
+                                                                                                    then
                                                                                                         if Ashes.List.length(appended) == 5
-                                                                                                        then 
+                                                                                                        then
                                                                                                             if Ashes.List.isEmpty([])
-                                                                                                            then 
+                                                                                                            then
                                                                                                                 if Ashes.List.isEmpty(nums)
                                                                                                                 then Ashes.IO.print("fail")
                                                                                                                 else Ashes.IO.print("ok")

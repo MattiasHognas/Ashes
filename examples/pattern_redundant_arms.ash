@@ -3,7 +3,7 @@ type Bool2 =
     | F
 
 let b = T
-in 
+in
     Ashes.IO.print(match b with
         | T -> 1
         | F -> 0)

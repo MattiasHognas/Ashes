@@ -3,7 +3,7 @@
 // overload-generic function (it compares two of its parameters) is inlined and type-resolved at
 // each concrete call site. A user-defined function with the same shape is polymorphic the same way.
 import Ashes.Test
-let sameShape a b = 
+let sameShape a b =
     if a == b
     then "eq"
     else "ne"

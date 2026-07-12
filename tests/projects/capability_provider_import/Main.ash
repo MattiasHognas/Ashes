@@ -1,11 +1,11 @@
 // expect: 1|3
 import Ordering
-let localMin : a -> List(a) -> a needs {Ord(a)} = 
-    given (seed) -> 
-        given (xs) -> 
+let localMin : a -> List(a) -> a needs {Ord(a)} =
+    given (seed) ->
+        given (xs) ->
             match xs with
                 | [] -> seed
-                | h :: t -> 
+                | h :: t ->
                     if Ord.compare(h)(seed) < 0
                     then h
                     else seed

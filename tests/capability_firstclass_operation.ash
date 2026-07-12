@@ -5,12 +5,12 @@ capability Prices =
 
 let lookupFn = Prices.lookup
 
-let both = 
+let both =
     given (f) -> f("a") + f("b")
 
-let result = 
+let result =
     handle both(lookupFn) with
-        | Prices.lookup(item) -> 
+        | Prices.lookup(item) ->
             match item with
                 | "a" -> resume(40)
                 | _ -> resume(2)

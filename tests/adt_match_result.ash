@@ -1,5 +1,5 @@
 // expect: 1
-let getOrDefault res def = 
+let getOrDefault res def =
     match res with
         | Ok(x) -> x
         | Error(_) -> def

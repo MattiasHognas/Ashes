@@ -7,13 +7,13 @@
 // the loop runs in bounded fds.
 import Ashes.File
 import Ashes.IO
-let recursive loop n acc = 
+let recursive loop n acc =
     if n <= 0
     then acc
-    else 
+    else
         match Ashes.File.open("loop_input.txt") with
             | Error(_e) -> acc + "[err]"
-            | Ok(fh) -> 
+            | Ok(fh) ->
                 match Ashes.File.readChunk(fh)(3) with
                     | Error(_) -> acc + "[rerr]"
                     | Ok(chunk) -> loop(n - 1)(acc + chunk)

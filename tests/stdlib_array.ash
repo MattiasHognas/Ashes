@@ -2,43 +2,43 @@
 import Ashes.Array
 import Ashes.IO
 let xs = Ashes.Array.fromList(10 :: 20 :: 30 :: [])
-in 
+in
     let updated = Ashes.Array.set(1)(25)(xs)
-    in 
+    in
         let appended = Ashes.Array.append(40)(updated)
-        in 
+        in
             match Ashes.Array.get(0)(appended) with
                 | None -> Ashes.IO.print("fail")
-                | Some(first) -> 
+                | Some(first) ->
                     match Ashes.Array.get(1)(appended) with
                         | None -> Ashes.IO.print("fail")
-                        | Some(second) -> 
+                        | Some(second) ->
                             match Ashes.Array.get(3)(appended) with
                                 | None -> Ashes.IO.print("fail")
-                                | Some(last) -> 
+                                | Some(last) ->
                                     match Ashes.Array.get(4)(appended) with
-                                        | None -> 
+                                        | None ->
                                             if Ashes.Array.length(appended) == 4
-                                            then 
+                                            then
                                                 if Ashes.Array.isEmpty(Ashes.Array.empty)
-                                                then 
+                                                then
                                                     if Ashes.Array.isEmpty(appended)
                                                     then Ashes.IO.print("fail")
-                                                    else 
+                                                    else
                                                         if first == 10
-                                                        then 
+                                                        then
                                                             if second == 25
-                                                            then 
+                                                            then
                                                                 if last == 40
-                                                                then 
+                                                                then
                                                                     match Ashes.Array.toList(appended) with
-                                                                        | a :: b :: c :: d :: [] -> 
+                                                                        | a :: b :: c :: d :: [] ->
                                                                             if a == 10
-                                                                            then 
+                                                                            then
                                                                                 if b == 25
-                                                                                then 
+                                                                                then
                                                                                     if c == 30
-                                                                                    then 
+                                                                                    then
                                                                                         if d == 40
                                                                                         then Ashes.IO.print("ok")
                                                                                         else Ashes.IO.print("fail")

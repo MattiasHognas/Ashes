@@ -1,10 +1,10 @@
-let unwrapOr opt def = 
+let unwrapOr opt def =
     match opt with
         | None -> def
         | Some(x) -> x
-in 
+in
     let r = Ok(42)
-    in 
+    in
         match r with
             | Ok(v) -> Ashes.IO.print(unwrapOr(Some(v))(0))
             | Error(_) -> Ashes.IO.print(0)

@@ -9,17 +9,17 @@ capability Rng =
     | next : Unit -> Int
 
 provide Clock =
-    | now = 
+    | now =
         given (_) -> 1720000000
 
 provide Rng =
-    | next = 
+    | next =
         given (_) -> 42
 
-let report = 
-    given (_) -> 
+let report =
+    given (_) ->
         let t = Clock.now(Unit)
-        in 
+        in
             let r = Rng.next(Unit)
             in "t=" + Ashes.Text.fromInt(t) + " r=" + Ashes.Text.fromInt(r)
 

@@ -2,75 +2,75 @@
 import Ashes.String
 import Ashes.IO
 let text = "compiler"
-in 
+in
     let hasLength = Ashes.String.length(text) == 8
-    in 
+    in
         let hasSubstring = Ashes.String.substring(text)(1)(3) == "omp"
-        in 
+        in
             let hasIndex = Ashes.String.indexOf(text)("pile") == 3
-            in 
+            in
                 let missingIndex = Ashes.String.indexOf(text)("zzz") == -1
-                in 
+                in
                     let hasPrefix = Ashes.String.startsWith(text)("com")
-                    in 
-                        let noPrefix = 
+                    in
+                        let noPrefix =
                             if Ashes.String.startsWith(text)("omp")
                             then false
                             else true
-                        in 
+                        in
                             let hasContains = Ashes.String.contains(text)("pil")
-                            in 
-                                let noContains = 
+                            in
+                                let noContains =
                                     if Ashes.String.contains(text)("zip")
                                     then false
                                     else true
-                                in 
-                                    let hasSplit = 
+                                in
+                                    let hasSplit =
                                         match Ashes.String.split("a,b,,c")(",") with
-                                            | p0 :: p1 :: p2 :: p3 :: [] -> 
+                                            | p0 :: p1 :: p2 :: p3 :: [] ->
                                                 if p0 == "a"
-                                                then 
+                                                then
                                                     if p1 == "b"
-                                                    then 
+                                                    then
                                                         if p2 == ""
                                                         then p3 == "c"
                                                         else false
                                                     else false
                                                 else false
                                             | _ -> false
-                                    in 
+                                    in
                                         let hasTrim = Ashes.String.trim(" \n\tvalue\r ") == "value"
-                                        in 
+                                        in
                                             let hasIsLetter = Ashes.String.isLetter("A")
-                                            in 
+                                            in
                                                 let hasIsDigit = Ashes.String.isDigit("7")
-                                                in 
+                                                in
                                                     let hasIsWhiteSpace = Ashes.String.isWhiteSpace("\n")
-                                                    in 
+                                                    in
                                                         if hasLength
-                                                        then 
+                                                        then
                                                             if hasSubstring
-                                                            then 
+                                                            then
                                                                 if hasIndex
-                                                                then 
+                                                                then
                                                                     if missingIndex
-                                                                    then 
+                                                                    then
                                                                         if hasPrefix
-                                                                        then 
+                                                                        then
                                                                             if noPrefix
-                                                                            then 
+                                                                            then
                                                                                 if hasContains
-                                                                                then 
+                                                                                then
                                                                                     if noContains
-                                                                                    then 
+                                                                                    then
                                                                                         if hasSplit
-                                                                                        then 
+                                                                                        then
                                                                                             if hasTrim
-                                                                                            then 
+                                                                                            then
                                                                                                 if hasIsLetter
-                                                                                                then 
+                                                                                                then
                                                                                                     if hasIsDigit
-                                                                                                    then 
+                                                                                                    then
                                                                                                         if hasIsWhiteSpace
                                                                                                         then Ashes.IO.print("ok")
                                                                                                         else Ashes.IO.print("fail")

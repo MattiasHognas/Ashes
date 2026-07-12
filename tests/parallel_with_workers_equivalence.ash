@@ -2,19 +2,19 @@
 import Ashes.Parallel
 import Ashes.Text
 import Ashes.IO
-let recursive range lo hi = 
+let recursive range lo hi =
     if lo >= hi
     then []
     else lo :: range(lo + 1)(hi)
 
-let plus = 
-    given (a) -> 
+let plus =
+    given (a) ->
         given (b) -> a + b
 
-let id = 
+let id =
     given (x) -> x
 
-let scoped = 
+let scoped =
     Ashes.Parallel.withWorkers(1)(given (_u) -> Ashes.Parallel.reduce(plus)(0)(id)(range(0)(100)))
 
 let plain = Ashes.Parallel.reduce(plus)(0)(id)(range(0)(100))

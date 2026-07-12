@@ -10,22 +10,22 @@
 // completion first (AstartAgothiB1B2). HTTPS variant: the TLS handshake also yields cooperatively (WaitTlsWantRead/Write).
 // target.
 import Ashes.IO
-let taskA = 
+let taskA =
     async(let _ = Ashes.IO.write("Astart")
-    in 
+    in
         match await Ashes.Http.get("https://localhost:__TCP_PORT__/x") with
-            | Ok(t) -> 
+            | Ok(t) ->
                 let _ = Ashes.IO.write("Agot")
                 in Ashes.IO.write(t)
             | Error(m) -> Ashes.IO.write(m))
 
-let taskB = 
+let taskB =
     async(let _ = Ashes.IO.write("B1")
-    in 
+    in
         match await Ashes.Async.task(0) with
             | Ok(_) -> Ashes.IO.write("B2")
             | Error(_) -> Ashes.IO.write("Berr"))
-in 
+in
     match Ashes.Async.run(Ashes.Async.all([taskA, taskB])) with
         | Ok(_) -> Ashes.IO.write("")
         | Error(_) -> Ashes.IO.write("end-err")

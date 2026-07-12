@@ -8,12 +8,12 @@ import Ashes.IO as io
 import Ashes.Text as text
 let calc px h = px + h * 2.0
 
-let recursive foo xs px = 
+let recursive foo xs px =
     match xs with
         | [] -> px
         | h :: rest -> foo(rest)(px + h * 2.0)
 
-let recursive mac bodies px = 
+let recursive mac bodies px =
     match bodies with
         | [] -> px
         | vx :: rest -> mac(rest)(px + vx * 0.5)

@@ -1,6 +1,6 @@
 Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
     | Error(msg) -> msg
-    | Ok(sock) -> 
+    | Ok(sock) ->
         match await Ashes.Net.Tcp.receive(sock)(64) with
             | Ok(text) -> text
             | Error(msg) -> msg)

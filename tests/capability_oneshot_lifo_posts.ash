@@ -3,16 +3,16 @@
 capability Trace =
     | note : Str -> Unit
 
-let work = 
-    given (u) -> 
+let work =
+    given (u) ->
         let _ = Trace.note("a")
-        in 
+        in
             let _ = Trace.note("b")
             in "done:"
 
-let result = 
+let result =
     handle work(Unit) with
-        | Trace.note(msg) -> 
+        | Trace.note(msg) ->
             match resume(Unit) with
                 | acc -> acc + msg
         | return(r) -> r
