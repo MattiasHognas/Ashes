@@ -83,6 +83,30 @@ public sealed partial class Lowering
             recordFieldType = Prune(Instantiate(recordScheme.S));
         }
 
+        // Single-pass inference: a parameter's type is often still an unbound type variable at its
+        // first use, so `param.field` reached here with an unresolved receiver and fell through to the
+        // misleading "does not export" error. Resolve it structurally by field name: if exactly one
+        // record type in scope declares a field named `qv.Name`, unify the receiver with a fresh
+        // instance of it and proceed. Ambiguous (two records share the field) or unknown falls through
+        // to require a type annotation. (A resolved non-record type is left alone — no false unify.)
+        if (recordFieldSlot.HasValue && recordFieldType is TypeRef.TVar)
+        {
+            var fieldRecordCandidates = _typeSymbols.Values
+                .Where(s => s.Constructors.Count == 1
+                    && s.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
+                    && s.Constructors[0].DeclaringSyntax.FieldNames.Contains(qv.Name, StringComparer.Ordinal))
+                .ToList();
+            if (fieldRecordCandidates.Count == 1)
+            {
+                var candidate = fieldRecordCandidates[0];
+                var freshRecordType = new TypeRef.TNamedType(
+                    candidate,
+                    candidate.TypeParameters.Select(_ => (TypeRef)NewTypeVar()).ToList());
+                Unify(recordFieldType, freshRecordType);
+                recordFieldType = Prune(freshRecordType);
+            }
+        }
+
         if (recordFieldSlot.HasValue
             && recordFieldType is TypeRef.TNamedType namedRecordType
             && namedRecordType.Symbol.Constructors.Count == 1
@@ -110,6 +134,20 @@ public sealed partial class Lowering
                 RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
                 return (fieldTemp, fieldType);
             }
+        }
+
+        // `qv.Module` resolved to a value binding (a local/param/let), not a module — this was a
+        // record field access that could not be resolved. Give a field-access-oriented message rather
+        // than the misleading "does not export": either the receiver's record type is known but lacks
+        // the field, or its type is not yet determined here (single-pass inference) and needs an
+        // annotation (also the ambiguous case, where more than one record declares this field).
+        if (binding is Binding.Local or Binding.Scheme)
+        {
+            var message = recordFieldType is TypeRef.TNamedType resolvedRecord
+                ? $"Record type '{resolvedRecord.Symbol.Name}' has no field '{qv.Name}'."
+                : $"Cannot resolve field access '{qv.Module}.{qv.Name}': the type of '{qv.Module}' is not known here. Annotate it, e.g. `let f : Rec -> _ = given ({qv.Module}) -> {qv.Module}.{qv.Name}`.";
+            ReportDiagnostic(GetSpan(qv), message);
+            return ReturnNeverWithDummyTemp();
         }
 
         ReportDiagnostic(GetSpan(qv), $"Module '{qv.Module}' does not export '{qv.Name}'.");
