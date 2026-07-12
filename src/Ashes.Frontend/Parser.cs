@@ -1081,16 +1081,27 @@ public sealed class Parser
         {
             var start = _current.Position;
             Consume(TokenKind.Given);
-            Consume(TokenKind.LParen);
-            var paramToken = Consume(TokenKind.Ident);
-            var param = paramToken.Text;
             var extraParamTokens = new List<Token>();
-            while (_current.Kind == TokenKind.Comma)
+            Token paramToken;
+            if (_current.Kind == TokenKind.LParen)
             {
-                Consume(TokenKind.Comma);
-                extraParamTokens.Add(Consume(TokenKind.Ident));
+                Consume(TokenKind.LParen);
+                paramToken = Consume(TokenKind.Ident);
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    extraParamTokens.Add(Consume(TokenKind.Ident));
+                }
+
+                Consume(TokenKind.RParen);
             }
-            Consume(TokenKind.RParen);
+            else
+            {
+                // Bare single-parameter form: `given x -> body` (parens optional for one param).
+                paramToken = Consume(TokenKind.Ident);
+            }
+
+            var param = paramToken.Text;
             Consume(TokenKind.Arrow);
             var body = ParseExpressionCore();
             // Desugar multi-param lambdas: given (x, y) -> body => given (x) -> given (y) -> body

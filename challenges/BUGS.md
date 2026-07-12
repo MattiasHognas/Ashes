@@ -192,8 +192,11 @@ work. Surfaced by `n-body`.
 
 ### 16. (P3) Inline parameter type annotation `(b: Body)` is unsupported (`ASH003`); annotate the whole
 binding instead.
-### 17. (P3) `given xs ->` requires parenthesized params `given (xs) ->`; the error (`ASH003 Expected
-LParen`) is opaque.
+### 17. (P3) `given xs ->` requires parenthesized params `given (xs) ->` — [FIXED]
+**[FIXED]** (`lambda_bare_param`): `ParseLambda` now makes the parentheses optional for a single
+parameter — `given x -> body` parses the same as `given (x) -> body`. The parenthesized form (and its
+multi-parameter `given (x, y) ->` desugaring) is unchanged, and remains the canonical form the
+formatter emits (it re-parenthesizes the bare input).
 
 ## Open questions (not yet classified)
 - Does `Ashes.IO.write` buffer, or issue a syscall per call? `fasta`/`reverse-complement` streaming
