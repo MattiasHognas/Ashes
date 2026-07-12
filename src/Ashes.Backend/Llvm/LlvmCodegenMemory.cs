@@ -574,8 +574,13 @@ internal static partial class LlvmCodegen
         // Header link = the current chunk's end (0 on the to-space's first grow — harmless, to-space is
         // never reclaimed so the chain is never walked).
         LlvmValueHandle prevEnd = LlvmApi.BuildLoad2(builder, state.I64, endSlot, "grow_heap_prev_end");
-        // chunkSize = max(HeapChunkBytes, neededBytes + header + footer).
-        LlvmValueHandle fitSize = LlvmApi.BuildAdd(builder, neededBytes,
+        // chunkSize = max(HeapChunkBytes, 2*neededBytes + header + footer). The doubling headroom
+        // lets a growing accumulator larger than a standard chunk keep extending in place
+        // (ConcatStrTip) inside its chunk instead of forcing a new chunk per append — geometric
+        // growth, amortized-linear copies. The extra half is virtual address space only: Linux and
+        // Windows fault pages in lazily, so untouched headroom costs nothing.
+        LlvmValueHandle fitSize = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildMul(builder, neededBytes, LlvmApi.ConstInt(state.I64, 2, 0), "grow_heap_need2"),
             LlvmApi.ConstInt(state.I64, ChunkOverheadBytes, 0), "grow_heap_fit_size");
         LlvmValueHandle standard = LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0);
         LlvmValueHandle fitsStandard = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, fitSize, standard, "grow_heap_fits_standard");
@@ -970,9 +975,9 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
         LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_list_total_cells");
 
-        // ── Cache head values into a stack-allocated buffer ─────────────
-        // Dynamic alloca: allocate totalCells × i64 on the stack.
-        LlvmValueHandle headBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, "copy_list_head_buf");
+        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
+        var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, "copy_list_head_buf");
+        LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, "copy_list_head_buf_ptr");
         LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cache_cur");
         LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
         LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cache_idx");
@@ -1050,11 +1055,78 @@ internal static partial class LlvmCodegen
 
         // Done
         LlvmApi.PositionBuilderAtEnd(builder, buildDone);
+        EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, "copy_list_head_buf");
         LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
         LlvmApi.BuildBr(builder, copyListFinal);
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
         return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_list_result_val");
+    }
+
+    /// <summary>
+    /// Allocates the head-cache buffer for a list copy-out. Small lists cache on the stack
+    /// (dynamic alloca, as before); lists whose cache exceeds 32 KB get an OS allocation instead —
+    /// an unbounded dynamic alloca overflows the default 8 MB stack past ~1M cells, and entry-frame
+    /// allocas are never popped, so consecutive top-level list copies compound until the crash.
+    /// Returns the buffer address (i64), the byte size, and the slot recording whether the buffer
+    /// must be released via <see cref="EmitListHeadCacheFree"/>.
+    /// </summary>
+    private static (LlvmValueHandle BufAddr, LlvmValueHandle TotalBytes, LlvmValueHandle IsOsSlot) EmitListHeadCacheAlloc(
+        LlvmCodegenState state, LlvmValueHandle totalCells, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+        LlvmValueHandle totalBytes = LlvmApi.BuildMul(builder, totalCells,
+            LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_bytes");
+
+        LlvmValueHandle bufAddrSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_addr_slot");
+        LlvmValueHandle isOsSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_isos_slot");
+
+        LlvmValueHandle isLarge = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt,
+            totalBytes, LlvmApi.ConstInt(state.I64, 32768, 0), prefix + "_is_large");
+        var osBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_os");
+        var stackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_stack");
+        var contBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cont");
+        LlvmApi.BuildCondBr(builder, isLarge, osBlock, stackBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, stackBlock);
+        LlvmValueHandle stackBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, prefix + "_stack_buf");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, stackBuf, state.I64, prefix + "_stack_addr"), bufAddrSlot);
+        LlvmApi.BuildStore(builder, zero, isOsSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, osBlock);
+        LlvmValueHandle osBuf = EmitAllocateOsMemory(state, totalBytes, prefix);
+        LlvmApi.BuildStore(builder, osBuf, bufAddrSlot);
+        LlvmApi.BuildStore(builder, one, isOsSlot);
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        LlvmValueHandle bufAddr = LlvmApi.BuildLoad2(builder, state.I64, bufAddrSlot, prefix + "_addr");
+        return (bufAddr, totalBytes, isOsSlot);
+    }
+
+    /// <summary>
+    /// Releases a head-cache buffer allocated by <see cref="EmitListHeadCacheAlloc"/> when it was
+    /// OS-allocated (stack buffers pop with the frame).
+    /// </summary>
+    private static void EmitListHeadCacheFree(LlvmCodegenState state,
+        LlvmValueHandle bufAddr, LlvmValueHandle totalBytes, LlvmValueHandle isOsSlot, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle isOs = LlvmApi.BuildLoad2(builder, state.I64, isOsSlot, prefix + "_isos");
+        LlvmValueHandle needsFree = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            isOs, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_needs_free");
+        var freeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free");
+        var contBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_cont");
+        LlvmApi.BuildCondBr(builder, needsFree, freeBlock, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freeBlock);
+        EmitFreeOsMemory(state, bufAddr, totalBytes, prefix + "_release");
+        LlvmApi.BuildBr(builder, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
     }
 
     /// <summary>
@@ -1134,8 +1206,9 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
         LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_total_cells");
 
-        // ── Cache head values into a stack-allocated buffer ─────────────
-        LlvmValueHandle headBuf = LlvmApi.BuildArrayAlloca(builder, state.I64, totalCells, "copy_inner_head_buf");
+        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
+        var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, "copy_inner_head_buf");
+        LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, "copy_inner_head_buf_ptr");
         LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_cur");
         LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
         LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_idx");
@@ -1206,6 +1279,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, buildHead);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildDone);
+        EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, "copy_inner_head_buf");
         LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
         LlvmApi.BuildBr(builder, copyListFinal);
 
@@ -2192,6 +2266,90 @@ internal static partial class LlvmCodegen
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
         EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
         return stringRef;
+    }
+
+    /// <summary>
+    /// Affine-accumulator string append (<see cref="IrInst.ConcatStrTip"/>): semantically a string
+    /// concat, but the accumulator grows inside a RESERVATION instead of being copied per append.
+    /// The loop keeps two slots — the reservation's start and end. When the left operand IS the
+    /// reserved string (pointer identity with the recorded start) and the appended bytes fit below
+    /// the recorded end, right's bytes are copied onto its end and only the length header grows —
+    /// the arena cursor is untouched, so per-iteration scratch allocated above the reservation
+    /// (uncons views, tuples, closure results) is irrelevant. Otherwise the fallback concatenates
+    /// into a NEW allocation with doubling headroom (capacity = 2x the result) and records it in
+    /// the slots: fallbacks are geometric in the accumulator's growth, so total copy work stays
+    /// linear in appended bytes. The identity check makes the mutation safe — only a string this
+    /// loop itself reserved can match the recorded start (a caller-passed seed never does), and
+    /// lowering only arms the instruction for accumulators the affine analysis proved unaliased.
+    /// </summary>
+    private static LlvmValueHandle EmitConcatStrTip(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, int resvStartSlot, int resvEndSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var extendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_extend");
+        var fallbackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_fallback");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_done");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "csr_result");
+
+        LlvmValueHandle la = LoadStringLength(state, leftRef, "csr_la");
+        LlvmValueHandle lb = LoadStringLength(state, rightRef, "csr_lb");
+        LlvmValueHandle resvStart = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[resvStartSlot], "csr_rstart");
+        LlvmValueHandle resvEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[resvEndSlot], "csr_rend");
+        LlvmValueHandle accEnd = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildAdd(builder, leftRef, LlvmApi.ConstInt(state.I64, 8, 0), "csr_l8"), la, "csr_acc_end");
+
+        LlvmValueHandle isOurs = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftRef, resvStart, "csr_identity"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, resvStart, LlvmApi.ConstInt(state.I64, 0, 0), "csr_nonzero"),
+            "csr_ours");
+        LlvmValueHandle fits = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
+            LlvmApi.BuildAdd(builder, accEnd, lb, "csr_new_end"), resvEnd, "csr_fits");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, isOurs, fits, "csr_extendable"), extendBlock, fallbackBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, extendBlock);
+        {
+            // Destination [accEnd, accEnd+lb) is unused reservation space — disjoint from every
+            // live byte (the affine analysis keeps the accumulator out of the right operand, so
+            // right cannot be a view into it), hence a plain memcpy.
+            LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "csr_ext_rbytes");
+            LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, accEnd, state.I8Ptr, "csr_ext_dest");
+            EmitCopyBytes(state, destPtr, rightBytes, lb, "csr_ext_copy");
+            StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "csr_ext_len"), "csr_ext_hdr");
+            LlvmApi.BuildStore(builder, leftRef, resultSlot);
+            LlvmApi.BuildBr(builder, doneBlock);
+        }
+
+        LlvmApi.PositionBuilderAtEnd(builder, fallbackBlock);
+        {
+            // Concatenate into a fresh allocation with doubling headroom and record the new
+            // reservation. Handles the caller seed (never matches the identity check), views, a
+            // filled reservation, and post-compaction re-reservation alike.
+            LlvmValueHandle total = LlvmApi.BuildAdd(builder, la, lb, "csr_fb_total");
+            LlvmValueHandle allocSize = LlvmApi.BuildAdd(builder,
+                LlvmApi.BuildMul(builder, total, LlvmApi.ConstInt(state.I64, 2, 0), "csr_fb_2x"),
+                LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
+            LlvmValueHandle dest = EmitAllocDynamic(state, allocSize);
+            StoreMemory(state, dest, 0, total, "csr_fb_hdr");
+            LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");
+            LlvmValueHandle leftBytes = GetStringBytesPointer(state, leftRef, "csr_fb_lbytes");
+            EmitCopyBytes(state, destBytes, leftBytes, la, "csr_fb_lcopy");
+            LlvmValueHandle destTail = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder,
+                    LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8b"), la, "csr_fb_dtail_i"),
+                state.I8Ptr, "csr_fb_dtail");
+            LlvmValueHandle rightBytesF = GetStringBytesPointer(state, rightRef, "csr_fb_rbytes");
+            EmitCopyBytes(state, destTail, rightBytesF, lb, "csr_fb_rcopy");
+            // Reservation bounds: EmitAllocDynamic reserved align8(allocSize) bytes at dest.
+            LlvmValueHandle reservedEnd = LlvmApi.BuildAdd(builder, dest,
+                AlignRuntimeSize(state, allocSize, "csr_fb_rsz"), "csr_fb_rend");
+            LlvmApi.BuildStore(builder, dest, state.LocalSlots[resvStartSlot]);
+            LlvmApi.BuildStore(builder, reservedEnd, state.LocalSlots[resvEndSlot]);
+            LlvmApi.BuildStore(builder, dest, resultSlot);
+            LlvmApi.BuildBr(builder, doneBlock);
+        }
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "csr_final");
     }
 
     /// <summary>

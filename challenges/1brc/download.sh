@@ -20,7 +20,7 @@
 # only checks in the ~44k-row station list (data/weather_stations.csv); the
 # ~13 GB measurements.txt is meant to be generated locally from it. That is what
 # ROWS does here. Crank ROWS up to 1e9 to reproduce the out-of-memory failure
-# documented in challenges/FLAWS.md.
+# documented in challenges/BUGS.md.
 set -euo pipefail
 
 # Default source: the upstream 1BRC station list (`Station;Latitude`). With ROWS

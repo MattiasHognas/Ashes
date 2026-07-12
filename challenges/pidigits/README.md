@@ -39,7 +39,7 @@ the digits match π (`3141592653 5897932384 …`).
 format (ten digits per line, each tagged with the running count; defaults to 27, or pass `N` as an
 argument). Correctness of the bignum runtime is covered by `tests/bigint_pidigits.ash`,
 `tests/bigint_core.ash`, `tests/bigint_edge.ash`, `tests/bigint_conversions.ash`, and
-`tests/bigint_literals.ash`; see [FLAWS.md](FLAWS.md) for the writeup.
+`tests/bigint_literals.ash`.
 
 ## Build & run
 
@@ -57,24 +57,19 @@ challenges/bench.sh pidigits 1000
 ```
 
 Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded — this benchmark does not
-use `Ashes.Parallel`):
+use `Ashes.Parallel`), `-O2`:
 
 | N (digits) | Time | Peak RSS |
 |------------|------|----------|
-| 250 | 0.03 s | 0.25 MB |
-| 500 | 0.36 s | 0.25 MB |
-| 1,000 | 3.50 s | 0.25 MB |
-| 2,000 | 31.7 s | 0.25 MB |
+| 1,000 | 0.029 s | 0.2 MB |
+| 2,000 | 0.123 s | 0.2 MB |
+| 5,000 | 0.82 s | 0.5 MB |
+| **10,000** (standard) | **3.50 s** | 1.2 MB |
 
-Resident memory is now **constant** (0.25 MB) at every `N` — down from `O(N²)` (`N=1000` was 168 MB).
-Two changes did it: (1) a `BigInt` is a self-contained buffer, so it is copied out across the TCO
-back-edge reset like a `String`, letting the reset fire and free the spigot's intermediate values; and
-(2) a loop threading only non-sharing whole-value accumulators (here `q, r, t` `BigInt`s plus the
-`String` output — no cons-lists) resets to a **fixed** loop-entry watermark, so each iteration's
-grown accumulator overwrites the previous one instead of being stranded below an advancing watermark.
-The growing accumulator now stays `O(current width)`, not `O(sum of all widths)`.
-
-What remains is **time**: it is still ~`O(N³)` (doubling `N` is ~9×), driven by the binary long-
-division in the digit-extraction step. That is a bignum-algorithm follow-up (Knuth Algorithm D /
-Karatsuba), not a memory-model issue — the standard `N=10000` is now memory-feasible but still
-time-bound, so the table stops where the wall time does.
+Both original flaws are fixed. Resident memory is **constant-ish** (the working `BigInt`s
+themselves) at every `N` — down from `O(N^2)` (`N=1000` was 168 MB) after the fixed-watermark
+copy-out arc. Time dropped ~128x when `bignum_divmod` was rewritten from bit-by-bit binary long
+division to **Knuth Algorithm D in base 2^32** (changelog CO-33): `N=1000` went 3.46 s -> 0.029 s,
+and the standard `N=10000` — formerly ~an hour of extrapolated runtime — now runs in 3.5 s.
+Remaining time growth is the schoolbook `mul` (Karatsuba unimplemented; nothing currently hits it
+hard enough to matter).

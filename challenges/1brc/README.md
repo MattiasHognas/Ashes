@@ -65,7 +65,7 @@ worker cap defaults to the detected thread count (override with `--parallel-work
 |------|------|----------|
 | 10,000,000 | 0.56 s | 6.6 GB |
 | 100,000,000 | 1.26 s | 8.6 GB |
-| **1,000,000,000** (full challenge) | **8.31 s** (8.19–8.48) | 21.7 GB |
+| **1,000,000,000** (full challenge) | **8.42 s** (±0.12) | 22.2 GB |
 
 At the full billion rows: 41,343 stations, ≈120 M rows/s.
 

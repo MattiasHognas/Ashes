@@ -408,6 +408,7 @@ public static class IrOptimizer
             IrInst.CmpStrEq c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpStrNe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.ConcatStr c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.ConcatStrTip c => c with { Left = R(c.Left), Right = R(c.Right) },
 
             // Memory operations.
             IrInst.StoreLocal s => s with { Source = R(s.Source) },
@@ -1364,6 +1365,7 @@ public static class IrOptimizer
             case IrInst.CmpStrEq c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpStrNe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.ConcatStr c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
+            case IrInst.ConcatStrTip c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.StoreLocal s: usedTemps.Add(s.Source); break;
             case IrInst.StoreMemOffset s: usedTemps.Add(s.BasePtr); usedTemps.Add(s.Source); break;
             case IrInst.LoadMemOffset l: usedTemps.Add(l.BasePtr); break;

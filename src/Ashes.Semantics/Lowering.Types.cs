@@ -67,6 +67,24 @@ public sealed partial class Lowering
         public int FixedCursorSlot { get; set; } = -1;
         public int FixedEndSlot { get; set; } = -1;
 
+        // Params proven AFFINE across the loop (consumed at most once along every loop-continuing
+        // path, and only as the leftmost leaf of the `+` chain producing their own tail-call
+        // argument). The affine property guarantees the loop holds no other reference, licensing
+        // in-place reservation growth (ConcatStrTip). Empty when not computed (conservative).
+        public HashSet<string> AffineStrParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Per affine param: the reservation start/end local slots (zeroed at loop entry, written by
+        // ConcatStrTip's fallback, zeroed again by the compaction that reclaims the reservation).
+        public Dictionary<string, (int Start, int End)> AffineResvSlots { get; } = new(System.StringComparer.Ordinal);
+
+        // Live accumulator size (cursor - W) recorded after the last fixed-watermark compaction,
+        // zero-initialized at loop entry. The back-edge skips the whole copy-out + reset while the
+        // arena has grown less than 2x this size (+ slack) since W — so a growing accumulator is
+        // copied only when the garbage since the last compaction is at least as large as the live
+        // data, making the total copy work LINEAR in bytes allocated (the doubling amortization)
+        // instead of one full copy per iteration (O(N^2) time), while memory stays O(live).
+        public int CompactionSizeSlot { get; set; } = -1;
+
         // Stack pointer saved at the loop body label; restored at each back-edge so per-iteration dynamic
         // stack allocations in the loop body are freed instead of accumulating until the stack overflows.
         public int StackPtrSlot { get; set; } = -1;

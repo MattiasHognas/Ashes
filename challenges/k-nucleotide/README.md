@@ -28,7 +28,7 @@ Slide a k-wide window across the sequence, keying a map by the window substring.
   1BRC #2/#3, on a different shape.** Millions of `get`-then-`set` updates with no mutable
   hashtable and no arena reclamation: expect linear memory growth toward OOM on large `N`.
 - Substring/window extraction cost — whether `substring`/`take` are view-based or copy
-  (1BRC #7 fixed `uncons` views; `take` is still O(count²) per FLAWS #2 task 3).
+  (`uncons` views are fixed; byte-indexed windows go through `Ashes.Bytes.subText`).
 - Sorting map entries by frequency then key (needs a total order and a stable sort).
 - Float formatting for the printed percentages (`Ashes.Text.formatFloat(value)(3)`).
 
@@ -39,13 +39,36 @@ division). The interesting blocker is the missing mutable/O(1) hashtable, not ma
 
 ## Status
 
-**Scaffold only.** `k-nucleotide.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked.** [`k-nucleotide.ash`](k-nucleotide.ash) extracts the `>THREE`
+sequence via `Bytes`, counts k-mers (k = 1, 2, then the six named oligonucleotides) with the
+persistent `Ashes.Map`, and prints frequency-sorted percentages to 3 dp. Writing it originally
+surfaced the superlinear character-indexed `String.substring` (fixed: single offset walk + one
+`Bytes.subText`, ~2000x on the sliding window) — the sliding k-mer windows now run on `Bytes`.
 
-## Build & run (once written)
+## Build & run
 
 ```bash
-# input is fasta's >THREE sequence
-./challenges/fasta/fasta 1000000 > knucleotide-input.txt
-dotnet run --project src/Ashes.Cli -- compile challenges/k-nucleotide/k-nucleotide.ash -o challenges/k-nucleotide/k-nucleotide
+./challenges/fasta/fasta 250000 > knucleotide-input.txt
+dotnet run --project src/Ashes.Cli -- compile challenges/k-nucleotide/k-nucleotide.ash -o challenges/k-nucleotide/k-nucleotide -O2
 ./challenges/k-nucleotide/k-nucleotide < knucleotide-input.txt
 ```
+
+## Benchmark
+
+```bash
+./challenges/fasta/fasta 250000 > /tmp/fa250k.txt
+BENCH_STDIN=/tmp/fa250k.txt challenges/bench.sh k-nucleotide
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+
+| Input (fasta N) | >THREE bases | Time | Peak RSS |
+|-----------------|--------------|------|----------|
+| 250,000 | 1.25M | 2.83 s | 44 MB |
+| 1,000,000 | 5M | 11.3 s | 123 MB |
+
+Time and memory scale linearly with the sequence. The cost profile is the expected one: every
+k-mer count is an immutable `Map` update (O(log n) + path allocation), where the reference uses a
+mutable O(1) hashtable — that constant-factor gap, not any remaining compiler flaw, is what
+separates this from the leaderboard. The standard 25M-base input is reachable but was skipped to
+keep the sweep short (~5 min extrapolated).

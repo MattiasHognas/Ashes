@@ -549,7 +549,7 @@ Compiler-foundation primitives (not intended for everyday use).
 
 - `deepCopy(value)` returning the same type — an independent deep copy of any value (strings,
   tuples, lists, closures, and recursive ADTs such as `Map`/`HashMap`). Semantically the identity
-  for immutable values; it underlies arena reclamation (FLAWS #2) and parallel result copy-out (#5).
+  for immutable values; it underlies arena reclamation and parallel result copy-out.
 
 ### `Ashes.HashMap`
 

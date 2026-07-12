@@ -83,7 +83,15 @@ public abstract record IrInst
     // DeferredType is non-null only for a provisional '+' whose operand type was still unresolved at
     // lowering time; ResolveDeferredAdds patches such adds to ConcatStr/AddFloat (or a plain AddInt)
     // once inference finishes. It is carried on the record so the TCO `with`-based remap preserves it.
-    public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
+    public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst
+    {
+        /// <summary>When >= 0 (both): this deferred `+` was armed as an affine accumulator append;
+        /// if it resolves to Str, ResolveDeferredAdds patches it to ConcatStrTip carrying the
+        /// loop's reservation slots instead of a plain ConcatStr.</summary>
+        public int AffineResvStartSlot { get; init; } = -1;
+
+        public int AffineResvEndSlot { get; init; } = -1;
+    }
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
     // DeferredType mirrors AddInt: non-null only for a provisional '*' whose operand type was still
     // unresolved at lowering time; ResolveDeferredMuls patches such muls to MulFloat / BigIntBinary
@@ -146,6 +154,19 @@ public abstract record IrInst
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
+    // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
+    // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
+    // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot
+    // and the appended bytes fit below *ResvEndSlot, Right's bytes are copied onto Left's end and
+    // only the length header grows — the cursor is untouched, so per-iteration scratch allocated
+    // above the reservation is irrelevant. Otherwise the fallback concatenates into a NEW
+    // allocation with doubling headroom (capacity = 2x the result) and records it in the slots —
+    // fallbacks are geometric, so total copy work is linear in appended bytes. The identity check
+    // makes mutation safe: only a string this loop itself reserved can match ResvStart (a
+    // caller-passed seed never does), and the static affine analysis guarantees the loop holds no
+    // other reference to it. The compaction/reset paths zero the slots (the reservation's memory
+    // is reclaimed there).
+    public sealed record ConcatStrTip(int Target, int Left, int Right, int ResvStartSlot, int ResvEndSlot) : IrInst;
 
     // Ashes.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
@@ -311,6 +332,13 @@ public abstract record IrInst
     /// composite ancestor shares the arena, where a stale-watermark reset could free a sibling's
     /// live allocations).
     /// </remarks>
+    // Placeholder for a TCO back-edge arena block whose copy-out decision could not be made at
+    // emission time because an argument's type was still an unresolved inference variable (e.g. an
+    // accumulator only constrained by a deferred '+' or by the caller). Replaced in place — with the
+    // real reset/copy-out block, or with nothing when the resolved types do not qualify — by
+    // ResolveDeferredTcoResets at the end of lowering. Carries no temps; never reaches the backend.
+    public sealed record TcoResetPending(int Id) : IrInst;
+
     public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst
     {
         public bool CoroutineLoop { get; init; }

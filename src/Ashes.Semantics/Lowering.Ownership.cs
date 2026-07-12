@@ -819,10 +819,9 @@ public sealed partial class Lowering
         {
             _ when CanArenaReset(pruned) => true,
             TypeRef.TStr or TypeRef.TBytes => true,
-            // Lists deep-copy element-by-element via CopyOutList: copy-type, String, or List-of-copy heads.
-            TypeRef.TList list => Prune(list.Element) is TypeRef.TStr
-                || CanArenaReset(Prune(list.Element))
-                || (Prune(list.Element) is TypeRef.TList inner && CanArenaReset(Prune(inner.Element))),
+            // Lists deep-copy element-by-element: copy-type/String/List-of-copy heads via CopyOutList,
+            // any other deep-copyable element via the synthesized recursive list copier.
+            TypeRef.TList list => IsDeepCopyOutSafeFieldType(Prune(list.Element), path),
             TypeRef.TTuple tup => tup.Elements.All(e => IsDeepCopyOutSafeFieldType(e, path)),
             TypeRef.TNamedType n => CanDeepCopyOutAdt(n, path),
             _ => false,
@@ -967,6 +966,22 @@ public sealed partial class Lowering
                         int dest = NewTemp();
                         Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.InnerList));
                         return dest;
+                    }
+
+                    if (IsDeepCopyOutSafeType(elemPruned))
+                    {
+                        // Deep-copyable element (fixed-shape ADT / tuple / nested list): a synthesized
+                        // recursive list copier clones every cell and deep-copies every head, so the
+                        // result shares nothing with the source (fixed-watermark safe).
+                        var listLabel = SynthesizeListDeepCopier(elemPruned);
+                        int listEnvPtr = NewTemp();
+                        Emit(new IrInst.Alloc(listEnvPtr, 8));
+                        int listCopier = NewTemp();
+                        Emit(new IrInst.MakeClosure(listCopier, listLabel, listEnvPtr, 8));
+                        Emit(new IrInst.StoreMemOffset(listEnvPtr, 0, listCopier));
+                        int listResult = NewTemp();
+                        Emit(new IrInst.CallClosure(listResult, listCopier, temp));
+                        return listResult;
                     }
 
                     return temp; // unsupported element type: shallow (step 1b)
@@ -1231,6 +1246,111 @@ public sealed partial class Lowering
         return label;
     }
 
+    private readonly Dictionary<string, string> _listCopierLabels = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Synthesizes (once per element type, cached) a recursive function deep-copying a cons list:
+    /// nil (0) passes through; otherwise the head is deep-copied (via <see cref="EmitDeepCopy"/> —
+    /// e.g. through the element ADT's synthesized copier) and the tail recursed via the self-closure
+    /// at env[0], rebuilding each 16-byte cell. The clone shares nothing with the source, so a
+    /// <c>List(fixed-shape-ADT)</c> accumulator can cross a fixed-watermark arena reset. Returns the
+    /// function label.
+    /// </summary>
+    private string SynthesizeListDeepCopier(TypeRef elementType)
+    {
+        var key = Pretty(elementType);
+        if (_listCopierLabels.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        string label = $"__deepcopy_list_{_nextLambdaId++}";
+        _listCopierLabels[key] = label;
+
+        // Build the copier body in isolation (mirrors TrySynthesizeAdtCopier's state save/restore).
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        _inst.Clear();
+        _nextTempSlot = 0;
+        var savedReuseTokenFieldBindings = new Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>>(_reuseTokenFieldBindings);
+        var savedReuseBindingSeen = new Dictionary<int, int>(_reuseBindingSeenBySlot);
+        var savedReuseTrackedSlotNames = new Dictionary<int, string>(_reuseTrackedSlotNames);
+        _reuseTokenFieldBindings.Clear();
+        _reuseBindingSeenBySlot.Clear();
+        _reuseTrackedSlotNames.Clear();
+        _nextLocalSlot = 0;
+        _localNames.Clear();
+        _localTypes.Clear();
+
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: the list to copy (implicit)
+
+        int argTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(argTemp, argSlot));
+        int selfTemp = NewTemp();
+        Emit(new IrInst.LoadEnv(selfTemp, 0));
+
+        // if (list != nil) goto copy; return 0
+        string copyLabel = $"{label}_copy";
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int isNilTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(isNilTemp, argTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(isNilTemp, copyLabel));
+        int nilResult = NewTemp();
+        Emit(new IrInst.LoadConstInt(nilResult, 0));
+        Emit(new IrInst.Return(nilResult));
+
+        Emit(new IrInst.Label(copyLabel));
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, 0));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, 8));
+        int copiedHead = EmitDeepCopy(headTemp, elementType);
+        int copiedTail = NewTemp();
+        Emit(new IrInst.CallClosure(copiedTail, selfTemp, tailTemp));
+        int cellTemp = NewTemp();
+        Emit(new IrInst.Alloc(cellTemp, 16));
+        Emit(new IrInst.StoreMemOffset(cellTemp, 0, copiedHead));
+        Emit(new IrInst.StoreMemOffset(cellTemp, 8, copiedTail));
+        Emit(new IrInst.Return(cellTemp));
+
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+
+        // Restore the enclosing function's state.
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTempSlot = savedTemp;
+        _reuseTokenFieldBindings.Clear();
+        foreach (var kv in savedReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;
+        _reuseBindingSeenBySlot.Clear();
+        foreach (var kv in savedReuseBindingSeen) _reuseBindingSeenBySlot[kv.Key] = kv.Value;
+        _reuseTrackedSlotNames.Clear();
+        foreach (var kv in savedReuseTrackedSlotNames) _reuseTrackedSlotNames[kv.Key] = kv.Value;
+        _nextLocalSlot = savedLocal;
+        _localNames.Clear();
+        foreach (var kv in savedLocalNames)
+        {
+            _localNames[kv.Key] = kv.Value;
+        }
+
+        _localTypes.Clear();
+        foreach (var kv in savedLocalTypes)
+        {
+            _localTypes[kv.Key] = kv.Value;
+        }
+
+        return label;
+    }
+
     /// <summary>
     /// Copies one field inside a synthesized ADT copier: a field of the same recursive type uses the
     /// self-closure (env[0]) for recursion; any other field type goes through <see cref="EmitDeepCopy"/>.
@@ -1289,8 +1409,12 @@ public sealed partial class Lowering
                         listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
                         return CopyOutKind.TcoListCell;
                     }
+
+                    // A list of deep-copyable elements (fixed-shape ADT / tuple) is cloned whole by
+                    // the synthesized list copier — a self-contained copy, fixed-watermark safe.
+                    // Lets n-body's List(Body) accumulator reset instead of growing O(N).
                     staticSizeBytes = 0;
-                    return CopyOutKind.None;
+                    return IsDeepCopyOutSafeType(elemPruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
                 }
 
             case TypeRef.TFun:

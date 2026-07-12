@@ -35,12 +35,34 @@ the more tractable benchmarks to write today.
 
 ## Status
 
-**Scaffold only.** `reverse-complement.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked.** [`reverse-complement.ash`](reverse-complement.ash) reads the FASTA
+stream, reverse-complements each sequence with the IUPAC complement table, and re-wraps at 60
+columns. Output verified against the reference transform.
 
-## Build & run (once written)
+## Build & run
 
 ```bash
 ./challenges/fasta/fasta 1000000 > revcomp-input.txt
-dotnet run --project src/Ashes.Cli -- compile challenges/reverse-complement/reverse-complement.ash -o challenges/reverse-complement/reverse-complement
+dotnet run --project src/Ashes.Cli -- compile challenges/reverse-complement/reverse-complement.ash -o challenges/reverse-complement/reverse-complement -O2
 ./challenges/reverse-complement/reverse-complement < revcomp-input.txt > revcomp-output.txt
 ```
+
+## Benchmark
+
+```bash
+./challenges/fasta/fasta 1000000 > /tmp/fa1m.txt
+BENCH_STDIN=/tmp/fa1m.txt challenges/bench.sh reverse-complement
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+
+| Input (fasta N) | Input size | Time | Peak RSS |
+|-----------------|-----------|------|----------|
+| 250,000 | ~2.5 MB | 0.14 s | 236 MB |
+| 1,000,000 | ~10 MB | 0.58 s | 944 MB |
+
+Time and memory are both **linear**, but the memory *constant* is the story: ~96 bytes of resident
+set per input base, because the working form is a cons list of single-character `Str` values (a
+length-prefixed heap string plus a cons cell per base). That constant is the last open remainder in
+[`../BUGS.md`](../BUGS.md) — shrinking it needs in-place cons-cell reuse (the ownership milestone),
+which also gates running the standard 25M-base workload (extrapolates to ~24 GB).

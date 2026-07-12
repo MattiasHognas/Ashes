@@ -9,99 +9,61 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-- [`1brc/`](1brc/README.md) — the One Billion Row Challenge; a full 1e9-row stress test that runs
-  in ~8.3 s (every flaw it originally surfaced has since been fixed).
-- [`server/`](server/README.md) — TCP + HTTP echo servers benchmarked against .NET baselines (own `bench.sh`).
+Every defect the suite surfaced is triaged in **[BUGS.md](BUGS.md)** — 18 found, 17 fixed, one
+partial remainder. The analysis and measurements for each fix live in
+[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md), each fix ships with a
+regression test under `tests/`, and every benchmark below is written in its natural,
+workaround-free form.
+
+## The suite
+
+- [`1brc/`](1brc/README.md) — the One Billion Row Challenge; the full 1e9-row workload in
+  **8.4 s** on 32 threads (~120 M rows/s), byte-identical to a sequential fold.
+- [`server/`](server/README.md) — TCP + HTTP echo servers benchmarked against .NET baselines
+  (own `bench.sh`); ~320k TCP / ~239k HTTP req/s at c=64, ~2-2.7x the dotnet equivalents.
 - The folders below are the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-  set. [`bench.sh`](bench.sh) is a shared harness for the compute-bound ones (`bench.sh <name> [args]`
-  — compiles at `-O2`, reports hyperfine time + peak RSS). Progress:
+  set. [`bench.sh`](bench.sh) is the shared harness for the compute-bound ones
+  (`bench.sh <name> [args]` — compiles at `-O2`, reports hyperfine time + peak RSS; stdin
+  fixtures via `BENCH_STDIN=<file>`). Each folder's README has the full table and analysis.
 
-  | Challenge | State |
-  |---|---|
-  | [pidigits](pidigits/README.md) | **Benchmarked** — resident memory now **constant** 0.25 MB at every N (was O(N²), 168 MB at N=1000); only the O(N³) division *time* remains |
-  | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
-  | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
-  | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=8…11); resident memory now **constant** 0.25 MB (was 4.6 GB at N=10), time-bound only |
-  | [reverse-complement](reverse-complement/README.md) | **Implemented** — correct, no bugs; list-of-char-`Str` is memory-dense but linear |
-  | [spectral-norm](spectral-norm/README.md) | **Implemented** — correct (1.274224153); needs Float-operand-order workaround ([BUGS](BUGS.md) #1) |
-  | [n-body](n-body/README.md) | **Implemented** — correct energy; several workarounds + O(N) `List(Body)` leak ([BUGS](BUGS.md) #1,2,3,15) |
-  | [fasta](fasta/README.md) | **Implemented** — correct; natural string/tuple accumulator O(N²), streaming form O(1) ([BUGS](BUGS.md) #3) |
-  | [k-nucleotide](k-nucleotide/README.md) | **Implemented** — correct via `Bytes`; `String.substring` superlinear ([BUGS](BUGS.md) #7) |
-  | [regex-redux](regex-redux/README.md) | **Implemented** — correct at small N; chained `Regex.replace` OOMs at scale ([BUGS](BUGS.md) #8) |
+## Benchmarks Game results
 
-  Every bug and gap these probes surfaced is catalogued in **[BUGS.md](BUGS.md)** (the fix backlog);
-  fixed items live in each challenge's `FLAWS.md`.
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64, `-O2`, single-threaded. All outputs match
+the reference implementations.
 
-## Compiler fixes made (surfaced by benchmarking)
+| Challenge | Standard workload | Time | Peak RSS | Note |
+|---|---|---|---|---|
+| [pidigits](pidigits/README.md) | N=10,000 | 3.50 s | 1.2 MB | Algorithm D bignum division (was O(N^3) bit-division; N=1000 went 3.46 s -> 0.029 s) |
+| [binary-trees](binary-trees/README.md) | N=21 | 1.41 s | 192 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree |
+| [mandelbrot](mandelbrot/README.md) | N=16,000 | 13.5 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
+| [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 27.5 s | 0.2 MB | constant memory at every N; time-bound only (N! enumeration) |
+| [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
+| [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
+| [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
+| [reverse-complement](reverse-complement/README.md) | fasta 1M input | 0.58 s | 944 MB | linear, but ~96 B/base constant — the one open BUGS.md item (cons-cell reuse) |
+| [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 11.3 s | 123 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
+| [regex-redux](regex-redux/README.md) | fasta 5M input | 63.7 s | 1.3 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
 
-Every bug the benchmarks above surfaced has been fixed; the benchmarks are written in their natural,
-workaround-free form. Minimal reproducers live in each challenge's `FLAWS.md`, and each fix ships with
-a regression test under `tests/`.
+Two compiler bugs were found and fixed during this very benchmark rerun — the suite doing its job:
 
-- **fannkuch-redux** ([FLAWS.md](fannkuch-redux/FLAWS.md)) — all three bugs fixed; benchmark runs:
-  - [x] **Two threaded `List` accumulators + early ADT return miscompiled** — the shallow single-cell
-    TCO copy-out only preserved a list's top cons cell; a multi-cell/rebuilt list left interior cells
-    dangling, so the early return was dropped. Now the reset is disqualified for any list accumulator
-    that is not a single fresh cons.
-  - [x] **Back-edge use-after-reset (segfault)** — same root cause; the `State`-of-two-lists
-    accumulator no longer takes the unsound shallow copy across the reset.
-  - [x] **Spurious `ASH014`** — a non-recursive helper calling a recursive one is no longer rejected;
-    the backward-reference reconstruction no longer requires the specialization path.
-- **mandelbrot** ([FLAWS.md](mandelbrot/FLAWS.md)) — written naturally; emits the real image:
-  - [x] **`Float * Float` of annotated parameters resolved to `Int`** — the operator overload was
-    picked before the parameter's annotation applied. Annotated parameter types are now seeded before
-    the body is lowered, so `zr * zr` and `cr + zr2 - zi2` resolve as `Float` with no `1.0 *` lead or
-    operand reordering.
-  - [x] **Recursive numeric accumulator typed off its first operand** — same seeding fix.
-  - [x] **(feature) Raw-bytes stdout write** — added `Ashes.IO.writeBytes : Bytes -> Unit`; mandelbrot
-    now emits the real binary `P4` PBM instead of a pixel count.
-- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, memory now **constant**:
-  - [x] **Per-iteration `BigInt` garbage now reclaimed** — a BigInt is a self-contained buffer, so it
-    is copied out across the TCO reset like a `String`; the reset fires and reclaims the spigot's
-    intermediate `BigInt`s.
-  - [x] **Growing whole-value accumulator is now O(N), not O(N²)** — a loop threading only non-sharing
-    whole-value accumulators (`String` / `BigInt`, no cons-lists) resets to a **fixed** loop-entry
-    watermark, so each grown accumulator overwrites the previous one instead of being stranded below an
-    advancing watermark. pidigits resident memory dropped from 168 MB (N=1000) to a **constant 0.25 MB
-    at every N**. Only the ~`O(N³)` *time* remains (binary long-division — a bignum-algorithm follow-up).
-- **fannkuch / fixed-shape pointer-bearing ADT accumulators** — a non-recursive pointer-bearing ADT
-  (fannkuch's `State(perm, count)`) is now carried across the reset by a recursive **deep copy** — a
-  self-contained clone (list fields fully copied, tail-sharing broken) that resets to the fixed
-  loop-entry watermark. fannkuch resident memory dropped from 4.6 GB (N=10) to a constant 0.25 MB, and
-  N≥11 is now reachable (time-bound only).
-- **Growing recursive-tree / cons-list accumulators** *(memory-model milestone, still open)* — a
-  *growing* accumulator that is a **cons-list** (shared tail forces the advancing watermark) or a
-  **self-recursive ADT** (an unbounded tree — deep-copying it per iteration would be O(size)/iteration,
-  and it is owned by the in-place reuse specialization) still grows outside that specialization. Also,
-  a helper that *returns* a growing list deep-copies it out of its arena scope per call. Removing these
-  needs ownership / in-place reuse (FLAWS #2), not a point fix.
-- **binary-trees** — no fix needed; the **positive baseline**: the per-iteration arena reset fires
-  correctly for a discarded pointer-bearing ADT (constant memory, no OOM).
+- **Large-list copy-out stack overflow (CO-37):** the scope-exit list copier cached heads in an
+  unbounded dynamic stack alloca; mandelbrot's packed-bitmap list (N^2/8 cells, then reversed —
+  two copies in one entry frame) segfaulted at N >= 2500. Large caches now spill to OS memory.
+- **Whole-list DeepAdt clone gating:** the `List(ADT)` back-edge clone (CO-32) was licensed by
+  TYPE, so 1brc's merge loops — which walk a `List(tuple)` by pattern tails — deep-copied the
+  remainder every iteration (~400x time, ~27x memory, OOM on the full file). The clone is now
+  licensed per argument, only for freshly rebuilt lists (n-body's shape).
 
-## Benchmarks Game — math-lib coverage
+## Math-lib coverage
 
-`Ashes.Math` has landed (see [STANDARD_LIBRARY.md](../docs/md/reference/standard-library.md#ashesmath)), and
-this is where each benchmark stands. The math lib's real unlock for this set is the **Int↔Float
-conversions** (`toFloat`, `*ToInt`) it introduces plus the hermetic `sqrt`. Notably **none of
-these need a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`); only the hermetic core is on the
-critical path. Two needs fell **outside** the math lib: a **fixed-precision float formatter**
-(`fromFloat` hardcodes 6 fractional digits; n-body and spectral-norm require 9 dp) — now shipped
-as `Ashes.Text.formatFloat(value)(decimals)` — and **bignum** (pidigits), now shipped as the
-native `Ashes.BigInt` type (see the [architecture notes](../docs/md/internals/architecture.md#bigint-arbitrary-precision-integers)).
+`Ashes.Math` (see [the standard library](../docs/md/reference/standard-library.md#ashesmath))
+plus `Ashes.Text.formatFloat` (fixed-precision formatting) and native `Ashes.BigInt` cover the
+whole set; **none of these benchmarks needs a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`) —
+only the hermetic core (`sqrt`, `toFloat`, `*ToInt`) is on any critical path.
 
-| Challenge | Covered by math lib? | Remaining gap |
-|---|---|---|
-| [binary-trees](binary-trees/README.md) | n/a (no math) | — |
-| [fannkuch-redux](fannkuch-redux/README.md) | n/a (no math) | pure-solvable; probes arena churn #2 |
-| [fasta](fasta/README.md) | yes, `toFloat` | — |
-| [mandelbrot](mandelbrot/README.md) | yes, `toFloat` | — |
-| [reverse-complement](reverse-complement/README.md) | n/a (no math) | — |
-| [regex-redux](regex-redux/README.md) | n/a (no math) | regex-engine perf at scale |
-| [k-nucleotide](k-nucleotide/README.md) | yes, `toFloat` | — (3-dp percentages via `formatFloat`) |
-| [n-body](n-body/README.md) | yes, `sqrt` | — (9-dp via `formatFloat`) |
-| [spectral-norm](spectral-norm/README.md) | yes, `sqrt` + `toFloat` | — (9-dp via `formatFloat`) |
-| [pidigits](pidigits/README.md) | n/a (integers) | — (native `Ashes.BigInt`) |
-
-Net: `Ashes.Math` plus the fixed-precision float formatter serves the 9 float-oriented
-benchmarks, and native `Ashes.BigInt` unblocks pidigits — the whole set is now expressible.
-Each folder's `README.md` has the per-benchmark detail.
+| Challenge | Math dependency |
+|---|---|
+| binary-trees, fannkuch-redux, reverse-complement, regex-redux | none |
+| fasta, mandelbrot, k-nucleotide | `toFloat` (+ `formatFloat` percentages) |
+| n-body, spectral-norm | `sqrt` + `formatFloat` (9 dp) |
+| pidigits | native `Ashes.BigInt` |

@@ -23,7 +23,7 @@ are accumulator-passing tail recursion (the regime Ashes compiles to a real loop
 
 ## What it probes (expected flaws)
 
-- **The non-GC bump-arena reclamation path (FLAWS #2).** This is the headline reason to
+- **The non-GC bump-arena reclamation path.** This is the headline reason to
   run it: it allocates and discards huge tree structures in a tight loop, which is exactly
   the churn that the 1BRC residual linear leak fails to reclaim — but here in a small,
   isolated reproducer (a tree, not a 50 GB hashmap), far cheaper to debug.
@@ -63,14 +63,14 @@ dotnet run --project src/Ashes.Cli -- compile challenges/binary-trees/binary-tre
 challenges/bench.sh binary-trees 21
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded):
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
 
 | N (maxDepth) | Time | Peak RSS |
 |--------------|------|----------|
-| 16 | 0.03 s | 5.8 MB |
-| 18 | 0.15 s | 23.8 MB |
-| 20 | 0.74 s | 96.0 MB |
-| **21** (standard) | **1.51 s** | **191.5 MB** |
+| 16 | 0.031 s | 6.0 MB |
+| 18 | 0.145 s | 24.0 MB |
+| 20 | 0.711 s | 95.8 MB |
+| **21** (standard) | **1.41 s** | **191.8 MB** |
 
 The headline probe — *does the per-iteration arena reset fire for a discarded `Tree`, or does
 memory grow toward OOM?* — comes out **positive**: `N=21` allocates and discards tens of millions

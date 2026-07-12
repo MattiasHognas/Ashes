@@ -296,6 +296,197 @@ public sealed partial class Lowering
         return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Params that are AFFINE across the loop: along every loop-continuing path (one that reaches a
+    /// tail self-call), the param is consumed at most once, and only as the left operand of the
+    /// <c>+</c> producing its OWN tail-call argument (or passed through unchanged). Occurrences on
+    /// exiting paths are unrestricted — the loop is over, no further in-place growth can invalidate
+    /// them. Together with the loop-entry watermark boundary (a value ABOVE it is loop-created, so
+    /// the caller cannot alias it), this proves the accumulator is uniquely owned at each append —
+    /// the license for growing it in place (<see cref="IrInst.ConcatStrTip"/>) instead of copying.
+    /// Anything a continuing path reads outside the sanctioned position — the scrutinee, a guard,
+    /// an if condition, a let value, another argument — disqualifies the param (it would alias a
+    /// string whose length header a later in-place append rewrites).
+    /// </summary>
+    private HashSet<string> CollectAffineAccumulators(Expr body, IReadOnlyList<string> paramNames, string selfName)
+    {
+        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
+        bool sawSelfCall = false;
+
+        void DisqualifyMentioned(Expr e, HashSet<string> shadowed)
+        {
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            var free = FreeVars(e, shadowed);
+            candidates.RemoveWhere(free.Contains);
+        }
+
+        // Returns whether the subtree contains a tail self-call (i.e. is loop-continuing).
+        bool Walk(Expr e, HashSet<string> shadowed)
+        {
+            switch (e)
+            {
+                case Expr.If iff:
+                    {
+                        bool t = Walk(iff.Then, shadowed);
+                        bool el = Walk(iff.Else, shadowed);
+                        if (t || el)
+                        {
+                            DisqualifyMentioned(iff.Cond, shadowed);
+                        }
+
+                        return t || el;
+                    }
+
+                case Expr.Match m:
+                    {
+                        bool any = false;
+                        foreach (var c in m.Cases)
+                        {
+                            var caseShadow = shadowed;
+                            var binders = new HashSet<string>(StringComparer.Ordinal);
+                            CollectPatternBinders(c.Pattern, binders);
+                            if (binders.Count > 0)
+                            {
+                                caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                                caseShadow.UnionWith(binders);
+                            }
+
+                            bool caseContinues = Walk(c.Body, caseShadow);
+                            if (caseContinues && c.Guard is not null)
+                            {
+                                DisqualifyMentioned(c.Guard, caseShadow);
+                            }
+
+                            any |= caseContinues;
+                        }
+
+                        if (any)
+                        {
+                            DisqualifyMentioned(m.Value, shadowed);
+                        }
+
+                        return any;
+                    }
+
+                case Expr.Let let:
+                    {
+                        var bodyShadow = shadowed.Contains(let.Name)
+                            ? shadowed
+                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+                        bool b = Walk(let.Body, bodyShadow);
+                        if (b)
+                        {
+                            DisqualifyMentioned(let.Value, shadowed);
+                        }
+
+                        return b;
+                    }
+
+                case Expr.LetResult letResult:
+                    {
+                        var bodyShadow = shadowed.Contains(letResult.Name)
+                            ? shadowed
+                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letResult.Name };
+                        bool b = Walk(letResult.Body, bodyShadow);
+                        if (b)
+                        {
+                            DisqualifyMentioned(letResult.Value, shadowed);
+                        }
+
+                        return b;
+                    }
+
+                case Expr.LetRecursive letRecursive:
+                    {
+                        var bodyShadow = shadowed.Contains(letRecursive.Name)
+                            ? shadowed
+                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letRecursive.Name };
+                        bool b = Walk(letRecursive.Body, bodyShadow);
+                        if (b)
+                        {
+                            // The nested function's captures alias whatever they close over.
+                            DisqualifyMentioned(letRecursive.Value, bodyShadow);
+                        }
+
+                        return b;
+                    }
+
+                case Expr.Call:
+                    {
+                        var args = new List<Expr>();
+                        var root = CollectCallArgs(e, args);
+                        if (root is not Expr.Var f
+                            || !string.Equals(f.Name, selfName, StringComparison.Ordinal)
+                            || shadowed.Contains(selfName)
+                            || args.Count != paramNames.Count)
+                        {
+                            // An exit leaf (or a non-tail self-call: a fresh invocation whose own
+                            // watermark sits above our values, so its appends fall back safely).
+                            return false;
+                        }
+
+                        sawSelfCall = true;
+                        for (int j = 0; j < args.Count; j++)
+                        {
+                            foreach (var p in candidates.ToArray())
+                            {
+                                if (shadowed.Contains(p))
+                                {
+                                    continue;
+                                }
+
+                                bool ownPosition = string.Equals(p, paramNames[j], StringComparison.Ordinal);
+                                if (ownPosition)
+                                {
+                                    // Sanctioned: the param itself, or a LEFT-NESTED `+` chain with
+                                    // the param as its leftmost leaf and no other occurrence in any
+                                    // right operand — e.g. `out + "\n" + ch`. Every step of the
+                                    // chain then appends onto the same uniquely-owned accumulator.
+                                    bool sanctioned;
+                                    var chain = args[j];
+                                    bool rhsClean = true;
+                                    while (chain is Expr.Add chainAdd)
+                                    {
+                                        if (FreeVars(chainAdd.Right, shadowed).Contains(p))
+                                        {
+                                            rhsClean = false;
+                                            break;
+                                        }
+
+                                        chain = chainAdd.Left;
+                                    }
+
+                                    sanctioned = rhsClean
+                                        && chain is Expr.Var pv
+                                        && string.Equals(pv.Name, p, StringComparison.Ordinal);
+                                    if (!sanctioned && FreeVars(args[j], shadowed).Contains(p))
+                                    {
+                                        candidates.Remove(p);
+                                    }
+                                }
+                                else if (FreeVars(args[j], shadowed).Contains(p))
+                                {
+                                    candidates.Remove(p);
+                                }
+                            }
+                        }
+
+                        return true;
+                    }
+
+                default:
+                    return false; // exit leaf: unrestricted uses
+            }
+        }
+
+        Walk(body, new HashSet<string>(StringComparer.Ordinal));
+        return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
+    }
+
     private bool TailLeavesStable(Expr body, string accName, TextSpan selfSpan, int selfParamCount, HashSet<string> shadowed)
     {
         switch (body)

@@ -12,7 +12,7 @@
 //
 // STATUS: runs correctly. The three compiler bugs this benchmark surfaced (a two-threaded-list
 // early-return miscompile, a spurious ASH014, and a TCO back-edge use-after-reset segfault) are all
-// fixed -- see FLAWS.md. The permutation and its factorial counter are modeled as one `State(perm,
+// fixed. The permutation and its factorial counter are modeled as one `State(perm,
 // count)` pair, threaded through the enumeration loop; that is a design choice, not a workaround now.
 // N! grows factorially, so resident memory grows with the enumeration (the growing pointer-bearing
 // accumulator is not reclaimed within the loop yet -- the memory-model milestone), and the Benchmarks

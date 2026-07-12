@@ -688,6 +688,9 @@ public sealed partial class Lowering
         ResolveDeferredAdds();
         ResolveDeferredMuls();
         ResolveDeferredEqs();
+        // After the operator resolutions: argument types the back-edge copy-out decision was
+        // waiting on are now as concrete as they will ever be.
+        ResolveDeferredTcoResets();
 
         // Any concrete capability left in the entry expression's row after inference has no handler
         // discharging it — a compile-time error, not a runtime failure.
@@ -726,6 +729,484 @@ public sealed partial class Lowering
         };
     }
 
+    /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
+    /// block can be generated later (after inference resolves the argument types) at the exact
+    /// point marked by an <see cref="IrInst.TcoResetPending"/> placeholder. The
+    /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
+    /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
+    /// stable-accumulator) are evaluated eagerly, since the scope is gone by resolution time.</summary>
+    /// <summary>
+    /// True when a tail-call argument expression rebuilds its list THIS iteration: a call result
+    /// (a function's list result is copied out of the callee's arena scope on return, so it is
+    /// self-contained), a list literal, or a cons spine ending in one of those. Only such an arg
+    /// may take the whole-list DeepAdt clone at the back-edge — the body already paid O(length)
+    /// to construct it, so the clone at most doubles that. Anything else (bare var, pattern tail,
+    /// cons onto the accumulator param) may share unbounded structure with the previous iteration.
+    /// </summary>
+    private static bool IsFreshListRebuildExpr(Expr expr)
+        => expr switch
+        {
+            Expr.Call => true,
+            Expr.ListLit => true,
+            Expr.Cons cons => IsFreshListRebuildExpr(cons.Tail),
+            Expr.Let let => IsFreshListRebuildExpr(let.Body),
+            _ => false,
+        };
+
+    private sealed record PendingTcoReset(
+        int[] ArgTemps,
+        TypeRef[] ArgTypes,
+        bool[] PassThrough,
+        bool[] SingleFreshCons,
+        bool[] FreshListRebuild,
+        bool[] StableAccArg,
+        int[] ParamSlots,
+        int FixedCursorSlot,
+        int FixedEndSlot,
+        int ArenaCursorSlot,
+        int ArenaEndSlot,
+        bool CoroutineLoop,
+        int CompactionSizeSlot,
+        int[] ArgResvStartSlots,
+        int[] ArgResvEndSlots);
+
+    private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
+    private int _nextTcoResetId;
+
+    // Set while lowering the tail-call argument of an affine string accumulator (its own param
+    // position): LowerAdd's Str+Str branch emits the reservation-growing ConcatStrTip for
+    // `<param> + rhs` chains instead of a copying ConcatStr. (Name, the param's slot for the
+    // shadow check, and the loop's reservation start/end slots.)
+    private (string Name, int Slot, int ResvStart, int ResvEnd)? _affineAppendCtx;
+
+    // Slack added to the amortized-compaction threshold (growth > 2*live + slack): small loops with
+    // tiny live sizes still batch a few KB of garbage per compaction instead of copying every
+    // iteration, and loops whose live size is zero compact only once slack accumulates.
+    private const long TcoCompactionSlackBytes = 4096;
+
+    /// <summary>
+    /// Emits the TCO back-edge arena block — the plain per-iteration reset, or the two-pass
+    /// copy-out with the fixed/advancing watermark choice — from the captured facts. Called inline
+    /// at the back edge when every argument type is already resolved, or from
+    /// <see cref="ResolveDeferredTcoResets"/> (with <c>_inst</c> pointed at the splice list) when
+    /// the decision had to wait for inference.
+    /// </summary>
+    private void EmitTcoBackEdgeArenaBlock(PendingTcoReset info)
+    {
+        var argTypes = info.ArgTypes;
+        int tcoPreRestoreEndSlot = NewLocal();
+
+        // An arg needs no copy-out at the reset if it's a copy type (inline), a resource handle
+        // (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), a loop-invariant
+        // pass-through (holds the pre-loop value, below the watermark), or a fully-reusing
+        // specialized accumulator (rewritten in place below the watermark).
+        bool ArgResetSafe(int i) => CanArenaReset(argTypes[i])
+            || IsResourceHandleType(argTypes[i])
+            || info.PassThrough[i]
+            || info.StableAccArg[i];
+
+        if (Enumerable.Range(0, argTypes.Length).All(ArgResetSafe))
+        {
+            // All copy types and/or in-place-reused accumulators: plain reset. Skipped
+            // while a one-shot capability post pushed this iteration is still pending — the
+            // post (and its captures) lives in the iteration's allocations.
+            var tcoResetSkipLabel = BeginLivePostsGuard();
+            Emit(new IrInst.RestoreArenaState(info.ArenaCursorSlot, info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+            Emit(new IrInst.ReclaimArenaChunks(info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+            EndLivePostsGuard(tcoResetSkipLabel);
+            return;
+        }
+
+        // Check whether every heap-type arg can be copy-outed. The single-cell list copy-outs
+        // preserve only the list's TOP cons cell across the reset, valid only for the
+        // `head :: <loop accumulator param>` shape (captured in SingleFreshCons); any other list
+        // shape — except a DeepAdt list, which the synthesized copier clones WHOLE — disqualifies
+        // the reset (those iterations simply don't reclaim).
+        // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
+        // at every back-edge, affordable only when the body already paid O(length) rebuilding the
+        // list this iteration (info.FreshListRebuild). A threaded/consumed list (a bare var, a
+        // pattern-derived tail, a cons onto the accumulator) can share unbounded structure with
+        // the previous iteration — cloning it per back-edge multiplies the loop's cost by the
+        // list length (1brc's merge phase regressed ~400x) — so it downgrades to None here.
+        CopyOutKind ArgCopyOutKind(int i, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy)
+        {
+            var argKind = GetTcoCopyOutKind(argTypes[i], out sizeBytes, out headCopy);
+            if (argKind == CopyOutKind.DeepAdt
+                && Prune(argTypes[i]) is TypeRef.TList
+                && !info.FreshListRebuild[i])
+            {
+                return CopyOutKind.None;
+            }
+
+            return argKind;
+        }
+
+        bool allCopyable = true;
+        for (int i = 0; i < argTypes.Length; i++)
+        {
+            if (info.PassThrough[i])
+            {
+                continue;
+            }
+
+            if (!CanArenaReset(argTypes[i])
+                && ArgCopyOutKind(i, out _, out _) == CopyOutKind.None)
+            {
+                allCopyable = false;
+                break;
+            }
+
+            if (Prune(argTypes[i]) is TypeRef.TList
+                && ArgCopyOutKind(i, out _, out _) != CopyOutKind.DeepAdt
+                && !info.SingleFreshCons[i])
+            {
+                allCopyable = false;
+                break;
+            }
+        }
+
+        // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's whole-value
+        // accumulator copies) instead of the per-iteration one WHEN every arg is a non-sharing
+        // whole-value type: a copy type, a resource handle, a String, a BigInt, a self-contained
+        // DeepAdt clone (ADT/tuple/list), or a loop-invariant pass-through. A single-fresh-cons
+        // list shares its tail with the prior accumulator, which sits below the per-iteration
+        // watermark and would be overwritten by a fixed-mark reset — it keeps the advancing one.
+        // This is what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident.
+        bool useFixedWatermark = info.FixedCursorSlot >= 0
+            && Enumerable.Range(0, argTypes.Length).All(i =>
+                info.PassThrough[i]
+                || CanArenaReset(argTypes[i])
+                || IsResourceHandleType(argTypes[i])
+                || Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBigInt
+                || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
+                || (Prune(argTypes[i]) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(argTypes[i])))
+                || (Prune(argTypes[i]) is TypeRef.TList && ArgCopyOutKind(i, out _, out _) == CopyOutKind.DeepAdt));
+        int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
+        int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
+
+        if (!allCopyable)
+        {
+            return; // complex heap types — no arena reset.
+        }
+
+        // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args across the back-edge cannot
+        // be done with a single round of copy-outs to the watermark W: each copy-out compacts its
+        // arg *down* to W, but a copy whose destination block [W, …) reaches high enough overwrites
+        // a later arg's still-unread source bytes.
+        //
+        // Phase A (BEFORE the reset): copy every heap arg UP to a fresh alloc above the current
+        // cursor. Sources are all below the cursor, destinations above it → disjoint. Phase B
+        // (AFTER the reset): copy each up-copy DOWN to W.
+        // Skipped entirely while a one-shot capability post pushed this iteration is still pending.
+        var tcoCopySkipLabel = BeginLivePostsGuard();
+
+        // Amortized compaction (fixed watermark only): copying the WHOLE growing accumulator at
+        // every back-edge is O(N^2) TIME (each of N iterations copies O(N) live bytes). Instead,
+        // skip the copy-out + reset while the arena has grown less than 2x the live size recorded
+        // at the last compaction (+ slack) — the skipped iterations just keep allocating above W.
+        // Each compaction then reclaims at least as much garbage as it copies live bytes, so total
+        // copy work is LINEAR in bytes allocated (the doubling amortization) and resident memory
+        // stays bounded by ~3x the live accumulator. Skipping is trivially safe: it is exactly the
+        // no-reset behavior every non-qualifying loop already has. The advancing-mark path is NOT
+        // amortized — its single-cell list copies must track the moving mark every iteration.
+        string? compactSkipLabel = null;
+        if (useFixedWatermark && info.CompactionSizeSlot >= 0)
+        {
+            int curCursorSlot = NewLocal();
+            int curEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(curCursorSlot, curEndSlot));
+            int curTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(curTemp, curCursorSlot));
+            int wTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wTemp, info.FixedCursorSlot));
+            int growthTemp = NewTemp();
+            Emit(new IrInst.SubInt(growthTemp, curTemp, wTemp));
+
+            // An active string reservation (ConcatStrTip) is LIVE capacity, not garbage — without
+            // subtracting its span, a fresh doubling reservation (~2x live) plus the live data
+            // always exceeds the 2M threshold, so every doubling would resonate into an immediate
+            // compact -> zero -> re-reserve -> compact cycle: one full copy per append, quadratic
+            // again. Netting the span out restores the intended accounting (only abandoned copies
+            // and iteration scraps count), keeping compactions geometric.
+            for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
+            {
+                if (info.ArgResvStartSlots[r] < 0)
+                {
+                    continue;
+                }
+
+                int resvStartTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(resvStartTemp, info.ArgResvStartSlots[r]));
+                int resvEndTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(resvEndTemp, info.ArgResvEndSlots[r]));
+                int resvSpanTemp = NewTemp();
+                Emit(new IrInst.SubInt(resvSpanTemp, resvEndTemp, resvStartTemp));
+                int nettedTemp = NewTemp();
+                Emit(new IrInst.SubInt(nettedTemp, growthTemp, resvSpanTemp));
+                growthTemp = nettedTemp;
+            }
+            int mTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(mTemp, info.CompactionSizeSlot));
+            int oneTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(oneTemp, 1));
+            int twoMTemp = NewTemp();
+            Emit(new IrInst.ShlInt(twoMTemp, mTemp, oneTemp));
+            int slackTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(slackTemp, TcoCompactionSlackBytes));
+            int thresholdTemp = NewTemp();
+            Emit(new IrInst.AddInt(thresholdTemp, twoMTemp, slackTemp));
+            int growthGtTemp = NewTemp();
+            Emit(new IrInst.CmpIntGt(growthGtTemp, growthTemp, thresholdTemp));
+            // cursor - W is only meaningful while the cursor is still in W's chunk; once the arena
+            // grew into another chunk the difference is garbage (distinct mmaps). A crossed chunk
+            // also means at least a chunk's worth of allocation since W — compact unconditionally.
+            int wEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wEndTemp, info.FixedEndSlot));
+            int curEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(curEndTemp, curEndSlot));
+            int endsDifferTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(endsDifferTemp, curEndTemp, wEndTemp));
+            int needTemp = NewTemp();
+            Emit(new IrInst.OrInt(needTemp, growthGtTemp, endsDifferTemp));
+            compactSkipLabel = $"tco_compact_skip_{_nextLambdaId++}";
+            Emit(new IrInst.JumpIfFalse(needTemp, compactSkipLabel));
+        }
+
+        var upCopyTemps = new int[argTypes.Length];
+        for (int i = 0; i < argTypes.Length; i++)
+        {
+            // A loop-invariant pass-through arg lives below the fixed watermark; its slot already
+            // holds it — no copy at all.
+            if (info.PassThrough[i] || CanArenaReset(argTypes[i]))
+            {
+                upCopyTemps[i] = -1;
+                continue;
+            }
+
+            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
+            if (kind == CopyOutKind.None)
+            {
+                upCopyTemps[i] = -1;
+                continue;
+            }
+
+            // A deep-ADT copy returns its own temp (a self-contained recursive clone), rather than
+            // writing into a pre-allocated dest like the shallow kinds.
+            //
+            // It is cloned TWICE (a clone of the clone). Phase B writes its down-copy at [W, W+S)
+            // while reading the up-copy at [W+B, W+B+S), where B is what the loop body allocated
+            // this iteration — they overlap whenever B < S. The shallow kinds are safe because the
+            // fresh accumulator itself was just body-allocated (B >= S), but a deep clone's size
+            // includes copier env/closure overhead beyond the raw value, and a list-tail argument
+            // may not be body-allocated at all (B ~ 0) — an overlapping, skewed Phase B copy then
+            // reads its own partially-written output. The second clone starts at least one full
+            // clone-size above W, so Phase B's destination end (W + S) never reaches its source
+            // start (W + B + S): disjoint for any B >= 0, for any number of DeepAdt args.
+            upCopyTemps[i] = kind == CopyOutKind.DeepAdt
+                ? EmitDeepCopy(EmitDeepCopy(info.ArgTemps[i], argTypes[i]), argTypes[i])
+                : NewTemp();
+            if (kind != CopyOutKind.DeepAdt)
+            {
+                EmitTcoCopyOut(kind, upCopyTemps[i], info.ArgTemps[i], sizeBytes, headCopy);
+            }
+        }
+
+        // Reset (pointer reset only, no chunk freeing): cursor → W.
+        Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+
+        // The reset reclaims any string reservations (they live above the watermark) — zero their
+        // slots; the reserving Phase-B copy below writes fresh bounds for the affine args.
+        if (info.ArgResvStartSlots.Any(s => s >= 0))
+        {
+            int resvZeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(resvZeroTemp, 0));
+            for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
+            {
+                if (info.ArgResvStartSlots[r] >= 0)
+                {
+                    Emit(new IrInst.StoreLocal(info.ArgResvStartSlots[r], resvZeroTemp));
+                    Emit(new IrInst.StoreLocal(info.ArgResvEndSlots[r], resvZeroTemp));
+                }
+            }
+        }
+
+        // Phase B: copy each up-copy down to W and store into the slot.
+        for (int i = 0; i < argTypes.Length; i++)
+        {
+            if (upCopyTemps[i] < 0)
+                continue;
+
+            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
+            int copyDest;
+            if (kind == CopyOutKind.DeepAdt)
+            {
+                copyDest = EmitDeepCopy(upCopyTemps[i], argTypes[i]);
+            }
+            else if (info.ArgResvStartSlots[i] >= 0 && kind == CopyOutKind.Shallow && sizeBytes == -1)
+            {
+                // An affine string accumulator's down-copy RESERVES (ConcatStrTip with an empty
+                // right; the slots were just zeroed, so its fallback reserves 2x and records fresh
+                // bounds). Without this, the first post-compaction append re-reserves in a fresh
+                // allocation — which, for an accumulator larger than the watermark chunk's
+                // remainder, lands in ANOTHER chunk and re-triggers the crossed-chunk compaction
+                // every back-edge (one full copy per append). Reserving here keeps the accumulator
+                // and its headroom exactly where the rebase puts the watermark.
+                int emptyTemp = NewTemp();
+                Emit(new IrInst.LoadConstStr(emptyTemp, InternString(string.Empty)));
+                copyDest = NewTemp();
+                Emit(new IrInst.ConcatStrTip(copyDest, upCopyTemps[i], emptyTemp, info.ArgResvStartSlots[i], info.ArgResvEndSlots[i]));
+            }
+            else
+            {
+                copyDest = NewTemp();
+                EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
+            }
+
+            Emit(new IrInst.StoreLocal(info.ParamSlots[i], copyDest));
+        }
+
+        // Free the chunks abandoned above W (including the Phase A up-copies, now fully consumed).
+        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+
+        if (compactSkipLabel is not null)
+        {
+            // Record the compacted live size (cursor - W) for the next amortization trigger. When
+            // the down-copy overflowed into a NEW chunk (the accumulator outgrew W's chunk), the
+            // difference is garbage — instead REBASE the fixed watermark to the post-copy position
+            // in the new chunk and restart the epoch (M = 0). The old chunk's region above the old
+            // W is stranded, but crossings happen only when the live size doubles past a chunk
+            // (the grow path gives oversized chunks 2x headroom), so the stranded generations form
+            // a geometric series bounded by ~2x the final live size. After the rebase, appends and
+            // compactions run entirely inside the roomy new chunk.
+            int afterCursorSlot = NewLocal();
+            int afterEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(afterCursorSlot, afterEndSlot));
+            int afterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(afterTemp, afterCursorSlot));
+            int wAfterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wAfterTemp, info.FixedCursorSlot));
+            int liveTemp = NewTemp();
+            Emit(new IrInst.SubInt(liveTemp, afterTemp, wAfterTemp));
+            int afterEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(afterEndTemp, afterEndSlot));
+            int wEndAfterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wEndAfterTemp, info.FixedEndSlot));
+            int sameChunkTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(sameChunkTemp, afterEndTemp, wEndAfterTemp));
+            string rebaseLabel = $"tco_compact_rebase_{_nextLambdaId++}";
+            string recordedLabel = $"tco_compact_recorded_{_nextLambdaId++}";
+            Emit(new IrInst.JumpIfFalse(sameChunkTemp, rebaseLabel));
+            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, liveTemp));
+            Emit(new IrInst.Jump(recordedLabel));
+            Emit(new IrInst.Label(rebaseLabel));
+            // W' = the new chunk's allocation start, recovered from the chunk FOOTER (the usable
+            // end holds the chunk's own base; allocations start at base + 8). The down-copy landed
+            // exactly there, so the live accumulator sits AT W' — future compactions copy down to
+            // W' with the accumulator's full size counted in the body-allocation term (B >= S), and
+            // in-place appends see acc >= W' immediately. M restarts at the region size.
+            int chunkBaseTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(chunkBaseTemp, afterEndTemp, 0));
+            int eightTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(eightTemp, 8));
+            int rebaseCursorTemp = NewTemp();
+            Emit(new IrInst.AddInt(rebaseCursorTemp, chunkBaseTemp, eightTemp));
+            Emit(new IrInst.StoreLocal(info.FixedCursorSlot, rebaseCursorTemp));
+            Emit(new IrInst.StoreLocal(info.FixedEndSlot, afterEndTemp));
+            int rebasedLiveTemp = NewTemp();
+            Emit(new IrInst.SubInt(rebasedLiveTemp, afterTemp, rebaseCursorTemp));
+            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, rebasedLiveTemp));
+            Emit(new IrInst.Label(recordedLabel));
+            Emit(new IrInst.Label(compactSkipLabel));
+        }
+
+        EndLivePostsGuard(tcoCopySkipLabel);
+    }
+
+    /// <summary>
+    /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder — a back-edge whose copy-out
+    /// decision was deferred because an argument type was still an unresolved inference variable —
+    /// with the real arena block (or with nothing, when the now-resolved types do not qualify).
+    /// Runs at the end of lowering, after the deferred operator resolutions, so the pruned types
+    /// are as concrete as they will ever be. Splices in place per function, temporarily pointing
+    /// <c>_inst</c> and the temp/local counters at the target function.
+    /// </summary>
+    private void ResolveDeferredTcoResets()
+    {
+        if (_pendingTcoResets.Count == 0)
+        {
+            return;
+        }
+
+        // The entry instruction list (_inst) is spliced in place with the live counters.
+        if (_inst.Any(x => x is IrInst.TcoResetPending))
+        {
+            var entryOriginal = new List<IrInst>(_inst);
+            _inst.Clear();
+            foreach (var inst in entryOriginal)
+            {
+                if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
+                {
+                    EmitTcoBackEdgeArenaBlock(info);
+                }
+                else
+                {
+                    _inst.Add(inst);
+                }
+            }
+        }
+
+        // Lifted functions: splice each, with the counters swapped to the function's. Synthesized
+        // copiers appended by the emission land after originalCount and never contain placeholders.
+        int originalCount = _funcs.Count;
+        for (int fi = 0; fi < originalCount; fi++)
+        {
+            var f = _funcs[fi];
+            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending))
+            {
+                continue;
+            }
+
+            var savedInst = new List<IrInst>(_inst);
+            var savedTemp = _nextTempSlot;
+            var savedLocal = _nextLocalSlot;
+            var savedLocalNames = new Dictionary<int, string>(_localNames);
+            var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+            _inst.Clear();
+            _nextTempSlot = f.TempCount;
+            _nextLocalSlot = f.LocalCount;
+            foreach (var inst in f.Instructions)
+            {
+                if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
+                {
+                    EmitTcoBackEdgeArenaBlock(info);
+                }
+                else
+                {
+                    _inst.Add(inst);
+                }
+            }
+
+            _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
+            _inst.Clear();
+            _inst.AddRange(savedInst);
+            _nextTempSlot = savedTemp;
+            _nextLocalSlot = savedLocal;
+            _localNames.Clear();
+            foreach (var kv in savedLocalNames)
+            {
+                _localNames[kv.Key] = kv.Value;
+            }
+
+            _localTypes.Clear();
+            foreach (var kv in savedLocalTypes)
+            {
+                _localTypes[kv.Key] = kv.Value;
+            }
+        }
+
+        _pendingTcoResets.Clear();
+    }
+
     // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
     // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
     // Int. Then each provisional add becomes ConcatStr (Str), AddFloat (Float), or stays AddInt.
@@ -760,6 +1241,7 @@ public sealed partial class Lowering
 
             instructions[i] = Prune(operandType) switch
             {
+                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineResvStartSlot, add.AffineResvEndSlot) { Location = add.Location }),
                 TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
@@ -1524,7 +2006,8 @@ public sealed partial class Lowering
                     ParamCount = paramCount,
                     ParamNames = tcoParamNames,
                     InTailPosition = false,
-                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
+                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name),
+                    AffineStrParams = CollectAffineAccumulators(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
                 };
             }
             else
@@ -2180,6 +2663,23 @@ public sealed partial class Lowering
             tco.FixedCursorSlot = NewLocal();
             tco.FixedEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
+            // Live-size slot for the amortized fixed-watermark compaction (see TcoContext), starts 0
+            // so the first qualifying back-edge compacts and records the true live size.
+            tco.CompactionSizeSlot = NewLocal();
+            int compactionZero = NewTemp();
+            Emit(new IrInst.LoadConstInt(compactionZero, 0));
+            Emit(new IrInst.StoreLocal(tco.CompactionSizeSlot, compactionZero));
+
+            // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
+            // zeroed here so no string matches until the loop's first fallback reserves.
+            foreach (var affineParam in tco.AffineStrParams)
+            {
+                int resvStart = NewLocal();
+                int resvEnd = NewLocal();
+                Emit(new IrInst.StoreLocal(resvStart, compactionZero));
+                Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
+                tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
+            }
 
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
@@ -2639,7 +3139,32 @@ public sealed partial class Lowering
             var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
             for (int i = 0; i < collectedArgs.Count; i++)
             {
+                // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
+                // concat chain with the accumulator as its leftmost leaf) appends in place at every
+                // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
+                var savedAffineCtx = _affineAppendCtx;
+                if (i < tco.ParamNames.Count
+                    && tco.FixedCursorSlot >= 0
+                    && tco.AffineStrParams.Contains(tco.ParamNames[i])
+                    && i < tco.ParamSlots.Count
+                    && collectedArgs[i] is Expr.Add)
+                {
+                    var chainLeaf = collectedArgs[i];
+                    while (chainLeaf is Expr.Add chainAdd)
+                    {
+                        chainLeaf = chainAdd.Left;
+                    }
+
+                    if (chainLeaf is Expr.Var affineVar
+                        && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
+                        && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
+                    {
+                        _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
+                    }
+                }
+
                 var (argTemp, argType) = LowerExpr(collectedArgs[i]);
+                _affineAppendCtx = savedAffineCtx;
                 newArgTemps[i] = argTemp;
                 newArgTypes[i] = argType;
                 if (curType is TypeRef.TFun funType)
@@ -2685,187 +3210,90 @@ public sealed partial class Lowering
             // watermark and are therefore never reclaimed.
             if (tco.ArenaCursorSlot >= 0)
             {
-                int tcoPreRestoreEndSlot = NewLocal();
-
-                // An arg needs no copy-out at the reset if it's a copy type (inline), a resource
-                // handle (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), OR a
-                // fully-reusing specialized accumulator — rewritten in place below the watermark, it
-                // already survives a plain reset, which then reclaims the iteration's scaffolding.
-                bool ArgResetSafe(int i) => CanArenaReset(newArgTypes[i])
-                    || IsResourceHandleType(newArgTypes[i])
-                    // A loop-invariant param (passed unchanged as its own Var at every tail self-call)
-                    // holds the value passed into the loop — below the watermark — so it survives a plain
-                    // reset even when it is a heap type (e.g. a Bytes threaded unchanged through a fold).
-                    || (i < tco.ParamNames.Count
+                // Gather the AST/scope-dependent facts about each argument NOW (they need the
+                // current scope and the raw arg expressions); the TYPE-dependent copy-out decision
+                // may have to wait until inference finishes (see below).
+                var passThrough = new bool[newArgTypes.Length];
+                var singleFreshCons = new bool[newArgTypes.Length];
+                var freshListRebuild = new bool[newArgTypes.Length];
+                var stableAccArg = new bool[newArgTypes.Length];
+                for (int i = 0; i < newArgTypes.Length; i++)
+                {
+                    // A loop-invariant pass-through arg (the param's own unchanged Var at every tail
+                    // self-call) still holds the value passed INTO the loop — allocated before entry,
+                    // hence below even the FIXED loop-entry watermark. It needs no copy-out at all and
+                    // never endangers (or is endangered by) a reset. This is what lets a loop threading
+                    // a closure (fasta's randomFasta table), an invariant list, or any other heap value
+                    // alongside a growing accumulator keep the fixed mark instead of stranding every
+                    // iteration's accumulator copy below an advancing one.
+                    passThrough[i] = i < tco.ParamNames.Count
                         && tco.LoopInvariantParams.Contains(tco.ParamNames[i])
-                        && collectedArgs[i] is Expr.Var invVar
-                        && string.Equals(invVar.Name, tco.ParamNames[i], StringComparison.Ordinal))
-                    || (i < tco.ParamNames.Count
+                        && collectedArgs[i] is Expr.Var passVar
+                        && string.Equals(passVar.Name, tco.ParamNames[i], StringComparison.Ordinal);
+
+                    // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
+                    // tail already lives below the watermark — which holds only for literally
+                    // `head :: <loop accumulator param>` (through one level of let-binding).
+                    var argExpr = collectedArgs[i];
+                    if (argExpr is Expr.Var v
+                        && Lookup(v.Name) is Binding.Local local
+                        && _letBindingValues.TryGetValue(local.Slot, out var bound))
+                    {
+                        argExpr = bound;
+                    }
+
+                    singleFreshCons[i] = argExpr is Expr.Cons cons
+                        && cons.Tail is Expr.Var tailVar
+                        && tco.ParamNames.Contains(tailVar.Name);
+
+                    // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
+                    // licensed only when the list was freshly REBUILT this iteration (see
+                    // IsFreshListRebuildExpr); a threaded/consumed shape falls back to no reset.
+                    freshListRebuild[i] = IsFreshListRebuildExpr(argExpr);
+
+                    // A fully-reusing specialized accumulator is rewritten in place below the
+                    // watermark, so it survives a plain reset.
+                    stableAccArg[i] = i < tco.ParamNames.Count
                         && _resetSafeAccumulators.Contains(tco.ParamNames[i])
                         && IsStableAccumulatorExpr(
                             collectedArgs[i],
-                            name => Lookup(name) is Binding.Local local && local.Slot == tco.ParamSlots[i]));
+                            name => Lookup(name) is Binding.Local sl && sl.Slot == tco.ParamSlots[i]);
+                }
 
-                if (Enumerable.Range(0, newArgTypes.Length).All(ArgResetSafe))
+                var resetInfo = new PendingTcoReset(
+                    newArgTemps,
+                    newArgTypes,
+                    passThrough,
+                    singleFreshCons,
+                    freshListRebuild,
+                    stableAccArg,
+                    tco.ParamSlots.ToArray(),
+                    tco.FixedCursorSlot,
+                    tco.FixedEndSlot,
+                    tco.ArenaCursorSlot,
+                    tco.ArenaEndSlot,
+                    tco.CoroutineLoopReset,
+                    tco.CompactionSizeSlot,
+                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rp) ? rp.Start : -1).ToArray(),
+                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
+
+                // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
+                // still be an unresolved inference variable here (e.g. constrained only by a deferred
+                // `+`, or by the caller, lowered later). Deciding on a TVar would silently decline the
+                // reset and leak every iteration. Emit a placeholder instead and let
+                // ResolveDeferredTcoResets re-run the decision at the end of lowering, when the types
+                // are as resolved as they will ever be.
+                if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
                 {
-                    // All copy types and/or in-place-reused accumulators: plain reset. Skipped
-                    // while a one-shot capability post pushed this iteration is still pending — the
-                    // post (and its captures) lives in the iteration's allocations.
-                    var tcoResetSkipLabel = BeginLivePostsGuard();
-                    Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
-                    Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
-                    EndLivePostsGuard(tcoResetSkipLabel);
+                    int pendingId = _nextTcoResetId++;
+                    _pendingTcoResets[pendingId] = resetInfo;
+                    Emit(new IrInst.TcoResetPending(pendingId));
                 }
                 else
                 {
-                    // A list copy-out (shallow single-cell CopyOutArena(16), or TcoListCell for
-                    // String/InnerList heads) preserves only the list's TOP cons cell across the reset,
-                    // on the assumption that its tail already lives below the watermark. That holds only
-                    // when the argument is literally `head :: <loop accumulator param>`: exactly one
-                    // fresh cell, tail = the previous iteration's accumulator (below the watermark). Any
-                    // other shape — `a :: b :: acc` (two fresh cells), a rebuilt list from
-                    // setAt/map/reverse, or an opaque function result — has interior fresh cells the
-                    // single-cell copy leaves dangling, so the reset reclaims still-referenced memory
-                    // (wrong branch taken at best, segfault at worst). Detect the safe shape (through one
-                    // level of let-binding, since accumulators are usually named) and disqualify the
-                    // reset for every other list arg; those iterations then simply don't reclaim.
-                    bool IsSingleFreshConsListArg(int i)
-                    {
-                        if (Prune(newArgTypes[i]) is not TypeRef.TList)
-                        {
-                            return false;
-                        }
-
-                        var argExpr = collectedArgs[i];
-                        if (argExpr is Expr.Var v
-                            && Lookup(v.Name) is Binding.Local local
-                            && _letBindingValues.TryGetValue(local.Slot, out var bound))
-                        {
-                            argExpr = bound;
-                        }
-
-                        return argExpr is Expr.Cons cons
-                            && cons.Tail is Expr.Var tailVar
-                            && tco.ParamNames.Contains(tailVar.Name);
-                    }
-
-                    // Check whether every heap-type arg can be copy-outed.
-                    bool allCopyable = true;
-                    for (int i = 0; i < newArgTypes.Length; i++)
-                    {
-                        if (!CanArenaReset(newArgTypes[i])
-                            && GetTcoCopyOutKind(newArgTypes[i], out _, out _) == CopyOutKind.None)
-                        {
-                            allCopyable = false;
-                            break;
-                        }
-
-                        if (Prune(newArgTypes[i]) is TypeRef.TList && !IsSingleFreshConsListArg(i))
-                        {
-                            allCopyable = false;
-                            break;
-                        }
-                    }
-
-                    // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's
-                    // whole-value accumulator copies) instead of the per-iteration one WHEN every arg is
-                    // a non-sharing whole-value type: a copy type, a resource handle, a String, or a
-                    // BigInt. A cons-list (or any TList) shares its tail with the prior accumulator, which
-                    // sits below the per-iteration watermark and would be overwritten by a fixed-mark
-                    // reset — so any list disqualifies the fixed mark and keeps the advancing one. This is
-                    // what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident memory.
-                    bool useFixedWatermark = tco.FixedCursorSlot >= 0
-                        && newArgTypes.All(t =>
-                            CanArenaReset(t)
-                            || IsResourceHandleType(t)
-                            || Prune(t) is TypeRef.TStr or TypeRef.TBigInt
-                            // An ADT copied shallow (all copy-type fields) or deep (list/string fields
-                            // fully copied, breaking tail-sharing), or a deep-copyable tuple, is a
-                            // self-contained clone, so it is safe at the fixed mark.
-                            || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
-                            || (Prune(t) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(t))));
-                    int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
-                    int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
-
-                    if (allCopyable)
-                    {
-                        // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args
-                        // across the back-edge cannot be done with a single round of
-                        // copy-outs to the watermark W: each copy-out compacts its arg
-                        // *down* to W, but a copy whose destination block [W, …) reaches
-                        // high enough overwrites a later arg's still-unread source bytes
-                        // (e.g. startsWith(textTail)(prefixTail): copying textTail to W
-                        // clobbers prefixTail's source once the string exceeds ~11 bytes,
-                        // corrupting the second arg → the rt_sigsuspend deadlock).
-                        //
-                        // Phase A (BEFORE the reset): copy every heap arg UP to a fresh
-                        // alloc above the current cursor. Sources are all below the cursor,
-                        // destinations above it → disjoint, overlap-free regardless of
-                        // order. Phase B (AFTER the reset): copy each up-copy DOWN to W.
-                        // The destination block [W, …) lies entirely below every up-copy
-                        // source (which sits above the pre-reset cursor), so these copies
-                        // are also disjoint and order-independent.
-                        // Skipped entirely while a one-shot capability post pushed this iteration is
-                        // still pending: the param slots already hold the (unrelocated) new
-                        // values, and nothing is reclaimed, so they stay valid.
-                        var tcoCopySkipLabel = BeginLivePostsGuard();
-                        var upCopyTemps = new int[newArgTypes.Length];
-                        for (int i = 0; i < newArgTypes.Length; i++)
-                        {
-                            if (CanArenaReset(newArgTypes[i]))
-                            {
-                                upCopyTemps[i] = -1;
-                                continue;
-                            }
-
-                            var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
-                            if (kind == CopyOutKind.None)
-                            {
-                                upCopyTemps[i] = -1;
-                                continue;
-                            }
-
-                            // A deep-ADT copy returns its own temp (a self-contained recursive clone),
-                            // rather than writing into a pre-allocated dest like the shallow kinds.
-                            upCopyTemps[i] = kind == CopyOutKind.DeepAdt
-                                ? EmitDeepCopy(newArgTemps[i], newArgTypes[i])
-                                : NewTemp();
-                            if (kind != CopyOutKind.DeepAdt)
-                            {
-                                EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
-                            }
-                        }
-
-                        // Reset (pointer reset only, no chunk freeing): cursor → W.
-                        Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
-
-                        // Phase B: copy each up-copy down to W and store into the slot.
-                        for (int i = 0; i < newArgTypes.Length; i++)
-                        {
-                            if (upCopyTemps[i] < 0)
-                                continue;
-
-                            var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
-                            int copyDest;
-                            if (kind == CopyOutKind.DeepAdt)
-                            {
-                                copyDest = EmitDeepCopy(upCopyTemps[i], newArgTypes[i]);
-                            }
-                            else
-                            {
-                                copyDest = NewTemp();
-                                EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
-                            }
-
-                            Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
-                        }
-
-                        // Free the chunks abandoned above W (including the Phase A
-                        // up-copies, now fully consumed by Phase B).
-                        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
-                        EndLivePostsGuard(tcoCopySkipLabel);
-                    }
-                    // else: complex heap types — no arena reset.
+                    EmitTcoBackEdgeArenaBlock(resetInfo);
                 }
             }
 

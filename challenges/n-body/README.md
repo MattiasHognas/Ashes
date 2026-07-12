@@ -33,12 +33,35 @@ fixed-precision formatting) have both shipped — the benchmark is ready to impl
 
 ## Status
 
-**Scaffold only.** `n-body.ash` and the `FLAWS.md` writeup are not written yet, but the
-benchmark is **unblocked** — nothing is missing to implement it.
+**Implemented + benchmarked.** [`n-body.ash`](n-body.ash) is the intended pure solution: each body
+a record, the system a fixed 5-element `List(Body)` rebuilt by `advance` every step, energy printed
+to 9 dp via `Ashes.Math.sqrt` + `Ashes.Text.formatFloat`. Output matches the reference
+(`-0.169075164` / `-0.169059907` at the standard workload).
 
-## Build & run (once written)
+## Build & run
 
 ```bash
-dotnet run --project src/Ashes.Cli -- compile challenges/n-body/n-body.ash -o challenges/n-body/n-body
+dotnet run --project src/Ashes.Cli -- compile challenges/n-body/n-body.ash -o challenges/n-body/n-body -O2
 ./challenges/n-body/n-body 50000000
 ```
+
+## Benchmark
+
+```bash
+challenges/bench.sh n-body 50000000
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+
+| N (steps) | Time | Peak RSS |
+|-----------|------|----------|
+| 1,000,000 | 0.43 s | 0.2 MB |
+| 10,000,000 | 4.29 s | 0.2 MB |
+| **50,000,000** (standard) | **21.4 s** | **0.2 MB** |
+
+**Constant 0.2 MB at every N** — the `List(Body)` accumulator takes the whole-list deep clone
+across the fixed-watermark reset (changelog CO-32; licensed because `advance(dt)(bodies)` rebuilds
+the list every step), and the amortized compaction (CO-35) keeps the per-step copy cost sub-linear.
+Before that arc this loop grew 4.27 GB per 1e6 steps. Time is ~0.43 us/step of pure Float
+arithmetic; the mutable reference is ~6x faster per step, the price of rebuilding an immutable
+5-record list per iteration.

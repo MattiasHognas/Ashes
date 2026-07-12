@@ -4,7 +4,7 @@
 // from minDepth (4) to maxDepth in steps of 2, build many trees, walk each for a node-count
 // checksum, and let it go; a single long-lived tree stays resident across the whole run. The work
 // is pure allocation churn of a recursive ADT -- the small, isolated reproducer for the non-GC
-// bump-arena reclamation path (challenges/1brc FLAWS #2).
+// bump-arena reclamation path.
 //
 // Usage: ./binary-trees 21   (defaults to 10)
 import Ashes.IO as io
