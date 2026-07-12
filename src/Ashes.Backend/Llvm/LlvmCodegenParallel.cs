@@ -415,13 +415,12 @@ internal static partial class LlvmCodegen
         if (state.Flavor != LlvmCodegenFlavor.LinuxArm64)
         {
             LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_chunk");
-            // Worker TCB: self-pointer, cursor (chunk+8 past the prev-base header), end.
+            // Worker TCB: self-pointer, then set up the chunk's header/footer + cursor/end through
+            // slot pointers into the TCB's arena fields (same chunk format as the main allocator).
             StoreMemory(state, workerTcb, (int)TcbSelfOffset, workerTcb, "par_tcb_self");
-            StoreMemory(state, workerTcb, (int)TcbHeapCursorOffset,
-                LlvmApi.BuildAdd(builder, chunk, LlvmApi.ConstInt(state.I64, 8, 0), "par_chunk_cursor"), "par_tcb_cursor");
-            StoreMemory(state, workerTcb, (int)TcbHeapEndOffset,
-                LlvmApi.BuildAdd(builder, chunk, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_chunk_end"), "par_tcb_end");
-            StoreMemory(state, chunk, 0, LlvmApi.ConstInt(state.I64, 0, 0), "par_chunk_prevbase");
+            var (parCursorSlot, parEndSlot) = BuildLinuxTcbSlots(state, workerTcb, TcbHeapCursorOffset, TcbHeapEndOffset);
+            EmitHeapChunkSetup(state, chunk, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0), parCursorSlot, parEndSlot, "par_chunk");
         }
 
         StoreMemory(state, desc, ParallelDescWorkerTcb, workerTcb, "par_desc_tcb");
@@ -616,9 +615,10 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// munmaps every arena chunk of a finished worker. The current chunk's end is
-    /// <paramref name="arenaEnd"/>; each chunk's first word links to the previous chunk's base
-    /// (0 for the first chunk), matching the main allocator's chunk header.
+    /// munmaps every arena chunk of a finished worker. <paramref name="arenaEnd"/> is the current
+    /// chunk's end (its footer address); the footer records the chunk's own base and the header at
+    /// that base links to the previous chunk's end (0 for the first chunk), matching the main
+    /// allocator's variable-sized chunk format (see EmitHeapChunkSetup).
     /// </summary>
     private static void EmitFreeWorkerArenaChunks(LlvmCodegenState state, LlvmValueHandle arenaEnd)
     {
@@ -632,12 +632,15 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "par_free_cur_end_val");
-        LlvmValueHandle base_ = LlvmApi.BuildSub(builder, curEnd, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_free_base");
-        LlvmValueHandle prevBase = LoadMemory(state, base_, 0, "par_free_prev_base");
-        EmitFreeOsMemory(state, base_, HeapChunkBytes, "par_free_chunk");
-        LlvmValueHandle isFirst = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, prevBase, LlvmApi.ConstInt(state.I64, 0, 0), "par_free_is_first");
-        LlvmValueHandle nextEnd = LlvmApi.BuildAdd(builder, prevBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "par_free_next_end");
-        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
+        // Footer at curEnd -> chunk base; header at base -> previous chunk's end. size = curEnd + footer - base.
+        LlvmValueHandle base_ = LoadMemory(state, curEnd, 0, "par_free_base");
+        LlvmValueHandle prevEnd = LoadMemory(state, base_, 0, "par_free_prev_end");
+        LlvmValueHandle curSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, curEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "par_free_cur_top"),
+            base_, "par_free_cur_size");
+        EmitFreeOsMemory(state, base_, curSize, "par_free_chunk");
+        LlvmValueHandle isFirst = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, prevEnd, LlvmApi.ConstInt(state.I64, 0, 0), "par_free_is_first");
+        LlvmApi.BuildStore(builder, prevEnd, curEndSlot);
         LlvmApi.BuildCondBr(builder, isFirst, doneBlock, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
@@ -1239,11 +1242,8 @@ internal static partial class LlvmCodegen
         {
             LlvmValueHandle chunk = EmitAllocateOsMemory(state, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), "parq_chunk");
             StoreMemory(state, workerTcb, (int)TcbSelfOffset, workerTcb, "parq_tcb_self");
-            StoreMemory(state, workerTcb, (int)TcbHeapCursorOffset,
-                LlvmApi.BuildAdd(builder, chunk, eight, "parq_chunk_cursor"), "parq_tcb_cursor");
-            StoreMemory(state, workerTcb, (int)TcbHeapEndOffset,
-                LlvmApi.BuildAdd(builder, chunk, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), "parq_chunk_end"), "parq_tcb_end");
-            StoreMemory(state, chunk, 0, zero, "parq_chunk_prevbase");
+            var (parqCursorSlot, parqEndSlot) = BuildLinuxTcbSlots(state, workerTcb, TcbHeapCursorOffset, TcbHeapEndOffset);
+            EmitHeapChunkSetup(state, chunk, LlvmApi.ConstInt(i64, HeapChunkBytes, 0), zero, parqCursorSlot, parqEndSlot, "parq_chunk");
         }
 
         StoreMemory(state, recordAddr, ParallelDescWorkerTcb, workerTcb, "parq_rec_tcb");

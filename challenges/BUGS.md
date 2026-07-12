@@ -112,11 +112,23 @@ Surfaced by `k-nucleotide`. *Workaround:* `Ashes.Bytes.fromText` once + `Ashes.B
 indexed, O(k)). *Fix direction:* make `substring` byte-backed, or document it as O(N) and steer k-mer
 work to `Bytes`.
 
-### 8. (P1) Chained `Ashes.Regex.replace` / `substituteAll` OOMs (~28 GB)
-Feeding a `substituteAll` result larger than ~1.5 MB into another `substituteAll` allocates ~28 GB and
-is killed. The second call OOMs even with a **non-matching** pattern, so the blowup is in *accepting*
+### 8. (P1) Chained `Ashes.Regex.replace` / `substituteAll` OOMs (~28 GB) — [FIXED]
+**[FIXED]** (`regex_large_subject_chain`): the root cause was not regex-specific. The substitute output
+buffer (`2*subject + 256`) is allocated from the main arena; a heap chunk was a **fixed** 4 MiB, and
+`EmitHeapEnsureSpace` looped `grow`→`recheck` — but `EmitHeapGrow` always allocated exactly one 4 MiB
+chunk, so a single allocation larger than 4 MiB never fit and grew one chunk per iteration forever until
+the OS refused (the "~28 GB constant"). Any >4 MiB allocation (large string/`Bytes` too) hit this, not
+just regex. Chunks are now **variable-sized**: `EmitHeapGrow` sizes an oversized chunk to
+`max(4 MiB, request + overhead)`. To keep the reclaim linked-list walk working without a fixed size, each
+chunk carries a header (previous chunk's end) and a footer at its usable end (its own base), so the walk
+recovers a chunk's base from its end pointer. All chunk sites (main init/grow/reclaim and the parallel
+worker setup + worker-chunk free walk in `Lowering`/`LlvmCodegenParallel`) share one format via
+`EmitHeapChunkSetup`. Verified: the ~5 MiB chain completes in bounded memory, and 1000 iterations of a
+>4 MiB reclaimed temporary stay under a 2 GB cap (no leak/corruption) on all three targets.
+Feeding a `substituteAll` result larger than ~1.5 MB into another `substituteAll` allocated ~28 GB and
+was killed. The second call OOMed even with a **non-matching** pattern, so the blowup was in *accepting*
 the large subject, not in substitution work. Surfaced by `regex-redux` (its canonical substitution
-chain); no user workaround. Minimal repro:
+chain). Minimal repro:
 ```ash
 let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
 let seq = grow("acgtWacgtWacgtWacgtW")(17)              // ~2.6 MB
