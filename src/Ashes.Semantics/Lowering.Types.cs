@@ -67,6 +67,12 @@ public sealed partial class Lowering
         public int FixedCursorSlot { get; set; } = -1;
         public int FixedEndSlot { get; set; } = -1;
 
+        // Params proven AFFINE across the loop (consumed at most once along every loop-continuing
+        // path, and only as the left operand of the `+` producing their own tail-call argument).
+        // Together with the loop-entry watermark boundary this proves unique ownership, licensing
+        // in-place string growth (ConcatStrTip). Empty when not computed (conservative).
+        public HashSet<string> AffineStrParams { get; init; } = new(System.StringComparer.Ordinal);
+
         // Live accumulator size (cursor - W) recorded after the last fixed-watermark compaction,
         // zero-initialized at loop entry. The back-edge skips the whole copy-out + reset while the
         // arena has grown less than 2x this size (+ slack) since W — so a growing accumulator is

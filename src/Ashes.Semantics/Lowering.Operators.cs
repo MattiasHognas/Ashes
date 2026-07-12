@@ -34,6 +34,27 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
+        // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is
+        // the accumulator param the TCO back-edge armed (see _affineAppendCtx). Resolving to Str
+        // then appends in place (ConcatStrTip) instead of copying.
+        int affineWSlot = -1;
+        if (_affineAppendCtx is { } armedCtx)
+        {
+            var armedLeaf = add.Left;
+            while (armedLeaf is Expr.Add armedAdd)
+            {
+                armedLeaf = armedAdd.Left;
+            }
+
+            if (armedLeaf is Expr.Var armedVar
+                && string.Equals(armedVar.Name, armedCtx.Name, StringComparison.Ordinal)
+                && Lookup(armedVar.Name) is Binding.Local armedLocal
+                && armedLocal.Slot == armedCtx.Slot)
+            {
+                affineWSlot = armedCtx.WSlot;
+            }
+        }
+
         // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
         // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
         // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
@@ -47,7 +68,7 @@ public sealed partial class Lowering
                 _addConstrainedVars.Add(sharedVar);
                 _hasDeferredAdds = true;
                 int deferredTarget = NewTemp();
-                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar));
+                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar) { AffineWSlot = affineWSlot });
                 return (deferredTarget, sharedVar);
             }
         }
@@ -119,6 +140,19 @@ public sealed partial class Lowering
         {
             _usesConcatStr = true;
             int target = NewTemp();
+
+            // Affine accumulator append (armed by the TCO back-edge for the accumulator's own
+            // tail-call argument): the accumulator is uniquely owned above the loop-entry
+            // watermark, so the append can grow it in place at the arena tip — the runtime checks
+            // (and the plain-concat fallback) live in the ConcatStrTip emitter. Fires on every
+            // step of a left-nested chain (`acc + r1 + r2`): each step's left VALUE is the same
+            // uniquely-owned accumulator (extended in place, or a fresh tip copy after a fallback).
+            if (affineWSlot >= 0)
+            {
+                Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineWSlot));
+                return (target, new TypeRef.TStr());
+            }
+
             Emit(new IrInst.ConcatStr(target, leftTemp, rightTemp));
             return (target, new TypeRef.TStr());
         }

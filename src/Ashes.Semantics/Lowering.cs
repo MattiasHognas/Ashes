@@ -752,6 +752,12 @@ public sealed partial class Lowering
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
     private int _nextTcoResetId;
 
+    // Set while lowering the tail-call argument of an affine string accumulator (its own param
+    // position): LowerAdd's Str+Str branch emits the in-place ConcatStrTip for `<param> + rhs`
+    // instead of a copying ConcatStr. (Name, the param's slot for the shadow check, and the local
+    // slot holding the loop-entry watermark W.)
+    private (string Name, int Slot, int WSlot)? _affineAppendCtx;
+
     // Slack added to the amortized-compaction threshold (growth > 2*live + slack): small loops with
     // tiny live sizes still batch a few KB of garbage per compaction instead of copying every
     // iteration, and loops whose live size is zero compact only once slack accumulates.
@@ -885,8 +891,19 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(slackTemp, TcoCompactionSlackBytes));
             int thresholdTemp = NewTemp();
             Emit(new IrInst.AddInt(thresholdTemp, twoMTemp, slackTemp));
+            int growthGtTemp = NewTemp();
+            Emit(new IrInst.CmpIntGt(growthGtTemp, growthTemp, thresholdTemp));
+            // cursor - W is only meaningful while the cursor is still in W's chunk; once the arena
+            // grew into another chunk the difference is garbage (distinct mmaps). A crossed chunk
+            // also means at least a chunk's worth of allocation since W — compact unconditionally.
+            int wEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wEndTemp, info.FixedEndSlot));
+            int curEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(curEndTemp, curEndSlot));
+            int endsDifferTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(endsDifferTemp, curEndTemp, wEndTemp));
             int needTemp = NewTemp();
-            Emit(new IrInst.CmpIntGt(needTemp, growthTemp, thresholdTemp));
+            Emit(new IrInst.OrInt(needTemp, growthGtTemp, endsDifferTemp));
             compactSkipLabel = $"tco_compact_skip_{_nextLambdaId++}";
             Emit(new IrInst.JumpIfFalse(needTemp, compactSkipLabel));
         }
@@ -959,7 +976,14 @@ public sealed partial class Lowering
 
         if (compactSkipLabel is not null)
         {
-            // Record the compacted live size (cursor - W) for the next amortization trigger.
+            // Record the compacted live size (cursor - W) for the next amortization trigger. When
+            // the down-copy overflowed into a NEW chunk (the accumulator outgrew W's chunk), the
+            // difference is garbage — instead REBASE the fixed watermark to the post-copy position
+            // in the new chunk and restart the epoch (M = 0). The old chunk's region above the old
+            // W is stranded, but crossings happen only when the live size doubles past a chunk
+            // (the grow path gives oversized chunks 2x headroom), so the stranded generations form
+            // a geometric series bounded by ~2x the final live size. After the rebase, appends and
+            // compactions run entirely inside the roomy new chunk.
             int afterCursorSlot = NewLocal();
             int afterEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(afterCursorSlot, afterEndSlot));
@@ -969,7 +993,35 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadLocal(wAfterTemp, info.FixedCursorSlot));
             int liveTemp = NewTemp();
             Emit(new IrInst.SubInt(liveTemp, afterTemp, wAfterTemp));
+            int afterEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(afterEndTemp, afterEndSlot));
+            int wEndAfterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wEndAfterTemp, info.FixedEndSlot));
+            int sameChunkTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(sameChunkTemp, afterEndTemp, wEndAfterTemp));
+            string rebaseLabel = $"tco_compact_rebase_{_nextLambdaId++}";
+            string recordedLabel = $"tco_compact_recorded_{_nextLambdaId++}";
+            Emit(new IrInst.JumpIfFalse(sameChunkTemp, rebaseLabel));
             Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, liveTemp));
+            Emit(new IrInst.Jump(recordedLabel));
+            Emit(new IrInst.Label(rebaseLabel));
+            // W' = the new chunk's allocation start, recovered from the chunk FOOTER (the usable
+            // end holds the chunk's own base; allocations start at base + 8). The down-copy landed
+            // exactly there, so the live accumulator sits AT W' — future compactions copy down to
+            // W' with the accumulator's full size counted in the body-allocation term (B >= S), and
+            // in-place appends see acc >= W' immediately. M restarts at the region size.
+            int chunkBaseTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(chunkBaseTemp, afterEndTemp, 0));
+            int eightTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(eightTemp, 8));
+            int rebaseCursorTemp = NewTemp();
+            Emit(new IrInst.AddInt(rebaseCursorTemp, chunkBaseTemp, eightTemp));
+            Emit(new IrInst.StoreLocal(info.FixedCursorSlot, rebaseCursorTemp));
+            Emit(new IrInst.StoreLocal(info.FixedEndSlot, afterEndTemp));
+            int rebasedLiveTemp = NewTemp();
+            Emit(new IrInst.SubInt(rebasedLiveTemp, afterTemp, rebaseCursorTemp));
+            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, rebasedLiveTemp));
+            Emit(new IrInst.Label(recordedLabel));
             Emit(new IrInst.Label(compactSkipLabel));
         }
 
@@ -1095,6 +1147,7 @@ public sealed partial class Lowering
 
             instructions[i] = Prune(operandType) switch
             {
+                TypeRef.TStr when add.AffineWSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineWSlot) { Location = add.Location }),
                 TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
@@ -1859,7 +1912,8 @@ public sealed partial class Lowering
                     ParamCount = paramCount,
                     ParamNames = tcoParamNames,
                     InTailPosition = false,
-                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
+                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name),
+                    AffineStrParams = CollectAffineAccumulators(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
                 };
             }
             else
@@ -2980,7 +3034,31 @@ public sealed partial class Lowering
             var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
             for (int i = 0; i < collectedArgs.Count; i++)
             {
+                // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
+                // concat chain with the accumulator as its leftmost leaf) appends in place at every
+                // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
+                var savedAffineCtx = _affineAppendCtx;
+                if (i < tco.ParamNames.Count
+                    && tco.FixedCursorSlot >= 0
+                    && tco.AffineStrParams.Contains(tco.ParamNames[i])
+                    && i < tco.ParamSlots.Count
+                    && collectedArgs[i] is Expr.Add)
+                {
+                    var chainLeaf = collectedArgs[i];
+                    while (chainLeaf is Expr.Add chainAdd)
+                    {
+                        chainLeaf = chainAdd.Left;
+                    }
+
+                    if (chainLeaf is Expr.Var affineVar
+                        && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal))
+                    {
+                        _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], tco.FixedCursorSlot);
+                    }
+                }
+
                 var (argTemp, argType) = LowerExpr(collectedArgs[i]);
+                _affineAppendCtx = savedAffineCtx;
                 newArgTemps[i] = argTemp;
                 newArgTypes[i] = argType;
                 if (curType is TypeRef.TFun funType)

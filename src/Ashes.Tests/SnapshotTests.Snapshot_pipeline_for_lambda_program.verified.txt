@@ -328,7 +328,8 @@
           },
           {
             Target: 2,
-            Right: 1
+            Right: 1,
+            AffineWSlot: -1
           },
           {
             Source: 2
@@ -388,5 +389,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: EA6BFE14119C4A02F8C85390DA97BB8B3501E6565AB0E55EC82989DC5C9805BA
+  ElfSha256: DC7E84150806B30FA4A430471F949E0054D2B7F6538DCFC3CEB6BEA82DEF1CE0
 }

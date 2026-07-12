@@ -12,9 +12,8 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
-Current tally: **15 FIXED**, **1 PARTIAL** (#4, re-scoped: both quadratic-memory holes fixed; the fat list constant and copy-per-iteration TIME remain), **1 OPEN** (#5, unreproduced)
-Everything point-fixable has been fixed; what remains of #4 (the fat list-of-small-Str constant,
-copy-per-iteration TIME) is the ownership / in-place-reuse milestone, and #5 awaits a reproducer.
+Current tally: **15 FIXED**, **1 PARTIAL** (#4). (#5, the helper-returns-list report, was removed:
+it measures linear in time and memory on the current compiler and no reproducer exists.)
 
 Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
@@ -119,23 +118,22 @@ now **FIXED** (CO-34):
   `TcoResetPending` placeholder and `ResolveDeferredTcoResets` splices the real block at the end of
   lowering, once the deferred-operator resolutions have grounded the types. **0.25 MB constant.**
 
-**Update (CO-35):** the back-edge copy cost itself is now AMORTIZED — the copy-out + reset are
-skipped while arena growth <= 2x the last compacted live size (+4 KB slack), making total copy work
-linear in bytes allocated (the `List(Body)` 3M loop went 0.289 s -> 0.054 s at unchanged memory;
-fasta ~1.5x). **Still open (the genuine milestone):** the ~96 B/base *constant* of
-list-of-small-`Str` representations (needs in-place reuse / ownership — the FLAWS #2 milestone), and
-the remaining **O(N^2) TIME of the immutable concat itself** — `out + ch` copies the whole string
-every iteration regardless of the arena; fixing that needs in-place unique-string growth (extend at
-the arena tip when the accumulator is uniquely owned), same milestone.
+**Update (CO-35):** the back-edge copy cost is AMORTIZED — copy-out + reset skipped while arena
+growth <= 2x the last compacted live size (+4 KB slack): total copy work linear in bytes allocated
+(the `List(Body)` 3M loop 0.289 s -> 0.054 s at unchanged memory).
 
-### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN, unreproduced]
-Nesting a list-builder helper inside a loop (`outer` threads a list through `inner` that returns it)
-was reported to deep-copy the whole growing list per call -> O(N^2), found while writing `mandelbrot`
-(worked around by keeping the bit-packer a single flat loop). Re-measured on the current compiler:
-the minimal shape (`inner acc i = item :: acc` called from a TCO `outer`) is **linear in both time
-and memory** (2x N -> 2x, 100k..400k). Either the original trigger needs a shape not yet
-reconstructed (the mandelbrot bit-packer had more structure) or intervening work absorbed it. Left
-open pending a real reproducer; same ownership milestone as #4's remainder if it resurfaces.
+**Update (CO-36): the concat O(N^2) TIME is FIXED by affine in-place string growth.** The affine
+analysis (accumulator consumed at most once along every loop-continuing path, only as the leftmost
+leaf of its own tail-call `+` chain) plus the watermark boundary (values >= W are loop-created,
+unaliased by the caller) prove unique ownership; `ConcatStrTip` then extends the accumulator in
+place at the arena tip (or absorbs a freshly allocated right operand), with a plain-concat runtime
+fallback. Oversized chunks get 2x headroom and the watermark rebases via the chunk footer on
+crossings, so growth continues past 4 MiB. **Measured: a 3M-iteration string fold (6 MB result):
+>120 s/OOM -> 0.026 s; a 960k closure-call append fold: >120 s -> 0.006 s; both LINEAR. fasta
+44.5 s -> 4.7 s** (its repeatFasta half still falls back — the per-iteration `uncons` view lands
+between accumulator and cursor). **Still open (the last remainder):** the ~96 B/base *constant* of
+list-of-small-`Str` representations (needs in-place cons-cell reuse — the FLAWS #2 milestone), and
+tip-preserving treatment of interleaved small live allocations (the repeatFasta shape).
 
 ### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [FIXED]
 **[FIXED]** (`bigint_divmod_algorithm_d`): `bignum_divmod` rewritten from bit-by-bit binary long
