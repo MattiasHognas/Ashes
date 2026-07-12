@@ -1,18 +1,29 @@
 # Bugs & gaps surfaced by the challenge benchmarks
 
 Running the full Benchmarks Game suite in its **natural spelling** turned up the items below. Each is
-a real defect or gap hit while writing a benchmark, with a minimal reproducer where one exists. Fixed
-items are recorded in each challenge's `FLAWS.md`; this file is the backlog of what remains.
+a real defect or gap hit while writing a benchmark, with a minimal reproducer where one exists. Each
+item carries a status; **FIXED** items keep their entry (with the commit) so the analysis is not lost,
+and notable optimizations among them are also recorded in
+[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md).
 
 Severity: **P1** blocks a benchmark or is a correctness/inference bug on valid code; **P2** hurts real
 use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor / cosmetic.
+
+Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
+remains, **[OPEN]** not yet addressed.
 
 Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
 
 ## Type inference & operators
 
-### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free)
+### 1. (P1) Float operator defaults an unresolved operand to `Int` (annotation-free) — [PARTIAL]
+**[PARTIAL]** main case FIXED (`c4556bd`): `+`'s left-operand resolution switch was missing the `Float`
+case (it had `Str`/`BigInt`/`UInt`), so `acc + x * 2.0` froze the accumulator to `Int`; adding
+`TFloat -> TFloat` fixes n-body / spectral-norm `avRow`. **Still open:** a bare `x * y` with *both*
+operands unresolved defaults to `Int` (`Multiply` has no deferred-resolution path like `Add`'s
+`ResolveDeferredAdds`) — a pure polymorphic dot product still needs a signature.
+
 A numeric operator whose result type is not yet grounded defaults an unbound operand to `Int`, so a
 recursive Float accumulator on the **left** of `+`/`*` with a compound Float right operand is rejected.
 The earlier fix seeds parameter types from a **declaration annotation**; the annotation-free /
@@ -27,7 +38,11 @@ let recursive foo xs px =
 `x * y` on two unconstrained operands (no numeric typeclass, so it picks `Int`). *Workaround:* lead
 with the grounded operand, or give the function a full type signature.
 
-### 2. (P2) Unary minus on a Float variable/expression lowers to `Int 0 - x`
+### 2. (P2) Unary minus on a Float variable/expression lowers to `Int 0 - x` — [FIXED]
+**[FIXED]** (`25428b7`): a literal `0` is the identity of every numeric type, so `LowerSubtract` now
+re-lowers a literal-`0` left operand as the right operand's concrete numeric zero (`Float`/`BigInt`/
+`UInt`). `-total` on a Float variable compiles; Int negation is unchanged.
+
 `-x` desugars to `0 - x` with a synthesized **Int** zero, so negating a Float variable fails. Negated
 Float *literals* were fixed (they fold into the literal); variables/expressions were not. Surfaced by
 `n-body`.
@@ -40,7 +55,12 @@ polymorphic numeric zero) instead of the `0 - x` desugar.
 
 ## Memory model (extends the fixed-watermark / deep-copy-out work)
 
-### 3. (P1) Fixed-shape pointer-bearing accumulators that are TUPLES or `List(ADT)` are not reclaimed
+### 3. (P1) Fixed-shape pointer-bearing accumulators that are TUPLES or `List(ADT)` are not reclaimed — [PARTIAL]
+**[PARTIAL]** tuple half FIXED (`747adc4`): a deep-copy-safe `TTuple` accumulator now takes the
+`DeepAdt` copy-out and the fixed watermark, so fasta's `(seed, out)` is bounded. **Still open:**
+`List(fixed-shape-ADT)` (n-body's `List(Body)`) needs a synthesized recursive list-of-ADT deep-copier
+(`EmitDeepCopy`'s `TList` branch handles only copy/String/List-of-copy heads).
+
 The recent work made whole-value (`String`/`BigInt`) and fixed-shape **ADT** accumulators reset to a
 fixed watermark (constant memory). Two more fixed-shape shapes are still excluded and grow:
 - **Tuple accumulator** — `fasta` threads `(seed, out)`; the tuple is not in the copy-out path, so its
@@ -69,7 +89,13 @@ Binary long-division dominates; needs Knuth Algorithm D / Karatsuba multiply. No
 
 ## Standard library
 
-### 7. (P1, perf) `Ashes.String.substring` is superlinear (character-indexed)
+### 7. (P1, perf) `Ashes.String.substring` is superlinear (character-indexed) — [FIXED]
+**[FIXED]** (`984a13c`): rewrote `substring` from `take(drop(...))` (O(start + count^2), per-char
+concatenation) to a single codepoint->byte offset walk + one `Bytes.subText` — O(start + count), no
+concatenation, still UTF-8 correct. The 8000-char sliding window dropped ~63 s -> 0.03 s (~2000x). It
+is still O(position) per call (strings are not byte-indexable); the doc steers repeated indexed slicing
+to `Bytes.subText`.
+
 `substring` walks from byte 0, so a sliding k-mer window is worse than O(N^2) (8000 bases -> 63 s).
 Surfaced by `k-nucleotide`. *Workaround:* `Ashes.Bytes.fromText` once + `Ashes.Bytes.subText` (byte-
 indexed, O(k)). *Fix direction:* make `substring` byte-backed, or document it as O(N) and steer k-mer
@@ -89,8 +115,14 @@ in let s1 = Ashes.Regex.replace(...W...)(seq)("(a|t)")
 ```
 (The constant ~28 GB across runs suggests a size miscalculation in the substitute buffer sizing.)
 
-### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive.
-### 10. (P3) Missing `Ashes.List.sort` — benchmarks hand-write merge sort with a custom comparator.
+### 9. (P3) Missing `Ashes.String.toUpper` / `toLower` — no case normalization primitive. — [OPEN]
+An efficient version needs a `Bytes` byte-map primitive (only `subText` exists for `Bytes -> Str`) plus
+an ASCII-vs-Unicode design decision, so deferred.
+
+### 10. (P3) Missing `Ashes.List.sort` — [FIXED]
+**[FIXED]** (`7dcad83`): added `Ashes.List.sortBy : (a -> a -> Bool) -> List(a) -> List(a)`, a stable
+O(n log n) comparator merge sort (the language has no ordering typeclass, so the caller supplies the
+comparator).
 
 ## Diagnostics & formatter
 
@@ -109,7 +141,12 @@ curried `given` chains). Output still compiles, but inline documentation is lost
 
 ## Records & syntax
 
-### 15. (P2) Record dot-access fails on a parameter receiver
+### 15. (P2) Record dot-access fails on a parameter receiver — [FIXED]
+**[FIXED]** (`4292936`): when the receiver is a value binding whose type is still an unbound variable,
+`b.x` now resolves structurally — if exactly one record type in scope declares field `x`, the receiver
+is unified with a fresh instance of it. Ambiguous/unknown falls through to a clear, field-access-
+oriented diagnostic (annotate the parameter) instead of the misleading module-export error.
+
 `let f b = b.x` (b a record param) is parsed as module-member access -> "Module 'b' does not export
 'x'". Re-letting the param does not help; a direct `let r = Rec(...) in r.x`, a positional
 `match b with | Rec(x, ...) ->`, or a full type signature `let f : Rec -> T = given (b) -> b.x` all
@@ -124,4 +161,3 @@ LParen`) is opaque.
 - Does `Ashes.IO.write` buffer, or issue a syscall per call? `fasta`/`reverse-complement` streaming
   emits one `write` per 60-char line (~2M+ syscalls at benchmark scale) — worth confirming the write
   path buffers.
-</content>
