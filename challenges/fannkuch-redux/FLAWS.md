@@ -42,8 +42,17 @@ at `N >= 3` the process segfaulted. **Same root cause as Bug 1** — the unsound
 reclaimed still-referenced interior cells. The Bug 1 fix (disqualifying the reset for non-single-fresh-
 cons accumulators) resolves the crash too.
 
-## Residual (memory-model, still open)
+## Memory — now constant (FIXED)
 
-Fixing the crash means these loops no longer reclaim their per-iteration garbage: a *growing* pointer-
-bearing accumulator threaded through the loop stays resident, so RSS grows with `N!`. That is the
-ownership / in-place-reuse milestone (FLAWS #2), not a point fix — it is why `N=12` is out of reach.
+Fixing the crash initially left these loops unable to reclaim per-iteration garbage (the reset was
+disqualified for the pointer-bearing `State`), so RSS grew with `N!` (4.6 GB at N=10). That is now
+fixed: `State(perm, count)` is a **fixed-shape, non-recursive** ADT, so it is carried across the reset
+by a recursive **deep copy** — a self-contained clone whose list fields are fully copied, which breaks
+any tail-sharing with the previous accumulator. Being self-contained, it resets to the fixed loop-entry
+watermark, so the reset fires and reclaims every transient. Resident set is a constant 0.25 MB at every
+N; N≥11 is now reachable, bounded only by `N!` enumeration time.
+
+Self-*recursive* ADTs (trees such as `MapTree`) are deliberately excluded — a full per-iteration deep
+copy of an unbounded tree would be O(size)/iteration, and those shapes are owned by the in-place reuse
+specialization. A growing tree accumulator outside that specialization is the remaining memory-model
+work.

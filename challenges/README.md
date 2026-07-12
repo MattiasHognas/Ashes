@@ -21,7 +21,7 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
   | [pidigits](pidigits/README.md) | **Benchmarked** — resident memory now **constant** 0.25 MB at every N (was O(N²), 168 MB at N=1000); only the O(N³) division *time* remains |
   | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
   | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
-  | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=7→228/16 … N=10→73196/38); memory-bound at large N |
+  | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=8…11); resident memory now **constant** 0.25 MB (was 4.6 GB at N=10), time-bound only |
   | fasta, reverse-complement, n-body, spectral-norm, k-nucleotide, regex-redux | Scaffold (`.ash` deferred) |
 
 ## Compiler fixes made (surfaced by benchmarking)
@@ -56,12 +56,17 @@ a regression test under `tests/`.
     watermark, so each grown accumulator overwrites the previous one instead of being stranded below an
     advancing watermark. pidigits resident memory dropped from 168 MB (N=1000) to a **constant 0.25 MB
     at every N**. Only the ~`O(N³)` *time* remains (binary long-division — a bignum-algorithm follow-up).
-- **fannkuch / general pointer-bearing accumulators** *(memory-model milestone, still open)* — a
-  *growing* accumulator that is a **cons-list or a pointer-bearing ADT** (fannkuch's `State(perm,
-  count)`) still grows: a list's shared tail forces the advancing watermark (so the fixed-mark reset
-  above cannot apply), and a helper that *returns* a growing list deep-copies it out of its arena scope
-  on every call. Removing this needs ownership / in-place reuse (FLAWS #2), not a point fix — it is why
-  fannkuch is memory-bound at large N.
+- **fannkuch / fixed-shape pointer-bearing ADT accumulators** — a non-recursive pointer-bearing ADT
+  (fannkuch's `State(perm, count)`) is now carried across the reset by a recursive **deep copy** — a
+  self-contained clone (list fields fully copied, tail-sharing broken) that resets to the fixed
+  loop-entry watermark. fannkuch resident memory dropped from 4.6 GB (N=10) to a constant 0.25 MB, and
+  N≥11 is now reachable (time-bound only).
+- **Growing recursive-tree / cons-list accumulators** *(memory-model milestone, still open)* — a
+  *growing* accumulator that is a **cons-list** (shared tail forces the advancing watermark) or a
+  **self-recursive ADT** (an unbounded tree — deep-copying it per iteration would be O(size)/iteration,
+  and it is owned by the in-place reuse specialization) still grows outside that specialization. Also,
+  a helper that *returns* a growing list deep-copies it out of its arena scope per call. Removing these
+  needs ownership / in-place reuse (FLAWS #2), not a point fix.
 - **binary-trees** — no fix needed; the **positive baseline**: the per-iteration arena reset fires
   correctly for a discarded pointer-bearing ADT (constant memory, no OOM).
 

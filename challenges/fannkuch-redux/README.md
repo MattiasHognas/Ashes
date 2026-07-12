@@ -62,10 +62,11 @@ it surfaced **three distinct compiler bugs** — exactly the flaw-finding this c
 3. a **use-after-reset** segfault of a pointer-bearing accumulator across the TCO back-edge (same root
    as (1)).
 
-Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`). Because the
-enumeration threads a growing pointer-bearing accumulator that is not yet reclaimed within the loop
-(the memory-model milestone, FLAWS #2), resident memory grows with `N!`, so the standard `N=12` is out
-of reach — benchmark at small N.
+Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`), and resident memory
+is now **constant**: the `State(perm, count)` accumulator is a fixed-shape (non-recursive) pointer-
+bearing ADT, so it is carried across the TCO reset by a recursive **deep copy** (a self-contained clone
+whose list fields are fully copied) and reset to the fixed loop-entry watermark. The reset now fires,
+reclaiming every per-iteration transient. Larger N is bounded only by *time* (`N!` enumeration).
 
 ## Build & run
 
@@ -81,10 +82,12 @@ the reference:
 
 | N | checksum / Pfannkuchen | Time | Peak RSS |
 |---|---|------|----------|
-| 7 | 228 / 16 | <0.01 s | 4.8 MB |
-| 8 | 1616 / 22 | 0.02 s | 43 MB |
-| 9 | 8629 / 30 | 0.24 s | 424 MB |
-| 10 | 73196 / 38 | 2.7 s | 4.6 GB |
+| 8 | 1616 / 22 | 0.02 s | 0.25 MB |
+| 9 | 8629 / 30 | 0.20 s | 0.25 MB |
+| 10 | 73196 / 38 | 2.4 s | 0.25 MB |
+| 11 | 556355 / 51 | 30 s | 0.25 MB |
 
-The ~10× RSS growth per N is the unreclaimed accumulator, not the (correct) compute — the memory-model
-milestone below the main [`challenges/README.md`](../README.md) fix list.
+Resident set is a **constant 0.25 MB** (previously it grew ~10× per N — 4.6 GB at N=10 — and N≥11 was
+out of reach). The remaining limit is pure `N!` enumeration *time*, not memory; the mutable-array
+reference plus its permutation-range sharding (FLAWS #5, still sequential here) is what closes the
+speed gap at N=12.
