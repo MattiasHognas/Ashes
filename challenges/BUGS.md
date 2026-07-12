@@ -12,9 +12,9 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
-Current tally: **15 FIXED**, **2 OPEN**
-(#4/#5 — the ownership / in-place-reuse milestone). Everything
-point-fixable has been fixed; the remaining items need milestone-scale work.
+Current tally: **15 FIXED**, **1 PARTIAL** (#4, re-scoped: both quadratic-memory holes fixed; the fat list constant and copy-per-iteration TIME remain), **1 OPEN** (#5, unreproduced)
+Everything point-fixable has been fixed; what remains of #4 (the fat list-of-small-Str constant,
+copy-per-iteration TIME) is the ownership / in-place-reuse milestone, and #5 awaits a reproducer.
 
 Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
@@ -98,16 +98,40 @@ fixed watermark (constant memory), but two more fixed-shape shapes were excluded
 was wrong — the miscompile reproduced with no async at all on unoptimized IR; see the overlap analysis
 above.)
 
-### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory — [OPEN]
-A list that grows by more than one fresh cons cell per iteration (or a whole-program list built via a
-returned accumulator) cannot use the fixed watermark because its shared tail must stay below an
-advancing mark. `reverse-complement`'s list-of-single-char-`Str` (~117 bytes/base) and any
-list-building fold hit this. Needs ownership / in-place reuse (the FLAWS #2 milestone), not a point fix.
+### 4. (P2) Growing accumulators: quadratic-memory holes — [PARTIAL, re-scoped]
+Re-measured after the CO-28..32 arc: the base shapes this entry originally described are **linear
+today** (single-fresh-cons string builders ~31 B/elem, two-cons ~23 B/elem, and `reverse-complement`
+~96 B/base — all scale 2x memory for 2x N). What actually still blew up were two subtler holes, both
+now **FIXED** (CO-34):
+- **A loop-invariant heap argument disqualified the fixed watermark.** fasta's `randomFasta` threads
+  the `table` CLOSURE unchanged through the loop; `TFun` was not in the fixed-mark whitelist, so the
+  loop kept the ADVANCING mark and stranded every iteration's copy of the growing `out` string —
+  **6.8 GB at N=20000, 27 GB at N=40000** (despite the entry above saying the fasta case was fixed —
+  the tuple leaf was, but the real loop never qualified). A pass-through arg (the param's own
+  unchanged Var at every tail self-call, per `LoopInvariantParams`) lives below the loop-entry
+  watermark, needs no copy-out at all, and is now exempt from both the copyability scan and the
+  fixed-mark qualification. **fasta: constant 3.8 MB at every N**, output identical.
+- **A late-typed accumulator silently lost its reset entirely.** The back-edge copy-out decision
+  dispatches on argument types — but an accumulator constrained only by a deferred `+` (or by the
+  caller) is still an unresolved inference variable when the back-edge lowers (e.g. whenever the
+  stable `[] -> acc` leaf lowers before the cons arm), so `GetTcoCopyOutKind(TVar)` = None declined
+  the whole block: **1.76 GB for a 60k-iteration string fold**. The back-edge now emits a
+  `TcoResetPending` placeholder and `ResolveDeferredTcoResets` splices the real block at the end of
+  lowering, once the deferred-operator resolutions have grounded the types. **0.25 MB constant.**
 
-### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN]
+**Still open (the genuine milestone):** the ~96 B/base *constant* of list-of-small-`Str`
+representations (needs in-place reuse / ownership — the FLAWS #2 milestone), and the **O(N^2) TIME**
+of copy-per-iteration growing accumulators (each back-edge copies the whole string/list — fasta is
+memory-constant but still quadratic-time; needs a rope/builder or true in-place growth).
+
+### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN, unreproduced]
 Nesting a list-builder helper inside a loop (`outer` threads a list through `inner` that returns it)
-makes each call deep-copy the whole growing list -> O(N^2). Found while writing `mandelbrot` (worked
-around by keeping the bit-packer a single flat loop). Same ownership milestone as #4.
+was reported to deep-copy the whole growing list per call -> O(N^2), found while writing `mandelbrot`
+(worked around by keeping the bit-packer a single flat loop). Re-measured on the current compiler:
+the minimal shape (`inner acc i = item :: acc` called from a TCO `outer`) is **linear in both time
+and memory** (2x N -> 2x, 100k..400k). Either the original trigger needs a shape not yet
+reconstructed (the mandelbrot bit-packer had more structure) or intervening work absorbed it. Left
+open pending a real reproducer; same ownership milestone as #4's remainder if it resurfaces.
 
 ### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [FIXED]
 **[FIXED]** (`bigint_divmod_algorithm_d`): `bignum_divmod` rewritten from bit-by-bit binary long
