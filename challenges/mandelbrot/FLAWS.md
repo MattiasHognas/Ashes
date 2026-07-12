@@ -1,39 +1,38 @@
-# mandelbrot — flaws found
+# mandelbrot — flaws found (all fixed)
 
-The escape-time inner loop is the whole benchmark, and it worked once two `Float` type-inference
-weaknesses were worked around. Both also affect the other float challenges (`n-body`,
-`spectral-norm`).
+The escape-time inner loop is the whole benchmark. It originally needed two `Float` type-inference
+workarounds and could not emit its real binary output. All three are now fixed, and `mandelbrot.ash`
+is written in its natural form.
 
-## Flaw 1 — `Float * Float` of annotated parameters defaults to `Int`
+## Flaw 1 — `Float * Float` of annotated parameters defaulted to `Int` (FIXED)
 
-`*` on two operands whose `Float` type comes from a **parameter annotation** resolves as `Int * Int`
-and then clashes. It reproduces with no recursion:
+`*` on two operands whose `Float` type came from a **parameter annotation** resolved as `Int * Int`
+and then clashed, because the overload was picked before the annotation was applied:
 
 ```ash
-let mul : Float -> Float -> Float = given (a) -> given (b) -> a * b   // ASH002 Type mismatch: Float vs Int
+let mul : Float -> Float -> Float = given (a) -> given (b) -> a * b   // used to ASH002 Float vs Int
 ```
 
-`+`/`-` on the same annotated params are fine — only `*` mis-resolves. The overload is picked before
-the parameter's annotated type is applied. It only bites when the operands are *bare params*: when at
-least one operand is a known-`Float` expression — a `Float` literal or a function result — `*`
-resolves correctly (e.g. `Priced.cost(d) * math.toFloat(q)` in the README hero works).
+Fixed by seeding a definition's parameter types from its annotation before the body is lowered (both
+`let` and `let recursive`). `zr * zr` now resolves as `Float` with no `1.0 *` lead. Regression test:
+`tests/float_annotated_param_operators.ash`.
 
-**Workaround:** lead the product with a `Float` literal so `*` sees a `Float` operand first:
-`1.0 * zr * zr` instead of `zr * zr`.
+## Flaw 2 — recursive numeric accumulator took its type from the first operand (FIXED)
 
-## Flaw 2 — recursive numeric accumulator takes its type from the first operand
+A recursion argument like `escape(cr + zr2 - zi2)…` mis-inferred when it led with a still-unresolved
+parameter. Same seeding fix: the annotated parameter (`cr`) is `Float` before the body is lowered, so
+`cr + zr2 - zi2` resolves without reordering to `zr2 - zi2 + cr`.
 
-A tail-recursive accumulator like `escape(cr + zr2 - zi2) …` mis-infers when the recursion argument
-*leads with a parameter* (`cr`, still-unresolved) rather than a known-`Float` sub-expression: the
-`+` defaults off the leading operand. Writing the same value with the resolved sub-expression first —
-`zr2 - zi2 + cr` — resolves it. (Same root cause seen for the `Float` accumulator in the README order
-demo, and for `Int`-vs-`Float` in `pidigits`.)
+## Flaw 3 — no raw-bytes stdout write (FIXED, feature)
 
-## Net
+`Ashes.IO.write` takes a UTF-8 `Str`, so the binary `P4` PBM was not expressible and the benchmark
+reported a pixel count. Added `Ashes.IO.writeBytes : Bytes -> Unit`, which writes a raw `Bytes` buffer
+to stdout verbatim. `mandelbrot.ash` now packs one bit per pixel (8/byte, MSB first, rows padded to a
+byte) and emits the real image. Regression test: `tests/io_write_bytes.ash`.
 
-With both workarounds (`1.0 *` before each square, and squares-first in the recursion arguments) the
-pure-`Float` escape loop compiles and runs; it is deterministic and constant-memory. The output is a
-pixel **count** rather than the reference binary PBM: `Ashes.IO.write` takes a UTF-8 `Str` and there
-is no raw-bytes stdout write, so the exact `P4` image is not expressible today — the compute (the
-point of the benchmark) is identical. Both flaws are pure type-inference issues, not missing
-features; fixing Flaw 1 in particular would let `n-body` and `spectral-norm` be written naturally.
+## Residual (memory-model, not mandelbrot-specific)
+
+The bit-packing is a single **flat** cons loop on purpose. A helper that *returned* the growing byte
+list would be deep-copied out of its arena scope on every call, making the build O(rows²) — the same
+growing-accumulator limitation tracked as FLAWS #2 (ownership / in-place reuse). Flat threading keeps
+mandelbrot's build proportional to the output image.

@@ -18,50 +18,46 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 
   | Challenge | State |
   |---|---|
-  | [pidigits](pidigits/README.md) | **Benchmarked** — quantifies the BigInt arena churn (~O(N³) time, O(N²) RSS) |
+  | [pidigits](pidigits/README.md) | **Benchmarked** — per-iteration BigInt garbage now reclaimed (N=1000 172 MB → 60 MB); residual accumulator growth is the memory-model milestone |
   | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
-  | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — N=4000 in 0.7 s, constant RSS; found 2 `Float` inference bugs |
-  | [fannkuch-redux](fannkuch-redux/README.md) | **Blocked** — surfaced 3 compiler bugs (FLAWS.md); crashes at N≥3 |
+  | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
+  | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=7→228/16 … N=10→73196/38); memory-bound at large N |
   | fasta, reverse-complement, n-body, spectral-norm, k-nucleotide, regex-redux | Scaffold (`.ash` deferred) |
 
-## Compiler fixes to make (surfaced by benchmarking)
+## Compiler fixes made (surfaced by benchmarking)
 
-Each item is a real bug or gap the benchmarks above hit, with the current workaround (if any). Fixing
-the two `Float`-inference items unblocks writing `n-body` / `spectral-norm` naturally; fixing the
-`fannkuch` back-edge crash unblocks that benchmark. Minimal reproducers live in each challenge's
-`FLAWS.md`.
+Every bug the benchmarks above surfaced has been fixed; the benchmarks are written in their natural,
+workaround-free form. Minimal reproducers live in each challenge's `FLAWS.md`, and each fix ships with
+a regression test under `tests/`.
 
-- **fannkuch-redux** ([FLAWS.md](fannkuch-redux/FLAWS.md)) — blocks the benchmark:
-  - [ ] **Two threaded `List` accumulators + early ADT return miscompiles** — the early (non-tail)
-    return is dropped and the base case is taken. One list is fine; two is not. *Workaround:* pack
-    both lists into one value threaded as a single argument.
-  - [ ] **Back-edge use-after-reset (segfault)** — a `State`-of-two-lists accumulator threaded through
-    a TCO loop is reclaimed by the arena reset while the next iteration still reads it (crashes at
-    N≥3). A single list, and a list-of-records, do *not* crash — so it is specific to the nested
-    pointer-in-ADT case. *No workaround yet; this is why fannkuch has no benchmark.*
-  - [ ] **Spurious `ASH014`** — a non-recursive `let f x = … g …` that calls a recursive helper `g`,
-    when `f` is itself called from a later recursive function, is wrongly rejected as "not yet
-    declared" (and the error is mis-located). *Workaround:* mark `f` `let recursive`.
-- **mandelbrot** ([FLAWS.md](mandelbrot/FLAWS.md)) — worked around; benchmark runs:
-  - [ ] **`Float * Float` of annotated parameters mis-resolves to `Int`** — `*` picks its overload
-    before the parameter's annotated type is applied. `+`/`-` are fine; only `*`, and only when both
-    operands are bare params (a literal or function-result operand resolves correctly). *Workaround:*
-    lead the product with a `Float` literal (`1.0 * zr * zr`).
-  - [ ] **Recursive numeric accumulator types off its first operand** — a recursion arg like
-    `cr + zr2 - zi2` mis-infers when it leads with a still-unresolved parameter. *Workaround:* lead
-    with the resolved sub-expression (`zr2 - zi2 + cr`). (Same root cause as the `Int`-vs-`Float`
-    accumulator defaulting seen in `pidigits`.)
-  - [ ] **(feature) No raw-bytes stdout write** — `Ashes.IO.write` takes a UTF-8 `Str`, so the binary
-    `P4` PBM output is not expressible; the benchmark reports an in-set pixel count instead. A
-    `Bytes`-to-stdout write would let it emit the real image.
-- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, but pathologically:
-  - [ ] **Per-iteration `BigInt` garbage is not reclaimed within the loop** — every spigot step
-    allocates fresh, growing-width `BigInt`s that the bump arena keeps resident, giving ~`O(N³)` time
-    and `O(N²)` RSS and making the standard N=10000 infeasible. The arena reset that *does* fire for
-    `binary-trees` does not fire here. (Memory-model / FLAWS #2 reclamation work.)
-- **binary-trees** — no fix needed; included as the **positive baseline**: the per-iteration arena
-  reset fires correctly for a discarded pointer-bearing ADT (constant memory, no OOM). Use it as the
-  reference when fixing the pidigits/fannkuch reclamation bugs.
+- **fannkuch-redux** ([FLAWS.md](fannkuch-redux/FLAWS.md)) — all three bugs fixed; benchmark runs:
+  - [x] **Two threaded `List` accumulators + early ADT return miscompiled** — the shallow single-cell
+    TCO copy-out only preserved a list's top cons cell; a multi-cell/rebuilt list left interior cells
+    dangling, so the early return was dropped. Now the reset is disqualified for any list accumulator
+    that is not a single fresh cons.
+  - [x] **Back-edge use-after-reset (segfault)** — same root cause; the `State`-of-two-lists
+    accumulator no longer takes the unsound shallow copy across the reset.
+  - [x] **Spurious `ASH014`** — a non-recursive helper calling a recursive one is no longer rejected;
+    the backward-reference reconstruction no longer requires the specialization path.
+- **mandelbrot** ([FLAWS.md](mandelbrot/FLAWS.md)) — written naturally; emits the real image:
+  - [x] **`Float * Float` of annotated parameters resolved to `Int`** — the operator overload was
+    picked before the parameter's annotation applied. Annotated parameter types are now seeded before
+    the body is lowered, so `zr * zr` and `cr + zr2 - zi2` resolve as `Float` with no `1.0 *` lead or
+    operand reordering.
+  - [x] **Recursive numeric accumulator typed off its first operand** — same seeding fix.
+  - [x] **(feature) Raw-bytes stdout write** — added `Ashes.IO.writeBytes : Bytes -> Unit`; mandelbrot
+    now emits the real binary `P4` PBM instead of a pixel count.
+- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, per-iteration garbage reclaimed:
+  - [x] **Per-iteration `BigInt` garbage now reclaimed** — a BigInt is a self-contained buffer, so it
+    is copied out across the TCO reset like a `String`; the reset fires and reclaims the spigot's
+    intermediate `BigInt`s (N=1000 172 MB → 60 MB).
+  - [ ] **Residual O(N²) accumulator growth** *(memory-model milestone, still open)* — a *growing*
+    heap accumulator (BigInt or String) threaded through a loop still accumulates: each iteration's
+    whole-value copy is preserved below the advancing watermark, and a helper that *returns* a growing
+    list deep-copies it out of its arena scope on every call. This is the same root as fannkuch's
+    memory growth at large N, and needs ownership / in-place-reuse (FLAWS #2), not a point fix.
+- **binary-trees** — no fix needed; the **positive baseline**: the per-iteration arena reset fires
+  correctly for a discarded pointer-bearing ADT (constant memory, no OOM).
 
 ## Benchmarks Game — math-lib coverage
 

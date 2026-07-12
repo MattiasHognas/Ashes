@@ -35,21 +35,22 @@ spectral-norm. Wants a byte-output builder (verify `Bytes` write path is adequat
 
 ## Status
 
-**Implemented + benchmarked** (with caveats). [`mandelbrot.ash`](mandelbrot.ash) runs the pure-Float
-`N×N × up-to-50` escape loop. Two caveats, both in [FLAWS.md](FLAWS.md):
+**Implemented + benchmarked.** [`mandelbrot.ash`](mandelbrot.ash) runs the pure-Float
+`N×N × up-to-50` escape loop and emits the real binary `P4` PBM. The two `Float` inference bugs and
+the missing raw-bytes stdout write it originally surfaced ([FLAWS.md](FLAWS.md)) are all fixed:
 
-- It reports the **count of in-set pixels** as a checksum rather than writing the binary `P4` PBM —
-  `Ashes.IO.write` takes a UTF-8 `Str` and there is no raw-bytes stdout write. The compute (the
-  benchmark's work) is identical; the count is deterministic (e.g. `397380 of 1000000` at `N=1000`).
-- Two `Float` type-inference bugs had to be worked around: `Float * Float` of annotated parameters
-  mis-resolves to `Int` (led with `1.0 *`), and a recursive accumulator must lead with a known-`Float`
-  sub-expression. These also block the natural spelling of `n-body` / `spectral-norm`.
+- The escape loop is written **naturally** — `zr * zr`, `cr + zr2 - zi2` — with no `1.0 *` lead and no
+  operand reordering. Annotated parameter types are now seeded before the body is lowered.
+- It writes the real image via `Ashes.IO.writeBytes : Bytes -> Unit` (a `P4` header plus one bit per
+  pixel, packed 8/byte, MSB first, rows padded to a byte). Verified as a valid PBM (`N=200` → 15909
+  black pixels). The bit-packing is a single flat cons loop, kept flat on purpose (a helper returning
+  the growing byte list would be deep-copied per call — the memory-model limitation noted below).
 
 ## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/mandelbrot/mandelbrot.ash -o challenges/mandelbrot/mandelbrot
-./challenges/mandelbrot/mandelbrot 1000
+./challenges/mandelbrot/mandelbrot 1000 > out.pbm   # binary P4 PBM on stdout
 ```
 
 ## Benchmark
@@ -62,10 +63,12 @@ Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded):
 
 | N | Time | Peak RSS |
 |---|------|----------|
-| 1,000 | 0.04 s | 0.25 MB |
-| 2,000 | 0.18 s | 0.25 MB |
-| 4,000 | 0.69 s | 0.25 MB |
+| 1,000 | 0.05 s | 5.6 MB |
+| 2,000 | 0.21 s | 27 MB |
+| 4,000 | 0.89 s | 31 MB |
 
-Clean ~`O(N²)` scaling and **constant 0.25 MB** resident set: the accumulators are scalar `Int`/`Float`
-threaded through the pixel loops, so — unlike the pointer-bearing challenges — there is no arena churn
-and no growth. A pure-numeric hot loop is the compiler's happy path.
+The escape loop itself is constant-memory (scalar `Int`/`Float` accumulators, the compiler's happy
+path). Resident set now scales with the **output image**: the packed bitmap is `N²/8` bytes, built as a
+cons list (`2·N²` bytes of cells) that is materialized to `Bytes` once at the end. That is inherent to
+emitting the real image; the earlier count-only version was constant `0.25 MB` because it produced no
+image.

@@ -51,23 +51,40 @@ feature.
 
 ## Status
 
-**Implemented, but BLOCKED by compiler bugs — no benchmark yet.** [`fannkuch-redux.ash`](fannkuch-redux.ash)
-is the intended fully-pure solution (List-based permutation, one-pass O(k) `flip`, faithful
-factorial-order enumeration). Writing it surfaced **three distinct compiler bugs** — exactly the
-flaw-finding this challenge exists for — documented in [FLAWS.md](FLAWS.md):
+**Implemented + benchmarked.** [`fannkuch-redux.ash`](fannkuch-redux.ash) is the intended fully-pure
+solution (List-based permutation, one-pass O(k) `flip`, faithful factorial-order enumeration). Writing
+it surfaced **three distinct compiler bugs** — exactly the flaw-finding this challenge exists for —
+**all now fixed** (see [FLAWS.md](FLAWS.md)):
 
-1. a self-recursive function threading **two** `List` accumulators with an early ADT return drops
-   the early return (takes the wrong branch);
+1. a self-recursive function threading **two** `List` accumulators with an early ADT return dropped
+   the early return — the TCO shallow copy-out only preserved a list's top cons cell;
 2. a spurious `ASH014` for a non-recursive helper that calls a recursive helper;
-3. a **use-after-reset** of a pointer-bearing accumulator across the TCO back-edge.
+3. a **use-after-reset** segfault of a pointer-bearing accumulator across the TCO back-edge (same root
+   as (1)).
 
-With workarounds for (1) and (2) the program compiles and is correct for `N <= 2`, but (3) makes it
-**segfault for `N >= 3`**, so there is no benchmark table yet. It becomes benchmarkable once the
-back-edge crash is fixed.
+Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`). Because the
+enumeration threads a growing pointer-bearing accumulator that is not yet reclaimed within the loop
+(the memory-model milestone, FLAWS #2), resident memory grows with `N!`, so the standard `N=12` is out
+of reach — benchmark at small N.
 
 ## Build & run
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch-redux.ash -o challenges/fannkuch-redux/fannkuch-redux
-./challenges/fannkuch-redux/fannkuch-redux 2   # correct; N >= 3 currently crashes (FLAWS.md bug 3)
+./challenges/fannkuch-redux/fannkuch-redux 7
 ```
+
+## Benchmark
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`. All outputs match
+the reference:
+
+| N | checksum / Pfannkuchen | Time | Peak RSS |
+|---|---|------|----------|
+| 7 | 228 / 16 | <0.01 s | 4.8 MB |
+| 8 | 1616 / 22 | 0.02 s | 43 MB |
+| 9 | 8629 / 30 | 0.24 s | 424 MB |
+| 10 | 73196 / 38 | 2.7 s | 4.6 GB |
+
+The ~10× RSS growth per N is the unreclaimed accumulator, not the (correct) compute — the memory-model
+milestone below the main [`challenges/README.md`](../README.md) fix list.

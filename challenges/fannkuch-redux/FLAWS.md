@@ -1,58 +1,49 @@
-# fannkuch-redux — flaws found
+# fannkuch-redux — flaws found (all fixed)
 
-fannkuch-redux is *fully expressible purely* (per the README), yet implementing the faithful
-factorial-order enumeration surfaced **three distinct compiler bugs**. The benchmark cannot run to
-completion until they are fixed: `fannkuch-redux.ash` compiles and produces correct output for
-`N <= 2`, then **segfaults for `N >= 3`**. Each bug is reduced to a small reproducer below.
+fannkuch-redux is *fully expressible purely*, yet implementing the faithful factorial-order
+enumeration surfaced **three distinct compiler bugs** — it compiled and ran only for `N <= 2` and
+segfaulted at `N >= 3`. All three are now fixed and the benchmark runs correctly; each reduced
+reproducer is below with its fix.
 
-## Bug 1 — two independently-threaded list accumulators drop an early ADT return
+## Bug 1 — two threaded list accumulators dropped an early ADT return (FIXED)
 
-A self-recursive function that threads **two** `List` accumulators and returns an ADT *early* (a
-non-tail return) takes the wrong branch: the early return is dropped and the base case is returned
-instead. With **one** threaded list it is correct; packing the two lists into a single value is the
-workaround used in `fannkuch-redux.ash`.
+A self-recursive function threading **two** `List` accumulators and returning an ADT *early* took the
+wrong branch — the early (non-tail) return was dropped and the base case returned:
 
 ```ash
-import Ashes.IO as io
-import Ashes.Text as text
-type R = | Base | Hit(Int)
-let recursive getAt i xs = match xs with | [] -> 0 | h :: t -> if i == 0 then h else getAt(i - 1)(t)
-let recursive setAt i v xs = match xs with | [] -> [] | h :: t -> if i == 0 then v :: t else h :: setAt(i - 1)(v)(t)
 let recursive g r n perm count =
-    if r == n
-    then Base
+    if r == n then Base
     else
-        let perm2 = r :: perm
-        in let cr = getAt(r)(count) - 1
-        in let count2 = setAt(r)(cr)(count)
-        in if cr > 0 then Hit(r) else g(r + 1)(n)(perm2)(count2)
-// g(1)(3)([2,1,3])([0,1,3]) should reach r=2 (cr=2>0) and return Hit(2); instead returns Base.
-io.print(match g(1)(3)([2, 1, 3])([0, 1, 3]) with | Base -> "BASE (bug)\n" | Hit(r) -> "HIT " + text.fromInt(r) + "\n")
+        let cr = getAt(r)(count) - 1
+        in if cr > 0 then Hit(r) else g(r + 1)(n)(r :: perm)(setAt(r)(cr)(count))
+// g(1)(3)([2,1,3])([0,1,3]) used to return Base; correct is Hit(2).
 ```
 
-Prints `BASE (bug)`; expected `HIT 2`. Removing either the second threaded list, the early return,
-or reading the threaded list via `getAt` all make it correct — so the trigger is the combination.
+**Root cause:** the TCO back-edge arena reset used a single-cell shallow copy-out for list
+accumulators, which preserves only a list's *top* cons cell. That is sound only for `head :: <loop
+param>` (one fresh cell). A list rebuilt by `setAt` (multiple fresh interior cells) had those cells
+reclaimed by the reset, so the threaded `count` was corrupted and `cr` never exceeded 0. **Fix:** the
+reset is disqualified for any list accumulator that is not a single fresh cons; such loops no longer
+reclaim (rather than reclaiming unsoundly). Regression test:
+`tests/tco_multi_fresh_list_accumulator.ash`.
 
-## Bug 2 — spurious ASH014 for a non-recursive helper that calls a recursive helper
+## Bug 2 — spurious ASH014 for a non-recursive helper calling a recursive one (FIXED)
 
 A **non-recursive** `let f x = … g …` whose body calls a recursive helper `g`, when `f` is itself
-called from a later recursive function, is rejected with `ASH014 Binding 'g' is not yet declared at
-this point` (the error is even mis-located at an unrelated later declaration). Marking `f`
-`let recursive` (though it does not self-recurse) works around it — this is why `rotateFirst` and
-`flip` are `let recursive` in `fannkuch-redux.ash`.
+called from a later recursive function, was rejected with `ASH014 … not yet declared` (mis-located).
+**Fix:** the backward-reference reconstruction no longer requires the specialization path, so a helper
+already lowered earlier resolves as the valid backward reference it is. `rotateFirst` and `flip` are
+now plain `let`. Regression test: `tests/regression_ash014_nonrecursive_helper_calls_recursive.ash`.
 
-## Bug 3 — use-after-reset of a threaded accumulator across the TCO back-edge (segfault)
+## Bug 3 — use-after-reset of a threaded accumulator across the TCO back-edge (FIXED)
 
-The `loop` function threads a `State(perm, count)` value (a constructor holding two lists) as a
-tail-recursive accumulator. At `N >= 3` — i.e. once the enumeration takes more than a couple of
-back-edges — the process **segfaults**. The pattern matches the known back-edge address-stability
-class (`challenges/1brc` FLAWS #2 / the TCO plain-reset UAF on relocated accumulators): the arena
-reset on the loop back-edge reclaims the `State` (and the lists it points at) that the next
-iteration still reads. Constant-memory reuse specialization is fine for flat integer accumulators
-but not for a pointer-bearing accumulator rebuilt each iteration here.
+The `loop` function threads a `State(perm, count)` value (two lists) as a tail-recursive accumulator;
+at `N >= 3` the process segfaulted. **Same root cause as Bug 1** — the unsound shallow copy-out
+reclaimed still-referenced interior cells. The Bug 1 fix (disqualifying the reset for non-single-fresh-
+cons accumulators) resolves the crash too.
 
-## Net
+## Residual (memory-model, still open)
 
-fannkuch-redux is not a missing-feature blocker — it is a *correctness* blocker: the pure
-enumeration is expressible, but three codegen bugs (two miscompiles + one spurious diagnostic) stop
-it running. The benchmark table in `README.md` is deferred until Bug 3 (the crash) is fixed.
+Fixing the crash means these loops no longer reclaim their per-iteration garbage: a *growing* pointer-
+bearing accumulator threaded through the loop stays resident, so RSS grows with `N!`. That is the
+ownership / in-place-reuse milestone (FLAWS #2), not a point fix — it is why `N=12` is out of reach.

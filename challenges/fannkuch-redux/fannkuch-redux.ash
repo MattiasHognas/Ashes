@@ -10,19 +10,15 @@
 // N! grows factorially, so the Benchmarks Game standard N=12 is out of reach for a pure immutable
 // enumeration -- benchmark at small N.
 //
-// STATUS: BLOCKED by compiler bugs -- this file is the intended pure solution, but it does not yet
-// run correctly. It segfaults for N >= 3. See FLAWS.md for three distinct compiler bugs this
-// benchmark surfaced (a two-threaded-list early-return miscompile, a spurious ASH014, and this
-// back-edge crash). The workarounds below get it to compile and run N <= 2:
-//   * the permutation and factorial-counter are packed into one `State(perm, count)` value threaded
-//     as a single argument (two *separate* threaded lists miscompile: an early ADT return is
-//     dropped and the base case is wrongly taken);
-//   * the non-recursive helpers `rotateFirst`/`flip` are marked `recursive` to dodge a spurious
-//     "not yet declared" (ASH014) error.
-// A third bug remains: the State/list accumulator threaded through `loop` is freed and reused across
-// the TCO back-edge (a use-after-reset), which crashes at N >= 3.
+// STATUS: runs correctly. The three compiler bugs this benchmark surfaced (a two-threaded-list
+// early-return miscompile, a spurious ASH014, and a TCO back-edge use-after-reset segfault) are all
+// fixed -- see FLAWS.md. The permutation and its factorial counter are modeled as one `State(perm,
+// count)` pair, threaded through the enumeration loop; that is a design choice, not a workaround now.
+// N! grows factorially, so resident memory grows with the enumeration (the growing pointer-bearing
+// accumulator is not reclaimed within the loop yet -- the memory-model milestone), and the Benchmarks
+// Game standard N=12 is out of reach; benchmark at small N.
 //
-// Usage: ./fannkuch-redux 7   (defaults to 7 -- currently crashes for N >= 3)
+// Usage: ./fannkuch-redux 7   (defaults to 7)
 import Ashes.IO as io
 import Ashes.Text as text
 let recursive iota i n = 
@@ -59,7 +55,7 @@ let recursive insertAt i v xs =
             | [] -> v :: []
             | h :: t -> h :: insertAt(i - 1)(v)(t)
 
-let recursive rotateFirst r xs = 
+let rotateFirst r xs = 
     match xs with
         | [] -> []
         | h :: t -> insertAt(r)(h)(t)
@@ -77,7 +73,7 @@ let recursive flipInto k xs acc =
             | [] -> appendTail(acc)(xs)
             | h :: t -> flipInto(k - 1)(t)(h :: acc)
 
-let recursive flip k xs = flipInto(k)(xs)([])
+let flip k xs = flipInto(k)(xs)([])
 
 let recursive countFlips perm flips = 
     match perm with
