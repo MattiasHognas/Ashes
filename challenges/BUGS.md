@@ -119,10 +119,14 @@ now **FIXED** (CO-34):
   `TcoResetPending` placeholder and `ResolveDeferredTcoResets` splices the real block at the end of
   lowering, once the deferred-operator resolutions have grounded the types. **0.25 MB constant.**
 
-**Still open (the genuine milestone):** the ~96 B/base *constant* of list-of-small-`Str`
-representations (needs in-place reuse / ownership — the FLAWS #2 milestone), and the **O(N^2) TIME**
-of copy-per-iteration growing accumulators (each back-edge copies the whole string/list — fasta is
-memory-constant but still quadratic-time; needs a rope/builder or true in-place growth).
+**Update (CO-35):** the back-edge copy cost itself is now AMORTIZED — the copy-out + reset are
+skipped while arena growth <= 2x the last compacted live size (+4 KB slack), making total copy work
+linear in bytes allocated (the `List(Body)` 3M loop went 0.289 s -> 0.054 s at unchanged memory;
+fasta ~1.5x). **Still open (the genuine milestone):** the ~96 B/base *constant* of
+list-of-small-`Str` representations (needs in-place reuse / ownership — the FLAWS #2 milestone), and
+the remaining **O(N^2) TIME of the immutable concat itself** — `out + ch` copies the whole string
+every iteration regardless of the arena; fixing that needs in-place unique-string growth (extend at
+the arena tip when the accumulator is uniquely owned), same milestone.
 
 ### 5. (P2) A helper that **returns** a growing list deep-copies it out of its arena scope per call — [OPEN, unreproduced]
 Nesting a list-builder helper inside a loop (`outer` threads a list through `inner` that returns it)

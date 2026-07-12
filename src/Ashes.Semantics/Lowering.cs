@@ -746,10 +746,16 @@ public sealed partial class Lowering
         int FixedEndSlot,
         int ArenaCursorSlot,
         int ArenaEndSlot,
-        bool CoroutineLoop);
+        bool CoroutineLoop,
+        int CompactionSizeSlot);
 
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
     private int _nextTcoResetId;
+
+    // Slack added to the amortized-compaction threshold (growth > 2*live + slack): small loops with
+    // tiny live sizes still batch a few KB of garbage per compaction instead of copying every
+    // iteration, and loops whose live size is zero compact only once slack accumulates.
+    private const long TcoCompactionSlackBytes = 4096;
 
     /// <summary>
     /// Emits the TCO back-edge arena block — the plain per-iteration reset, or the two-pass
@@ -847,6 +853,44 @@ public sealed partial class Lowering
         // (AFTER the reset): copy each up-copy DOWN to W.
         // Skipped entirely while a one-shot capability post pushed this iteration is still pending.
         var tcoCopySkipLabel = BeginLivePostsGuard();
+
+        // Amortized compaction (fixed watermark only): copying the WHOLE growing accumulator at
+        // every back-edge is O(N^2) TIME (each of N iterations copies O(N) live bytes). Instead,
+        // skip the copy-out + reset while the arena has grown less than 2x the live size recorded
+        // at the last compaction (+ slack) — the skipped iterations just keep allocating above W.
+        // Each compaction then reclaims at least as much garbage as it copies live bytes, so total
+        // copy work is LINEAR in bytes allocated (the doubling amortization) and resident memory
+        // stays bounded by ~3x the live accumulator. Skipping is trivially safe: it is exactly the
+        // no-reset behavior every non-qualifying loop already has. The advancing-mark path is NOT
+        // amortized — its single-cell list copies must track the moving mark every iteration.
+        string? compactSkipLabel = null;
+        if (useFixedWatermark && info.CompactionSizeSlot >= 0)
+        {
+            int curCursorSlot = NewLocal();
+            int curEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(curCursorSlot, curEndSlot));
+            int curTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(curTemp, curCursorSlot));
+            int wTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wTemp, info.FixedCursorSlot));
+            int growthTemp = NewTemp();
+            Emit(new IrInst.SubInt(growthTemp, curTemp, wTemp));
+            int mTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(mTemp, info.CompactionSizeSlot));
+            int oneTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(oneTemp, 1));
+            int twoMTemp = NewTemp();
+            Emit(new IrInst.ShlInt(twoMTemp, mTemp, oneTemp));
+            int slackTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(slackTemp, TcoCompactionSlackBytes));
+            int thresholdTemp = NewTemp();
+            Emit(new IrInst.AddInt(thresholdTemp, twoMTemp, slackTemp));
+            int needTemp = NewTemp();
+            Emit(new IrInst.CmpIntGt(needTemp, growthTemp, thresholdTemp));
+            compactSkipLabel = $"tco_compact_skip_{_nextLambdaId++}";
+            Emit(new IrInst.JumpIfFalse(needTemp, compactSkipLabel));
+        }
+
         var upCopyTemps = new int[argTypes.Length];
         for (int i = 0; i < argTypes.Length; i++)
         {
@@ -912,6 +956,23 @@ public sealed partial class Lowering
 
         // Free the chunks abandoned above W (including the Phase A up-copies, now fully consumed).
         Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+
+        if (compactSkipLabel is not null)
+        {
+            // Record the compacted live size (cursor - W) for the next amortization trigger.
+            int afterCursorSlot = NewLocal();
+            int afterEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(afterCursorSlot, afterEndSlot));
+            int afterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(afterTemp, afterCursorSlot));
+            int wAfterTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(wAfterTemp, info.FixedCursorSlot));
+            int liveTemp = NewTemp();
+            Emit(new IrInst.SubInt(liveTemp, afterTemp, wAfterTemp));
+            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, liveTemp));
+            Emit(new IrInst.Label(compactSkipLabel));
+        }
+
         EndLivePostsGuard(tcoCopySkipLabel);
     }
 
@@ -2454,6 +2515,12 @@ public sealed partial class Lowering
             tco.FixedCursorSlot = NewLocal();
             tco.FixedEndSlot = NewLocal();
             Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
+            // Live-size slot for the amortized fixed-watermark compaction (see TcoContext), starts 0
+            // so the first qualifying back-edge compacts and records the true live size.
+            tco.CompactionSizeSlot = NewLocal();
+            int compactionZero = NewTemp();
+            Emit(new IrInst.LoadConstInt(compactionZero, 0));
+            Emit(new IrInst.StoreLocal(tco.CompactionSizeSlot, compactionZero));
 
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
@@ -3014,7 +3081,8 @@ public sealed partial class Lowering
                     tco.FixedEndSlot,
                     tco.ArenaCursorSlot,
                     tco.ArenaEndSlot,
-                    tco.CoroutineLoopReset);
+                    tco.CoroutineLoopReset,
+                    tco.CompactionSizeSlot);
 
                 // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
                 // still be an unresolved inference variable here (e.g. constrained only by a deferred

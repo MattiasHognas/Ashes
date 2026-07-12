@@ -67,6 +67,14 @@ public sealed partial class Lowering
         public int FixedCursorSlot { get; set; } = -1;
         public int FixedEndSlot { get; set; } = -1;
 
+        // Live accumulator size (cursor - W) recorded after the last fixed-watermark compaction,
+        // zero-initialized at loop entry. The back-edge skips the whole copy-out + reset while the
+        // arena has grown less than 2x this size (+ slack) since W — so a growing accumulator is
+        // copied only when the garbage since the last compaction is at least as large as the live
+        // data, making the total copy work LINEAR in bytes allocated (the doubling amortization)
+        // instead of one full copy per iteration (O(N^2) time), while memory stays O(live).
+        public int CompactionSizeSlot { get; set; } = -1;
+
         // Stack pointer saved at the loop body label; restored at each back-edge so per-iteration dynamic
         // stack allocations in the loop body are freed instead of accumulating until the stack overflows.
         public int StackPtrSlot { get; set; } = -1;
