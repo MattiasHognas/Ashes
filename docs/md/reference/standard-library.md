@@ -353,6 +353,10 @@ namespace. They are not overridable by project-local modules.
 - `length` — `List(a) -> Int`, number of elements
 - `map` — `(a -> b) -> List(a) -> List(b)`, apply `f` to each element
 - `reverse` — `List(a) -> List(a)`, the elements in reverse order
+- `sortBy` — `(a -> a -> Bool) -> List(a) -> List(a)`, a stable `O(n log n)` merge sort ordered by the
+  comparator `before`: `before(x)(y)` is `true` when `x` should not come after `y` (e.g. `given (a) ->
+  given (b) -> a <= b` for ascending). Provide your own comparator since the language has no built-in
+  ordering typeclass
 - `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
 
 ### `Ashes.Math`
