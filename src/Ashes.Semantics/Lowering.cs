@@ -2709,7 +2709,11 @@ public sealed partial class Lowering
                         && newArgTypes.All(t =>
                             CanArenaReset(t)
                             || IsResourceHandleType(t)
-                            || Prune(t) is TypeRef.TStr or TypeRef.TBigInt);
+                            || Prune(t) is TypeRef.TStr or TypeRef.TBigInt
+                            // An ADT copied shallow (all copy-type fields) or deep (list/string fields
+                            // fully copied, breaking tail-sharing) is a self-contained clone, so it is
+                            // safe at the fixed mark.
+                            || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n))));
                     int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
                     int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
 
@@ -2751,8 +2755,15 @@ public sealed partial class Lowering
                                 continue;
                             }
 
-                            upCopyTemps[i] = NewTemp();
-                            EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
+                            // A deep-ADT copy returns its own temp (a self-contained recursive clone),
+                            // rather than writing into a pre-allocated dest like the shallow kinds.
+                            upCopyTemps[i] = kind == CopyOutKind.DeepAdt
+                                ? EmitDeepCopy(newArgTemps[i], newArgTypes[i])
+                                : NewTemp();
+                            if (kind != CopyOutKind.DeepAdt)
+                            {
+                                EmitTcoCopyOut(kind, upCopyTemps[i], newArgTemps[i], sizeBytes, headCopy);
+                            }
                         }
 
                         // Reset (pointer reset only, no chunk freeing): cursor → W.
@@ -2765,8 +2776,17 @@ public sealed partial class Lowering
                                 continue;
 
                             var kind = GetTcoCopyOutKind(newArgTypes[i], out int sizeBytes, out var headCopy);
-                            int copyDest = NewTemp();
-                            EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
+                            int copyDest;
+                            if (kind == CopyOutKind.DeepAdt)
+                            {
+                                copyDest = EmitDeepCopy(upCopyTemps[i], newArgTypes[i]);
+                            }
+                            else
+                            {
+                                copyDest = NewTemp();
+                                EmitTcoCopyOut(kind, copyDest, upCopyTemps[i], sizeBytes, headCopy);
+                            }
+
                             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], copyDest));
                         }
 

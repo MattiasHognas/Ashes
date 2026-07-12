@@ -296,5 +296,8 @@ public sealed partial class Lowering
         Closure,
         /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
         TcoListCell,
+        /// <summary>Recursive deep copy of a pointer-bearing ADT (fields deep-copied) via a synthesized
+        /// copier. Self-contained result, so a fixed-shape ADT accumulator can reset.</summary>
+        DeepAdt,
     }
 }
