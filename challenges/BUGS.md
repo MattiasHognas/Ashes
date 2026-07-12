@@ -126,17 +126,32 @@ comparator).
 
 ## Diagnostics & formatter
 
-### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs
+### 11. (P2) Bogus diagnostic locations for flat / stitched top-level programs — [OPEN, diagnosed]
 Propagated/secondary type errors are reported at coordinates **past EOF** (e.g. line 71 in a 66-line
 file, columns ~2000+ that look like byte offsets into the internally stitched single line), and
 sometimes blame an unrelated later declaration. Primary errors locate correctly. Surfaced by
-`spectral-norm` and `n-body`; makes multi-error files very hard to debug.
+`spectral-norm` and `n-body`; makes multi-error files very hard to debug. **Diagnosis:** compilation
+runs on `layout.Source` (the stitched **combined** source), so diagnostic spans are offsets into *it*,
+but `PrintCompilerDiagnostics` renders them against the **original** file text (`Program.cs` passes
+`source`, not `prepared.Layout.Source`). For a flat top-level file the combined source is not the
+original text — `TryShapeFlatModule` **reconstructs** the module from extracted binding-value fragments
+(imports consumed, type/`external`/`provide` decls hoisted, body parenthesized), so offsets shift by
+the stripped prefix and the two texts no longer line up. **Fix direction:** carry a combined→original
+source map (extend `ModuleOffsets` with each region's original offset, tracked as fragments are
+extracted) and map spans back before rendering; the non-flat path already blanks hoisted decls to keep
+line numbers, but the flat reconstruction loses them entirely. Needs care — real source-map
+infrastructure, not a point fix.
 
 ### 12. (P2) `fmt` silently strips all non-leading comments
 `fmt -w` deletes every `//` comment that is not in the leading header block (and reshapes one-line
 curried `given` chains). Output still compiles, but inline documentation is lost with no warning.
 
-### 13. (P3) Formatter emits trailing whitespace after `=`, `->`, `in`, `else` (idempotent; cosmetic).
+### 13. (P3) Formatter emits trailing whitespace after `=`, `->`, `in`, `else` (idempotent; cosmetic). — [OPEN]
+The formatter fix is small (a per-line `TrimEnd` of the final output — safe because string literals are
+emitted single-line with escaped `\n`, so a line never ends inside a literal). But it changes the
+canonical output of **~391 committed `.ash` files** (all of `lib/Ashes`, `tests`, `examples` currently
+carry the trailing whitespace), so it must land with a coordinated repo-wide `fmt -w` reformat in the
+same change — deferred as a deliberate bulk commit rather than bundled here.
 ### 14. (P3) `import M.binding` selector renders as `import M as binding` under `fmt` (rendering-only).
 
 ## Records & syntax
