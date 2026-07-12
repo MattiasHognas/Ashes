@@ -2103,6 +2103,15 @@ public sealed partial class Lowering
                 }
             }
 
+            // Save a FIXED loop-entry watermark BEFORE the loop label (runs once). A back-edge whose
+            // accumulators are all non-sharing whole-value types resets here instead of the per-iteration
+            // mark, so the previous iteration's whole-value copy is reclaimed rather than stranded below
+            // an advancing watermark (the growing-accumulator O(N^2) leak). Same cursor position as the
+            // first per-iteration save below (nothing is emitted between them).
+            tco.FixedCursorSlot = NewLocal();
+            tco.FixedEndSlot = NewLocal();
+            Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
+
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
@@ -2689,6 +2698,21 @@ public sealed partial class Lowering
                         }
                     }
 
+                    // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's
+                    // whole-value accumulator copies) instead of the per-iteration one WHEN every arg is
+                    // a non-sharing whole-value type: a copy type, a resource handle, a String, or a
+                    // BigInt. A cons-list (or any TList) shares its tail with the prior accumulator, which
+                    // sits below the per-iteration watermark and would be overwritten by a fixed-mark
+                    // reset — so any list disqualifies the fixed mark and keeps the advancing one. This is
+                    // what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident memory.
+                    bool useFixedWatermark = tco.FixedCursorSlot >= 0
+                        && newArgTypes.All(t =>
+                            CanArenaReset(t)
+                            || IsResourceHandleType(t)
+                            || Prune(t) is TypeRef.TStr or TypeRef.TBigInt);
+                    int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
+                    int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
+
                     if (allCopyable)
                     {
                         // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args
@@ -2732,7 +2756,7 @@ public sealed partial class Lowering
                         }
 
                         // Reset (pointer reset only, no chunk freeing): cursor → W.
-                        Emit(new IrInst.RestoreArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
+                        Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
 
                         // Phase B: copy each up-copy down to W and store into the slot.
                         for (int i = 0; i < newArgTypes.Length; i++)
@@ -2748,7 +2772,7 @@ public sealed partial class Lowering
 
                         // Free the chunks abandoned above W (including the Phase A
                         // up-copies, now fully consumed by Phase B).
-                        Emit(new IrInst.ReclaimArenaChunks(tco.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
+                        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = tco.CoroutineLoopReset });
                         EndLivePostsGuard(tcoCopySkipLabel);
                     }
                     // else: complex heap types — no arena reset.
