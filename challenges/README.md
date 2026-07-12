@@ -24,6 +24,45 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
   | [fannkuch-redux](fannkuch-redux/README.md) | **Blocked** — surfaced 3 compiler bugs (FLAWS.md); crashes at N≥3 |
   | fasta, reverse-complement, n-body, spectral-norm, k-nucleotide, regex-redux | Scaffold (`.ash` deferred) |
 
+## Compiler fixes to make (surfaced by benchmarking)
+
+Each item is a real bug or gap the benchmarks above hit, with the current workaround (if any). Fixing
+the two `Float`-inference items unblocks writing `n-body` / `spectral-norm` naturally; fixing the
+`fannkuch` back-edge crash unblocks that benchmark. Minimal reproducers live in each challenge's
+`FLAWS.md`.
+
+- **fannkuch-redux** ([FLAWS.md](fannkuch-redux/FLAWS.md)) — blocks the benchmark:
+  - [ ] **Two threaded `List` accumulators + early ADT return miscompiles** — the early (non-tail)
+    return is dropped and the base case is taken. One list is fine; two is not. *Workaround:* pack
+    both lists into one value threaded as a single argument.
+  - [ ] **Back-edge use-after-reset (segfault)** — a `State`-of-two-lists accumulator threaded through
+    a TCO loop is reclaimed by the arena reset while the next iteration still reads it (crashes at
+    N≥3). A single list, and a list-of-records, do *not* crash — so it is specific to the nested
+    pointer-in-ADT case. *No workaround yet; this is why fannkuch has no benchmark.*
+  - [ ] **Spurious `ASH014`** — a non-recursive `let f x = … g …` that calls a recursive helper `g`,
+    when `f` is itself called from a later recursive function, is wrongly rejected as "not yet
+    declared" (and the error is mis-located). *Workaround:* mark `f` `let recursive`.
+- **mandelbrot** ([FLAWS.md](mandelbrot/FLAWS.md)) — worked around; benchmark runs:
+  - [ ] **`Float * Float` of annotated parameters mis-resolves to `Int`** — `*` picks its overload
+    before the parameter's annotated type is applied. `+`/`-` are fine; only `*`, and only when both
+    operands are bare params (a literal or function-result operand resolves correctly). *Workaround:*
+    lead the product with a `Float` literal (`1.0 * zr * zr`).
+  - [ ] **Recursive numeric accumulator types off its first operand** — a recursion arg like
+    `cr + zr2 - zi2` mis-infers when it leads with a still-unresolved parameter. *Workaround:* lead
+    with the resolved sub-expression (`zr2 - zi2 + cr`). (Same root cause as the `Int`-vs-`Float`
+    accumulator defaulting seen in `pidigits`.)
+  - [ ] **(feature) No raw-bytes stdout write** — `Ashes.IO.write` takes a UTF-8 `Str`, so the binary
+    `P4` PBM output is not expressible; the benchmark reports an in-set pixel count instead. A
+    `Bytes`-to-stdout write would let it emit the real image.
+- **pidigits** ([FLAWS.md](pidigits/FLAWS.md)) — benchmark runs, but pathologically:
+  - [ ] **Per-iteration `BigInt` garbage is not reclaimed within the loop** — every spigot step
+    allocates fresh, growing-width `BigInt`s that the bump arena keeps resident, giving ~`O(N³)` time
+    and `O(N²)` RSS and making the standard N=10000 infeasible. The arena reset that *does* fire for
+    `binary-trees` does not fire here. (Memory-model / FLAWS #2 reclamation work.)
+- **binary-trees** — no fix needed; included as the **positive baseline**: the per-iteration arena
+  reset fires correctly for a discarded pointer-bearing ADT (constant memory, no OOM). Use it as the
+  reference when fixing the pidigits/fannkuch reclamation bugs.
+
 ## Benchmarks Game — math-lib coverage
 
 `Ashes.Math` has landed (see [STANDARD_LIBRARY.md](../docs/md/reference/standard-library.md#ashesmath)), and
