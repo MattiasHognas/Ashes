@@ -2811,6 +2811,7 @@ public sealed partial class Lowering
             {
                 IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
                 IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
                 IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
                 IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
                 IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
@@ -2943,6 +2944,7 @@ public sealed partial class Lowering
                     BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+                    BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
                     BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
                     BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),

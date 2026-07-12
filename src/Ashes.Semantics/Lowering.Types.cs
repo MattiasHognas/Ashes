@@ -77,6 +77,7 @@ public sealed partial class Lowering
     {
         Print,
         Write,
+        WriteBytes,
         WriteLine,
         ReadLine,
         FileReadText,
