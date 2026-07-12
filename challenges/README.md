@@ -11,8 +11,18 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 
 - [`1brc/`](1brc/README.md) — the One Billion Row Challenge; a full 1e9-row stress test that runs
   in ~8.3 s (every flaw it originally surfaced has since been fixed).
+- [`server/`](server/README.md) — TCP + HTTP echo servers benchmarked against .NET baselines (own `bench.sh`).
 - The folders below are the [Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-  set — **scaffolds for now** (README only; `.ash` + run deferred).
+  set. [`bench.sh`](bench.sh) is a shared harness for the compute-bound ones (`bench.sh <name> [args]`
+  — compiles at `-O2`, reports hyperfine time + peak RSS). Progress:
+
+  | Challenge | State |
+  |---|---|
+  | [pidigits](pidigits/README.md) | **Benchmarked** — quantifies the BigInt arena churn (~O(N³) time, O(N²) RSS) |
+  | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
+  | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — N=4000 in 0.7 s, constant RSS; found 2 `Float` inference bugs |
+  | [fannkuch-redux](fannkuch-redux/README.md) | **Blocked** — surfaced 3 compiler bugs (FLAWS.md); crashes at N≥3 |
+  | fasta, reverse-complement, n-body, spectral-norm, k-nucleotide, regex-redux | Scaffold (`.ash` deferred) |
 
 ## Benchmarks Game — math-lib coverage
 
