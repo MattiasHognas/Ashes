@@ -39,12 +39,31 @@ benchmark is meant to probe.
 
 ## Status
 
-**Scaffold only.** `spectral-norm.ash` and the `FLAWS.md` writeup are not written yet, but the
-benchmark is **unblocked** — the persistent-array perf cost is a probe, not a blocker.
+**Implemented + benchmarked.** [`spectral-norm.ash`](spectral-norm.ash) runs the standard power
+iteration (10 rounds of `A^T A`) with the implicit matrix `a(i,j) = 1/((i+j)(i+j+1)/2 + i + 1)`,
+printing the norm to 9 dp. Output matches the reference (`1.274224153` at the standard `N=5500`).
 
-## Build & run (once written)
+## Build & run
 
 ```bash
-dotnet run --project src/Ashes.Cli -- compile challenges/spectral-norm/spectral-norm.ash -o challenges/spectral-norm/spectral-norm
+dotnet run --project src/Ashes.Cli -- compile challenges/spectral-norm/spectral-norm.ash -o challenges/spectral-norm/spectral-norm -O2
 ./challenges/spectral-norm/spectral-norm 5500
 ```
+
+## Benchmark
+
+```bash
+challenges/bench.sh spectral-norm 5500
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+
+| N | Time | Peak RSS |
+|---|------|----------|
+| 1,000 | 0.16 s | 0.2 MB |
+| 3,000 | 1.48 s | 1.0 MB |
+| **5,500** (standard) | **4.72 s** | **1.5 MB** |
+
+Time scales as the O(N^2) matrix-vector products predict (5.5^2 ~ 30x from 1000 to 5500) — the
+persistent-vector access cost the benchmark was expected to expose is visible but constant-factor,
+not asymptotic, and memory stays at the size of the working vectors.

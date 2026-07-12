@@ -39,12 +39,38 @@ cap noted in 1BRC #1 — large inputs may need the chunked file API rather than 
 
 ## Status
 
-**Scaffold only.** `regex-redux.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked.** [`regex-redux.ash`](regex-redux.ash) runs the canonical workload on
+`Ashes.Regex` (hermetic PCRE2): strip FASTA headers/newlines, count the nine variant patterns, then
+apply the five substitution passes and print the three lengths. Writing it originally surfaced the
+chained->4 MiB-allocation OOM (~28 GB) — fixed by variable-sized heap chunks; the whole chain now
+runs in bounded memory.
 
-## Build & run (once written)
+## Build & run
 
 ```bash
 ./challenges/fasta/fasta 1000000 > regexredux-input.txt
-dotnet run --project src/Ashes.Cli -- compile challenges/regex-redux/regex-redux.ash -o challenges/regex-redux/regex-redux
+dotnet run --project src/Ashes.Cli -- compile challenges/regex-redux/regex-redux.ash -o challenges/regex-redux/regex-redux -O2
 ./challenges/regex-redux/regex-redux < regexredux-input.txt
 ```
+
+## Benchmark
+
+```bash
+./challenges/fasta/fasta 1000000 > /tmp/fa1m.txt
+BENCH_STDIN=/tmp/fa1m.txt challenges/bench.sh regex-redux
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+
+| Input (fasta N) | Input size | Time | Peak RSS |
+|-----------------|-----------|------|----------|
+| 250,000 | ~2.5 MB | 0.64 s | 54 MB |
+| 1,000,000 | ~10 MB | 4.17 s | 240 MB |
+| **5,000,000** (standard) | ~51 MB | **63.7 s** | 1.3 GB |
+
+Correct at every scale, but time grows **superlinearly** (5x input -> ~15x time from 1M to 5M):
+each variant count is a fresh scan of the whole subject and each substitution pass materializes a
+new large string, so the constant re-copying of a tens-of-MB subject dominates once it falls out
+of cache. Memory is bounded (the chunk fix) at ~25x the input. Closing the time gap needs
+match-iteration over a shared subject view rather than per-pass materialization — stdlib work, not
+a compiler flaw.

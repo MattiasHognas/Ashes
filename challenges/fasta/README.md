@@ -41,11 +41,37 @@ math lib needed. (`fasta`'s output is the input for **reverse-complement** and
 
 ## Status
 
-**Scaffold only.** `fasta.ash` and the `FLAWS.md` writeup are deferred.
+**Implemented + benchmarked.** [`fasta.ash`](fasta.ash) generates all three sequences (repeated
+ALU, weighted-random IUB and homo sapiens) with the specified LCG, 60-column wrapped, in the
+natural accumulator style: each sequence's output is built by a tail-recursive fold appending to a
+growing `Str` accumulator. That shape used to be O(N^2) time (every `out + ch` copied the whole
+accumulator); reservation-based affine string growth (changelog CO-36) made it amortized O(1) per
+appended byte, which is what unlocked benchmark-scale N here.
 
-## Build & run (once written)
+## Build & run
 
 ```bash
-dotnet run --project src/Ashes.Cli -- compile challenges/fasta/fasta.ash -o challenges/fasta/fasta
+dotnet run --project src/Ashes.Cli -- compile challenges/fasta/fasta.ash -o challenges/fasta/fasta -O2
 ./challenges/fasta/fasta 25000000 > fasta-output.txt
 ```
+
+## Benchmark
+
+```bash
+challenges/bench.sh fasta 25000000
+```
+
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`, output to
+`/dev/null`:
+
+| N | Output | Time | Peak RSS |
+|---|--------|------|----------|
+| 1,000,000 | ~10 MB | 0.22 s | 34 MB |
+| 5,000,000 | ~51 MB | 3.29 s | 168 MB |
+| **25,000,000** (standard) | ~254 MB | **17.4 s** | 786 MB |
+
+Before the affine-growth arc this was 67 s at N=80,000 (and quadratically worse beyond); N=25M was
+out of reach. Resident memory tracks the largest single sequence's accumulator (the output is held
+as one growing string per sequence). Time is not perfectly linear above ~1M — the accumulator
+outgrows the CPU caches and every reservation doubling recopies a now-hundreds-of-MB string — but
+the curve is gentle enough that the standard workload completes comfortably.

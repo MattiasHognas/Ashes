@@ -37,7 +37,7 @@ spectral-norm. Wants a byte-output builder (verify `Bytes` write path is adequat
 
 **Implemented + benchmarked.** [`mandelbrot.ash`](mandelbrot.ash) runs the pure-Float
 `N×N × up-to-50` escape loop and emits the real binary `P4` PBM. The two `Float` inference bugs and
-the missing raw-bytes stdout write it originally surfaced ([FLAWS.md](FLAWS.md)) are all fixed:
+the missing raw-bytes stdout write it originally surfaced are all fixed:
 
 - The escape loop is written **naturally** — `zr * zr`, `cr + zr2 - zi2` — with no `1.0 *` lead and no
   operand reordering. Annotated parameter types are now seeded before the body is lowered.
@@ -59,16 +59,22 @@ dotnet run --project src/Ashes.Cli -- compile challenges/mandelbrot/mandelbrot.a
 challenges/bench.sh mandelbrot 4000
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded):
+Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
 
 | N | Time | Peak RSS |
 |---|------|----------|
-| 1,000 | 0.05 s | 5.6 MB |
-| 2,000 | 0.21 s | 27 MB |
-| 4,000 | 0.89 s | 31 MB |
+| 1,000 | 0.054 s | 5.2 MB |
+| 4,000 | 0.85 s | 102 MB |
+| **16,000** (standard) | **13.5 s** | **1.7 GB** |
 
 The escape loop itself is constant-memory (scalar `Int`/`Float` accumulators, the compiler's happy
-path). Resident set now scales with the **output image**: the packed bitmap is `N²/8` bytes, built as a
-cons list (`2·N²` bytes of cells) that is materialized to `Bytes` once at the end. That is inherent to
-emitting the real image; the earlier count-only version was constant `0.25 MB` because it produced no
-image.
+path). Resident set scales with the **output image**: the packed bitmap is `N^2/8` bytes, built as a
+cons list (`2*N^2` bytes of cells) that is reversed and materialized to `Bytes` once at the end.
+That is inherent to emitting the real image as a list; the earlier count-only version was constant
+0.25 MB because it produced no image.
+
+Re-running this benchmark surfaced (and fixed) a real compiler bug — exactly what the suite is
+for: the scope-exit list copier cached head values in an **unbounded dynamic stack alloca** (8
+bytes per cell), and the entry frame never pops allocas, so the packed-bitmap list plus its
+reversed copy overflowed the 8 MB stack at `N >= 2500` (changelog CO-37). Large head caches now
+spill to OS memory; `N=16000` (a 32M-cell list) runs on all three targets.
