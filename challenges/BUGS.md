@@ -183,9 +183,18 @@ hard to debug. Root cause: compilation runs on `layout.Source` (the stitched **c
 diagnostic spans are offsets into *it*, but `PrintCompilerDiagnostics` rendered them against the
 **original** file text.
 
-### 12. (P2) `fmt` silently strips all non-leading comments
-`fmt -w` deletes every `//` comment that is not in the leading header block (and reshapes one-line
-curried `given` chains). Output still compiles, but inline documentation is lost with no warning.
+### 12. (P2) `fmt` silently strips all non-leading comments — [FIXED]
+**[FIXED]** (standalone comment lines): the anchor-based comment reinsertion the LSP's format-document
+path already had (`ReinsertStandaloneCommentLines`) was formatter-domain logic living in the LSP —
+moved to `Ashes.Formatter.CommentReinserter` (per the boundary rule: LSP consumes compiler logic,
+never implements it) and wired into CLI `fmt`, so both format paths now behave identically. Every
+standalone `//` comment line is re-anchored to the surrounding significant lines by a
+whitespace-insensitive token signature and reinserted after formatting; comments whose anchor
+disappears fall back to the previous anchor, then the top of the file — never silently dropped.
+Verified: between-declaration, multi-line, and inside-expression comment lines all survive `fmt -w`,
+the result is idempotent, and a repo-wide `fmt -w` over `lib`/`tests`/`examples`/`challenges` is a
+no-op. **Remaining (minor):** trailing same-line comments (`let x = 1 // note`) still need real trivia
+in the AST — the reinserter is line-based.
 
 ### 13. (P3) Formatter emits trailing whitespace after `=`, `->`, `in`, `else` — [FIXED]
 **[FIXED]**: `Formatter.FinishOutput` strips trailing spaces/tabs from every line before applying the

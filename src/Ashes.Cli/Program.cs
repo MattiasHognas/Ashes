@@ -1103,6 +1103,9 @@ async Task<int> RunFmtAsync(string[] a)
                 || sourceWithoutImports.Contains("|?>", StringComparison.Ordinal)
                 || sourceWithoutImports.Contains("|!>", StringComparison.Ordinal),
             options: formattingOptions);
+        // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
+        // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
+        formattedBody = CommentReinserter.ReinsertStandaloneCommentLines(sourceWithoutImports, formattedBody, lineEnding);
         var formattedWithoutComments = imports.Count == 0
             ? formattedBody
             : string.Join(lineEnding, imports) + lineEnding + formattedBody;

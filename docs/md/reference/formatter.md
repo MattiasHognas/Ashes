@@ -165,6 +165,20 @@ Spacing
 - Binary operators use spaces around the operator.
 - Comparison operators use spaces around the operator.
 - Function calls keep their existing canonical form: `f(x)` for parenthesized calls and `f x` for whitespace application.
+- No line ends in trailing whitespace.
+
+Comments
+
+- The leading `//` comment block at the top of a file (before the first import or
+  declaration) is preserved verbatim, in place.
+- Standalone `//` comment lines elsewhere in the file are preserved: each is
+  re-anchored to the surrounding significant lines (by a whitespace-insensitive
+  token signature) and reinserted at the anchor's position in the formatted
+  output. A comment whose anchor line no longer exists (for example, a line the
+  formatter merged away) is placed after the nearest preceding anchor rather
+  than dropped.
+- Trailing same-line comments (`let x = 1 // note`) are not yet preserved; the
+  reinsertion is line-based. Keep comments on their own line.
 
 ## Enforcement
 
