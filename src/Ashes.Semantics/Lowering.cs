@@ -2760,7 +2760,12 @@ public sealed partial class Lowering
                             break;
                         }
 
-                        if (Prune(newArgTypes[i]) is TypeRef.TList && !IsSingleFreshConsListArg(i))
+                        // A DeepAdt list is cloned WHOLE by the synthesized list copier (every cell,
+                        // every head), so the single-fresh-cons shape restriction does not apply to it —
+                        // only the shallow single-cell list copies need it.
+                        if (Prune(newArgTypes[i]) is TypeRef.TList
+                            && GetTcoCopyOutKind(newArgTypes[i], out _, out _) != CopyOutKind.DeepAdt
+                            && !IsSingleFreshConsListArg(i))
                         {
                             allCopyable = false;
                             break;
@@ -2781,9 +2786,11 @@ public sealed partial class Lowering
                             || Prune(t) is TypeRef.TStr or TypeRef.TBigInt
                             // An ADT copied shallow (all copy-type fields) or deep (list/string fields
                             // fully copied, breaking tail-sharing), or a deep-copyable tuple, is a
-                            // self-contained clone, so it is safe at the fixed mark.
+                            // self-contained clone, so it is safe at the fixed mark. A DeepAdt list is
+                            // likewise cloned whole (no tail-sharing with the prior accumulator).
                             || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
-                            || (Prune(t) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(t))));
+                            || (Prune(t) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(t)))
+                            || (Prune(t) is TypeRef.TList && GetTcoCopyOutKind(t, out _, out _) == CopyOutKind.DeepAdt));
                     int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
                     int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
 
@@ -2827,8 +2834,22 @@ public sealed partial class Lowering
 
                             // A deep-ADT copy returns its own temp (a self-contained recursive clone),
                             // rather than writing into a pre-allocated dest like the shallow kinds.
+                            //
+                            // It is cloned TWICE (a clone of the clone). Phase B writes its down-copy at
+                            // [W, W+S) while reading the up-copy at [W+B, W+B+S), where B is what the
+                            // loop body allocated this iteration — they overlap whenever B < S. The
+                            // shallow kinds are safe because the fresh accumulator itself was just
+                            // body-allocated (B >= S), but a deep clone's size includes copier
+                            // env/closure overhead beyond the raw value, and a list-tail argument may
+                            // not be body-allocated at all (B ~ 0) — an overlapping, skewed Phase B copy
+                            // then reads its own partially-written output (garbage fields; benign only
+                            // in the accidental zero-skew layout). The second clone starts at least one
+                            // full clone-size above W, so Phase B's destination end (W + S) never
+                            // reaches its source start (W + B + S): disjoint for any B >= 0, for any
+                            // number of DeepAdt args (each contributes 2S to the up region but only S
+                            // to the destination).
                             upCopyTemps[i] = kind == CopyOutKind.DeepAdt
-                                ? EmitDeepCopy(newArgTemps[i], newArgTypes[i])
+                                ? EmitDeepCopy(EmitDeepCopy(newArgTemps[i], newArgTypes[i]), newArgTypes[i])
                                 : NewTemp();
                             if (kind != CopyOutKind.DeepAdt)
                             {

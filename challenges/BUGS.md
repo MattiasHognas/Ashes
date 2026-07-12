@@ -12,7 +12,7 @@ use (perf cliff, bad diagnostics, silent data loss); **P3** stdlib gap / minor /
 Status legend: **[FIXED]** shipped (commit noted), **[PARTIAL]** main case shipped, a harder sub-case
 remains, **[OPEN]** not yet addressed.
 
-Current tally: **13 FIXED**, **1 PARTIAL** (#3, the `List(ADT)` accumulator half), **3 OPEN**
+Current tally: **14 FIXED**, **3 OPEN**
 (#4/#5 — the ownership / in-place-reuse milestone; #6 — Knuth Algorithm D division). Everything
 point-fixable has been fixed; the remaining items need milestone-scale work.
 
@@ -63,30 +63,40 @@ polymorphic numeric zero) instead of the `0 - x` desugar.
 
 ## Memory model (extends the fixed-watermark / deep-copy-out work)
 
-### 3. (P1) Fixed-shape pointer-bearing accumulators that are TUPLES or `List(ADT)` are not reclaimed — [PARTIAL]
-**[PARTIAL]** tuple half FIXED (`747adc4`): a deep-copy-safe `TTuple` accumulator now takes the
-`DeepAdt` copy-out and the fixed watermark, so fasta's `(seed, out)` is bounded. **Still open:**
-`List(fixed-shape-ADT)` (n-body's `List(Body)`) needs a synthesized recursive list-of-ADT deep-copier
-(`EmitDeepCopy`'s `TList` branch handles only copy/String/List-of-copy heads).
+### 3. (P1) Fixed-shape pointer-bearing accumulators that are TUPLES or `List(ADT)` are not reclaimed — [FIXED]
+**[FIXED]** in two halves. Tuple half (`747adc4`): a deep-copy-safe `TTuple` accumulator takes the
+`DeepAdt` copy-out and the fixed watermark, so fasta's `(seed, out)` is bounded. `List(ADT)` half
+(`tco_list_of_adt_accumulator`): a synthesized recursive list deep-copier (`SynthesizeListDeepCopier`,
+mirroring the ADT copier: nil passes through, each head deep-copies via `EmitDeepCopy`, the tail
+recurses via the self-closure at env[0]) clones the list whole, so `GetTcoCopyOutKind` classifies
+`List(deep-copyable-element)` as `DeepAdt` and the loop takes the fixed watermark. **n-body's
+`List(Body)` loop: 3M iterations at 0.25 MB max RSS** (was 4.27 GB at 1e6).
 
-The recent work made whole-value (`String`/`BigInt`) and fixed-shape **ADT** accumulators reset to a
-fixed watermark (constant memory). Two more fixed-shape shapes are still excluded and grow:
-- **Tuple accumulator** — `fasta` threads `(seed, out)`; the tuple is not in the copy-out path, so its
-  growing `String` field grows O(N^2) (N=20000 -> 3.97 GB).
+The earlier attempt at this was reverted for a "List(ADT)+async" miscompile (readme_showcase priced
+41.00 instead of 12.50). Root-causing it this time found the real bug — **not async at all**: the
+two-pass back-edge copy-out's disjointness argument has a hole for `DeepAdt`. Phase B writes its
+down-copy at `[W, W+S)` while reading the Phase-A up-copy at `[W+B, W+B+S)` (B = the loop body's
+allocations this iteration) — overlapping whenever `B < S`. Shallow kinds are safe (the fresh
+accumulator itself was body-allocated, so `B >= S`), but a deep clone's size includes copier
+env/closure overhead beyond the raw value, and a list-tail argument may not be body-allocated at all.
+With `B = 0` the copy self-overwrites at zero skew — accidentally benign, which is why optimized
+builds "worked"; the test runner compiles **unoptimized** IR where a dead 24-byte `MakeClosure`
+skewed the overlap and corrupted the clone. Fix: `DeepAdt` Phase A clones **twice** (clone of the
+clone), so the down-copy's destination end `W+S` never reaches its source start `W+B+S` — disjoint
+for any `B >= 0` and any number of DeepAdt args. This also closes the same latent hazard for the
+already-shipped ADT/tuple DeepAdt copy-outs. Verified on all three targets; the readme_showcase
+capability+async case now passes under the test runner's unoptimized pipeline.
+
+Original report: whole-value (`String`/`BigInt`) and fixed-shape **ADT** accumulators reset to a
+fixed watermark (constant memory), but two more fixed-shape shapes were excluded and grew:
+- **Tuple accumulator** — `fasta` threads `(seed, out)`; the tuple was not in the copy-out path, so
+  its growing `String` field grew O(N^2) (N=20000 -> 3.97 GB).
 - **`List(record)` accumulator** — `n-body` threads a fixed-size `List(Body)` (5 records) rebuilt each
-  step; `List(ADT)` is not copy-outable, so it grows O(N) (N=1e6 -> 4.27 GB) for a constant-state loop.
-  A synthesized recursive list-of-ADT deep-copier (`EmitDeepCopy` `TList` branch + `DeepAdt` copy-out +
-  fixed watermark) was prototyped and gives constant memory for the *non-async* n-body loop, but it
-  miscompiles `List(ADT)` accumulators threaded through `async.task` (`readme_showcase`'s `priceAll`
-  inside `async.all` yielded 41.00 instead of 12.50). The deep-copy-out interacts badly with the
-  per-task arena / join deep-copy: the list is copied against the wrong watermark. Reverted pending a
-  fix that makes the list deep-copier arena-aware under coroutine joins. Isolation: nullary-ADT Int/Float
-  fields and the capability-no-async path are all correct; only `List(ADT) + async` regresses.
+  step; `List(ADT)` was not copy-outable, so it grew O(N) (N=1e6 -> 4.27 GB) for a constant-state loop.
 
-Both are fixed-shape and deep-copyable, exactly like the `State(perm, count)` case already handled —
-extend `CanDeepCopyOutAdt` / the copy-out to **tuples** and to **lists whose element is a fixed-shape
-(non-recursive) ADT/tuple**, then admit them to the fixed-watermark qualification. *Workaround:*
-stream output per line (fasta) instead of accumulating.
+(A first attempt's "the deep-copy-out interacts badly with the per-task arena under async" diagnosis
+was wrong — the miscompile reproduced with no async at all on unoptimized IR; see the overlap analysis
+above.)
 
 ### 4. (P2) Growing **cons-list** accumulator is O(N^2) memory — [OPEN]
 A list that grows by more than one fresh cons cell per iteration (or a whole-program list built via a
