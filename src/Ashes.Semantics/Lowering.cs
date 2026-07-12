@@ -2711,9 +2711,10 @@ public sealed partial class Lowering
                             || IsResourceHandleType(t)
                             || Prune(t) is TypeRef.TStr or TypeRef.TBigInt
                             // An ADT copied shallow (all copy-type fields) or deep (list/string fields
-                            // fully copied, breaking tail-sharing) is a self-contained clone, so it is
-                            // safe at the fixed mark.
-                            || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n))));
+                            // fully copied, breaking tail-sharing), or a deep-copyable tuple, is a
+                            // self-contained clone, so it is safe at the fixed mark.
+                            || (Prune(t) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
+                            || (Prune(t) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(t))));
                     int resetCursorSlot = useFixedWatermark ? tco.FixedCursorSlot : tco.ArenaCursorSlot;
                     int resetEndSlot = useFixedWatermark ? tco.FixedEndSlot : tco.ArenaEndSlot;
 

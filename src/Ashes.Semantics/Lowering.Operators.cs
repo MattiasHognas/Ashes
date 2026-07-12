@@ -58,6 +58,7 @@ public sealed partial class Lowering
             TypeRef resolved = rightPruned switch
             {
                 TypeRef.TStr => new TypeRef.TStr(),
+                TypeRef.TFloat => new TypeRef.TFloat(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
@@ -134,6 +135,25 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(sub);
         var (leftTemp, leftType) = LowerExpr(sub.Left);
         var (rightTemp, rightType) = LowerExpr(sub.Right);
+
+        // Unary negation `-x` desugars to `0 - x`; the synthesized 0 is an Int literal, which would
+        // force the subtraction to Int and reject `-floatVar`. A literal 0 is the identity of every
+        // numeric type (0 == 0.0 == 0N == 0u), so when the other operand is a concrete Float/BigInt/UInt
+        // re-lower the 0 as that type's zero. (The literal-Int lowering above becomes dead and is elided.)
+        if (sub.Left is Expr.IntLit { Value: 0 } && Prune(leftType) is TypeRef.TInt)
+        {
+            Expr? coercedZero = Prune(rightType) switch
+            {
+                TypeRef.TFloat => new Expr.FloatLit(0.0),
+                TypeRef.TBigInt => new Expr.BigIntLit("0"),
+                TypeRef.TUInt u => new Expr.UIntLit(0, u.Bits),
+                _ => null,
+            };
+            if (coercedZero is not null)
+            {
+                (leftTemp, leftType) = LowerExpr(coercedZero);
+            }
+        }
 
         return LowerNumericBinaryOp(sub, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.SubInt(target, left, right), (target, left, right) => new IrInst.SubFloat(target, left, right), "'-'", bigIntOp: "sub");
     }

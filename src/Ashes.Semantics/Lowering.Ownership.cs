@@ -807,6 +807,11 @@ public sealed partial class Lowering
         return ok;
     }
 
+    // True if a value of this type can be deep-copied into a self-contained clone (no pointer back into
+    // the reclaimable arena) — the condition for carrying it across the reset at the fixed watermark.
+    private bool IsDeepCopyOutSafeType(TypeRef type)
+        => IsDeepCopyOutSafeFieldType(type, new HashSet<string>(StringComparer.Ordinal));
+
     private bool IsDeepCopyOutSafeFieldType(TypeRef type, HashSet<string> path)
     {
         var pruned = Prune(type);
@@ -1291,6 +1296,13 @@ public sealed partial class Lowering
             case TypeRef.TFun:
                 staticSizeBytes = 0;
                 return CopyOutKind.Closure;
+
+            case TypeRef.TTuple:
+                // A tuple is a fixed-shape heap record; if every element is deep-copyable, EmitDeepCopy
+                // rebuilds it as a self-contained clone, so a tuple accumulator (e.g. a threaded
+                // `(seed, output)`) can reset. Same DeepAdt path as a fixed-shape ADT.
+                staticSizeBytes = 0;
+                return IsDeepCopyOutSafeType(pruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
 
             case TypeRef.TNamedType named:
                 if (CanCopyOutAdt(named, out staticSizeBytes))

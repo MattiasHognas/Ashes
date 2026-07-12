@@ -57,3 +57,30 @@ let tail xs =
     match xs with
         | [] -> None
         | _ :: rest -> Some(rest)
+
+let recursive splitAlt xs = 
+    match xs with
+        | [] -> ([], [])
+        | single :: [] -> (single :: [], [])
+        | a :: b :: rest -> 
+            match splitAlt(rest) with
+                | (left, right) -> (a :: left, b :: right)
+
+let recursive merge before left right = 
+    match left with
+        | [] -> right
+        | lh :: lt -> 
+            match right with
+                | [] -> left
+                | rh :: rt -> 
+                    if before(lh)(rh)
+                    then lh :: merge(before)(lt)(right)
+                    else rh :: merge(before)(left)(rt)
+
+let recursive sortBy before xs = 
+    match xs with
+        | [] -> []
+        | single :: [] -> single :: []
+        | _ :: _ -> 
+            match splitAlt(xs) with
+                | (left, right) -> merge(before)(sortBy(before)(left))(sortBy(before)(right))
