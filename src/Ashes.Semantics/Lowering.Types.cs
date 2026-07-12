@@ -68,10 +68,14 @@ public sealed partial class Lowering
         public int FixedEndSlot { get; set; } = -1;
 
         // Params proven AFFINE across the loop (consumed at most once along every loop-continuing
-        // path, and only as the left operand of the `+` producing their own tail-call argument).
-        // Together with the loop-entry watermark boundary this proves unique ownership, licensing
-        // in-place string growth (ConcatStrTip). Empty when not computed (conservative).
+        // path, and only as the leftmost leaf of the `+` chain producing their own tail-call
+        // argument). The affine property guarantees the loop holds no other reference, licensing
+        // in-place reservation growth (ConcatStrTip). Empty when not computed (conservative).
         public HashSet<string> AffineStrParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Per affine param: the reservation start/end local slots (zeroed at loop entry, written by
+        // ConcatStrTip's fallback, zeroed again by the compaction that reclaims the reservation).
+        public Dictionary<string, (int Start, int End)> AffineResvSlots { get; } = new(System.StringComparer.Ordinal);
 
         // Live accumulator size (cursor - W) recorded after the last fixed-watermark compaction,
         // zero-initialized at loop entry. The back-edge skips the whole copy-out + reset while the

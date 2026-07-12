@@ -2201,154 +2201,86 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Affine-accumulator string append (<see cref="IrInst.ConcatStrTip"/>): semantically a string
-    /// concat, but grows <paramref name="leftRef"/> IN PLACE when the runtime layout allows it.
-    /// Lowering guarantees the semantic precondition (the left operand is an affine loop
-    /// accumulator — consumed exactly once per iteration — and <paramref name="w"/> is the loop's
-    /// entry watermark, above which every value is loop-created and hence unaliased by the caller);
-    /// this emitter checks the MEMORY preconditions and falls back to a plain copying concat when
-    /// any fails:
-    /// <list type="bullet">
-    ///   <item><b>V1 (direct extension)</b>: left is owned (not a view), sits at/above W, and its
-    ///     bytes end within alignment slack (&lt; 8 bytes) of the arena cursor, and the appended
-    ///     bytes fit the current chunk → copy right's bytes onto left's end, grow left's length
-    ///     header, advance the cursor. The pad bytes below the cursor are dead by construction.</item>
-    ///   <item><b>V2 (absorb a fresh right)</b>: right is the freshly allocated tip block starting
-    ///     immediately (mod alignment) after left's bytes → slide right's bytes down onto left's
-    ///     end (forward 8-byte chunks; the source stays ≥ 8 bytes ahead of the destination), grow
-    ///     left, and move the cursor DOWN past the absorbed header — reclaiming it.</item>
-    /// </list>
-    /// Together with the amortized compaction this turns a growing string accumulator from one
-    /// whole-string copy per iteration (O(N^2) time) into O(appended bytes).
+    /// concat, but the accumulator grows inside a RESERVATION instead of being copied per append.
+    /// The loop keeps two slots — the reservation's start and end. When the left operand IS the
+    /// reserved string (pointer identity with the recorded start) and the appended bytes fit below
+    /// the recorded end, right's bytes are copied onto its end and only the length header grows —
+    /// the arena cursor is untouched, so per-iteration scratch allocated above the reservation
+    /// (uncons views, tuples, closure results) is irrelevant. Otherwise the fallback concatenates
+    /// into a NEW allocation with doubling headroom (capacity = 2x the result) and records it in
+    /// the slots: fallbacks are geometric in the accumulator's growth, so total copy work stays
+    /// linear in appended bytes. The identity check makes the mutation safe — only a string this
+    /// loop itself reserved can match the recorded start (a caller-passed seed never does), and
+    /// lowering only arms the instruction for accumulators the affine analysis proved unaliased.
     /// </summary>
-    private static LlvmValueHandle EmitConcatStrTip(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, int wSlot)
+    private static LlvmValueHandle EmitConcatStrTip(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, int resvStartSlot, int resvEndSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle w = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[wSlot], "cst_w");
-        var v1Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v1");
-        var v2CheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_check");
-        var v2Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2");
-        var fallbackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_fallback");
-        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_done");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "cst_result");
+        var extendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_extend");
+        var fallbackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_fallback");
+        var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_done");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "csr_result");
 
-        LlvmValueHandle leftHdr = LoadMemory(state, leftRef, 0, "cst_lhdr");
-        LlvmValueHandle la = LlvmApi.BuildAnd(builder, leftHdr, LlvmApi.ConstInt(state.I64, ~StringViewFlag, 0), "cst_la");
-        LlvmValueHandle lb = LoadStringLength(state, rightRef, "cst_lb");
+        LlvmValueHandle la = LoadStringLength(state, leftRef, "csr_la");
+        LlvmValueHandle lb = LoadStringLength(state, rightRef, "csr_lb");
+        LlvmValueHandle resvStart = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[resvStartSlot], "csr_rstart");
+        LlvmValueHandle resvEnd = LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[resvEndSlot], "csr_rend");
         LlvmValueHandle accEnd = LlvmApi.BuildAdd(builder,
-            LlvmApi.BuildAdd(builder, leftRef, LlvmApi.ConstInt(state.I64, 8, 0), "cst_l8"), la, "cst_acc_end");
-        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, state.HeapCursorSlot, "cst_cursor");
-        LlvmValueHandle chunkEnd = LlvmApi.BuildLoad2(builder, state.I64, state.HeapEndSlot, "cst_chunk_end");
+            LlvmApi.BuildAdd(builder, leftRef, LlvmApi.ConstInt(state.I64, 8, 0), "csr_l8"), la, "csr_acc_end");
 
-        // Common precondition: left is loop-created (>= W), owned (not a view), and fully below the cursor.
-        LlvmValueHandle notView = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            LlvmApi.BuildAnd(builder, leftHdr, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), "cst_lview"),
-            LlvmApi.ConstInt(state.I64, 0, 0), "cst_not_view");
-        LlvmValueHandle aboveW = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, leftRef, w, "cst_above_w");
-        LlvmValueHandle belowCursor = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, accEnd, cursor, "cst_below_cur");
-        LlvmValueHandle pre = LlvmApi.BuildAnd(builder, LlvmApi.BuildAnd(builder, notView, aboveW, "cst_p1"), belowCursor, "cst_pre");
-
-        // V1: left is the tip (only alignment pad between its end and the cursor) and the appended
-        // bytes fit the current chunk (extension cannot cross into a new chunk).
-        LlvmValueHandle gap = LlvmApi.BuildSub(builder, cursor, accEnd, "cst_gap");
-        LlvmValueHandle atTip = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, gap, LlvmApi.ConstInt(state.I64, 8, 0), "cst_at_tip");
-        LlvmValueHandle newEnd = LlvmApi.BuildAdd(builder, accEnd, lb, "cst_new_end");
+        LlvmValueHandle isOurs = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, leftRef, resvStart, "csr_identity"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, resvStart, LlvmApi.ConstInt(state.I64, 0, 0), "csr_nonzero"),
+            "csr_ours");
         LlvmValueHandle fits = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
-            LlvmApi.BuildAdd(builder, newEnd, LlvmApi.ConstInt(state.I64, 7, 0), "cst_new_end7"), chunkEnd, "cst_fits");
-        LlvmValueHandle v1 = LlvmApi.BuildAnd(builder, LlvmApi.BuildAnd(builder, pre, atTip, "cst_v1a"), fits, "cst_v1c");
-        LlvmApi.BuildCondBr(builder, v1, v1Block, v2CheckBlock);
+            LlvmApi.BuildAdd(builder, accEnd, lb, "csr_new_end"), resvEnd, "csr_fits");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, isOurs, fits, "csr_extendable"), extendBlock, fallbackBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, v1Block);
+        LlvmApi.PositionBuilderAtEnd(builder, extendBlock);
         {
-            // The destination [accEnd, accEnd+lb) is pad + virgin space — disjoint from every live
-            // byte, so a plain memcpy from right's bytes (view or owned) is safe.
-            LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "cst_v1_rbytes");
-            LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, accEnd, state.I8Ptr, "cst_v1_dest");
-            EmitCopyBytes(state, destPtr, rightBytes, lb, "cst_v1_copy");
-            StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "cst_v1_len"), "cst_v1_hdr");
-            LlvmApi.BuildStore(builder, AlignRuntimeSize(state, newEnd, "cst_v1_cursor"), state.HeapCursorSlot);
-            LlvmApi.BuildStore(builder, leftRef, resultSlot);
-            LlvmApi.BuildBr(builder, doneBlock);
-        }
-
-        LlvmApi.PositionBuilderAtEnd(builder, v2CheckBlock);
-        {
-            // V2: right is OWNED, is the freshly allocated tip block, and starts immediately
-            // (mod alignment) after left's bytes.
-            LlvmValueHandle rightHdr = LoadMemory(state, rightRef, 0, "cst_rhdr");
-            LlvmValueHandle rNotView = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-                LlvmApi.BuildAnd(builder, rightHdr, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), "cst_rview"),
-                LlvmApi.ConstInt(state.I64, 0, 0), "cst_r_not_view");
-            LlvmValueHandle rExpected = AlignRuntimeSize(state, accEnd, "cst_r_expected");
-            LlvmValueHandle rAdjacent = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, rightRef, rExpected, "cst_r_adjacent");
-            LlvmValueHandle rEnd = LlvmApi.BuildAdd(builder,
-                LlvmApi.BuildAdd(builder, rightRef, LlvmApi.ConstInt(state.I64, 8, 0), "cst_r8"), lb, "cst_r_end");
-            LlvmValueHandle rBelow = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, rEnd, cursor, "cst_r_below");
-            LlvmValueHandle rGap = LlvmApi.BuildSub(builder, cursor, rEnd, "cst_r_gap");
-            LlvmValueHandle rTip = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, rGap, LlvmApi.ConstInt(state.I64, 8, 0), "cst_r_tip");
-            LlvmValueHandle distinct = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, rightRef, leftRef, "cst_distinct");
-            LlvmValueHandle v2 = LlvmApi.BuildAnd(builder,
-                LlvmApi.BuildAnd(builder,
-                    LlvmApi.BuildAnd(builder, pre, rNotView, "cst_v2a"),
-                    LlvmApi.BuildAnd(builder, rAdjacent, distinct, "cst_v2b"), "cst_v2c"),
-                LlvmApi.BuildAnd(builder, rBelow, rTip, "cst_v2d"), "cst_v2");
-            LlvmApi.BuildCondBr(builder, v2, v2Block, fallbackBlock);
-        }
-
-        LlvmApi.PositionBuilderAtEnd(builder, v2Block);
-        {
-            // Slide right's bytes down onto left's end. Source (right+8) stays exactly
-            // pad+8 in [8,16) bytes ahead of the destination (accEnd), so forward 8-byte chunks
-            // never read a byte written by an earlier chunk; a byte loop finishes the tail.
-            LlvmValueHandle srcBase = LlvmApi.BuildAdd(builder, rightRef, LlvmApi.ConstInt(state.I64, 8, 0), "cst_v2_src");
-            LlvmValueHandle kSlot = LlvmApi.BuildAlloca(builder, state.I64, "cst_v2_k");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), kSlot);
-            var chunkLoop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_chunk_loop");
-            var chunkBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_chunk_body");
-            var byteLoop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_byte_loop");
-            var byteBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_byte_body");
-            var copyDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cst_v2_copy_done");
-            LlvmApi.BuildBr(builder, chunkLoop);
-
-            LlvmApi.PositionBuilderAtEnd(builder, chunkLoop);
-            LlvmValueHandle k = LlvmApi.BuildLoad2(builder, state.I64, kSlot, "cst_v2_kv");
-            LlvmValueHandle k8 = LlvmApi.BuildAdd(builder, k, LlvmApi.ConstInt(state.I64, 8, 0), "cst_v2_k8");
-            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, k8, lb, "cst_v2_more8"), chunkBody, byteLoop);
-            LlvmApi.PositionBuilderAtEnd(builder, chunkBody);
-            LlvmValueHandle kc = LlvmApi.BuildLoad2(builder, state.I64, kSlot, "cst_v2_kc");
-            LlvmValueHandle word = LoadMemory(state, LlvmApi.BuildAdd(builder, srcBase, kc, "cst_v2_sp"), 0, "cst_v2_word");
-            StoreMemory(state, LlvmApi.BuildAdd(builder, accEnd, kc, "cst_v2_dp"), 0, word, "cst_v2_store");
-            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, kc, LlvmApi.ConstInt(state.I64, 8, 0), "cst_v2_kinc"), kSlot);
-            LlvmApi.BuildBr(builder, chunkLoop);
-
-            LlvmApi.PositionBuilderAtEnd(builder, byteLoop);
-            LlvmValueHandle kb = LlvmApi.BuildLoad2(builder, state.I64, kSlot, "cst_v2_kb");
-            LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, kb, lb, "cst_v2_moreb"), byteBody, copyDone);
-            LlvmApi.PositionBuilderAtEnd(builder, byteBody);
-            LlvmValueHandle kv2 = LlvmApi.BuildLoad2(builder, state.I64, kSlot, "cst_v2_kv2");
-            LlvmValueHandle srcBytePtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, srcBase, kv2, "cst_v2_sb"), state.I8Ptr, "cst_v2_sbp");
-            LlvmValueHandle byteVal = LlvmApi.BuildLoad2(builder, state.I8, srcBytePtr, "cst_v2_byte");
-            LlvmValueHandle dstBytePtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, accEnd, kv2, "cst_v2_db"), state.I8Ptr, "cst_v2_dbp");
-            LlvmApi.BuildStore(builder, byteVal, dstBytePtr);
-            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, kv2, LlvmApi.ConstInt(state.I64, 1, 0), "cst_v2_binc"), kSlot);
-            LlvmApi.BuildBr(builder, byteLoop);
-
-            LlvmApi.PositionBuilderAtEnd(builder, copyDone);
-            StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "cst_v2_len"), "cst_v2_hdr");
-            // The cursor moves DOWN past the absorbed header/pad — that garbage is reclaimed now.
-            LlvmApi.BuildStore(builder, AlignRuntimeSize(state, newEnd, "cst_v2_cursor"), state.HeapCursorSlot);
+            // Destination [accEnd, accEnd+lb) is unused reservation space — disjoint from every
+            // live byte (the affine analysis keeps the accumulator out of the right operand, so
+            // right cannot be a view into it), hence a plain memcpy.
+            LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "csr_ext_rbytes");
+            LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, accEnd, state.I8Ptr, "csr_ext_dest");
+            EmitCopyBytes(state, destPtr, rightBytes, lb, "csr_ext_copy");
+            StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "csr_ext_len"), "csr_ext_hdr");
             LlvmApi.BuildStore(builder, leftRef, resultSlot);
             LlvmApi.BuildBr(builder, doneBlock);
         }
 
         LlvmApi.PositionBuilderAtEnd(builder, fallbackBlock);
         {
-            LlvmValueHandle plain = EmitStringConcat(state, leftRef, rightRef);
-            LlvmApi.BuildStore(builder, plain, resultSlot);
+            // Concatenate into a fresh allocation with doubling headroom and record the new
+            // reservation. Handles the caller seed (never matches the identity check), views, a
+            // filled reservation, and post-compaction re-reservation alike.
+            LlvmValueHandle total = LlvmApi.BuildAdd(builder, la, lb, "csr_fb_total");
+            LlvmValueHandle allocSize = LlvmApi.BuildAdd(builder,
+                LlvmApi.BuildMul(builder, total, LlvmApi.ConstInt(state.I64, 2, 0), "csr_fb_2x"),
+                LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
+            LlvmValueHandle dest = EmitAllocDynamic(state, allocSize);
+            StoreMemory(state, dest, 0, total, "csr_fb_hdr");
+            LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");
+            LlvmValueHandle leftBytes = GetStringBytesPointer(state, leftRef, "csr_fb_lbytes");
+            EmitCopyBytes(state, destBytes, leftBytes, la, "csr_fb_lcopy");
+            LlvmValueHandle destTail = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder,
+                    LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8b"), la, "csr_fb_dtail_i"),
+                state.I8Ptr, "csr_fb_dtail");
+            LlvmValueHandle rightBytesF = GetStringBytesPointer(state, rightRef, "csr_fb_rbytes");
+            EmitCopyBytes(state, destTail, rightBytesF, lb, "csr_fb_rcopy");
+            // Reservation bounds: EmitAllocDynamic reserved align8(allocSize) bytes at dest.
+            LlvmValueHandle reservedEnd = LlvmApi.BuildAdd(builder, dest,
+                AlignRuntimeSize(state, allocSize, "csr_fb_rsz"), "csr_fb_rend");
+            LlvmApi.BuildStore(builder, dest, state.LocalSlots[resvStartSlot]);
+            LlvmApi.BuildStore(builder, reservedEnd, state.LocalSlots[resvEndSlot]);
+            LlvmApi.BuildStore(builder, dest, resultSlot);
             LlvmApi.BuildBr(builder, doneBlock);
         }
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "cst_final");
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "csr_final");
     }
 
     /// <summary>

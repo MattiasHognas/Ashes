@@ -1728,7 +1728,7 @@ internal static partial class LlvmCodegen
             IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
             IrInst.PanicStr panicStr => EmitPanic(state, LoadTemp(state, panicStr.Source)),
             IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
-            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.WSlot)),
+            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot)),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp), makeClosure.EnvSizeBytes)),
             IrInst.LoadFuncAddr loadFuncAddr => StoreTemp(state, loadFuncAddr.Target,
                 LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[loadFuncAddr.FuncLabel], state.I64, $"func_addr_{loadFuncAddr.FuncLabel}")),

@@ -137,7 +137,8 @@
         {
           Target: 2,
           Right: 1,
-          AffineWSlot: -1
+          AffineResvStartSlot: -1,
+          AffineResvEndSlot: -1
         },
         {
           Slot: 2,
@@ -155,7 +156,8 @@
           Target: 5,
           Left: 3,
           Right: 4,
-          AffineWSlot: -1
+          AffineResvStartSlot: -1,
+          AffineResvEndSlot: -1
         },
         {
           Source: 5

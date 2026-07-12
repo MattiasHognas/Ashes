@@ -122,18 +122,20 @@ now **FIXED** (CO-34):
 growth <= 2x the last compacted live size (+4 KB slack): total copy work linear in bytes allocated
 (the `List(Body)` 3M loop 0.289 s -> 0.054 s at unchanged memory).
 
-**Update (CO-36): the concat O(N^2) TIME is FIXED by affine in-place string growth.** The affine
-analysis (accumulator consumed at most once along every loop-continuing path, only as the leftmost
-leaf of its own tail-call `+` chain) plus the watermark boundary (values >= W are loop-created,
-unaliased by the caller) prove unique ownership; `ConcatStrTip` then extends the accumulator in
-place at the arena tip (or absorbs a freshly allocated right operand), with a plain-concat runtime
-fallback. Oversized chunks get 2x headroom and the watermark rebases via the chunk footer on
-crossings, so growth continues past 4 MiB. **Measured: a 3M-iteration string fold (6 MB result):
->120 s/OOM -> 0.026 s; a 960k closure-call append fold: >120 s -> 0.006 s; both LINEAR. fasta
-44.5 s -> 4.7 s** (its repeatFasta half still falls back — the per-iteration `uncons` view lands
-between accumulator and cursor). **Still open (the last remainder):** the ~96 B/base *constant* of
-list-of-small-`Str` representations (needs in-place cons-cell reuse — the FLAWS #2 milestone), and
-tip-preserving treatment of interleaved small live allocations (the repeatFasta shape).
+**Update (CO-36): the concat O(N^2) TIME is FIXED by reservation-based affine string growth.** The
+affine analysis (accumulator consumed at most once along every loop-continuing path, only as the
+leftmost leaf of its own tail-call `+` chain) plus the watermark boundary (values >= W are
+loop-created, unaliased by the caller) prove unique ownership. Each affine accumulator carries a
+reservation (start/end slots): `ConcatStrTip` extends in place while the append fits the reserved
+headroom — cursor untouched, so interleaved per-iteration views/scratch cannot break the fast path
+— and the fallback reallocates with 2x headroom (doubling, amortized O(1)/byte). Reservation spans
+are netted out of the CO-35 compaction trigger, and the compaction's own down-copy of an affine
+accumulator re-reserves in place (fixes the every-back-edge-copies cliff once the accumulator
+outgrows the watermark chunk's remainder). **Measured: 3M-iteration string fold (6 MB result):
+>120 s/OOM -> 0.003 s; 960k closure-call append fold: >120 s -> 0.002 s; fasta N=80000: 67 s ->
+0.013 s, N=320000 0.050 s, N=1280000 0.53 s at 41 MB RSS — all linear.** **Still open (the last
+remainder):** the ~96 B/base *constant* of list-of-small-`Str` representations (needs in-place
+cons-cell reuse — the FLAWS #2 milestone).
 
 ### 6. (P3, perf) pidigits is O(N^3) **time** (memory is now constant) — [FIXED]
 **[FIXED]** (`bigint_divmod_algorithm_d`): `bignum_divmod` rewritten from bit-by-bit binary long

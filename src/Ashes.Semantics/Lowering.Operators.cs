@@ -36,8 +36,9 @@ public sealed partial class Lowering
 
         // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is
         // the accumulator param the TCO back-edge armed (see _affineAppendCtx). Resolving to Str
-        // then appends in place (ConcatStrTip) instead of copying.
-        int affineWSlot = -1;
+        // then grows the accumulator's reservation (ConcatStrTip) instead of copying.
+        int affineResvStart = -1;
+        int affineResvEnd = -1;
         if (_affineAppendCtx is { } armedCtx)
         {
             var armedLeaf = add.Left;
@@ -51,7 +52,8 @@ public sealed partial class Lowering
                 && Lookup(armedVar.Name) is Binding.Local armedLocal
                 && armedLocal.Slot == armedCtx.Slot)
             {
-                affineWSlot = armedCtx.WSlot;
+                affineResvStart = armedCtx.ResvStart;
+                affineResvEnd = armedCtx.ResvEnd;
             }
         }
 
@@ -68,7 +70,7 @@ public sealed partial class Lowering
                 _addConstrainedVars.Add(sharedVar);
                 _hasDeferredAdds = true;
                 int deferredTarget = NewTemp();
-                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar) { AffineWSlot = affineWSlot });
+                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar) { AffineResvStartSlot = affineResvStart, AffineResvEndSlot = affineResvEnd });
                 return (deferredTarget, sharedVar);
             }
         }
@@ -147,9 +149,9 @@ public sealed partial class Lowering
             // (and the plain-concat fallback) live in the ConcatStrTip emitter. Fires on every
             // step of a left-nested chain (`acc + r1 + r2`): each step's left VALUE is the same
             // uniquely-owned accumulator (extended in place, or a fresh tip copy after a fallback).
-            if (affineWSlot >= 0)
+            if (affineResvStart >= 0)
             {
-                Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineWSlot));
+                Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineResvStart, affineResvEnd));
                 return (target, new TypeRef.TStr());
             }
 

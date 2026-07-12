@@ -85,10 +85,12 @@ public abstract record IrInst
     // once inference finishes. It is carried on the record so the TCO `with`-based remap preserves it.
     public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst
     {
-        /// <summary>When >= 0: this deferred `+` was armed as an affine accumulator append; if it
-        /// resolves to Str, ResolveDeferredAdds patches it to ConcatStrTip with this watermark
-        /// slot instead of a plain ConcatStr.</summary>
-        public int AffineWSlot { get; init; } = -1;
+        /// <summary>When >= 0 (both): this deferred `+` was armed as an affine accumulator append;
+        /// if it resolves to Str, ResolveDeferredAdds patches it to ConcatStrTip carrying the
+        /// loop's reservation slots instead of a plain ConcatStr.</summary>
+        public int AffineResvStartSlot { get; init; } = -1;
+
+        public int AffineResvEndSlot { get; init; } = -1;
     }
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
     // DeferredType mirrors AddInt: non-null only for a provisional '*' whose operand type was still
@@ -152,15 +154,19 @@ public abstract record IrInst
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
     public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
-    // Affine-accumulator string append: semantically identical to ConcatStr, but when Left is
-    // provably uniquely owned by the loop (the static affine analysis: consumed exactly once along
-    // every loop-continuing path) AND sits at the arena tip at runtime, the bytes of Right are
-    // appended IN PLACE (Left's owned header grows) instead of copying both strings — turning a
-    // growing string accumulator from O(len) copy work per iteration into O(appended bytes).
-    // WTemp holds the loop-entry watermark: Left below it may be caller-visible (not uniquely
-    // owned), and falls back to a plain copying concat, as does a view, a non-tip layout, or an
-    // extension that would not fit the current chunk.
-    public sealed record ConcatStrTip(int Target, int Left, int Right, int WSlot) : IrInst;
+    // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
+    // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
+    // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot
+    // and the appended bytes fit below *ResvEndSlot, Right's bytes are copied onto Left's end and
+    // only the length header grows — the cursor is untouched, so per-iteration scratch allocated
+    // above the reservation is irrelevant. Otherwise the fallback concatenates into a NEW
+    // allocation with doubling headroom (capacity = 2x the result) and records it in the slots —
+    // fallbacks are geometric, so total copy work is linear in appended bytes. The identity check
+    // makes mutation safe: only a string this loop itself reserved can match ResvStart (a
+    // caller-passed seed never does), and the static affine analysis guarantees the loop holds no
+    // other reference to it. The compaction/reset paths zero the slots (the reservation's memory
+    // is reclaimed there).
+    public sealed record ConcatStrTip(int Target, int Left, int Right, int ResvStartSlot, int ResvEndSlot) : IrInst;
 
     // Ashes.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve

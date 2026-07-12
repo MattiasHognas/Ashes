@@ -747,16 +747,18 @@ public sealed partial class Lowering
         int ArenaCursorSlot,
         int ArenaEndSlot,
         bool CoroutineLoop,
-        int CompactionSizeSlot);
+        int CompactionSizeSlot,
+        int[] ArgResvStartSlots,
+        int[] ArgResvEndSlots);
 
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
     private int _nextTcoResetId;
 
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
-    // position): LowerAdd's Str+Str branch emits the in-place ConcatStrTip for `<param> + rhs`
-    // instead of a copying ConcatStr. (Name, the param's slot for the shadow check, and the local
-    // slot holding the loop-entry watermark W.)
-    private (string Name, int Slot, int WSlot)? _affineAppendCtx;
+    // position): LowerAdd's Str+Str branch emits the reservation-growing ConcatStrTip for
+    // `<param> + rhs` chains instead of a copying ConcatStr. (Name, the param's slot for the
+    // shadow check, and the loop's reservation start/end slots.)
+    private (string Name, int Slot, int ResvStart, int ResvEnd)? _affineAppendCtx;
 
     // Slack added to the amortized-compaction threshold (growth > 2*live + slack): small loops with
     // tiny live sizes still batch a few KB of garbage per compaction instead of copying every
@@ -881,6 +883,30 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadLocal(wTemp, info.FixedCursorSlot));
             int growthTemp = NewTemp();
             Emit(new IrInst.SubInt(growthTemp, curTemp, wTemp));
+
+            // An active string reservation (ConcatStrTip) is LIVE capacity, not garbage — without
+            // subtracting its span, a fresh doubling reservation (~2x live) plus the live data
+            // always exceeds the 2M threshold, so every doubling would resonate into an immediate
+            // compact -> zero -> re-reserve -> compact cycle: one full copy per append, quadratic
+            // again. Netting the span out restores the intended accounting (only abandoned copies
+            // and iteration scraps count), keeping compactions geometric.
+            for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
+            {
+                if (info.ArgResvStartSlots[r] < 0)
+                {
+                    continue;
+                }
+
+                int resvStartTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(resvStartTemp, info.ArgResvStartSlots[r]));
+                int resvEndTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(resvEndTemp, info.ArgResvEndSlots[r]));
+                int resvSpanTemp = NewTemp();
+                Emit(new IrInst.SubInt(resvSpanTemp, resvEndTemp, resvStartTemp));
+                int nettedTemp = NewTemp();
+                Emit(new IrInst.SubInt(nettedTemp, growthTemp, resvSpanTemp));
+                growthTemp = nettedTemp;
+            }
             int mTemp = NewTemp();
             Emit(new IrInst.LoadLocal(mTemp, info.CompactionSizeSlot));
             int oneTemp = NewTemp();
@@ -950,6 +976,22 @@ public sealed partial class Lowering
         // Reset (pointer reset only, no chunk freeing): cursor → W.
         Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
 
+        // The reset reclaims any string reservations (they live above the watermark) — zero their
+        // slots; the reserving Phase-B copy below writes fresh bounds for the affine args.
+        if (info.ArgResvStartSlots.Any(s => s >= 0))
+        {
+            int resvZeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(resvZeroTemp, 0));
+            for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
+            {
+                if (info.ArgResvStartSlots[r] >= 0)
+                {
+                    Emit(new IrInst.StoreLocal(info.ArgResvStartSlots[r], resvZeroTemp));
+                    Emit(new IrInst.StoreLocal(info.ArgResvEndSlots[r], resvZeroTemp));
+                }
+            }
+        }
+
         // Phase B: copy each up-copy down to W and store into the slot.
         for (int i = 0; i < argTypes.Length; i++)
         {
@@ -961,6 +1003,20 @@ public sealed partial class Lowering
             if (kind == CopyOutKind.DeepAdt)
             {
                 copyDest = EmitDeepCopy(upCopyTemps[i], argTypes[i]);
+            }
+            else if (info.ArgResvStartSlots[i] >= 0 && kind == CopyOutKind.Shallow && sizeBytes == -1)
+            {
+                // An affine string accumulator's down-copy RESERVES (ConcatStrTip with an empty
+                // right; the slots were just zeroed, so its fallback reserves 2x and records fresh
+                // bounds). Without this, the first post-compaction append re-reserves in a fresh
+                // allocation — which, for an accumulator larger than the watermark chunk's
+                // remainder, lands in ANOTHER chunk and re-triggers the crossed-chunk compaction
+                // every back-edge (one full copy per append). Reserving here keeps the accumulator
+                // and its headroom exactly where the rebase puts the watermark.
+                int emptyTemp = NewTemp();
+                Emit(new IrInst.LoadConstStr(emptyTemp, InternString(string.Empty)));
+                copyDest = NewTemp();
+                Emit(new IrInst.ConcatStrTip(copyDest, upCopyTemps[i], emptyTemp, info.ArgResvStartSlots[i], info.ArgResvEndSlots[i]));
             }
             else
             {
@@ -1147,7 +1203,7 @@ public sealed partial class Lowering
 
             instructions[i] = Prune(operandType) switch
             {
-                TypeRef.TStr when add.AffineWSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineWSlot) { Location = add.Location }),
+                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineResvStartSlot, add.AffineResvEndSlot) { Location = add.Location }),
                 TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
@@ -2576,6 +2632,17 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(compactionZero, 0));
             Emit(new IrInst.StoreLocal(tco.CompactionSizeSlot, compactionZero));
 
+            // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
+            // zeroed here so no string matches until the loop's first fallback reserves.
+            foreach (var affineParam in tco.AffineStrParams)
+            {
+                int resvStart = NewLocal();
+                int resvEnd = NewLocal();
+                Emit(new IrInst.StoreLocal(resvStart, compactionZero));
+                Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
+                tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
+            }
+
             // Emit loop start label
             tco.BodyLabel = $"{label}_body";
             Emit(new IrInst.Label(tco.BodyLabel));
@@ -3051,9 +3118,10 @@ public sealed partial class Lowering
                     }
 
                     if (chainLeaf is Expr.Var affineVar
-                        && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal))
+                        && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
+                        && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
                     {
-                        _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], tco.FixedCursorSlot);
+                        _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
                     }
                 }
 
@@ -3160,7 +3228,11 @@ public sealed partial class Lowering
                     tco.ArenaCursorSlot,
                     tco.ArenaEndSlot,
                     tco.CoroutineLoopReset,
-                    tco.CompactionSizeSlot);
+                    tco.CompactionSizeSlot,
+                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rp) ? rp.Start : -1).ToArray(),
+                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
 
                 // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
                 // still be an unresolved inference variable here (e.g. constrained only by a deferred
