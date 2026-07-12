@@ -22,7 +22,15 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
   | [binary-trees](binary-trees/README.md) | **Benchmarked** — N=21 in 1.5 s; per-iteration arena reset fires (no OOM) |
   | [mandelbrot](mandelbrot/README.md) | **Benchmarked** — both `Float` inference bugs fixed (natural spelling); emits the real P4 PBM via `writeBytes` |
   | [fannkuch-redux](fannkuch-redux/README.md) | **Benchmarked** — all 3 compiler bugs fixed; correct output (N=8…11); resident memory now **constant** 0.25 MB (was 4.6 GB at N=10), time-bound only |
-  | fasta, reverse-complement, n-body, spectral-norm, k-nucleotide, regex-redux | Scaffold (`.ash` deferred) |
+  | [reverse-complement](reverse-complement/README.md) | **Implemented** — correct, no bugs; list-of-char-`Str` is memory-dense but linear |
+  | [spectral-norm](spectral-norm/README.md) | **Implemented** — correct (1.274224153); needs Float-operand-order workaround ([BUGS](BUGS.md) #1) |
+  | [n-body](n-body/README.md) | **Implemented** — correct energy; several workarounds + O(N) `List(Body)` leak ([BUGS](BUGS.md) #1,2,3,15) |
+  | [fasta](fasta/README.md) | **Implemented** — correct; natural string/tuple accumulator O(N²), streaming form O(1) ([BUGS](BUGS.md) #3) |
+  | [k-nucleotide](k-nucleotide/README.md) | **Implemented** — correct via `Bytes`; `String.substring` superlinear ([BUGS](BUGS.md) #7) |
+  | [regex-redux](regex-redux/README.md) | **Implemented** — correct at small N; chained `Regex.replace` OOMs at scale ([BUGS](BUGS.md) #8) |
+
+  Every bug and gap these probes surfaced is catalogued in **[BUGS.md](BUGS.md)** (the fix backlog);
+  fixed items live in each challenge's `FLAWS.md`.
 
 ## Compiler fixes made (surfaced by benchmarking)
 
