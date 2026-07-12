@@ -128,8 +128,9 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `toHex(value)` returning `Str`
 - `byteLength(text)` returning `Int` — UTF-8 byte length of a string
 - `asciiUpper(text)` returning `Str` — ASCII-only uppercase: `a`–`z` map to `A`–`Z` in a single
-  byte pass; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through
-  byte-identical, so non-ASCII text is untouched (no Unicode case folding)
+  O(N) byte pass; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through
+  byte-identical, so non-ASCII text is untouched (no Unicode case folding — the ASCII scope is in
+  the name, following OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`)
 - `asciiLower(text)` returning `Str` — ASCII-only lowercase, the inverse of `asciiUpper`
  
 ### `Ashes.Process`
@@ -603,11 +604,6 @@ collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes p
 - `trim` — `Str -> Str`, strip leading and trailing whitespace
 - `trimStart` — `Str -> Str`, strip leading whitespace
 - `trimEnd` — `Str -> Str`, strip trailing whitespace
-- `toAsciiUpper` — `Str -> Str`, ASCII-only uppercase (`a`–`z` to `A`–`Z`; multibyte UTF-8 passes
-  through unchanged — no Unicode case folding). A single O(N) byte pass via `Ashes.Text.asciiUpper`.
-  Named after the ASCII scope (like OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`), leaving
-  `toUpper`/`toLower` free for a possible future Unicode-aware version.
-- `toAsciiLower` — `Str -> Str`, ASCII-only lowercase, the inverse of `toAsciiUpper`
 - `isLetter` — `Str -> Bool`, whether the single character `text` is an ASCII letter (`a`–`z`, `A`–`Z`)
 - `isDigit` — `Str -> Bool`, whether the single character `text` is a decimal digit (`0`–`9`)
 - `isWhiteSpace` — `Str -> Bool`, whether the single character `text` is space, tab, newline, or carriage return

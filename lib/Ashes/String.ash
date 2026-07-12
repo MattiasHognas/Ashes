@@ -262,10 +262,6 @@ let trimEnd text =
 
 let trim text = trimEnd(trimStart(text))
 
-let toAsciiUpper text = Ashes.Text.asciiUpper(text)
-
-let toAsciiLower text = Ashes.Text.asciiLower(text)
-
 let compare left right = Ashes.Bytes.compare(Ashes.Bytes.fromText(left))(Ashes.Bytes.fromText(right))
 
 let join separator parts =
