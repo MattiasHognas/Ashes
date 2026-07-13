@@ -1,19 +1,49 @@
 <Project>
   <!--
-    During 'dotnet publish' with a cross-architecture runtime, project reference evaluation may
-    resolve the wrong-arch native payloads (from _HostLinuxRid fallback in Backend.csproj).
-    This target runs after Publish to ensure the correct RID-specific native libraries
-    are placed in the published output.
+    Stages the vendored native runtime payloads into the published output.
+
+    Two problems this addresses, both invisible in a plain host build (where the compiler finds the
+    payloads by walking up to the repo's own runtimes/ directory):
+
+    1. During a cross-architecture 'dotnet publish', the Backend project reference is evaluated
+       without the RID flowing through, so its content items resolve against the HOST fallback — a
+       linux-arm64 or win-x64 publish staged linux-x64 bitcode under runtimes/linux-x64/ and had no
+       runtimes/<rid>/ at all.
+    2. The PCRE2 payload (libpcre2.bc, backing Ashes.Regex) was staged by no publish at all, so a
+       released compiler failed with "Missing PCRE2 bitcode" on any program using a regex.
+
+    The bitcode payloads are target-specific but tiny (~5 MB for all three RIDs together), so every
+    RID's payloads are staged — that is what lets a released compiler honour a foreign compilation
+    target. libLLVM (~144 MB) is host-only and is staged for the publish RID alone.
+
+    Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set BundleNativeRuntimes=false to
+    opt out — they use none of this, and copying libLLVM would only bloat their output.
   -->
-  <!--
-    Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set
-    BundleNativeRuntimes=false to opt out of the copy below — they don't use
-    libLLVM, so copying it just bloats their publish output (libLLVM.so
-    alone is ~144 MB). Everything else keeps the copy by default.
-  -->
-  <Target Name="_EnsureCorrectNativeLibForPublish"
+  <Target Name="_StageNativeRuntimePayloadsForPublish"
     AfterTargets="Publish"
     Condition="'$(RuntimeIdentifier)' != '' and '$(BundleNativeRuntimes)' != 'false'">
+
+    <ItemGroup>
+      <!-- Wrong-arch payloads left by the RID-less project-reference evaluation (problem 1). The
+           host libLLVM is one of them: a win-x64 publish otherwise carried a 144 MB Linux
+           libLLVM.so next to the libLLVM.dll it actually loads. -->
+      <_StalePublishedRuntimePayload Include="$(PublishDir)runtimes/**/*.bc" />
+      <_StalePublishedRuntimePayload Include="$(PublishDir)runtimes/**/*.version" />
+      <_StalePublishedRuntimePayload Include="$(PublishDir)libLLVM.so" Condition="$(RuntimeIdentifier.StartsWith('win-'))" />
+      <_StalePublishedRuntimePayload Include="$(PublishDir)libLLVM.dll" Condition="$(RuntimeIdentifier.StartsWith('linux-'))" />
+
+      <!-- Every RID's bitcode + version markers, so foreign compilation targets work too. -->
+      <_VendoredRuntimePayload Include="$(MSBuildThisFileDirectory)runtimes/**/*.bc" />
+      <_VendoredRuntimePayload Include="$(MSBuildThisFileDirectory)runtimes/**/*.version" />
+    </ItemGroup>
+
+    <Delete Files="@(_StalePublishedRuntimePayload)" />
+
+    <Copy SourceFiles="@(_VendoredRuntimePayload)"
+      DestinationFiles="@(_VendoredRuntimePayload->'$(PublishDir)runtimes/%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false" />
+
+    <!-- libLLVM is host-only: stage just the publish RID's copy, next to the executable. -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.so"
       DestinationFiles="$(PublishDir)libLLVM.so"
       SkipUnchangedFiles="false"

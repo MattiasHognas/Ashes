@@ -343,11 +343,13 @@ release_build() {
     stage_compiler() { # <rid> <binary> <llvm>
       local rid=\$1 binary=\$2 llvm=\$3
       local s=staging/ashes-\$rid
-      rm -rf \"\$s\" && mkdir -p \"\$s/runtimes/\$rid\"
+      rm -rf \"\$s\" && mkdir -p \"\$s/runtimes\"
       cp \"publish/cli/\$rid/\$binary\" \"\$s/\"
       cp \"publish/cli/\$rid/\$llvm\" \"\$s/\"
-      # The per-target hermetic runtime payloads (libmbedtls.bc, libopenlibm.bc, version markers).
-      cp -r \"publish/cli/\$rid/runtimes/\$rid/.\" \"\$s/runtimes/\$rid/\"
+      # The hermetic runtime payloads (libmbedtls.bc, libopenlibm.bc, libpcre2.bc, version markers)
+      # for EVERY target, not just this RID: they are ~5 MB in total and are what lets the shipped
+      # compiler honour a foreign compilation target. libLLVM is host-only and copied above.
+      cp -r \"publish/cli/\$rid/runtimes/.\" \"\$s/runtimes/\"
       [ -f LICENSE ] && cp LICENSE \"\$s/\" || true
       cp README.md \"\$s/\"
       (cd \"\$s\" && zip -r \"\$OLDPWD/\$OUT/ashes-\$rid.zip\" . > /dev/null)
