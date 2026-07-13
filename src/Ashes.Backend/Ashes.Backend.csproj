@@ -22,60 +22,60 @@
 
   <!-- When no explicit RID is set, detect host platform for native library selection -->
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">
-    <_ExpectedRustlsRuntimeIdentifier>linux-x64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>linux-x64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
-    <_ExpectedRustlsRuntimeIdentifier>linux-arm64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>linux-arm64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">
-    <_ExpectedRustlsRuntimeIdentifier>win-x64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>win-x64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64'">
-    <_ExpectedRustlsRuntimeIdentifier>linux-x64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>linux-x64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-arm64'">
-    <_ExpectedRustlsRuntimeIdentifier>linux-arm64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>linux-arm64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <_ExpectedRustlsRuntimeIdentifier>win-x64</_ExpectedRustlsRuntimeIdentifier>
+    <_ExpectedNativeRuntimeIdentifier>win-x64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
+  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != ''">
     <_ExpectedNativeLibraryExtension>.so</_ExpectedNativeLibraryExtension>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
     <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
-    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
+    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != '' and '$(_ExpectedRustlsRuntimeIdentifier)' != 'win-x64'">
-    <_ExpectedLlvmLinuxArch>$([System.String]::Copy('$(_ExpectedRustlsRuntimeIdentifier)').Replace('linux-', ''))</_ExpectedLlvmLinuxArch>
+  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != '' and '$(_ExpectedNativeRuntimeIdentifier)' != 'win-x64'">
+    <_ExpectedLlvmLinuxArch>$([System.String]::Copy('$(_ExpectedNativeRuntimeIdentifier)').Replace('linux-', ''))</_ExpectedLlvmLinuxArch>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh [LLVM_MAJOR] $(_ExpectedLlvmLinuxArch)</_ExpectedLlvmProvisionHint>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' == 'win-x64'">
+  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' == 'win-x64'">
     <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
     <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
-    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedRustlsRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
+    <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedRustlsRuntimeIdentifier)' != ''">
-    <_ExpectedLlvmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmAssetPath>
+  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != ''">
+    <_ExpectedLlvmAssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmAssetPath>
     <_ExpectedLlvmLinkFileName>libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmLinkFileName>
-    <_ExpectedOpenlibmAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetPath>
-    <_ExpectedOpenlibmVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionPath>
-    <_ExpectedOpenlibmAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetLinkPath>
-    <_ExpectedOpenlibmVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionLinkPath>
-    <_ExpectedMbedTlsAssetPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetPath>
-    <_ExpectedMbedTlsVersionPath>..\..\runtimes\$(_ExpectedRustlsRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionPath>
-    <_ExpectedMbedTlsAssetLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetLinkPath>
-    <_ExpectedMbedTlsVersionLinkPath>runtimes\$(_ExpectedRustlsRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionLinkPath>
+    <_ExpectedOpenlibmAssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetPath>
+    <_ExpectedOpenlibmVersionPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionPath>
+    <_ExpectedOpenlibmAssetLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetLinkPath>
+    <_ExpectedOpenlibmVersionLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionLinkPath>
+    <_ExpectedMbedTlsAssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetPath>
+    <_ExpectedMbedTlsVersionPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionPath>
+    <_ExpectedMbedTlsAssetLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetLinkPath>
+    <_ExpectedMbedTlsVersionLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionLinkPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' )">
@@ -128,7 +128,7 @@
       <_ProvisionedMbedTlsVersion>@(_ProvisionedMbedTlsVersionLine)</_ProvisionedMbedTlsVersion>
     </PropertyGroup>
     <Error Condition="'$(_ProvisionedMbedTlsVersion)' != '$(MbedTlsVersion)'"
-      Text="Provisioned Mbed TLS version '$(_ProvisionedMbedTlsVersion)' does not match expected version '$(MbedTlsVersion)' for '$(_ExpectedRustlsRuntimeIdentifier)'. Re-run '$(_ExpectedMbedTlsProvisionHint)' or update MbedTlsVersion." />
+      Text="Provisioned Mbed TLS version '$(_ProvisionedMbedTlsVersion)' does not match expected version '$(MbedTlsVersion)' for '$(_ExpectedNativeRuntimeIdentifier)'. Re-run '$(_ExpectedMbedTlsProvisionHint)' or update MbedTlsVersion." />
   </Target>
 
   <Target Name="ValidateLlvmRuntimeAsset"

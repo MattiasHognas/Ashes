@@ -2,7 +2,7 @@
 #
 # A native Windows runner is not feasible locally, so win-x64 example/test
 # binaries are executed via `wine ashes.exe ...`. The published win-x64 output
-# bundles libLLVM.dll + rustls.dll (see Directory.Build.targets), so no Windows
+# bundles libLLVM.dll (see Directory.Build.targets), so no Windows
 # toolchain is required at run time.
 #
 # The distro's wine (9.0) is too old to host the .NET 10 CoreCLR — it fails to

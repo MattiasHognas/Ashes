@@ -273,7 +273,7 @@ internal static partial class LlvmCodegen
     /// Always returns 0.
     /// Used by <c>Ashes.Async.race</c> to release resources held by losers
     /// as soon as the first task in the race completes.
-    /// Known limitations: rustls userspace session memory held by TLS leaf
+    /// Known limitations: the userspace TLS session memory held by TLS leaf
     /// tasks is not freed (released at process exit); leaf tasks not yet
     /// parked on a wait (no <see cref="TaskStructLayout.WaitHandle"/>) leak
     /// any socket they hold in <see cref="TaskStructLayout.IoArg0"/>. The
@@ -1451,7 +1451,6 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle initStatus = EmitNetworkingRuntimeCall(state, "ashes_tls_runtime_init", Array.Empty<LlvmValueHandle>(), "step_tls_handshake_init");
         LlvmValueHandle initReady = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, initStatus, LlvmApi.ConstInt(state.I64, 1, 0), "step_tls_handshake_init_ready");
-        LlvmValueHandle libsslHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.LibsslHandleGlobal, "step_tls_handshake_libssl_handle");
 
         LlvmBasicBlockHandle initFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_init_fail");
         LlvmBasicBlockHandle sessionCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_session_check");
@@ -1493,9 +1492,8 @@ internal static partial class LlvmCodegen
             LlvmValueHandle ctxHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ContextGlobal, "step_tls_handshake_ctx_handle");
             LlvmValueHandle connectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_connection_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), connectionSlot);
-            LlvmValueHandle createStatus = EmitRustlsClientConnectionNew(
+            LlvmValueHandle createStatus = EmitTlsClientConnectionNew(
                 state,
-                libsslHandle,
                 ctxHandle,
                 EmitStringToCString(state, host, "step_tls_handshake_host_cstr"),
                 connectionSlot,
@@ -1504,7 +1502,7 @@ internal static partial class LlvmCodegen
             LlvmValueHandle connectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, connectionSlot, "step_tls_handshake_connection_ptr"), state.I64, "step_tls_handshake_connection_handle");
             LlvmApi.BuildStore(builder, connectionHandle, connectionHandleSlot);
             LlvmValueHandle createOk = LlvmApi.BuildAnd(builder,
-                EmitRustlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
+                EmitTlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
                 LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_connection"),
                 "step_tls_handshake_create_connection_ok");
             LlvmApi.BuildCondBr(builder, createOk, storeSessionBlock, createSocketFailBlock);
@@ -1528,9 +1526,8 @@ internal static partial class LlvmCodegen
             LlvmValueHandle keyStr = LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tls_handshake_key_pem");
             LlvmValueHandle certifiedKeySlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_certified_key_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), certifiedKeySlot);
-            LlvmValueHandle keyBuildStatus = EmitRustlsCertifiedKeyBuild(
+            LlvmValueHandle keyBuildStatus = EmitTlsCertifiedKeyBuild(
                 state,
-                libsslHandle,
                 GetStringBytesPointer(state, certStr, "step_tls_handshake_cert_bytes"),
                 LoadStringLength(state, certStr, "step_tls_handshake_cert_len"),
                 GetStringBytesPointer(state, keyStr, "step_tls_handshake_key_bytes"),
@@ -1539,30 +1536,29 @@ internal static partial class LlvmCodegen
                 "step_tls_handshake_certified_key_build");
             LlvmApi.BuildStore(builder, keyBuildStatus, createStatusSlot);
             LlvmApi.BuildCondBr(builder,
-                EmitRustlsResultIsOk(state, keyBuildStatus, "step_tls_handshake_key_build_ok"),
+                EmitTlsResultIsOk(state, keyBuildStatus, "step_tls_handshake_key_build_ok"),
                 setKeysBlock, createSocketFailBlock);
 
             LlvmApi.PositionBuilderAtEnd(builder, setKeysBlock);
-            LlvmValueHandle builderHandle = EmitRustlsServerConfigBuilderNew(state, libsslHandle, "step_tls_handshake_config_builder_new");
-            LlvmValueHandle setKeysStatus = EmitRustlsServerConfigBuilderSetCertifiedKeys(
+            LlvmValueHandle builderHandle = EmitTlsServerConfigBuilderNew(state, "step_tls_handshake_config_builder_new");
+            LlvmValueHandle setKeysStatus = EmitTlsServerConfigBuilderSetCertifiedKeys(
                 state,
-                libsslHandle,
                 builderHandle,
                 certifiedKeySlot,
                 LlvmApi.ConstInt(state.I64, 1, 0),
                 "step_tls_handshake_set_certified_keys");
             LlvmApi.BuildStore(builder, setKeysStatus, createStatusSlot);
             LlvmApi.BuildCondBr(builder,
-                EmitRustlsResultIsOk(state, setKeysStatus, "step_tls_handshake_set_keys_ok"),
+                EmitTlsResultIsOk(state, setKeysStatus, "step_tls_handshake_set_keys_ok"),
                 buildBlock, createSocketFailBlock);
 
             LlvmApi.PositionBuilderAtEnd(builder, buildBlock);
             LlvmValueHandle configSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_config_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), configSlot);
-            LlvmValueHandle buildStatus = EmitRustlsServerConfigBuilderBuild(state, globals, libsslHandle, builderHandle, configSlot, "step_tls_handshake_config_build");
+            LlvmValueHandle buildStatus = EmitTlsServerConfigBuilderBuild(state, globals, builderHandle, configSlot, "step_tls_handshake_config_build");
             LlvmApi.BuildStore(builder, buildStatus, createStatusSlot);
             LlvmApi.BuildCondBr(builder,
-                EmitRustlsResultIsOk(state, buildStatus, "step_tls_handshake_config_build_ok"),
+                EmitTlsResultIsOk(state, buildStatus, "step_tls_handshake_config_build_ok"),
                 cacheConfigBlock, createSocketFailBlock);
 
             LlvmApi.PositionBuilderAtEnd(builder, cacheConfigBlock);
@@ -1578,12 +1574,12 @@ internal static partial class LlvmCodegen
             LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_config_for_conn");
             LlvmValueHandle serverConnectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_server_connection_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), serverConnectionSlot);
-            LlvmValueHandle connNewStatus = EmitRustlsServerConnectionNew(state, libsslHandle, configHandle, serverConnectionSlot, "step_tls_handshake_server_connection_new");
+            LlvmValueHandle connNewStatus = EmitTlsServerConnectionNew(state, configHandle, serverConnectionSlot, "step_tls_handshake_server_connection_new");
             LlvmApi.BuildStore(builder, connNewStatus, createStatusSlot);
             LlvmValueHandle serverConnectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, serverConnectionSlot, "step_tls_handshake_server_connection_ptr"), state.I64, "step_tls_handshake_server_connection_handle");
             LlvmApi.BuildStore(builder, serverConnectionHandle, connectionHandleSlot);
             LlvmValueHandle serverCreateOk = LlvmApi.BuildAnd(builder,
-                EmitRustlsResultIsOk(state, connNewStatus, "step_tls_handshake_server_create_ok"),
+                EmitTlsResultIsOk(state, connNewStatus, "step_tls_handshake_server_create_ok"),
                 LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, serverConnectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_server_have_connection"),
                 "step_tls_handshake_server_create_connection_ok");
             LlvmApi.BuildCondBr(builder, serverCreateOk, storeSessionBlock, createSocketFailBlock);
@@ -1609,7 +1605,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle writeCheckConnection = EmitLoadTlsSessionSsl(state, writeCheckSession, "step_tls_handshake_write_check_connection");
         LlvmValueHandle wantsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, writeCheckConnection, "step_tls_handshake_wants_write"),
+            EmitTlsConnectionWantsWrite(state, writeCheckConnection, "step_tls_handshake_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_has_pending_write");
         LlvmApi.BuildCondBr(builder, wantsWrite, writeBlock, readCheckBlock);
@@ -1620,12 +1616,12 @@ internal static partial class LlvmCodegen
         LlvmValueHandle writeConnection = EmitLoadTlsSessionSsl(state, writeSession, "step_tls_handshake_write_connection");
         LlvmValueHandle writeBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_handshake_write_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), writeBytesSlot);
-        LlvmValueHandle writeStatus = EmitRustlsConnectionWriteTls(state, globals, libsslHandle, writeConnection, writeSocket, writeBytesSlot, "step_tls_handshake_write_tls");
+        LlvmValueHandle writeStatus = EmitTlsConnectionWriteTls(state, globals, writeConnection, writeSocket, writeBytesSlot, "step_tls_handshake_write_tls");
         LlvmValueHandle writeOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, writeStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_handshake_write_ok");
         LlvmApi.BuildCondBr(builder, writeOk, processBlock, writeRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, writeRetryCheckBlock);
-        LlvmValueHandle writeWouldBlock = EmitRustlsIoResultIsWouldBlock(state, writeStatus, "step_tls_handshake_write_would_block");
+        LlvmValueHandle writeWouldBlock = EmitTlsIoResultIsWouldBlock(state, writeStatus, "step_tls_handshake_write_would_block");
         LlvmBasicBlockHandle writeFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_write_fail");
         LlvmApi.BuildCondBr(builder, writeWouldBlock, pendingWriteBlock, writeFailBlock);
 
@@ -1639,7 +1635,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle readCheckConnection = EmitLoadTlsSessionSsl(state, readCheckSession, "step_tls_handshake_read_check_connection");
         LlvmValueHandle wantsRead = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsRead(state, libsslHandle, readCheckConnection, "step_tls_handshake_wants_read"),
+            EmitTlsConnectionWantsRead(state, readCheckConnection, "step_tls_handshake_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_has_pending_read");
         LlvmApi.BuildCondBr(builder, wantsRead, readBlock, evaluateBlock);
@@ -1650,12 +1646,12 @@ internal static partial class LlvmCodegen
         LlvmValueHandle readConnection = EmitLoadTlsSessionSsl(state, readSession, "step_tls_handshake_read_connection");
         LlvmValueHandle readBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_handshake_read_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readBytesSlot);
-        LlvmValueHandle readStatus = EmitRustlsConnectionReadTls(state, globals, libsslHandle, readConnection, readSocket, readBytesSlot, "step_tls_handshake_read_tls");
+        LlvmValueHandle readStatus = EmitTlsConnectionReadTls(state, globals, readConnection, readSocket, readBytesSlot, "step_tls_handshake_read_tls");
         LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_handshake_read_ok");
         LlvmApi.BuildCondBr(builder, readOk, processBlock, readRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readRetryCheckBlock);
-        LlvmValueHandle readWouldBlock = EmitRustlsIoResultIsWouldBlock(state, readStatus, "step_tls_handshake_read_would_block");
+        LlvmValueHandle readWouldBlock = EmitTlsIoResultIsWouldBlock(state, readStatus, "step_tls_handshake_read_would_block");
         LlvmBasicBlockHandle readFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_read_fail");
         LlvmApi.BuildCondBr(builder, readWouldBlock, pendingReadBlock, readFailBlock);
 
@@ -1667,8 +1663,8 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, processBlock);
         LlvmValueHandle processSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_process_session");
         LlvmValueHandle processConnection = EmitLoadTlsSessionSsl(state, processSession, "step_tls_handshake_process_connection");
-        LlvmValueHandle processStatus = EmitRustlsConnectionProcessNewPackets(state, libsslHandle, processConnection, "step_tls_handshake_process_new_packets");
-        LlvmValueHandle processOk = EmitRustlsResultIsOk(state, processStatus, "step_tls_handshake_process_ok");
+        LlvmValueHandle processStatus = EmitTlsConnectionProcessNewPackets(state, processConnection, "step_tls_handshake_process_new_packets");
+        LlvmValueHandle processOk = EmitTlsResultIsOk(state, processStatus, "step_tls_handshake_process_ok");
         LlvmBasicBlockHandle processFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_process_fail");
         LlvmApi.BuildCondBr(builder, processOk, evaluateBlock, processFailBlock);
 
@@ -1682,7 +1678,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle evaluateConnection = EmitLoadTlsSessionSsl(state, evaluateSession, "step_tls_handshake_evaluate_connection");
         LlvmValueHandle handshakeComplete = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Eq,
-            EmitRustlsConnectionIsHandshaking(state, libsslHandle, evaluateConnection, "step_tls_handshake_is_handshaking"),
+            EmitTlsConnectionIsHandshaking(state, evaluateConnection, "step_tls_handshake_is_handshaking"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_complete");
         LlvmApi.BuildCondBr(builder, handshakeComplete, completeCheckBlock, incompleteCheckBlock);
@@ -1690,7 +1686,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, completeCheckBlock);
         LlvmValueHandle wantsWriteAfterComplete = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, evaluateConnection, "step_tls_handshake_complete_wants_write"),
+            EmitTlsConnectionWantsWrite(state, evaluateConnection, "step_tls_handshake_complete_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_complete_has_write");
         LlvmApi.BuildCondBr(builder, wantsWriteAfterComplete, pendingWriteBlock, successBlock);
@@ -1698,7 +1694,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, incompleteCheckBlock);
         LlvmValueHandle wantsWriteAfter = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, evaluateConnection, "step_tls_handshake_incomplete_wants_write"),
+            EmitTlsConnectionWantsWrite(state, evaluateConnection, "step_tls_handshake_incomplete_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_incomplete_has_write");
         LlvmApi.BuildCondBr(builder, wantsWriteAfter, pendingWriteBlock, readPendingCheckBlock);
@@ -1706,7 +1702,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, readPendingCheckBlock);
         LlvmValueHandle wantsReadAfter = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsRead(state, libsslHandle, evaluateConnection, "step_tls_handshake_incomplete_wants_read"),
+            EmitTlsConnectionWantsRead(state, evaluateConnection, "step_tls_handshake_incomplete_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_incomplete_has_read");
         LlvmApi.BuildCondBr(builder, wantsReadAfter, pendingReadBlock, failBlock);
@@ -1724,15 +1720,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle errorCode = LlvmApi.BuildLoad2(builder, state.I32, errorCodeSlot, "step_tls_handshake_error_code");
         LlvmValueHandle errorStage = LlvmApi.BuildLoad2(builder, state.I32, errorStageSlot, "step_tls_handshake_error_stage");
         LlvmValueHandle hasDetailedError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, errorCode, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_handshake_has_detailed_error");
-        LlvmValueHandle isRustlsError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, errorStage, LlvmApi.ConstInt(state.I32, 1, 0), "step_tls_handshake_is_rustls_error");
+        LlvmValueHandle isTlsError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, errorStage, LlvmApi.ConstInt(state.I32, 1, 0), "step_tls_handshake_is_tls_error");
         LlvmBasicBlockHandle failWithErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_with_error");
         LlvmBasicBlockHandle failDetailCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_detail_check");
         LlvmBasicBlockHandle failWithIoErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_with_io_error");
         LlvmBasicBlockHandle failWithWriteErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_with_write_error");
         LlvmBasicBlockHandle failWithReadErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_with_read_error");
         LlvmBasicBlockHandle failGenericBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_fail_generic");
-        LlvmValueHandle hasRustlsError = LlvmApi.BuildAnd(builder, hasDetailedError, isRustlsError, "step_tls_handshake_has_rustls_error");
-        LlvmApi.BuildCondBr(builder, hasRustlsError, failWithErrorBlock, failDetailCheckBlock);
+        LlvmValueHandle hasTlsError = LlvmApi.BuildAnd(builder, hasDetailedError, isTlsError, "step_tls_handshake_has_tls_error");
+        LlvmApi.BuildCondBr(builder, hasTlsError, failWithErrorBlock, failDetailCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, failDetailCheckBlock);
         LlvmApi.BuildCondBr(builder, hasDetailedError, failWithIoErrorBlock, failGenericBlock);
@@ -1743,7 +1739,6 @@ internal static partial class LlvmCodegen
             EmitHeapStringLiteral(state, TlsHandshakeFailedMessage + ": "),
             EmitMbedTlsHandshakeErrorString(
                 state,
-                libsslHandle,
                 errorCode,
                 EmitLoadTlsSessionSsl(state, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_error_session"), "step_tls_handshake_error_connection"),
                 "step_tls_handshake_error"));
@@ -1791,7 +1786,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle sentSoFar = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_send_sent_so_far");
         LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_send_status_slot");
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
-        LlvmValueHandle libsslHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.LibsslHandleGlobal, "step_tls_send_libssl_handle");
 
         LlvmValueHandle alreadyDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, sentSoFar, totalLen, "step_tls_send_already_done");
         LlvmBasicBlockHandle sendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_send");
@@ -1813,15 +1807,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle cursorPtr = LlvmApi.BuildGEP2(builder, state.I8, GetStringBytesPointer(state, textRef, "step_tls_send_bytes"), [sentSoFar], "step_tls_send_cursor_ptr");
         LlvmValueHandle acceptedBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_send_accepted_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), acceptedBytesSlot);
-        LlvmValueHandle writeStatus = EmitRustlsConnectionWrite(
+        LlvmValueHandle writeStatus = EmitTlsConnectionWrite(
             state,
-            libsslHandle,
             EmitLoadTlsSessionSsl(state, session, "step_tls_send_connection"),
             cursorPtr,
             remaining,
             acceptedBytesSlot,
             "step_tls_send_write");
-        LlvmValueHandle writeOk = EmitRustlsResultIsOk(state, writeStatus, "step_tls_send_write_ok");
+        LlvmValueHandle writeOk = EmitTlsResultIsOk(state, writeStatus, "step_tls_send_write_ok");
         LlvmApi.BuildCondBr(builder, writeOk, applyBlock, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, applyBlock);
@@ -1834,7 +1827,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle flushConnection = EmitLoadTlsSessionSsl(state, flushSession, "step_tls_send_flush_connection");
         LlvmValueHandle flushNeedsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, flushConnection, "step_tls_send_wants_write"),
+            EmitTlsConnectionWantsWrite(state, flushConnection, "step_tls_send_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_send_has_pending_write");
         LlvmApi.BuildCondBr(builder, flushNeedsWrite, flushBlock, finalizeBlock);
@@ -1843,12 +1836,12 @@ internal static partial class LlvmCodegen
         LlvmValueHandle flushSocket = EmitLoadTlsSessionSocket(state, flushSession, "step_tls_send_flush_socket");
         LlvmValueHandle flushBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_send_flush_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flushBytesSlot);
-        LlvmValueHandle flushStatus = EmitRustlsConnectionWriteTls(state, globals, libsslHandle, flushConnection, flushSocket, flushBytesSlot, "step_tls_send_write_tls");
+        LlvmValueHandle flushStatus = EmitTlsConnectionWriteTls(state, globals, flushConnection, flushSocket, flushBytesSlot, "step_tls_send_write_tls");
         LlvmValueHandle flushOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, flushStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_send_flush_ok");
         LlvmApi.BuildCondBr(builder, flushOk, finalizeBlock, flushRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushRetryCheckBlock);
-        LlvmValueHandle flushWouldBlock = EmitRustlsIoResultIsWouldBlock(state, flushStatus, "step_tls_send_flush_would_block");
+        LlvmValueHandle flushWouldBlock = EmitTlsIoResultIsWouldBlock(state, flushStatus, "step_tls_send_flush_would_block");
         LlvmApi.BuildCondBr(builder, flushWouldBlock, pendingWriteBlock, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, finalizeBlock);
@@ -1856,7 +1849,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle allSent = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, sentNow, totalLen, "step_tls_send_all_sent");
         LlvmValueHandle stillNeedsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, flushConnection, "step_tls_send_finalize_wants_write"),
+            EmitTlsConnectionWantsWrite(state, flushConnection, "step_tls_send_finalize_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_send_finalize_has_write");
         LlvmBasicBlockHandle allSentCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_all_sent_check");
@@ -1871,7 +1864,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, pendingReadBlock);
         LlvmValueHandle wantsRead = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsRead(state, libsslHandle, flushConnection, "step_tls_send_finalize_wants_read"),
+            EmitTlsConnectionWantsRead(state, flushConnection, "step_tls_send_finalize_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_send_finalize_has_read");
         LlvmBasicBlockHandle pendingReadStoreBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_read_store");
@@ -1908,7 +1901,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorStageSlot);
-        LlvmValueHandle libsslHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.LibsslHandleGlobal, "step_tls_receive_libssl_handle");
 
         LlvmValueHandle positiveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, maxBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_positive_max");
         LlvmBasicBlockHandle initBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_init_buffer");
@@ -1952,16 +1944,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_active_buffer");
         LlvmValueHandle readBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_receive_read_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readBytesSlot);
-        LlvmValueHandle readStatus = EmitRustlsConnectionRead(
+        LlvmValueHandle readStatus = EmitTlsConnectionRead(
             state,
-            libsslHandle,
             EmitLoadTlsSessionSsl(state, session, "step_tls_receive_connection"),
             GetStringBytesPointer(state, activeBuffer, "step_tls_receive_bytes"),
             maxBytes,
             readBytesSlot,
             "step_tls_receive_read_plaintext");
-        LlvmValueHandle readOk = EmitRustlsResultIsOk(state, readStatus, "step_tls_receive_read_ok");
-        LlvmValueHandle readEmpty = EmitRustlsResultIsPlaintextEmpty(state, readStatus, "step_tls_receive_read_empty");
+        LlvmValueHandle readOk = EmitTlsResultIsOk(state, readStatus, "step_tls_receive_read_ok");
+        LlvmValueHandle readEmpty = EmitTlsResultIsPlaintextEmpty(state, readStatus, "step_tls_receive_read_empty");
         LlvmValueHandle readReady = LlvmApi.BuildOr(builder, readOk, readEmpty, "step_tls_receive_read_ready");
         LlvmBasicBlockHandle initialReadFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_initial_read_fail");
         LlvmApi.BuildCondBr(builder, readReady, inspectPlaintextBlock, initialReadFailBlock);
@@ -1979,7 +1970,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, flushCheckBlock);
         LlvmValueHandle flushNeedsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_connection"), "step_tls_receive_wants_write"),
+            EmitTlsConnectionWantsWrite(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_connection"), "step_tls_receive_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_has_pending_write");
         LlvmApi.BuildCondBr(builder, flushNeedsWrite, flushBlock, readCheckBlock);
@@ -1987,12 +1978,12 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, flushBlock);
         LlvmValueHandle flushBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_receive_flush_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flushBytesSlot);
-        LlvmValueHandle flushStatus = EmitRustlsConnectionWriteTls(state, globals, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_write_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_flush_socket"), flushBytesSlot, "step_tls_receive_write_tls");
+        LlvmValueHandle flushStatus = EmitTlsConnectionWriteTls(state, globals, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_write_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_flush_socket"), flushBytesSlot, "step_tls_receive_write_tls");
         LlvmValueHandle flushOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, flushStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_receive_flush_ok");
         LlvmApi.BuildCondBr(builder, flushOk, readCheckBlock, flushRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushRetryCheckBlock);
-        LlvmValueHandle flushWouldBlock = EmitRustlsIoResultIsWouldBlock(state, flushStatus, "step_tls_receive_flush_would_block");
+        LlvmValueHandle flushWouldBlock = EmitTlsIoResultIsWouldBlock(state, flushStatus, "step_tls_receive_flush_would_block");
         LlvmBasicBlockHandle flushFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush_fail");
         LlvmApi.BuildCondBr(builder, flushWouldBlock, pendingWriteBlock, flushFailBlock);
 
@@ -2004,7 +1995,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, readCheckBlock);
         LlvmValueHandle networkNeedsRead = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsRead(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_read_check_connection"), "step_tls_receive_wants_read"),
+            EmitTlsConnectionWantsRead(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_read_check_connection"), "step_tls_receive_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_has_pending_read");
         LlvmApi.BuildCondBr(builder, networkNeedsRead, readBlock, finalizeEmptyBlock);
@@ -2012,12 +2003,12 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
         LlvmValueHandle networkReadBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_receive_network_read_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), networkReadBytesSlot);
-        LlvmValueHandle networkReadStatus = EmitRustlsConnectionReadTls(state, globals, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_network_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_network_socket"), networkReadBytesSlot, "step_tls_receive_read_tls");
+        LlvmValueHandle networkReadStatus = EmitTlsConnectionReadTls(state, globals, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_network_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_network_socket"), networkReadBytesSlot, "step_tls_receive_read_tls");
         LlvmValueHandle networkReadOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, networkReadStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_receive_network_read_ok");
         LlvmApi.BuildCondBr(builder, networkReadOk, processBlock, readRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readRetryCheckBlock);
-        LlvmValueHandle networkReadWouldBlock = EmitRustlsIoResultIsWouldBlock(state, networkReadStatus, "step_tls_receive_network_read_would_block");
+        LlvmValueHandle networkReadWouldBlock = EmitTlsIoResultIsWouldBlock(state, networkReadStatus, "step_tls_receive_network_read_would_block");
         LlvmBasicBlockHandle networkReadFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_network_read_fail");
         LlvmApi.BuildCondBr(builder, networkReadWouldBlock, pendingReadBlock, networkReadFailBlock);
 
@@ -2027,8 +2018,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, failBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, processBlock);
-        LlvmValueHandle processStatus = EmitRustlsConnectionProcessNewPackets(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_process_connection"), "step_tls_receive_process_packets");
-        LlvmValueHandle processOk = EmitRustlsResultIsOk(state, processStatus, "step_tls_receive_process_ok");
+        LlvmValueHandle processStatus = EmitTlsConnectionProcessNewPackets(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_process_connection"), "step_tls_receive_process_packets");
+        LlvmValueHandle processOk = EmitTlsResultIsOk(state, processStatus, "step_tls_receive_process_ok");
         LlvmBasicBlockHandle processFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_process_fail");
         LlvmApi.BuildCondBr(builder, processOk, rereadBlock, processFailBlock);
 
@@ -2039,16 +2030,15 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, rereadBlock);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readBytesSlot);
-        LlvmValueHandle rereadStatus = EmitRustlsConnectionRead(
+        LlvmValueHandle rereadStatus = EmitTlsConnectionRead(
             state,
-            libsslHandle,
             EmitLoadTlsSessionSsl(state, session, "step_tls_receive_reread_connection"),
             GetStringBytesPointer(state, activeBuffer, "step_tls_receive_reread_bytes"),
             maxBytes,
             readBytesSlot,
             "step_tls_receive_reread_plaintext");
-        LlvmValueHandle rereadOk = EmitRustlsResultIsOk(state, rereadStatus, "step_tls_receive_reread_ok");
-        LlvmValueHandle rereadEmpty = EmitRustlsResultIsPlaintextEmpty(state, rereadStatus, "step_tls_receive_reread_empty");
+        LlvmValueHandle rereadOk = EmitTlsResultIsOk(state, rereadStatus, "step_tls_receive_reread_ok");
+        LlvmValueHandle rereadEmpty = EmitTlsResultIsPlaintextEmpty(state, rereadStatus, "step_tls_receive_reread_empty");
         LlvmValueHandle rereadReady = LlvmApi.BuildOr(builder, rereadOk, rereadEmpty, "step_tls_receive_reread_ready");
         LlvmBasicBlockHandle rereadFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_reread_fail");
         LlvmApi.BuildCondBr(builder, rereadReady, inspectRereadBlock, rereadFailBlock);
@@ -2077,7 +2067,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, activeBuffer, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_store_empty_len");
         LlvmValueHandle wantsWriteAfter = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_finalize_connection"), "step_tls_receive_finalize_wants_write"),
+            EmitTlsConnectionWantsWrite(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_finalize_connection"), "step_tls_receive_finalize_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_finalize_has_write");
         LlvmApi.BuildCondBr(builder, wantsWriteAfter, pendingWriteBlock, readPendingCheckBlock);
@@ -2085,7 +2075,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, readPendingCheckBlock);
         LlvmValueHandle wantsReadAfter = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsRead(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_finalize_read_connection"), "step_tls_receive_finalize_wants_read"),
+            EmitTlsConnectionWantsRead(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_finalize_read_connection"), "step_tls_receive_finalize_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_finalize_has_read");
         LlvmApi.BuildCondBr(builder, wantsReadAfter, pendingReadBlock, successBlock);
@@ -2115,7 +2105,7 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, errorStage, LlvmApi.ConstInt(state.I32, 2, 0), "step_tls_receive_is_flush_io_error"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, errorStage, LlvmApi.ConstInt(state.I32, 3, 0), "step_tls_receive_is_network_io_error"),
             "step_tls_receive_is_io_error");
-        LlvmBasicBlockHandle failWithRustlsErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail_with_rustls_error");
+        LlvmBasicBlockHandle failWithTlsErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail_with_tls_error");
         LlvmBasicBlockHandle failDetailCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail_detail_check");
         LlvmBasicBlockHandle failWithIoErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail_with_io_error");
         LlvmBasicBlockHandle failGenericBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail_generic");
@@ -2125,15 +2115,15 @@ internal static partial class LlvmCodegen
             isIoError,
             LlvmApi.ConstNull(LlvmApi.TypeOf(isIoError)),
             "step_tls_receive_not_io_error");
-        LlvmValueHandle hasRustlsError = LlvmApi.BuildAnd(builder, hasDetailedError, isNotIoError, "step_tls_receive_has_rustls_error");
-        LlvmApi.BuildCondBr(builder, hasRustlsError, failWithRustlsErrorBlock, failDetailCheckBlock);
+        LlvmValueHandle hasTlsError = LlvmApi.BuildAnd(builder, hasDetailedError, isNotIoError, "step_tls_receive_has_tls_error");
+        LlvmApi.BuildCondBr(builder, hasTlsError, failWithTlsErrorBlock, failDetailCheckBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, failWithRustlsErrorBlock);
-        LlvmValueHandle rustlsErrorMessage = EmitStringConcat(
+        LlvmApi.PositionBuilderAtEnd(builder, failWithTlsErrorBlock);
+        LlvmValueHandle tlsErrorMessage = EmitStringConcat(
             state,
             EmitHeapStringLiteral(state, TlsReceiveFailedMessage + ": "),
-            EmitRustlsErrorString(state, libsslHandle, errorCode, "step_tls_receive_error"));
-        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, rustlsErrorMessage), "step_tls_receive_fail_with_rustls_error_complete"), statusSlot);
+            EmitTlsErrorString(state, errorCode, "step_tls_receive_error"));
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, tlsErrorMessage), "step_tls_receive_fail_with_tls_error_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, failDetailCheckBlock);
@@ -2159,7 +2149,6 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle session = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_close_session");
-        LlvmValueHandle libsslHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.LibsslHandleGlobal, "step_tls_close_libssl");
         LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_close_status_slot");
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
 
@@ -2179,14 +2168,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, closeStarted, flushCheckBlock, startBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, startBlock);
-        EmitRustlsConnectionSendCloseNotify(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_close_start_connection"), "step_tls_close_send_close_notify");
+        EmitTlsConnectionSendCloseNotify(state, EmitLoadTlsSessionSsl(state, session, "step_tls_close_start_connection"), "step_tls_close_send_close_notify");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, LlvmApi.ConstInt(state.I64, 1, 0), "step_tls_close_store_started_flag");
         LlvmApi.BuildBr(builder, flushCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushCheckBlock);
         LlvmValueHandle wantsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
-            EmitRustlsConnectionWantsWrite(state, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_close_flush_check_connection"), "step_tls_close_wants_write"),
+            EmitTlsConnectionWantsWrite(state, EmitLoadTlsSessionSsl(state, session, "step_tls_close_flush_check_connection"), "step_tls_close_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_close_has_pending_write");
         LlvmApi.BuildCondBr(builder, wantsWrite, flushBlock, cleanupBlock);
@@ -2194,12 +2183,12 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, flushBlock);
         LlvmValueHandle flushBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_close_flush_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flushBytesSlot);
-        LlvmValueHandle flushStatus = EmitRustlsConnectionWriteTls(state, globals, libsslHandle, EmitLoadTlsSessionSsl(state, session, "step_tls_close_flush_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_close_flush_socket"), flushBytesSlot, "step_tls_close_write_tls");
+        LlvmValueHandle flushStatus = EmitTlsConnectionWriteTls(state, globals, EmitLoadTlsSessionSsl(state, session, "step_tls_close_flush_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_close_flush_socket"), flushBytesSlot, "step_tls_close_write_tls");
         LlvmValueHandle flushOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, flushStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_close_flush_ok");
         LlvmApi.BuildCondBr(builder, flushOk, flushCheckBlock, flushRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushRetryCheckBlock);
-        LlvmValueHandle flushWouldBlock = EmitRustlsIoResultIsWouldBlock(state, flushStatus, "step_tls_close_flush_would_block");
+        LlvmValueHandle flushWouldBlock = EmitTlsIoResultIsWouldBlock(state, flushStatus, "step_tls_close_flush_would_block");
         LlvmApi.BuildCondBr(builder, flushWouldBlock, pendingWriteBlock, cleanupBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, pendingWriteBlock);

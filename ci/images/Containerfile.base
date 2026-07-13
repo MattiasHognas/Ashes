@@ -6,7 +6,7 @@
 # toolchain is built only once.
 #
 # The repo (including a populated runtimes/ directory) is bind-mounted at run
-# time, so LLVM/rustls native libs are NOT baked in here — run `just provision`
+# time, so the LLVM native libs are NOT baked in here — run `just provision`
 # on the host first.
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 
