@@ -1,11 +1,11 @@
 // tls-server: accept
 // skip-on: win-x64
-// Structured-parallelism + rustls-TLS coexistence (roadmap CO-6). The genuine
+// Structured-parallelism + TLS coexistence (roadmap CO-6). The genuine
 // fork/join `both` per-thread arena (win-x64: TEB ArbitraryUserPointer, gs:0x28)
-// must not collide with rustls's Windows TLS: heavy parallel work runs both
-// before and after a real TLS round-trip, and both results must stay correct.
-// win-x64 is empirically verified under local Wine (parallel forks + a full
-// rustls loopback handshake coexist, memory-bounded); like the other loopback
+// must not collide with the platform's own thread-local storage: heavy parallel
+// work runs both before and after a real TLS round-trip, and both results must
+// stay correct. win-x64 is empirically verified under local Wine (parallel forks
+// + a full loopback handshake coexist, memory-bounded); like the other loopback
 // TLS fixtures it is skipped in the Wine smoke-test for CI portability and
 // covered by the native Windows CI runner. See tls_send_receive.ash.
 // tls-expect: ping

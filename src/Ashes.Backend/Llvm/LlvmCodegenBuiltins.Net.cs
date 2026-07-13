@@ -94,7 +94,7 @@ internal static partial class LlvmCodegen
                             state.I32,
                             "tls_mbed_read_errno")
                         : EmitWindowsWsaGetLastError(state, "tls_mbed_read_wsa_error");
-                    LlvmValueHandle wouldBlock = EmitRustlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_read_would_block");
+                    LlvmValueHandle wouldBlock = EmitTlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_read_would_block");
                     LlvmApi.BuildRet(builder, LlvmApi.BuildSelect(builder, wouldBlock, LlvmApi.ConstInt(state.I32, unchecked((ulong)MbedTlsWantRead), 1), errorCode, "tls_mbed_read_result"));
                     return LlvmApi.ConstInt(state.I32, 0, 0);
                 });
@@ -130,7 +130,7 @@ internal static partial class LlvmCodegen
                             state.I32,
                             "tls_mbed_write_errno")
                         : EmitWindowsWsaGetLastError(state, "tls_mbed_write_wsa_error");
-                    LlvmValueHandle wouldBlock = EmitRustlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_write_would_block");
+                    LlvmValueHandle wouldBlock = EmitTlsIoResultIsWouldBlock(state, errorCode, "tls_mbed_write_would_block");
                     LlvmApi.BuildRet(builder, LlvmApi.BuildSelect(builder, wouldBlock, LlvmApi.ConstInt(state.I32, unchecked((ulong)MbedTlsWantWrite), 1), errorCode, "tls_mbed_write_result"));
                     return LlvmApi.ConstInt(state.I32, 0, 0);
                 });
@@ -141,7 +141,6 @@ internal static partial class LlvmCodegen
                 CreateInternalI64Global("__ashes_tls_init_status"),
                 CreateInternalI64Global("__ashes_tls_ctx"),
                 CreateInternalI64Global("__ashes_tls_runtime"),
-                CreateInternalI64Global("__ashes_tls_libssl_handle"),
                 mbedTlsReadCallback,
                 mbedTlsWriteCallback,
                 CreateInternalI64Global("__ashes_tls_server_config"))

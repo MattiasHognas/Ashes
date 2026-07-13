@@ -93,7 +93,7 @@ public sealed class LinuxArm64BackendCoverageTests
     public async Task Linux_arm64_backend_llvm_should_run_both_and_https_in_one_image_coexisting()
     {
         // CO-3: an arm64 image that carries the `both` parallel runtime (PT_TLS + local-exec arena)
-        // AND dlopen's rustls for a real TLS handshake. The main-thread arena resolves through the
+        // AND performs a real TLS handshake. The main-thread arena resolves through the
         // loader-reserved PT_TLS slot (the entry prologue must not clobber the loader's TPIDR_EL0),
         // and `both`'s deterministic fork/join computes correctly alongside the live TLS session.
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))

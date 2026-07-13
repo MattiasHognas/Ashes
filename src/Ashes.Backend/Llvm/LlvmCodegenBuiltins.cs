@@ -158,7 +158,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle InitStatusGlobal,
         LlvmValueHandle ContextGlobal,
         LlvmValueHandle RuntimeGlobal,
-        LlvmValueHandle LibsslHandleGlobal,
         LlvmValueHandle MbedTlsReadCallback,
         LlvmValueHandle MbedTlsWriteCallback,
         LlvmValueHandle ServerConfigGlobal);

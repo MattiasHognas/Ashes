@@ -4,10 +4,10 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    private static LlvmValueHandle EmitRustlsResultIsOk(LlvmCodegenState state, LlvmValueHandle result, string name)
+    private static LlvmValueHandle EmitTlsResultIsOk(LlvmCodegenState state, LlvmValueHandle result, string name)
         => LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, TlsResultOk, 0), name);
 
-    private static LlvmValueHandle EmitRustlsResultIsPlaintextEmpty(LlvmCodegenState state, LlvmValueHandle result, string name)
+    private static LlvmValueHandle EmitTlsResultIsPlaintextEmpty(LlvmCodegenState state, LlvmValueHandle result, string name)
         => LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, result, LlvmApi.ConstInt(state.I32, TlsResultPlaintextEmpty, 0), name);
 
     private static LlvmValueHandle EmitMbedTlsResultIsOk(LlvmCodegenState state, LlvmValueHandle result, string name)
@@ -25,7 +25,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitMbedTlsResultIsWant(LlvmCodegenState state, LlvmValueHandle result, string name)
         => LlvmApi.BuildOr(state.Target.Builder, EmitMbedTlsResultIsWantRead(state, result, name + "_read"), EmitMbedTlsResultIsWantWrite(state, result, name + "_write"), name);
 
-    private static LlvmValueHandle EmitRustlsIoResultIsWouldBlock(LlvmCodegenState state, LlvmValueHandle ioResult, string name)
+    private static LlvmValueHandle EmitTlsIoResultIsWouldBlock(LlvmCodegenState state, LlvmValueHandle ioResult, string name)
         => LlvmApi.BuildICmp(
             state.Target.Builder,
             LlvmIntPredicate.Eq,
@@ -100,15 +100,13 @@ internal static partial class LlvmCodegen
             name);
     }
 
-    private static LlvmValueHandle EmitRustlsClientConnectionNew(
+    private static LlvmValueHandle EmitTlsClientConnectionNew(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle configHandle,
         LlvmValueHandle serverNameCstr,
         LlvmValueHandle outConnectionSlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle connection = EmitAlloc(state, MbedTlsConnectionTotalBytes);
         LlvmValueHandle sslPtr = EmitMbedTlsConnectionSslPtr(state, connection, name);
@@ -134,9 +132,8 @@ internal static partial class LlvmCodegen
         return NormalizeMbedTlsStatus(state, status, name + "_normalized");
     }
 
-    private static LlvmValueHandle EmitRustlsCertifiedKeyBuild(
+    private static LlvmValueHandle EmitTlsCertifiedKeyBuild(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle certPtr,
         LlvmValueHandle certLen,
         LlvmValueHandle keyPtr,
@@ -144,7 +141,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle outKeySlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle key = EmitTlsSingletonStorage(state, "__ashes_mbedtls_certified_key", MbedTlsCertifiedKeyTotalBytes);
         LlvmValueHandle certCtx = LlvmApi.BuildIntToPtr(builder, key, state.I8Ptr, name + "_cert_ptr");
@@ -165,21 +161,18 @@ internal static partial class LlvmCodegen
         return NormalizeMbedTlsStatus(state, status, name + "_normalized");
     }
 
-    private static LlvmValueHandle EmitRustlsServerConfigBuilderNew(LlvmCodegenState state, LlvmValueHandle libsslHandle, string name)
+    private static LlvmValueHandle EmitTlsServerConfigBuilderNew(LlvmCodegenState state, string name)
     {
-        _ = libsslHandle;
         return EmitTlsSingletonStorage(state, "__ashes_mbedtls_server_config", MbedTlsServerConfigTotalBytes);
     }
 
-    private static LlvmValueHandle EmitRustlsServerConfigBuilderSetCertifiedKeys(
+    private static LlvmValueHandle EmitTlsServerConfigBuilderSetCertifiedKeys(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle builderHandle,
         LlvmValueHandle keysArraySlot,
         LlvmValueHandle count,
         string name)
     {
-        _ = libsslHandle;
         _ = count;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle keyPtr = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, keysArraySlot, name + "_key_ptr"), state.I64, name + "_key_handle");
@@ -187,15 +180,13 @@ internal static partial class LlvmCodegen
         return LlvmApi.ConstInt(state.I32, TlsResultOk, 0);
     }
 
-    private static LlvmValueHandle EmitRustlsServerConfigBuilderBuild(
+    private static LlvmValueHandle EmitTlsServerConfigBuilderBuild(
         LlvmCodegenState state,
         LinuxTlsGlobals globals,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle builderHandle,
         LlvmValueHandle outConfigSlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle configPtr = LlvmApi.BuildIntToPtr(builder, builderHandle, state.I8Ptr, name + "_config_ptr");
         EmitMbedTlsVoidCall(state, "mbedtls_ssl_config_init", LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [configPtr], name + "_config_init");
@@ -217,14 +208,12 @@ internal static partial class LlvmCodegen
         return NormalizeMbedTlsStatus(state, status, name + "_normalized");
     }
 
-    private static LlvmValueHandle EmitRustlsServerConnectionNew(
+    private static LlvmValueHandle EmitTlsServerConnectionNew(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle configHandle,
         LlvmValueHandle outConnectionSlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle connection = EmitAlloc(state, MbedTlsConnectionTotalBytes);
         LlvmValueHandle sslPtr = EmitMbedTlsConnectionSslPtr(state, connection, name);
@@ -245,28 +234,24 @@ internal static partial class LlvmCodegen
         return NormalizeMbedTlsStatus(state, setupStatus, name + "_normalized");
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionWantsRead(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static LlvmValueHandle EmitTlsConnectionWantsRead(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         return LlvmApi.BuildTrunc(state.Target.Builder, LoadMemory(state, connectionHandle, MbedTlsConnectionWantReadOffset, name + "_want_read"), state.I8, name);
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionWantsWrite(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static LlvmValueHandle EmitTlsConnectionWantsWrite(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         return LlvmApi.BuildTrunc(state.Target.Builder, LoadMemory(state, connectionHandle, MbedTlsConnectionWantWriteOffset, name + "_want_write"), state.I8, name);
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionIsHandshaking(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static LlvmValueHandle EmitTlsConnectionIsHandshaking(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         LlvmValueHandle done = LoadMemory(state, connectionHandle, MbedTlsConnectionHandshakeDoneOffset, name + "_done");
         return LlvmApi.BuildZExt(state.Target.Builder, LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, done, LlvmApi.ConstInt(state.I64, 0, 0), name + "_is_handshaking"), state.I8, name);
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionProcessNewPackets(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static LlvmValueHandle EmitTlsConnectionProcessNewPackets(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         LlvmValueHandle rc = EmitMbedTlsCall(state, "mbedtls_ssl_handshake", LlvmApi.FunctionType(state.I32, [state.I8Ptr]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name)], name);
         EmitMbedTlsSetWantFlags(state, connectionHandle, rc, name);
         LlvmValueHandle verifyFlags = EmitMbedTlsCall(state, "mbedtls_ssl_get_verify_result", LlvmApi.FunctionType(state.I32, [state.I8Ptr]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name + "_verify")], name + "_verify_result");
@@ -285,50 +270,44 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildSelect(state.Target.Builder, EmitMbedTlsResultIsWant(state, rc, name + "_want"), LlvmApi.ConstInt(state.I32, TlsResultOk, 0), current, name + "_want_normalized");
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionReadTls(
+    private static LlvmValueHandle EmitTlsConnectionReadTls(
         LlvmCodegenState state,
         LinuxTlsGlobals globals,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle connectionHandle,
         LlvmValueHandle socket,
         LlvmValueHandle outBytesSlot,
         string name)
     {
         _ = globals;
-        _ = libsslHandle;
         _ = connectionHandle;
         _ = socket;
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, 0, 0), outBytesSlot);
         return LlvmApi.ConstInt(state.I32, 0, 0);
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionWriteTls(
+    private static LlvmValueHandle EmitTlsConnectionWriteTls(
         LlvmCodegenState state,
         LinuxTlsGlobals globals,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle connectionHandle,
         LlvmValueHandle socket,
         LlvmValueHandle outBytesSlot,
         string name)
     {
         _ = globals;
-        _ = libsslHandle;
         _ = connectionHandle;
         _ = socket;
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, 0, 0), outBytesSlot);
         return LlvmApi.ConstInt(state.I32, 0, 0);
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionWrite(
+    private static LlvmValueHandle EmitTlsConnectionWrite(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle connectionHandle,
         LlvmValueHandle bufferPtr,
         LlvmValueHandle byteCount,
         LlvmValueHandle outBytesSlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle rc = EmitMbedTlsCall(state, "mbedtls_ssl_write", LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I64]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name), bufferPtr, byteCount], name);
         EmitMbedTlsSetWantFlags(state, connectionHandle, rc, name);
@@ -344,16 +323,14 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildSelect(builder, okOrWant, LlvmApi.ConstInt(state.I32, TlsResultOk, 0), rc, name + "_status");
     }
 
-    private static LlvmValueHandle EmitRustlsConnectionRead(
+    private static LlvmValueHandle EmitTlsConnectionRead(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle connectionHandle,
         LlvmValueHandle bufferPtr,
         LlvmValueHandle byteCount,
         LlvmValueHandle outBytesSlot,
         string name)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle rc = EmitMbedTlsCall(state, "mbedtls_ssl_read", LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I64]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name), bufferPtr, byteCount], name);
         EmitMbedTlsSetWantFlags(state, connectionHandle, rc, name);
@@ -373,22 +350,19 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildSelect(builder, positive, LlvmApi.ConstInt(state.I32, TlsResultOk, 0), normalized, name + "_status");
     }
 
-    private static void EmitRustlsConnectionSendCloseNotify(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static void EmitTlsConnectionSendCloseNotify(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         LlvmValueHandle rc = EmitMbedTlsCall(state, "mbedtls_ssl_close_notify", LlvmApi.FunctionType(state.I32, [state.I8Ptr]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name)], name);
         EmitMbedTlsSetWantFlags(state, connectionHandle, rc, name);
     }
 
-    private static void EmitRustlsConnectionFree(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle connectionHandle, string name)
+    private static void EmitTlsConnectionFree(LlvmCodegenState state, LlvmValueHandle connectionHandle, string name)
     {
-        _ = libsslHandle;
         EmitMbedTlsVoidCall(state, "mbedtls_ssl_free", LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [EmitMbedTlsConnectionSslPtr(state, connectionHandle, name)], name);
     }
 
-    private static LlvmValueHandle EmitRustlsErrorString(LlvmCodegenState state, LlvmValueHandle libsslHandle, LlvmValueHandle resultCode, string prefix)
+    private static LlvmValueHandle EmitTlsErrorString(LlvmCodegenState state, LlvmValueHandle resultCode, string prefix)
     {
-        _ = libsslHandle;
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 256);
         LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
@@ -404,7 +378,6 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitMbedTlsHandshakeErrorString(
         LlvmCodegenState state,
-        LlvmValueHandle libsslHandle,
         LlvmValueHandle resultCode,
         LlvmValueHandle connectionHandle,
         string prefix)
@@ -451,7 +424,7 @@ internal static partial class LlvmCodegen
             builder,
             hasMappedVerifyError,
             mappedMessage,
-            EmitRustlsErrorString(state, libsslHandle, resultCode, prefix + "_strerror"),
+            EmitTlsErrorString(state, resultCode, prefix + "_strerror"),
             prefix + "_message");
     }
 
@@ -556,7 +529,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, clientConfigPtr, state.I64, prefix + "_client_config_handle"), globals.ContextGlobal);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), globals.ServerConfigGlobal);
         LlvmApi.BuildStore(builder, initStatus, globals.InitStatusGlobal);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), globals.LibsslHandleGlobal);
         LlvmApi.BuildBr(builder, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
@@ -592,9 +564,8 @@ internal static partial class LlvmCodegen
     private static void EmitCleanupTlsSession(LlvmCodegenState state, LinuxTlsGlobals globals, LlvmValueHandle session, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle libsslHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.LibsslHandleGlobal, prefix + "_libssl_handle");
         LlvmValueHandle sslHandle = EmitLoadTlsSessionSsl(state, session, prefix + "_load_ssl");
-        EmitRustlsConnectionFree(state, libsslHandle, sslHandle, prefix + "_connection_free");
+        EmitTlsConnectionFree(state, sslHandle, prefix + "_connection_free");
         _ = EmitTcpClose(state, EmitLoadTlsSessionSocket(state, session, prefix + "_load_socket"));
     }
 }
