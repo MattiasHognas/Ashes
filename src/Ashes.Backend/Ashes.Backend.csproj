@@ -49,7 +49,10 @@
     <_ExpectedNativeLibraryExtension>.so</_ExpectedNativeLibraryExtension>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
     <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
+    <_ExpectedPcre2LibraryFileName>libpcre2.bc</_ExpectedPcre2LibraryFileName>
+    <_ExpectedOpenlibmProvisionHint>bash scripts/download-openlibm.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedOpenlibmProvisionHint>
     <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
+    <_ExpectedPcre2ProvisionHint>bash scripts/download-pcre2.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedPcre2ProvisionHint>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != '' and '$(_ExpectedNativeRuntimeIdentifier)' != 'win-x64'">
@@ -62,7 +65,10 @@
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
     <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
+    <_ExpectedPcre2LibraryFileName>libpcre2.bc</_ExpectedPcre2LibraryFileName>
+    <_ExpectedOpenlibmProvisionHint>bash scripts/download-openlibm.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedOpenlibmProvisionHint>
     <_ExpectedMbedTlsProvisionHint>bash scripts/download-mbedtls.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedMbedTlsProvisionHint>
+    <_ExpectedPcre2ProvisionHint>bash scripts/download-pcre2.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedPcre2ProvisionHint>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != ''">
@@ -76,6 +82,10 @@
     <_ExpectedMbedTlsVersionPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionPath>
     <_ExpectedMbedTlsAssetLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedMbedTlsLibraryFileName)</_ExpectedMbedTlsAssetLinkPath>
     <_ExpectedMbedTlsVersionLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\mbedtls.version</_ExpectedMbedTlsVersionLinkPath>
+    <_ExpectedPcre2AssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedPcre2LibraryFileName)</_ExpectedPcre2AssetPath>
+    <_ExpectedPcre2VersionPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\pcre2.version</_ExpectedPcre2VersionPath>
+    <_ExpectedPcre2AssetLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedPcre2LibraryFileName)</_ExpectedPcre2AssetLinkPath>
+    <_ExpectedPcre2VersionLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\pcre2.version</_ExpectedPcre2VersionLinkPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64' or '$(RuntimeIdentifier)' == 'linux-arm64' )">
@@ -112,6 +122,16 @@
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
       Link="$(_ExpectedMbedTlsVersionLinkPath)" />
+    <None Include="$(_ExpectedPcre2AssetPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedPcre2AssetPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedPcre2AssetLinkPath)" />
+    <None Include="$(_ExpectedPcre2VersionPath)"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedPcre2VersionPath)')"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="$(_ExpectedPcre2VersionLinkPath)" />
   </ItemGroup>
 
   <Target Name="ValidateMbedTlsRuntimeAsset"
@@ -129,6 +149,40 @@
     </PropertyGroup>
     <Error Condition="'$(_ProvisionedMbedTlsVersion)' != '$(MbedTlsVersion)'"
       Text="Provisioned Mbed TLS version '$(_ProvisionedMbedTlsVersion)' does not match expected version '$(MbedTlsVersion)' for '$(_ExpectedNativeRuntimeIdentifier)'. Re-run '$(_ExpectedMbedTlsProvisionHint)' or update MbedTlsVersion." />
+  </Target>
+
+  <Target Name="ValidateOpenlibmRuntimeAsset"
+    BeforeTargets="Build;Publish"
+    Condition="'$(_ExpectedOpenlibmAssetPath)' != ''">
+    <Error Condition="!Exists('$(_ExpectedOpenlibmAssetPath)')"
+      Text="Missing openlibm bitcode '$(_ExpectedOpenlibmAssetPath)'. Run '$(_ExpectedOpenlibmProvisionHint)' to provision the expected runtime payload." />
+    <Error Condition="!Exists('$(_ExpectedOpenlibmVersionPath)')"
+      Text="Missing openlibm version marker '$(_ExpectedOpenlibmVersionPath)'. Re-run '$(_ExpectedOpenlibmProvisionHint)' so the provisioned asset version can be verified at build time." />
+    <ReadLinesFromFile File="$(_ExpectedOpenlibmVersionPath)">
+      <Output TaskParameter="Lines" ItemName="_ProvisionedOpenlibmVersionLine" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_ProvisionedOpenlibmVersion>@(_ProvisionedOpenlibmVersionLine)</_ProvisionedOpenlibmVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_ProvisionedOpenlibmVersion)' != '$(OpenlibmVersion)'"
+      Text="Provisioned openlibm version '$(_ProvisionedOpenlibmVersion)' does not match expected version '$(OpenlibmVersion)' for '$(_ExpectedNativeRuntimeIdentifier)'. Re-run '$(_ExpectedOpenlibmProvisionHint)' or update OpenlibmVersion." />
+  </Target>
+
+  <Target Name="ValidatePcre2RuntimeAsset"
+    BeforeTargets="Build;Publish"
+    Condition="'$(_ExpectedPcre2AssetPath)' != ''">
+    <Error Condition="!Exists('$(_ExpectedPcre2AssetPath)')"
+      Text="Missing PCRE2 bitcode '$(_ExpectedPcre2AssetPath)'. Run '$(_ExpectedPcre2ProvisionHint)' to provision the expected runtime payload." />
+    <Error Condition="!Exists('$(_ExpectedPcre2VersionPath)')"
+      Text="Missing PCRE2 version marker '$(_ExpectedPcre2VersionPath)'. Re-run '$(_ExpectedPcre2ProvisionHint)' so the provisioned asset version can be verified at build time." />
+    <ReadLinesFromFile File="$(_ExpectedPcre2VersionPath)">
+      <Output TaskParameter="Lines" ItemName="_ProvisionedPcre2VersionLine" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_ProvisionedPcre2Version>@(_ProvisionedPcre2VersionLine)</_ProvisionedPcre2Version>
+    </PropertyGroup>
+    <Error Condition="'$(_ProvisionedPcre2Version)' != '$(Pcre2Version)'"
+      Text="Provisioned PCRE2 version '$(_ProvisionedPcre2Version)' does not match expected version '$(Pcre2Version)' for '$(_ExpectedNativeRuntimeIdentifier)'. Re-run '$(_ExpectedPcre2ProvisionHint)' or update Pcre2Version." />
   </Target>
 
   <Target Name="ValidateLlvmRuntimeAsset"
