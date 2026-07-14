@@ -1137,7 +1137,7 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        byte[] bitcode = HermeticMathRuntimeAssets.GetOpenlibmBitcode(targetId);
+        byte[] bitcode = HermeticRuntimeAssets.Openlibm.GetBitcode(targetId);
         if (!LlvmApi.TryParseModule(target.Context, bitcode, "openlibm", out var openlibmModule, out string? error))
         {
             throw new InvalidOperationException($"Failed to parse openlibm bitcode for '{targetId}': {error}");
@@ -1169,7 +1169,7 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        byte[] bitcode = HermeticRegexRuntimeAssets.GetPcre2Bitcode(targetId);
+        byte[] bitcode = HermeticRuntimeAssets.Pcre2.GetBitcode(targetId);
         if (!LlvmApi.TryParseModule(target.Context, bitcode, "pcre2", out var pcre2Module, out string? error))
         {
             throw new InvalidOperationException($"Failed to parse PCRE2 bitcode for '{targetId}': {error}");
@@ -1189,7 +1189,7 @@ internal static partial class LlvmCodegen
             return;
         }
 
-        byte[] bitcode = HermeticTlsRuntimeAssets.GetMbedTlsBitcode(targetId);
+        byte[] bitcode = HermeticRuntimeAssets.MbedTls.GetBitcode(targetId);
         if (!LlvmApi.TryParseModule(target.Context, bitcode, "mbedtls", out var mbedTlsModule, out string? error))
         {
             throw new InvalidOperationException($"Failed to parse Mbed TLS bitcode for '{targetId}': {error}");
