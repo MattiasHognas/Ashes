@@ -18,6 +18,14 @@
       <_Parameter1>MbedTlsVersion</_Parameter1>
       <_Parameter2>$(MbedTlsVersion)</_Parameter2>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>OpenlibmVersion</_Parameter1>
+      <_Parameter2>$(OpenlibmVersion)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>Pcre2Version</_Parameter1>
+      <_Parameter2>$(Pcre2Version)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- When no explicit RID is set, detect host platform for native library selection -->
