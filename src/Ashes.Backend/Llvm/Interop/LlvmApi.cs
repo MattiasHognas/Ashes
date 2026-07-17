@@ -185,6 +185,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDoubleTypeInContext")]
     public static partial LlvmTypeHandle DoubleTypeInContext(LlvmContextHandle context);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMFloatTypeInContext")]
+    public static partial LlvmTypeHandle FloatTypeInContext(LlvmContextHandle context);
+
     [LibraryImport(Lib, EntryPoint = "LLVMVoidTypeInContext")]
     public static partial LlvmTypeHandle VoidTypeInContext(LlvmContextHandle context);
 
@@ -348,6 +351,12 @@ internal static partial class LlvmApi
 
     [LibraryImport(Lib, EntryPoint = "LLVMBuildFPToSI", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildFPToSI(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildFPTrunc", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle BuildFPTrunc(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildFPExt", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LlvmValueHandle BuildFPExt(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
 
     [LibraryImport(Lib, EntryPoint = "LLVMBuildIntToPtr", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildIntToPtr(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);

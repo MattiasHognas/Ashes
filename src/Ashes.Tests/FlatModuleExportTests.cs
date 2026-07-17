@@ -29,7 +29,7 @@ public sealed class FlatModuleExportTests
     }
 
     [Test]
-    public void Flat_module_drops_trailing_expression_and_excludes_external()
+    public void Flat_module_drops_trailing_expression_and_excludes_external_from_exports()
     {
         var dir = WriteModules(
             ("B", "external getpid() -> Int = \"getpid\"\nlet inc = given (x) -> x + 1\ninc(41)\n"),
@@ -37,9 +37,11 @@ public sealed class FlatModuleExportTests
 
         var source = BuildProjectSource(dir, "Main");
 
-        // The exported let binding survives, but the external and the trailing expression do not.
+        // The exported let binding survives, but the external is not exported as a value and the
+        // trailing expression is dropped. The external declaration itself may be hoisted because
+        // imported flat bindings can depend on FFI declarations.
         source.ShouldContain("B_inc = ");
-        source.ShouldNotContain("getpid");
+        source.ShouldContain("external getpid() -> Int");
         source.ShouldNotContain("B_getpid");
         // A flat module binds no whole-module value, so there is no `let B = (...)` stitch.
         source.ShouldNotContain("let B = ");

@@ -1,0 +1,7 @@
+{
+  "name": "raylib-3d-terrain",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "target": "linux-x64"
+}

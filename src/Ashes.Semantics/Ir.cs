@@ -794,6 +794,7 @@ public abstract record FfiType
     public sealed record Int : FfiType;
     public sealed record UInt(int Bits) : FfiType;
     public sealed record Float : FfiType;
+    public sealed record Float32 : FfiType;
     public sealed record Bool : FfiType;
     public sealed record Str : FfiType;
     public sealed record Opaque(string Name) : FfiType;

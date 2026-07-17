@@ -1471,6 +1471,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
         LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
         LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
+        LlvmTypeHandle f32 = LlvmApi.FloatTypeInContext(target.Context);
         LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(target.Builder, i64, "rt_program_args");
         LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), programArgsSlot);
@@ -1491,6 +1492,7 @@ internal static partial class LlvmCodegen
             i32,
             i8,
             f64,
+            f32,
             i8Ptr,
             i8Ptr,
             i8Ptr,

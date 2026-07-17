@@ -158,6 +158,8 @@ internal static partial class LlvmCodegen
             returnType is FfiType.Void ? string.Empty : "ffi_call");
         return returnType is FfiType.Void
             ? LlvmApi.ConstInt(state.I64, 0, 0)
+            : returnType is FfiType.Float32
+                ? LlvmApi.BuildFPExt(state.Target.Builder, result, state.F64, "ffi_ret_f32")
             : result;
     }
 
@@ -184,6 +186,7 @@ internal static partial class LlvmCodegen
             FfiType.UInt { Bits: 32 } => state.I32,
             FfiType.UInt { Bits: 64 } => state.I64,
             FfiType.Float => state.F64,
+            FfiType.Float32 => state.F32,
             FfiType.Bool => state.I8,
             FfiType.Str => state.I8Ptr,
             FfiType.Opaque { } or FfiType.Ptr { } => state.I8Ptr,
@@ -198,6 +201,7 @@ internal static partial class LlvmCodegen
         return type switch
         {
             FfiType.Float => LlvmApi.BuildBitCast(state.Target.Builder, value, state.F64, "ffi_arg_float"),
+            FfiType.Float32 => LlvmApi.BuildFPTrunc(state.Target.Builder, LlvmApi.BuildBitCast(state.Target.Builder, value, state.F64, "ffi_arg_f32_source"), state.F32, "ffi_arg_f32"),
             FfiType.Bool => LlvmApi.BuildTrunc(state.Target.Builder, value, state.I8, "ffi_arg_bool"),
             FfiType.UInt { Bits: 8 or 16 or 32 } => LlvmApi.BuildTrunc(state.Target.Builder, value, GetLlvmFfiType(state, type), "ffi_arg_uint"),
             FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),

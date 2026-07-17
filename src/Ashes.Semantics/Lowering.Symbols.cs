@@ -331,11 +331,12 @@ public sealed partial class Lowering
         return named.Name switch
         {
             "Int" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.Int()),
-            "u8" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(8)),
-            "u16" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(16)),
-            "u32" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(32)),
-            "u64" => new ResolvedExternalType(new TypeRef.TInt(), new FfiType.UInt(64)),
+            "u8" => new ResolvedExternalType(new TypeRef.TUInt(8), new FfiType.UInt(8)),
+            "u16" => new ResolvedExternalType(new TypeRef.TUInt(16), new FfiType.UInt(16)),
+            "u32" => new ResolvedExternalType(new TypeRef.TUInt(32), new FfiType.UInt(32)),
+            "u64" => new ResolvedExternalType(new TypeRef.TUInt(64), new FfiType.UInt(64)),
             "Float" => new ResolvedExternalType(new TypeRef.TFloat(), new FfiType.Float()),
+            "f32" => new ResolvedExternalType(new TypeRef.TFloat(), new FfiType.Float32()),
             "Bool" => new ResolvedExternalType(new TypeRef.TBool(), new FfiType.Bool()),
             "Str" => new ResolvedExternalType(new TypeRef.TStr(), new FfiType.Str()),
             "void" when allowVoid => new ResolvedExternalType(_resolvedTypes["Unit"], new FfiType.Void()),

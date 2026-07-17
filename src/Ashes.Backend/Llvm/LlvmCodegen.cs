@@ -443,6 +443,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
         LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
         LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
+        LlvmTypeHandle f32 = LlvmApi.FloatTypeInContext(target.Context);
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(target.Context);
         LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
@@ -966,6 +967,7 @@ internal static partial class LlvmCodegen
             usesProgramArgs,
             useRunQueueScheduler,
             i32,
+            f32,
             i32Ptr,
             heapCursorGlobal,
             heapEndGlobal,
@@ -1028,6 +1030,7 @@ internal static partial class LlvmCodegen
                 usesProgramArgs,
                 useRunQueueScheduler,
                 i32,
+                f32,
                 i32Ptr,
                 heapCursorGlobal,
                 heapEndGlobal,
@@ -1227,6 +1230,7 @@ internal static partial class LlvmCodegen
         bool usesProgramArgs,
         bool useRunQueueScheduler,
         LlvmTypeHandle i32,
+        LlvmTypeHandle f32,
         LlvmTypeHandle i32Ptr,
         LlvmValueHandle heapCursorGlobal,
         LlvmValueHandle heapEndGlobal,
@@ -1346,6 +1350,7 @@ internal static partial class LlvmCodegen
             i32,
             i8,
             f64,
+            f32,
             i8Ptr,
             i32Ptr,
             i64Ptr,
@@ -1836,6 +1841,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle I32,
         LlvmTypeHandle I8,
         LlvmTypeHandle F64,
+        LlvmTypeHandle F32,
         LlvmTypeHandle I8Ptr,
         LlvmTypeHandle I32Ptr,
         LlvmTypeHandle I64Ptr,

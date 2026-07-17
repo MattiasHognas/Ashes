@@ -2146,13 +2146,17 @@ public static class ProjectSupport
 
                 case TopLevelItem.External externalItem:
                     {
-                        // `external` is never exported and carries no value the stitcher needs; skip it.
+                        // `external` is never exported, but it is program-wide and must be visible to
+                        // lowering so direct FFI calls bind. Hoist it with the other global declarations
+                        // while still removing it from the entry expression.
                         var span = AstSpans.GetOrDefault(externalItem.Decl);
                         if (span.End <= span.Start || span.End > source.Length)
                         {
                             return false;
                         }
 
+                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
+                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
                         hoistedSpans.Add((span.Start, span.End));
                         cursor = span.End;
                         break;

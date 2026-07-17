@@ -2372,6 +2372,20 @@ public sealed partial class Lowering
 
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        // Lambda bodies are lowered as separate functions with a fresh scope. Slot/env bindings are
+        // captured above, but scope-independent bindings must be re-seeded so direct calls to
+        // intrinsics, externals, and prelude values still resolve inside helper functions.
+        foreach (var enclosingScope in savedScopes.Reverse())
+        {
+            foreach (var (bindingName, binding) in enclosingScope)
+            {
+                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
+                {
+                    scope[bindingName] = binding;
+                }
+            }
+        }
+
         // Re-seed the always-available root-scope intrinsic `async` (like AddStdIOBindings below) so a
         // function body may itself build a task with `async(E)` — e.g. a `serve`/handler combinator.
         // Without this, `async` (an unqualified root-scope binding) is invisible inside any lambda body.
@@ -3752,6 +3766,13 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerExternalCall(Expr rootExpr, IrExternalFunction externalFunction, List<Expr> args)
     {
+        if (externalFunction.ParameterTypes.Count == 0
+            && args.Count == 1
+            && args[0] is Expr.Var { Name: "Unit" })
+        {
+            args = [];
+        }
+
         if (args.Count != externalFunction.ParameterTypes.Count)
         {
             return ReportArityMismatch(rootExpr, externalFunction.ParameterTypes.Count, args.Count);
@@ -3959,8 +3980,9 @@ public sealed partial class Lowering
         return ffiType switch
         {
             FfiType.Int => new TypeRef.TInt(),
-            FfiType.UInt => new TypeRef.TInt(),
+            FfiType.UInt unsigned => new TypeRef.TUInt(unsigned.Bits),
             FfiType.Float => new TypeRef.TFloat(),
+            FfiType.Float32 => new TypeRef.TFloat(),
             FfiType.Bool => new TypeRef.TBool(),
             FfiType.Str => new TypeRef.TStr(),
             FfiType.Opaque opaque => new TypeRef.TOpaque(opaque.Name),

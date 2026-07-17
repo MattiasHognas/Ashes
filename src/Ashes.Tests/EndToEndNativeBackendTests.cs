@@ -69,8 +69,8 @@ public sealed class EndToEndNativeBackendTests
         var src = """
             external srand(u32) -> void = "srand@libc.so.6"
             external strlen(Str) -> u64
-            let _ = srand(1)
-            in Ashes.IO.print(strlen("ashes"))
+            let _ = srand(1u32)
+            in Ashes.IO.print(Ashes.UInt.toInt(strlen("ashes")))
             """;
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("5\n");
     }

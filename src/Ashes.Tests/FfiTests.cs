@@ -29,6 +29,23 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void Nullary_external_function_call_lowers_with_no_arguments()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external getpid() -> Int = "getpid@libc.so.6"
+            getpid()
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternalFunctions.Count.ShouldBe(1);
+
+        var externalCall = program.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single();
+        externalCall.SymbolName.ShouldBe("getpid");
+        externalCall.LibraryName.ShouldBe("libc.so.6");
+        externalCall.ArgTemps.ShouldBeEmpty();
+    }
+
+    [Test]
     public void External_opaque_types_are_native_words_and_participate_in_call_typing()
     {
         var (program, diagnostics) = LowerProgram("""
@@ -61,11 +78,11 @@ public sealed class FfiTests
     }
 
     [Test]
-    public void External_unsigned_integer_types_lower_to_unsigned_ffi_types_and_ashes_ints()
+    public void External_unsigned_integer_types_lower_to_unsigned_ffi_types_and_ashes_uints()
     {
         var (program, diagnostics) = LowerProgram("""
             external pack(u8, u16, u32, u64) -> u32
-            pack(1, 2, 3, 4)
+            pack(1u8, 2u16, 3u32, 4u64)
             """);
 
         diagnostics.Errors.ShouldBeEmpty();
@@ -84,11 +101,31 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void External_f32_parameters_accept_ashes_float_values_and_lower_to_float32_ffi()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external point(f32, f32, f32) -> void
+            point(1.0, 2.0, 3.0)
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.ExternalFunctions.Count.ShouldBe(1);
+        program.ExternalFunctions[0].ParameterTypes.ShouldBe([
+            new FfiType.Float32(),
+            new FfiType.Float32(),
+            new FfiType.Float32()
+        ]);
+
+        var externalCall = program.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single();
+        externalCall.ParameterTypes.ShouldBe(program.ExternalFunctions[0].ParameterTypes);
+    }
+
+    [Test]
     public void External_void_return_type_lowers_to_void_call_and_unit_result()
     {
         var (program, diagnostics) = LowerProgram("""
             external log(Str, u32) -> void
-            log("answer", 42)
+            log("answer", 42u32)
             """);
 
         diagnostics.Errors.ShouldBeEmpty();

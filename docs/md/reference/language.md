@@ -728,10 +728,12 @@ Rules:
 - `external` declarations appear before the program body, alongside `type`
   declarations.
 - Supported external parameter and return types are `Int`, `u8`, `u16`, `u32`,
-  `u64`, `Float`, `Bool`, `Str`, opaque external types declared with
+  `u64`, `Float`, `f32`, `Bool`, `Str`, opaque external types declared with
   `external type`, and pointers to supported external types using `*T`.
   Unsigned external parameters and returns use Ashes unsigned values at call
   sites and are converted to the requested C ABI width at the external boundary.
+- `Float` maps to a C ABI `double`; `f32` maps to a C ABI `float` while using
+  Ashes `Float` values at call sites.
 - `void` is supported for external return types and produces Ashes `Unit`.
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
 - Opaque external types are represented as native pointer-sized words and are

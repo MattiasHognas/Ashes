@@ -662,6 +662,62 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void StandaloneCompilationLayout_should_preserve_flat_external_declarations_for_lowering()
+    {
+        var source = """
+            external getpid() -> Int = "getpid@libc.so.6"
+            getpid()
+            """;
+        var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+
+        layout.Source.ShouldContain("external getpid() -> Int");
+        layout.Source.ShouldContain("getpid()");
+
+        var diag = new Diagnostics();
+        var program = new Parser(layout.Source, diag).ParseProgram();
+        var ir = new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldBeEmpty();
+        ir.ExternalFunctions.Select(f => f.Name).ShouldBe(["getpid"]);
+        ir.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single().SymbolName.ShouldBe("getpid");
+    }
+
+    [Test]
+    public void BuildCompilationSource_should_preserve_project_entry_external_declarations_for_lowering()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), """
+                external BeginDrawing() -> void = "BeginDrawing@libraylib.so"
+                let draw _ =
+                    BeginDrawing()
+                draw(Unit)
+                """);
+
+            var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
+            var plan = ProjectSupport.BuildCompilationPlan(project);
+            var source = ProjectSupport.BuildCompilationSource(plan);
+
+            source.ShouldContain("external BeginDrawing() -> void");
+
+            var diag = new Diagnostics();
+            var program = new Parser(source, diag).ParseProgram();
+            var ir = new Lowering(diag, plan.ImportedStdModules).Lower(program);
+
+            diag.StructuredErrors.ShouldBeEmpty();
+            ir.ExternalFunctions.Select(f => f.Name).ShouldBe(["BeginDrawing"]);
+            ir.Functions.SelectMany(f => f.Instructions).OfType<IrInst.CallExternal>().Single().SymbolName.ShouldBe("BeginDrawing");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
     {
         // The Ashes.List import stitches a source stdlib module, so the entry body sits behind a
