@@ -37,8 +37,12 @@
     <_ExpectedNativeRuntimeIdentifier>linux-arm64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">
     <_ExpectedNativeRuntimeIdentifier>win-x64</_ExpectedNativeRuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows')) and '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
+    <_ExpectedNativeRuntimeIdentifier>win-arm64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64'">
@@ -53,6 +57,10 @@
     <_ExpectedNativeRuntimeIdentifier>win-x64</_ExpectedNativeRuntimeIdentifier>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-arm64'">
+    <_ExpectedNativeRuntimeIdentifier>win-arm64</_ExpectedNativeRuntimeIdentifier>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != ''">
     <_ExpectedNativeLibraryExtension>.so</_ExpectedNativeLibraryExtension>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
@@ -63,14 +71,14 @@
     <_ExpectedPcre2ProvisionHint>bash scripts/download-pcre2.sh --$(_ExpectedNativeRuntimeIdentifier)</_ExpectedPcre2ProvisionHint>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != '' and '$(_ExpectedNativeRuntimeIdentifier)' != 'win-x64'">
+  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != '' and !$(_ExpectedNativeRuntimeIdentifier.StartsWith('win-'))">
     <_ExpectedLlvmLinuxArch>$([System.String]::Copy('$(_ExpectedNativeRuntimeIdentifier)').Replace('linux-', ''))</_ExpectedLlvmLinuxArch>
     <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh [LLVM_MAJOR] $(_ExpectedLlvmLinuxArch)</_ExpectedLlvmProvisionHint>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' == 'win-x64'">
+  <PropertyGroup Condition="$(_ExpectedNativeRuntimeIdentifier.StartsWith('win-'))">
     <_ExpectedNativeLibraryExtension>.dll</_ExpectedNativeLibraryExtension>
-    <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --win-x64 [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
+    <_ExpectedLlvmProvisionHint>bash scripts/download-llvm-native.sh --$(_ExpectedNativeRuntimeIdentifier) [LLVM_FULL_VERSION]</_ExpectedLlvmProvisionHint>
     <_ExpectedOpenlibmLibraryFileName>libopenlibm.bc</_ExpectedOpenlibmLibraryFileName>
     <_ExpectedMbedTlsLibraryFileName>libmbedtls.bc</_ExpectedMbedTlsLibraryFileName>
     <_ExpectedPcre2LibraryFileName>libpcre2.bc</_ExpectedPcre2LibraryFileName>
@@ -100,7 +108,7 @@
     <_ShouldCopyResolvedNativeAssets>true</_ShouldCopyResolvedNativeAssets>
   </PropertyGroup>
 
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64' )">
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and ( '$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64' or '$(RuntimeIdentifier)' == 'win-arm64' )">
     <_ShouldCopyResolvedNativeAssets>true</_ShouldCopyResolvedNativeAssets>
   </PropertyGroup>
 

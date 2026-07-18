@@ -369,7 +369,7 @@ release_build() {
     OUT=artifacts/release
     rm -rf \$OUT publish && mkdir -p \$OUT
 
-    for rid in linux-x64 linux-arm64 win-x64; do
+    for rid in linux-x64 linux-arm64 win-x64 win-arm64; do
       dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/cli/\$rid
       dotnet publish src/Ashes.Lsp/Ashes.Lsp.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/lsp/\$rid
       dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/dap/\$rid
@@ -402,13 +402,16 @@ release_build() {
     stage_compiler linux-x64   ashes     libLLVM.so
     stage_compiler linux-arm64 ashes     libLLVM.so
     stage_compiler win-x64     ashes.exe libLLVM.dll
+    stage_compiler win-arm64   ashes.exe libLLVM.dll
 
     stage_tool lsp linux-x64   ashes-lsp     ashes-lsp-linux-x64
     stage_tool lsp linux-arm64 ashes-lsp     ashes-lsp-linux-arm64
     stage_tool lsp win-x64     ashes-lsp.exe ashes-lsp-win-x64
+    stage_tool lsp win-arm64   ashes-lsp.exe ashes-lsp-win-arm64
     stage_tool dap linux-x64   ashes-dap     ashes-dap-linux-x64
     stage_tool dap linux-arm64 ashes-dap     ashes-dap-linux-arm64
     stage_tool dap win-x64     ashes-dap.exe ashes-dap-win-x64
+    stage_tool dap win-arm64   ashes-dap.exe ashes-dap-win-arm64
 
     cd vscode-extension
     corepack enable
@@ -601,12 +604,15 @@ release_github() {
   # The exact artifact set published by release.yml (filenames match release_build).
   local artifacts=(
     "$out/ashes-win-x64.zip"
+    "$out/ashes-win-arm64.zip"
     "$out/ashes-linux-x64.zip"
     "$out/ashes-linux-arm64.zip"
     "$out/ashes-lsp-win-x64.zip"
+    "$out/ashes-lsp-win-arm64.zip"
     "$out/ashes-lsp-linux-x64.zip"
     "$out/ashes-lsp-linux-arm64.zip"
     "$out/ashes-dap-win-x64.zip"
+    "$out/ashes-dap-win-arm64.zip"
     "$out/ashes-dap-linux-x64.zip"
     "$out/ashes-dap-linux-arm64.zip"
     "$out/ashes-language-$version.vsix"
