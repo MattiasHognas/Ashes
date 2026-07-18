@@ -13,6 +13,11 @@ public static class IrOptimizer
     /// </summary>
     public static IrProgram Optimize(IrProgram program)
     {
+        // Aggressive compile-time evaluation runs first: it reduces pure, constant-argument
+        // calls to constants, after which the per-function passes below eliminate the now-dead
+        // argument/closure construction and the redundant arena brackets around the removed call.
+        program = IrCompileTimeEval.Evaluate(program);
+
         var optimizedEntry = OptimizeFunction(program.EntryFunction);
         var optimizedFuncs = program.Functions.Select(OptimizeFunction).ToList();
 

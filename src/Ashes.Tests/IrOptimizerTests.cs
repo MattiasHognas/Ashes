@@ -849,6 +849,63 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("AddInt should NOT be folded at multi-predecessor label.");
     }
 
+    // Compile-time evaluation tests
+
+    [Test]
+    public void Compile_time_eval_folds_recursive_scalar_call()
+    {
+        var ir = LowerAndOptimize(
+            "let recursive fib = given (n) -> if n < 2 then n else fib(n - 1) + fib(n - 2) " +
+            "in Ashes.IO.print(fib(20))");
+
+        // fib(20) = 6765. The whole recursive computation is replaced by a constant load,
+        // and no closure call to the fib lambda survives in the entry function.
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 6765 })
+            .ShouldBeTrue("Expected fib(20) to be evaluated to the constant 6765.");
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.CallClosure)
+            .ShouldBeFalse("The recursive fib call should be evaluated away at compile time.");
+    }
+
+    [Test]
+    public void Compile_time_eval_folds_pure_user_function()
+    {
+        var ir = LowerAndOptimize(
+            "let square = given (n) -> n * n in Ashes.IO.print(square(12))");
+
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 144 })
+            .ShouldBeTrue("Expected square(12) to be evaluated to the constant 144.");
+    }
+
+    [Test]
+    public void Compile_time_eval_does_not_fold_non_terminating_recursion()
+    {
+        // countUp(1) never terminates; the depth budget must make evaluation bail and keep the
+        // runtime call rather than hanging the compiler.
+        var ir = LowerAndOptimize(
+            "let recursive countUp = given (n) -> if n < 0 then n else countUp(n + 1) " +
+            "in Ashes.IO.print(countUp(1))");
+
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.CallClosure)
+            .ShouldBeTrue("Non-terminating recursion must not be folded; the call stays runtime.");
+    }
+
+    [Test]
+    public void Compile_time_eval_does_not_fold_side_effecting_call()
+    {
+        // A call to a function that performs IO must never be evaluated away — doing so would
+        // delete the observable side effect. The impurity gate keeps the call as runtime code.
+        var ir = LowerAndOptimize(
+            "let logIt = given (n) -> Ashes.IO.print(n + 1) in logIt(42)");
+
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.CallClosure)
+            .ShouldBeTrue("A call performing IO must stay runtime code, not be folded away.");
+    }
+
     // Helpers
 
     private static IrProgram Lower(string source)
