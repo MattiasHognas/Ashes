@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Text;
 using Ashes.Backend.Backends;
 using Shouldly;
@@ -13,10 +12,17 @@ namespace Ashes.Tests;
 public sealed class ExampleSocketFixtureTests
 {
     [Test]
-    public async Task Http_get_example_should_run_against_loopback_fixture()
+    public async Task Http_get_should_run_against_loopback_fixture()
     {
-        await RunExampleWithServerAsync(
-            "http_get.ash",
+        const string source = """
+Ashes.IO.print(match await Ashes.Http.get("http://127.0.0.1:8080/") with
+    | Ok(body) -> body
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
             async client =>
             {
                 var stream = client.GetStream();
@@ -35,10 +41,16 @@ public sealed class ExampleSocketFixtureTests
     }
 
     [Test]
-    public async Task Https_get_example_should_run_against_loopback_tls_fixture()
+    public async Task Https_get_should_run_against_loopback_tls_fixture()
     {
-        await RunExampleWithTlsServerAsync(
-            "https_get.ash",
+        const string source = """
+Ashes.IO.print(match await Ashes.Http.get("https://localhost:8080/") with
+    | Ok(body) -> body
+    | Error(err) -> err)
+""";
+
+        await RunSourceWithTlsServerAsync(
+            source,
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -204,10 +216,20 @@ Ashes.IO.print(
     }
 
     [Test]
-    public async Task Tcp_connect_example_should_run_against_loopback_fixture()
+    public async Task Tcp_connect_should_run_against_loopback_fixture()
     {
-        await RunExampleWithServerAsync(
-            "tcp_connect.ash",
+        const string source = """
+Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
+    | Error(msg) -> msg
+    | Ok(sock) ->
+        match await Ashes.Net.Tcp.close(sock) with
+            | Ok(_) -> "connected"
+            | Error(msg) -> msg)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
             async _ =>
             {
                 await Task.Delay(200).ConfigureAwait(false);
@@ -216,10 +238,20 @@ Ashes.IO.print(
     }
 
     [Test]
-    public async Task Tcp_send_example_should_run_against_loopback_fixture()
+    public async Task Tcp_send_should_run_against_loopback_fixture()
     {
-        await RunExampleWithServerAsync(
-            "tcp_send.ash",
+        const string source = """
+match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
+    | Error(msg) -> Ashes.IO.print(msg)
+    | Ok(sock) ->
+        match await Ashes.Net.Tcp.send(sock)("hello") with
+            | Ok(n) -> Ashes.IO.print(n)
+            | Error(msg) -> Ashes.IO.print(msg)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
             async client =>
             {
                 var stream = client.GetStream();
@@ -233,10 +265,20 @@ Ashes.IO.print(
     }
 
     [Test]
-    public async Task Tcp_receive_example_should_run_against_loopback_fixture()
+    public async Task Tcp_receive_should_run_against_loopback_fixture()
     {
-        await RunExampleWithServerAsync(
-            "tcp_receive.ash",
+        const string source = """
+Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
+    | Error(msg) -> msg
+    | Ok(sock) ->
+        match await Ashes.Net.Tcp.receive(sock)(64) with
+            | Ok(text) -> text
+            | Error(msg) -> msg)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
             async client =>
             {
                 var stream = client.GetStream();
@@ -251,10 +293,20 @@ Ashes.IO.print(
     }
 
     [Test]
-    public async Task Tcp_close_example_should_run_against_loopback_fixture()
+    public async Task Tcp_close_should_run_against_loopback_fixture()
     {
-        await RunExampleWithServerAsync(
-            "tcp_close.ash",
+        const string source = """
+Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
+    | Error(msg) -> msg
+    | Ok(sock) ->
+        match await Ashes.Net.Tcp.close(sock) with
+            | Ok(_) -> "closed"
+            | Error(msg) -> msg)
+""";
+
+        await RunSourceWithServerAsync(
+            source,
+            expectedClientCount: 1,
             async _ =>
             {
                 await Task.Delay(200).ConfigureAwait(false);
@@ -262,18 +314,20 @@ Ashes.IO.print(
             expectedStdout: "closed\n").ConfigureAwait(false);
     }
 
-    private static async Task RunExampleWithServerAsync(string exampleName, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
+    private static async Task RunSourceWithTlsServerAsync(string source, Func<SslStream, Task> handleClientAsync, string expectedStdout)
     {
-        var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
-        File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        await RunPathWithServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout).ConfigureAwait(false);
-    }
+        var tempPath = Path.Combine(Path.GetTempPath(), "ashes-tests", Guid.NewGuid().ToString("N") + ".ash");
+        Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
 
-    private static async Task RunExampleWithTlsServerAsync(string exampleName, Func<SslStream, Task> handleClientAsync, string expectedStdout)
-    {
-        var examplePath = Path.Combine(GetExamplesRoot(), exampleName);
-        File.Exists(examplePath).ShouldBeTrue($"Expected example file '{examplePath}' to exist.");
-        await RunPathWithTlsServerAsync(examplePath, expectedClientCount: 1, handleClientAsync, expectedStdout).ConfigureAwait(false);
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, source).ConfigureAwait(false);
+            await RunPathWithTlsServerAsync(tempPath, expectedClientCount: 1, handleClientAsync, expectedStdout).ConfigureAwait(false);
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
     }
 
     private static async Task RunSourceWithServerAsync(string source, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
@@ -490,12 +544,6 @@ Ashes.IO.print(
         }
 
         return Encoding.UTF8.GetString(buffer, 0, total);
-    }
-
-    private static string GetExamplesRoot([CallerFilePath] string? callerFile = null)
-    {
-        var sourceDir = Path.GetDirectoryName(callerFile)!;
-        return Path.GetFullPath(Path.Combine(sourceDir, "..", "..", "examples"));
     }
 
     private static async Task<string> CreatePortSpecificExampleAsync(string examplePath, int port)
