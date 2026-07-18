@@ -76,11 +76,6 @@ require_command() {
     fi
 }
 
-
-
-
-
-
 normalize_arch() {
     case "$1" in
         x86_64|amd64|x64)
