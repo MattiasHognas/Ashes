@@ -1,0 +1,7 @@
+{
+  "name": "key-value-store-service-test",
+  "entry": "KvTest.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "target": "linux-x64"
+}

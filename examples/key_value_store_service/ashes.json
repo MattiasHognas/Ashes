@@ -1,0 +1,7 @@
+{
+  "name": "key-value-store-service",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "target": "linux-x64"
+}
