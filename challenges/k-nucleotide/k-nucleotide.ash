@@ -17,7 +17,6 @@
 // Usage: ./fasta 1000 | ./k-nucleotide
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.Text as str
 import Ashes.Byte as bytes
 import Ashes.Collection.HashMap as map
 import Ashes.Collection.List as list
@@ -26,11 +25,11 @@ let recursive collect started acc =
     match io.readLine(Unit) with
         | None -> acc
         | Some(line) ->
-            if str.startsWith(line)(">")
+            if text.startsWith(line)(">")
             then
                 if started
                 then acc
-                else collect(str.startsWith(line)(">THREE"))(acc)
+                else collect(text.startsWith(line)(">THREE"))(acc)
             else
                 if started
                 then collect(true)(line :: acc)
@@ -54,7 +53,7 @@ let before a b =
             match b with
                 | (kb, cb) ->
                     if ca == cb
-                    then str.compare(ka)(kb) <= -1
+                    then text.compare(ka)(kb) <= -1
                     else ca > cb
 
 let recursive merge xs ys =
@@ -101,7 +100,7 @@ let frequencyTable buf len k =
         in renderFreq(msort(entries(m)))(total)(""))
 
 let countSpecific buf len kmer =
-    (let k = str.length(kmer)
+    (let k = text.length(kmer)
     in
         let m = countKmers(buf)(len)(k)(0)(map.empty)
         in
@@ -117,4 +116,4 @@ let run seq =
         let len = bytes.length(buf)
         in io.write(frequencyTable(buf)(len)(1) + "\n" + frequencyTable(buf)(len)(2) + "\n" + specificLine(buf)(len)("ggt") + specificLine(buf)(len)("ggta") + specificLine(buf)(len)("ggtatt") + specificLine(buf)(len)("ggtattttaatt") + specificLine(buf)(len)("ggtattttaatttatagt")))
 
-run(str.join("")(list.reverse(collect(false)([]))))
+run(text.join("")(list.reverse(collect(false)([]))))
