@@ -378,7 +378,9 @@ The full CI/CD pipeline runs locally in rootless **Podman** containers — no
 GitHub required. Jobs are driven by a `justfile` and reproduce the
 `.github/workflows/{pull-request,push-to-main,release}` steps, with each
 architecture in its own image: **linux-x64** natively, **linux-arm64** under
-`qemu`, **win-x64** under `wine`.
+`qemu`, **win-x64** under `wine`, and **win-arm64** compile-and-link-only (a
+Windows-on-ARM image cannot execute on an x64 host, so its leg cross-compiles
+and structurally checks the PE rather than running it).
 
 ```sh
 ./scripts/init-local-ci.sh   # one-command bootstrap (deps + images + LLVM libs)
