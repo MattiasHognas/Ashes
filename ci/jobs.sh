@@ -225,26 +225,28 @@ _matrix_fmt() {
   "
 }
 
-# Run the example/test matrix across all three runners, then verify fmt once.
+# Run the example/test matrix across all four legs, then verify fmt once.
 #
-# The three legs are independent containers over the same read-only-ish /work
-# mount (their per-example output goes to /tmp inside each container), so they
-# run in parallel — mirroring the GitHub matrix (fail-fast: false) and cutting
-# wall-clock to the slowest leg. Each leg's output is captured to a log and
-# replayed grouped afterwards so the interleaved streams stay readable. fmt is
-# verified afterwards, sequentially, by _matrix_fmt (writes the shared tree in
-# place, so it must not race the legs).
+# The legs are independent containers over the same read-only-ish /work mount
+# (their per-example output goes to /tmp inside each container), so they run in
+# parallel — mirroring the GitHub matrix (fail-fast: false) and cutting wall-clock
+# to the slowest leg. Each leg's output is captured to a log and replayed grouped
+# afterwards so the interleaved streams stay readable. fmt is verified afterwards,
+# sequentially, by _matrix_fmt (writes the shared tree in place, so it must not
+# race the legs).
 matrix() {
-  # All three legs run the full suite. The arm64 leg executes its binaries inside a
-  # genuine aarch64 container (ashes-ci-arm64), emulated transparently by the host's
-  # qemu-user-static binfmt_misc handler — which must be registered with the F
-  # (fix-binary) flag so emulation crosses into the container and survives the
-  # compiler's nested exec of its output. `scripts/init-local-ci.sh` sets this up;
-  # see docs/md/guide/local-ci.md. If the handler is missing, the arm64 leg fails with
-  # "Exec format error".
+  # Three legs (linux-x64, linux-arm64, win-x64) run the full suite; the fourth
+  # (win-arm64) is compile-and-link only — a Windows-on-ARM PE cannot be executed on
+  # the x64 CI host, so it just cross-compiles and checks the PE machine field. The
+  # arm64 leg executes its binaries inside a genuine aarch64 container
+  # (ashes-ci-arm64), emulated transparently by the host's qemu-user-static
+  # binfmt_misc handler — which must be registered with the F (fix-binary) flag so
+  # emulation crosses into the container and survives the compiler's nested exec of
+  # its output. `scripts/init-local-ci.sh` sets this up; see docs/md/guide/local-ci.md.
+  # If the handler is missing, the arm64 leg fails with "Exec format error".
   local logdir
   logdir="$(mktemp -d)"
-  local -a names=(linux-x64 linux-arm64 win-x64)
+  local -a names=(linux-x64 linux-arm64 win-x64 win-arm64)
   local -a pids=()
 
   _matrix_one base "./artifacts/ashes/linux-x64/ashes" \
@@ -255,6 +257,12 @@ matrix() {
   pids+=("$!")
   _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" \
     >"$logdir/win-x64.log" 2>&1 &
+  pids+=("$!")
+  # win-arm64 is a compile-and-link-only leg (no run leg; see _matrix_win_arm64's
+  # comment). It only cross-compiles with the linux-x64 host CLI and never writes the
+  # shared /work tree, so — unlike fmt — it runs in parallel with the other legs.
+  _matrix_win_arm64 \
+    >"$logdir/win-arm64.log" 2>&1 &
   pids+=("$!")
 
   local failed=() i
@@ -268,11 +276,9 @@ matrix() {
   done
   rm -rf "$logdir"
 
-  # fmt stability — once, sequentially (writes the shared /work tree in place).
+  # fmt stability — once, sequentially (writes the shared /work tree in place, so it
+  # must not race the legs above).
   _matrix_fmt || failed+=("fmt")
-
-  # win-arm64 compile-and-link smoke — once, on the base runner (no run leg; see above).
-  _matrix_win_arm64 || failed+=("win-arm64")
 
   if (( ${#failed[@]} )); then
     echo "Matrix failed for: ${failed[*]}" >&2
