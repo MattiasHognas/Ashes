@@ -4,7 +4,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    // ── Structured parallelism (Ashes.Parallel.both) ────────────────────────────────────────
+    // Structured parallelism (Ashes.Parallel.both)
     //
     // `both(left)(right)` runs `right(Unit)` on a worker thread (linux-x64) while `left(Unit)`
     // runs inline, then joins and returns the pair. The worker gets its own per-thread bump arena
@@ -54,7 +54,7 @@ internal static partial class LlvmCodegen
     // compiled max). The effective fork cap is min(override, compiledMax) when set.
     internal const string ParallelWorkerOverrideName = "__ashes_parallel_override";
 
-    // ── Work-conserving parallel reduce (queued Ashes.Parallel.reduce) ──────────────────────
+    // Work-conserving parallel reduce (queued Ashes.Parallel.reduce)
     //
     // One OS-allocated, zero-initialized region holds the whole queue: a fixed header, the
     // snapshotted list elements, an item slot and a publish-flag word for every node of the
@@ -440,11 +440,11 @@ internal static partial class LlvmCodegen
         var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_fork_done");
         LlvmApi.BuildCondBr(builder, canSpawn, spawnBlock, inlineBlock);
 
-        // ── Spawn path ──────────────────────────────────────────────────────────────────────
+        // Spawn path
         LlvmApi.PositionBuilderAtEnd(builder, spawnBlock);
         EmitParallelForkSpawn(state, desc, mergeBlock);
 
-        // ── Inline fallback path ────────────────────────────────────────────────────────────
+        // Inline fallback path
         LlvmApi.PositionBuilderAtEnd(builder, inlineBlock);
         // Release the slot we speculatively claimed.
         EmitAtomicFetchAdd(state, counterAddr, unchecked((ulong)-1L), "par_release");
@@ -840,7 +840,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, (ulong)ParallelCloneFlags, 0)], "");
     }
 
-    // ── Queued reduce runtime ────────────────────────────────────────────────────────────────
+    // Queued reduce runtime
 
     /// <summary>
     /// Returns a bare runtime state with the win-x64 memory/exit import handles resolved by name
@@ -984,7 +984,7 @@ internal static partial class LlvmCodegen
         QueueDrainCtx ctx = EmitParallelQueueDrainPrologue(state, fn);
         LlvmBasicBlockHandle mergeLoop = EmitParallelQueueDrainFoldLeaves(state, fn, ctx);
 
-        // ── Phase two: pairwise merges ──────────────────────────────────────────────────────
+        // Phase two: pairwise merges
         LlvmApi.PositionBuilderAtEnd(builder, mergeLoop);
         EmitParallelQueueDrainMerge(state, fn, ctx);
     }

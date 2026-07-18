@@ -4,7 +4,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    // ── Ashes.BigInt ─────────────────────────────────────────────────────────
+    // Ashes.BigInt
     // BigInt values are heap pointers to { i64 header = (negFlag<<32)|limbCount, i64 limb[...] },
     // sign-magnitude, base 2^64, little-endian, normalized (zero = header 0, no limbs).
     //
@@ -21,7 +21,7 @@ internal static partial class LlvmCodegen
     private const string BigIntDivModFn = "bignum_divmod";
     private const string BigIntToDecimal = "bignum_to_decimal";
 
-    // ── Call sites (in the current user function): size buffers, then call a helper ──────────────
+    // Call sites (in the current user function): size buffers, then call a helper
 
     private static LlvmValueHandle BigIntAsPtr(LlvmCodegenState state, LlvmValueHandle address, string name)
         => LlvmApi.BuildIntToPtr(state.Target.Builder, address, state.I8Ptr, name);
@@ -208,7 +208,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bi_parse_final");
     }
 
-    // ── Runtime helper emission (once per program that uses BigInt) ──────────────────────────────
+    // Runtime helper emission (once per program that uses BigInt)
     // A tiny builder toolkit (Bi) keeps the ports readable. Every helper is a direct translation of
     // the BigInt semantics. Loop-mutable state lives in entry-block
     // allocas; blocks follow the memcmp/strlen preheader→cond→body→exit idiom (no phi nodes).
@@ -297,7 +297,7 @@ internal static partial class LlvmCodegen
         EmitBiFromDecimal(e);
     }
 
-    // ── Split-helper support records (block/slot bundles keep phase-helper signatures small) ──────
+    // Split-helper support records (block/slot bundles keep phase-helper signatures small)
 
     private readonly record struct EmitBiFromDecimalBlocks(
         LlvmBasicBlockHandle Entry,
@@ -1006,7 +1006,7 @@ internal static partial class LlvmCodegen
         return (m, n);
     }
 
-    // ── Short division: single-digit divisor, one native 64/32 divide per dividend digit ──
+    // Short division: single-digit divisor, one native 64/32 divide per dividend digit
     private static void EmitBiDivModShort(Bi e, LlvmValueHandle fn, LlvmValueHandle a, LlvmValueHandle b, LlvmValueHandle q, LlvmValueHandle r, LlvmValueHandle m, LlvmValueHandle idxSlot, LlvmValueHandle rnSlot, LlvmBasicBlockHandle shortDiv, LlvmBasicBlockHandle finish)
     {
         e.At(shortDiv);
@@ -1034,7 +1034,7 @@ internal static partial class LlvmCodegen
         e.Br(finish);
     }
 
-    // ── Algorithm D proper (n >= 2) ──────────────────────────────────────────────────────
+    // Algorithm D proper (n >= 2)
     private static void EmitBiDivModLong(Bi e, LlvmValueHandle fn, LlvmValueHandle a, LlvmValueHandle b, LlvmValueHandle q, LlvmValueHandle r, LlvmValueHandle scratch, LlvmValueHandle m, LlvmValueHandle n, LlvmValueHandle idxSlot, LlvmValueHandle rnSlot, LlvmBasicBlockHandle longDiv, LlvmBasicBlockHandle finish)
     {
         var (s, rs) = EmitBiDivModLongNlz(e, fn, b, n, longDiv);

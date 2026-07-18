@@ -331,7 +331,7 @@ internal static partial class LlvmCodegen
         return false;
     }
 
-    // ── Async / Task support ──────────────────────────────────────────
+    // Async / Task support
 
     /// <summary>
     /// Zero the run-queue scheduler header slots (<c>ReadyNext</c> / <c>Waiter</c> / <c>ArenaOwner</c>
@@ -1639,7 +1639,7 @@ internal static partial class LlvmCodegen
         return LoadMemory(state, taskPtr, TaskStructLayout.ResultSlot, "sub_task_result");
     }
 
-    // ── Async Sleep ────────────────────────────────────────────
+    // Async Sleep
 
     /// <summary>
     /// EmitAsyncSleep: Create a sleep task.
@@ -1811,7 +1811,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
 
-    // ── Detached tasks (Ashes.Async.spawn) ─────────────────────────
+    // Detached tasks (Ashes.Async.spawn)
     //
     // A spawned task is fire-and-forget: its frame is copied into a private arena chunk (so it
     // survives the spawner's arena resets), it is chained into a global detached list via the
@@ -3425,7 +3425,7 @@ internal static partial class LlvmCodegen
         _ = EmitWindowsWsaPoll(state, pollArrayPtr, totalCount, waitTimeout, prefix + "_wsapoll_wait");
     }
 
-    // ── Async All ──────────────────────────────────────────────
+    // Async All
 
     /// <summary>
     /// EmitAsyncAll: Run all tasks in a list and collect results into a list.
@@ -3647,7 +3647,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, layout.ReverseCheckBlock);
     }
 
-    // ── Async Race ─────────────────────────────────────────────
+    // Async Race
 
     /// <summary>
     /// EmitAsyncRace: Run the first task in a list and return its result.

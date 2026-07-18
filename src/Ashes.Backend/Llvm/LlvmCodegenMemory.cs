@@ -971,7 +971,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
 
-        // ── Count source cells ────────────────────────────────────────
+        // Count source cells
         LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count");
         LlvmApi.BuildStore(builder, zero, countSlot);
         LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_cur");
@@ -1008,7 +1008,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
 
-        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
+        // Cache head values into a scratch buffer (stack when small, OS memory when large)
         var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, prefix + "_head_buf");
         LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, prefix + "_head_buf_ptr");
         LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cache_cur");
@@ -1050,7 +1050,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
         LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
 
-        // ── Build destination list from cached head values ──────────────
+        // Build destination list from cached head values
         // Arena allocations happen here. Source cells are never read again.
         LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_build_idx");
         LlvmApi.BuildStore(builder, zero, buildIdxSlot);

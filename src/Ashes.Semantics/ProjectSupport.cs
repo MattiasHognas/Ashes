@@ -86,7 +86,7 @@ public readonly record struct CombinedCompilationLayout(
 
 public static class ProjectSupport
 {
-    // ── Inline modules (LANGUAGE_SPEC §13.1) ────────────────────────────────────────────────────
+    // Inline modules (LANGUAGE_SPEC §13.1)
     // An inline `module Name = <indented block>` is lifted, before shaping/combination, into a
     // synthetic module whose name is the file-composed path (`File.Name`). Within the defining file
     // a bare qualifier `Name.member` is rewritten to the composed path `File.Name.member`, which the

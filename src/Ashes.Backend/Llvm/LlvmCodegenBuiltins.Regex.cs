@@ -51,7 +51,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = target.Builder;
         var (cursorGlobal, endGlobal) = GetPcre2RegionGlobals(target);
 
-        // ── void *malloc(size_t size) : bump the region, NULL on exhaustion ──
+        // void *malloc(size_t size) : bump the region, NULL on exhaustion
         {
             LlvmTypeHandle mallocType = LlvmApi.FunctionType(i8Ptr, [i64]);
             LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "malloc", mallocType);
@@ -83,7 +83,7 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildRet(builder, LlvmApi.ConstNull(i8Ptr));
         }
 
-        // ── void free(void *ptr) : no-op; the region is reclaimed by cursor restore ──
+        // void free(void *ptr) : no-op; the region is reclaimed by cursor restore
         {
             LlvmTypeHandle freeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(target.Context), [i8Ptr]);
             LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "free", freeType);

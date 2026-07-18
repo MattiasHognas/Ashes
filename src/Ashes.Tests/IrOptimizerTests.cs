@@ -6,7 +6,7 @@ namespace Ashes.Tests;
 
 public sealed class IrOptimizerTests
 {
-    // ── Constant folding tests ──────────────────────────────────────────
+    // Constant folding tests
 
     [Test]
     public void Constant_folding_folds_int_addition()
@@ -88,7 +88,7 @@ public sealed class IrOptimizerTests
             .ShouldBeFalse("CmpIntEq should be eliminated by constant folding.");
     }
 
-    // ── Bitwise and shift constant-folding tests ─────────────────────────
+    // Bitwise and shift constant-folding tests
 
     [Test]
     public void Constant_folding_folds_bitwise_and()
@@ -281,7 +281,7 @@ public sealed class IrOptimizerTests
             .ShouldBeFalse("ShrInt should be eliminated by constant folding.");
     }
 
-    // ── Dead code elimination tests ─────────────────────────────────────
+    // Dead code elimination tests
 
     [Test]
     public void Dead_code_eliminates_unused_constants_from_folding()
@@ -299,7 +299,7 @@ public sealed class IrOptimizerTests
             "Dead LoadConstInt instructions should be eliminated after folding.");
     }
 
-    // ── Observable behavior preservation tests ──────────────────────────
+    // Observable behavior preservation tests
 
     [Test]
     public void Optimized_program_produces_same_output_as_unoptimized_int()
@@ -327,7 +327,7 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("Optimized should still have PrintStr — side effects are preserved.");
     }
 
-    // ── Pass pipeline ordering tests ────────────────────────────────────
+    // Pass pipeline ordering tests
 
     [Test]
     public void Optimizer_runs_on_all_functions()
@@ -360,7 +360,7 @@ public sealed class IrOptimizerTests
         optimized.UsesClosures.ShouldBe(unoptimized.UsesClosures);
     }
 
-    // ── Drop elision tests ──────────────────────────────────────────────
+    // Drop elision tests
 
     [Test]
     public void Drop_elision_removes_non_resource_string_drop()
@@ -557,7 +557,7 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("PrintStr must remain — side effect.");
     }
 
-    // ── Borrow elision tests ────────────────────────────────────────────
+    // Borrow elision tests
 
     [Test]
     public void Borrow_elision_removes_single_use_borrow()
@@ -679,7 +679,7 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("TextUncons should be remapped to the original source temp when the borrow is elided.");
     }
 
-    // ── End-to-end optimization correctness ─────────────────────────────
+    // End-to-end optimization correctness
 
     [Test]
     public async Task Optimized_int_program_runs_and_prints_expected_output()
@@ -776,7 +776,7 @@ public sealed class IrOptimizerTests
         stdout.ShouldBe("ok\n");
     }
 
-    // ── Constant propagation across single-predecessor labels ─────────
+    // Constant propagation across single-predecessor labels
 
     [Test]
     public void Constant_propagation_preserves_constants_across_single_predecessor_label()
@@ -849,7 +849,7 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("AddInt should NOT be folded at multi-predecessor label.");
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────
+    // Helpers
 
     private static IrProgram Lower(string source)
     {

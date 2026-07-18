@@ -2050,7 +2050,7 @@ internal static partial class LlvmCodegen
         EmitBuiltinMemcpyStrlen(target, i8, i64, i8Ptr);
     }
 
-    // ── memcpy(dest, src, n) → dest ──────────────────────────────────
+    // memcpy(dest, src, n) → dest
     private static void EmitBuiltinMemcpyMemcpy(
         LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
     {
@@ -2090,7 +2090,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildRet(target.Builder, dest);
     }
 
-    // ── memset(dest, val, n) → dest ──────────────────────────────────
+    // memset(dest, val, n) → dest
     private static void EmitBuiltinMemcpyMemset(
         LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
     {
@@ -2131,7 +2131,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildRet(target.Builder, dest);
     }
 
-    // ── strlen(s) → length ───────────────────────────────────────────
+    // strlen(s) → length
     private static void EmitBuiltinMemcpyStrlen(
         LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
     {

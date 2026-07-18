@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    // ── Bytes ────────────────────────────────────────────────────────────────
+    // Bytes
     // TBytes has the same heap layout as TStr: [length:i64, data:u8[length]].
     // All helpers that work on TStr (LoadStringLength, GetStringBytesPointer,
     // EmitStringConcat, EmitAllocDynamic, EmitAlloc, etc.) are reused directly.

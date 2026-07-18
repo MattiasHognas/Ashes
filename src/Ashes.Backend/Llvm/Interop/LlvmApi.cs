@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace Ashes.Backend.Llvm.Interop;
 
-// ── Opaque handle types ─────────────────────────────────────────────────
+// Opaque handle types
 public readonly record struct LlvmContextHandle(nint Ptr);
 public readonly record struct LlvmModuleHandle(nint Ptr);
 public readonly record struct LlvmBuilderHandle(nint Ptr);
@@ -17,7 +17,7 @@ public readonly record struct LlvmMetadataHandle(nint Ptr);
 public readonly record struct LlvmPassBuilderOptionsHandle(nint Ptr);
 public readonly record struct LlvmAttributeHandle(nint Ptr);
 
-// ── Enums ───────────────────────────────────────────────────────────────
+// Enums
 public enum LlvmIntPredicate
 {
     Eq = 32, Ne = 33,
@@ -53,7 +53,7 @@ internal static partial class LlvmApi
 {
     private const string Lib = "libLLVM";
 
-    // ── Target initialization ───────────────────────────────────────────
+    // Target initialization
     [LibraryImport(Lib, EntryPoint = "LLVMInitializeX86TargetInfo")]
     public static partial void InitializeX86TargetInfo();
 
@@ -84,7 +84,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMInitializeAArch64AsmPrinter")]
     public static partial void InitializeAArch64AsmPrinter();
 
-    // ── Target lookup & machine ─────────────────────────────────────────
+    // Target lookup & machine
     [LibraryImport(Lib, EntryPoint = "LLVMGetTargetFromTriple", StringMarshalling = StringMarshalling.Utf8)]
     public static partial int GetTargetFromTriple(string triple, out LlvmTargetHandle target, out nint errorMessage);
 
@@ -108,7 +108,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMessage")]
     public static partial void DisposeMessage(nint message);
 
-    // ── Host CPU detection ──────────────────────────────────────────────
+    // Host CPU detection
     [LibraryImport(Lib, EntryPoint = "LLVMGetHostCPUName")]
     private static partial nint GetHostCPUNameRaw();
 
@@ -131,7 +131,7 @@ internal static partial class LlvmApi
         finally { DisposeMessage(ptr); }
     }
 
-    // ── Context & module ────────────────────────────────────────────────
+    // Context & module
     [LibraryImport(Lib, EntryPoint = "LLVMContextCreate")]
     public static partial LlvmContextHandle ContextCreate();
 
@@ -150,7 +150,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeModule")]
     public static partial void DisposeModule(LlvmModuleHandle module);
 
-    // ── Builder ─────────────────────────────────────────────────────────
+    // Builder
     [LibraryImport(Lib, EntryPoint = "LLVMCreateBuilderInContext")]
     public static partial LlvmBuilderHandle CreateBuilderInContext(LlvmContextHandle context);
 
@@ -166,7 +166,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeBuilder")]
     public static partial void DisposeBuilder(LlvmBuilderHandle builder);
 
-    // ── Types ───────────────────────────────────────────────────────────
+    // Types
     [LibraryImport(Lib, EntryPoint = "LLVMInt8TypeInContext")]
     public static partial LlvmTypeHandle Int8TypeInContext(LlvmContextHandle context);
 
@@ -201,7 +201,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMArrayType2")]
     public static partial LlvmTypeHandle ArrayType2(LlvmTypeHandle elementType, ulong elementCount);
 
-    // ── Type inspection ─────────────────────────────────────────────────
+    // Type inspection
     [LibraryImport(Lib, EntryPoint = "LLVMTypeOf")]
     public static partial LlvmTypeHandle TypeOf(LlvmValueHandle value);
 
@@ -211,7 +211,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetIntTypeWidth")]
     public static partial uint GetIntTypeWidth(LlvmTypeHandle type);
 
-    // ── Constants ───────────────────────────────────────────────────────
+    // Constants
     [LibraryImport(Lib, EntryPoint = "LLVMConstInt")]
     public static partial LlvmValueHandle ConstInt(LlvmTypeHandle type, ulong value, int signExtend);
 
@@ -238,7 +238,7 @@ internal static partial class LlvmApi
         string constraints, nint constraintsLen,
         int hasSideEffects, int isAlignStack, int dialect, int canThrow);
 
-    // ── Globals & functions ─────────────────────────────────────────────
+    // Globals & functions
     [LibraryImport(Lib, EntryPoint = "LLVMAddFunction", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle AddFunction(LlvmModuleHandle module, string name, LlvmTypeHandle type);
 
@@ -275,7 +275,7 @@ internal static partial class LlvmApi
     public static partial LlvmBasicBlockHandle AppendBasicBlockInContext(
         LlvmContextHandle context, LlvmValueHandle function, string name);
 
-    // ── Arithmetic instructions ─────────────────────────────────────────
+    // Arithmetic instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildAdd", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildAdd(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
@@ -297,7 +297,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildURem", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildURem(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
-    // ── Floating-point instructions ─────────────────────────────────────
+    // Floating-point instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildFAdd", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildFAdd(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
@@ -310,7 +310,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildFDiv", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildFDiv(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
-    // ── Bitwise instructions ────────────────────────────────────────────
+    // Bitwise instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildAnd", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildAnd(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
@@ -329,14 +329,14 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildAShr", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildAShr(LlvmBuilderHandle b, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
-    // ── Comparison instructions ─────────────────────────────────────────
+    // Comparison instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildICmp", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildICmp(LlvmBuilderHandle b, LlvmIntPredicate op, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
     [LibraryImport(Lib, EntryPoint = "LLVMBuildFCmp", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildFCmp(LlvmBuilderHandle b, LlvmRealPredicate op, LlvmValueHandle lhs, LlvmValueHandle rhs, string name);
 
-    // ── Conversion instructions ─────────────────────────────────────────
+    // Conversion instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildSExt", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildSExt(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
 
@@ -367,7 +367,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildBitCast", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildBitCast(LlvmBuilderHandle b, LlvmValueHandle val, LlvmTypeHandle destType, string name);
 
-    // ── Memory instructions ─────────────────────────────────────────────
+    // Memory instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildAlloca", StringMarshalling = StringMarshalling.Utf8)]
     public static partial LlvmValueHandle BuildAlloca(LlvmBuilderHandle b, LlvmTypeHandle type, string name);
 
@@ -390,7 +390,7 @@ internal static partial class LlvmApi
         LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr,
         LlvmValueHandle* indices, uint numIndices, string name);
 
-    // ── Call & select ───────────────────────────────────────────────────
+    // Call & select
     [LibraryImport(Lib, EntryPoint = "LLVMBuildCall2", StringMarshalling = StringMarshalling.Utf8)]
     private static unsafe partial LlvmValueHandle BuildCall2Raw(
         LlvmBuilderHandle b, LlvmTypeHandle fnType, LlvmValueHandle fn,
@@ -400,7 +400,7 @@ internal static partial class LlvmApi
     public static partial LlvmValueHandle BuildSelect(
         LlvmBuilderHandle b, LlvmValueHandle cond, LlvmValueHandle thenVal, LlvmValueHandle elseVal, string name);
 
-    // ── Control flow instructions ───────────────────────────────────────
+    // Control flow instructions
     [LibraryImport(Lib, EntryPoint = "LLVMBuildBr")]
     public static partial LlvmValueHandle BuildBr(LlvmBuilderHandle b, LlvmBasicBlockHandle dest);
 
@@ -424,11 +424,11 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMBuildUnreachable")]
     public static partial LlvmValueHandle BuildUnreachable(LlvmBuilderHandle b);
 
-    // ── Tail call support ───────────────────────────────────────────────
+    // Tail call support
     [LibraryImport(Lib, EntryPoint = "LLVMSetTailCall")]
     public static partial void SetTailCall(LlvmValueHandle callInst, int isTailCall);
 
-    // ── Function attributes ─────────────────────────────────────────────
+    // Function attributes
     [LibraryImport(Lib, EntryPoint = "LLVMGetEnumAttributeKindForName", StringMarshalling = StringMarshalling.Utf8)]
     private static partial uint GetEnumAttributeKindForNameRaw(string name, nint nameLen);
 
@@ -469,15 +469,15 @@ internal static partial class LlvmApi
         }
     }
 
-    // ── Debugging ───────────────────────────────────────────────────────
+    // Debugging
     [LibraryImport(Lib, EntryPoint = "LLVMPrintModuleToString")]
     public static partial nint PrintModuleToString(LlvmModuleHandle module);
 
-    // ── Verification ────────────────────────────────────────────────────
+    // Verification
     [LibraryImport(Lib, EntryPoint = "LLVMVerifyModule")]
     public static partial int VerifyModule(LlvmModuleHandle module, LlvmVerifierFailureAction action, out nint outMessage);
 
-    // ── Code emission ───────────────────────────────────────────────────
+    // Code emission
     [LibraryImport(Lib, EntryPoint = "LLVMTargetMachineEmitToMemoryBuffer")]
     public static partial int TargetMachineEmitToMemoryBuffer(
         LlvmTargetMachineHandle machine, LlvmModuleHandle module,
@@ -492,7 +492,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMemoryBuffer")]
     public static partial void DisposeMemoryBuffer(nint memBuf);
 
-    // ── Module linking (used to embed openlibm bitcode into the program module) ──
+    // Module linking (used to embed openlibm bitcode into the program module)
     [LibraryImport(Lib, EntryPoint = "LLVMCreateMemoryBufferWithMemoryRangeCopy", StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint CreateMemoryBufferWithMemoryRangeCopyRaw(nint inputData, nuint inputDataLength, string bufferName);
 
@@ -531,7 +531,7 @@ internal static partial class LlvmApi
         }
     }
 
-    // ── Safe convenience wrappers ───────────────────────────────────────
+    // Safe convenience wrappers
 
     public static LlvmTypeHandle FunctionType(LlvmTypeHandle returnType, ReadOnlySpan<LlvmTypeHandle> paramTypes, int isVarArg = 0)
     {
@@ -613,7 +613,7 @@ internal static partial class LlvmApi
             hasSideEffects ? 1 : 0, isAlignStack ? 1 : 0, 0, 0);
     }
 
-    // ── Debug Info (DWARF) ──────────────────────────────────────────────
+    // Debug Info (DWARF)
 
     [LibraryImport(Lib, EntryPoint = "LLVMCreateDIBuilder")]
     public static partial LlvmDIBuilderHandle CreateDIBuilder(LlvmModuleHandle module);
@@ -862,7 +862,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMMetadataAsValue")]
     public static partial LlvmValueHandle MetadataAsValue(LlvmContextHandle context, LlvmMetadataHandle md);
 
-    // ── LLVM New Pass Manager ─────────────────────────────────────────
+    // LLVM New Pass Manager
 
     /// <summary>
     /// Run a pipeline of LLVM passes on the module.
@@ -886,7 +886,7 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMPassBuilderOptionsSetDebugLogging")]
     public static partial void PassBuilderOptionsSetDebugLogging(LlvmPassBuilderOptionsHandle options, int debugLogging);
 
-    // ── Constants for debug info ────────────────────────────────────────
+    // Constants for debug info
 
     /// <summary>User-defined DWARF language code for Ashes (DW_LANG_lo_user + 1).</summary>
     public const uint DwarfLangAshes = 0x8001;

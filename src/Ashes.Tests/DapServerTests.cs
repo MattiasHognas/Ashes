@@ -7,7 +7,7 @@ namespace Ashes.Tests;
 
 public sealed class DapServerTests
 {
-    // ── Transport tests ─────────────────────────────────────────────────
+    // Transport tests
 
     [Test]
     public async Task Transport_can_read_and_write_messages()
@@ -83,7 +83,7 @@ public sealed class DapServerTests
         result.ShouldBeNull();
     }
 
-    // ── Server integration tests ────────────────────────────────────────
+    // Server integration tests
 
     [Test]
     public async Task Server_responds_to_initialize_with_capabilities()
@@ -190,7 +190,7 @@ public sealed class DapServerTests
         bpResponse.GetProperty("body").GetProperty("breakpoints").GetArrayLength().ShouldBe(1);
     }
 
-    // ── Protocol type tests ─────────────────────────────────────────────
+    // Protocol type tests
 
     [Test]
     public void DapRequest_serializes_correctly()
@@ -235,7 +235,7 @@ public sealed class DapServerTests
         caps.SupportsFunctionBreakpoints.ShouldBeFalse();
     }
 
-    // ── Backend selection and integration tests ────────────────────────
+    // Backend selection and integration tests
 
     [Test]
     public void CreateBackend_defaults_to_gdb_for_null()
@@ -517,7 +517,7 @@ public sealed class DapServerTests
         variables[1].GetProperty("type").GetString().ShouldBe("List<Int> *");
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────
+    // Helpers
 
     private static string CreateRequest(int seq, string command, JsonElement? arguments = null)
     {

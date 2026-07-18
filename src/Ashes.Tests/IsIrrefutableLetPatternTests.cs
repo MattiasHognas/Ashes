@@ -5,7 +5,7 @@ namespace Ashes.Tests;
 
 public sealed class IsIrrefutableLetPatternTests
 {
-    // ────── Irrefutable patterns (should return true) ──────
+    // Irrefutable patterns (should return true)
 
     [Test]
     public void Var_pattern_is_irrefutable()
@@ -76,7 +76,7 @@ public sealed class IsIrrefutableLetPatternTests
         Parser.IsIrrefutableLetPattern(pattern).ShouldBeTrue();
     }
 
-    // ────── Refutable patterns (should return false) ──────
+    // Refutable patterns (should return false)
 
     [Test]
     public void IntLit_pattern_is_refutable()
@@ -165,7 +165,7 @@ public sealed class IsIrrefutableLetPatternTests
         Parser.IsIrrefutableLetPattern(pattern).ShouldBeFalse();
     }
 
-    // ────── Integration: parser rejects refutable let-patterns ──────
+    // Integration: parser rejects refutable let-patterns
 
     [Test]
     public void Let_tuple_pattern_parses_without_error()
