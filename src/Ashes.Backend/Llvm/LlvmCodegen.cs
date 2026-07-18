@@ -144,9 +144,9 @@ internal static partial class LlvmCodegen
     private const int TlsErrorWantRead = 2;
     private const int TlsErrorWantWrite = 3;
     private const int TlsErrorZeroReturn = 6;
-    private const string FileReadFailedMessage = "Ashes.File.readText() failed";
-    private const string FileWriteFailedMessage = "Ashes.File.writeText() failed";
-    private const string FileReadInvalidUtf8Message = "Ashes.File.readText() encountered invalid UTF-8";
+    private const string FileReadFailedMessage = "Ashes.IO.File.readText() failed";
+    private const string FileWriteFailedMessage = "Ashes.IO.File.writeText() failed";
+    private const string FileReadInvalidUtf8Message = "Ashes.IO.File.readText() encountered invalid UTF-8";
     private const string TextParseIntInvalidMessage = "Ashes.Text.parseInt() invalid input";
     private const string TextParseIntOverflowMessage = "Ashes.Text.parseInt() overflow";
     private const string TextParseFloatInvalidMessage = "Ashes.Text.parseFloat() invalid input";
@@ -435,6 +435,23 @@ internal static partial class LlvmCodegen
         }
     }
 
+    /// <summary>
+    /// Marker consumed by EmitBytesIndexOf: when the TLS runtime already makes this image
+    /// dynamically linked against glibc, Byte.indexOf may use glibc's SIMD memchr for free;
+    /// otherwise it emits the freestanding SWAR scan so the image stays fully static.
+    /// </summary>
+    private static void EmitGlibcRuntimeMarker(LlvmTargetContext target, LlvmCodegenFlavor flavor, bool usesTlsRuntime, LlvmTypeHandle i8)
+    {
+        if (!usesTlsRuntime || flavor == LlvmCodegenFlavor.WindowsX64)
+        {
+            return;
+        }
+
+        LlvmValueHandle glibcMarker = LlvmApi.AddGlobal(target.Module, i8, "__ashes_glibc_runtime");
+        LlvmApi.SetInitializer(glibcMarker, LlvmApi.ConstInt(i8, 1, 0));
+        LlvmApi.SetLinkage(glibcMarker, LlvmLinkage.Internal);
+    }
+
     private static void EmitProgramModule(
         LlvmTargetContext target,
         IrProgram program,
@@ -472,7 +489,9 @@ internal static partial class LlvmCodegen
         EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
         EmitBuiltinBcmp(target, i8, i64, i8Ptr);
 
-        // Emit the Ashes.BigInt arbitrary-precision runtime helpers as LLVM IR (like the
+        EmitGlibcRuntimeMarker(target, flavor, usesTlsRuntime, i8);
+
+        // Emit the Ashes.Number.BigInt arbitrary-precision runtime helpers as LLVM IR (like the
         // freestanding memcmp/strlen helpers) when the program uses BigInt.
         if (ProgramUsesBigIntRuntimeAbi(program))
         {
@@ -480,7 +499,7 @@ internal static partial class LlvmCodegen
         }
 
         // Emit the malloc/free the linked PCRE2 payload calls (a bump allocator over the lazily
-        // OS-allocated regex region) when the program uses Ashes.Regex.
+        // OS-allocated regex region) when the program uses Ashes.Text.Regex.
         if (ProgramUsesRegexRuntimeAbi(program))
         {
             EmitPcre2Allocator(target, i64, i8Ptr);
@@ -948,7 +967,7 @@ internal static partial class LlvmCodegen
     {
         // serve's fork-based multi-reactor (forkWorkers) resolves its worker count via the shared
         // effective-cap function, so it honors the same --parallel-workers cap and withWorkers
-        // override as Ashes.Parallel. The fork step function is part of the always-emitted networking
+        // override as Ashes.Task.Parallel. The fork step function is part of the always-emitted networking
         // step table, and on Linux its body calls the cap function, so the cap globals/fn must exist
         // for every Linux networking program (not only ones that use forkWorkers). Emit them
         // (idempotent — the parallel runtime below reuses them) before the networking runtime. Windows
@@ -1226,7 +1245,7 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// When the program uses Ashes.Regex, parses the vendored PCRE2 8-bit bitcode and links it into
+    /// When the program uses Ashes.Text.Regex, parses the vendored PCRE2 8-bit bitcode and links it into
     /// the program module so the pcre2_* symbols resolve internally — no dynamic import, no runtime
     /// dependency. The payload's only external symbols are malloc/free (routed to the PCRE2 region
     /// emitted by <see cref="EmitPcre2Allocator"/>) and memcpy/memset (the module's own builtins).
@@ -1700,7 +1719,7 @@ internal static partial class LlvmCodegen
             // SpawnTask: detach a task (fire-and-forget); it advances while drivers wait.
             IrInst.SpawnTask spawnTask => StoreTemp(state, spawnTask.Target,
                 EmitSpawnTask(state, LoadTemp(state, spawnTask.TaskTemp))),
-            // Structured parallelism (Ashes.Parallel.both).
+            // Structured parallelism (Ashes.Task.Parallel.both).
             IrInst.ParallelFork parallelFork => StoreTemp(state, parallelFork.DescTarget,
                 EmitParallelFork(state, LoadTemp(state, parallelFork.RightClosureTemp))),
             IrInst.ParallelJoin parallelJoin => StoreTemp(state, parallelJoin.ResultTarget,
@@ -1713,7 +1732,7 @@ internal static partial class LlvmCodegen
                     LlvmApi.GetNamedGlobal(state.Target.Module, ParallelWorkerOverrideName), $"load_worker_override_{loadOverride.Target}")),
             IrInst.StoreParallelWorkerOverride storeOverride =>
                 StoreParallelWorkerOverrideGlobal(state, LoadTemp(state, storeOverride.Source)),
-            // Work-conserving parallel reduce (queued Ashes.Parallel.reduce).
+            // Work-conserving parallel reduce (queued Ashes.Task.Parallel.reduce).
             IrInst.ParallelQueueStart parallelQueueStart => StoreTemp(state, parallelQueueStart.DescTarget,
                 EmitParallelQueueStart(state, LoadTemp(state, parallelQueueStart.FClosureTemp),
                     LoadTemp(state, parallelQueueStart.CombineClosureTemp), LoadTemp(state, parallelQueueStart.ListTemp))),

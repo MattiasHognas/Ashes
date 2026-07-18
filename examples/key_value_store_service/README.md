@@ -71,7 +71,7 @@ Each check prints an `ok - ...` line and the run ends with `all tests passed`.
   Real Redis is also a single-threaded loop, though it multiplexes clients;
   doing that here would need per-connection interleaving with shared state.
 - The store is a plain association list to keep the example self-contained
-  (`Ashes.Map`/`Ashes.HashMap` currently have no remove operation, and stitched
+  (`Ashes.Collection.Map`/`Ashes.Collection.HashMap` currently have no remove operation, and stitched
   stdlib functions are single shared instances across a program).
 - `KEYS` supports `*` and exact-match patterns only, and RESP bulk lengths are
   treated as character counts, so multi-byte UTF-8 values are not

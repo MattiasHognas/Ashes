@@ -1,8 +1,8 @@
-// Ashes.List.sortBy: comparator-based merge sort (O(n log n), stable via alternating split). The
+// Ashes.Collection.List.sortBy: comparator-based merge sort (O(n log n), stable via alternating split). The
 // benchmarks (k-nucleotide) had to hand-write this; it now ships in the stdlib. `before(a)(b)` is true
 // when a should not come after b.
 // expect: 0,1,2,3,4,5,6,7,8,9, | 9,8,7,5,3,1, |  | 42,
-import Ashes.List as list
+import Ashes.Collection.List as list
 import Ashes.IO as io
 import Ashes.Text as text
 let recursive show xs =

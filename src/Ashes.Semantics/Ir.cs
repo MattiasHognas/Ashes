@@ -128,19 +128,19 @@ public abstract record IrInst
     public sealed record CmpFloatEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpFloatNe(int Target, int Left, int Right) : IrInst;
 
-    // Ashes.Math numeric conversions and Float unary intrinsics (Layer 1).
+    // Ashes.Number.Math numeric conversions and Float unary intrinsics (Layer 1).
     // IntToFloat is sitofp; FloatToInt is fptosi (truncates toward zero). FloatUnaryIntrinsic
     // lowers to a call to the named LLVM math intrinsic (e.g. "llvm.sqrt.f64").
     public sealed record IntToFloat(int Target, int ValueTemp) : IrInst;
     public sealed record FloatToInt(int Target, int ValueTemp) : IrInst;
     public sealed record FloatUnaryIntrinsic(int Target, int ValueTemp, string LlvmIntrinsic) : IrInst;
 
-    // Ashes.Math Layer-2 transcendental: a call to an openlibm symbol (e.g. "sin", "pow"). All
+    // Ashes.Number.Math Layer-2 transcendental: a call to an openlibm symbol (e.g. "sin", "pow"). All
     // arguments and the result are Float (f64). The openlibm bitcode is linked into the module when
     // the program uses any of these (ProgramUsesMathRuntimeAbi), so the symbol resolves internally.
     public sealed record CallLibm(int Target, string Symbol, IReadOnlyList<int> Args) : IrInst;
 
-    // Ashes.BigInt operations, backed by emitted LLVM-IR runtime helpers.
+    // Ashes.Number.BigInt operations, backed by emitted LLVM-IR runtime helpers.
     // BigInt values are heap pointers (i64). The codegen pre-sizes result buffers from operand limb
     // counts and calls the allocation-free C helpers.
     public sealed record BigIntFromInt(int Target, int ValueTemp) : IrInst;      // Int -> BigInt
@@ -168,7 +168,7 @@ public abstract record IrInst
     // is reclaimed there).
     public sealed record ConcatStrTip(int Target, int Left, int Right, int ResvStartSlot, int ResvEndSlot) : IrInst;
 
-    // Ashes.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
+    // Ashes.Text.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
     // internally. A compiled pattern (pcre2_code*) lives in a persistent mmap-backed region that the
     // arena never relocates, so a Regex value is a stable i64 handle to it. Per-match scratch is
@@ -273,7 +273,7 @@ public abstract record IrInst
     public sealed record NetTcpListen(int Target, int PortTemp) : IrInst;
     public sealed record NetTcpAccept(int Target, int SocketTemp) : IrInst;
 
-    // Ashes.Bytes operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
+    // Ashes.Byte operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
     public sealed record BytesEmpty(int Target) : IrInst;
     public sealed record BytesSingleton(int Target, int ByteTemp) : IrInst;
     public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
@@ -295,7 +295,7 @@ public abstract record IrInst
     public sealed record BytesGetU64Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record FileWriteBytes(int Target, int PathTemp, int BytesTemp) : IrInst;
 
-    // Ashes.Process operations. ProcessRef is a pointer to {stdin_fd, stdout_fd, stderr_fd, pid} (32 bytes).
+    // Ashes.IO.Process operations. ProcessRef is a pointer to {stdin_fd, stdout_fd, stderr_fd, pid} (32 bytes).
     public sealed record SpawnProcess(int Target, int ExeTemp, int ArgsTemp) : IrInst;
     public sealed record ProcessWriteStdin(int Target, int ProcessTemp, int TextTemp) : IrInst;
     public sealed record ProcessReadStdoutLine(int Target, int ProcessTemp) : IrInst;
@@ -533,7 +533,7 @@ public abstract record IrInst
     }
 
     /// <summary>
-    /// Creates an already-completed Task value. Used by Ashes.Async.fromResult
+    /// Creates an already-completed Task value. Used by Ashes.Task.fromResult
     /// to wrap a value in a task without needing a coroutine function.
     /// The task struct has state_index = -1 (COMPLETED) and the result stored directly.
     /// </summary>
@@ -547,12 +547,12 @@ public abstract record IrInst
 
     /// <summary>
     /// Synchronously runs a task to completion, returning the result value.
-    /// Used by Ashes.Async.run to drive a coroutine outside an async context.
+    /// Used by Ashes.Task.run to drive a coroutine outside an async context.
     /// </summary>
     public sealed record RunTask(int Target, int TaskTemp) : IrInst;
 
     /// <summary>
-    /// Detaches a task for fire-and-forget cooperative execution (Ashes.Async.spawn).
+    /// Detaches a task for fire-and-forget cooperative execution (Ashes.Task.spawn).
     /// The task frame is copied into a fresh private arena chunk and appended to the runtime's
     /// detached-task list; the scheduler steps detached tasks (with their private arena installed)
     /// whenever a driver blocks waiting for a pending leaf, and frees the private arena when the
@@ -561,7 +561,7 @@ public abstract record IrInst
     public sealed record SpawnTask(int Target, int TaskTemp) : IrInst;
 
     /// <summary>
-    /// Structured parallelism (Ashes.Parallel.both). Spawns a worker thread to evaluate the
+    /// Structured parallelism (Ashes.Task.Parallel.both). Spawns a worker thread to evaluate the
     /// <c>RightClosureTemp</c> thunk (applied to Unit) in its own per-thread arena, or — when
     /// the worker budget is exhausted — evaluates it inline. <c>DescTarget</c> receives a
     /// pointer to a heap-allocated task descriptor used by the matching <see cref="ParallelJoin"/>
@@ -586,7 +586,7 @@ public abstract record IrInst
 
     /// <summary>
     /// Loads the current dynamically-scoped worker override (the runtime global set by
-    /// <c>Ashes.Parallel.withWorkers</c>); 0 means "unset — use the compiled max". Used by
+    /// <c>Ashes.Task.Parallel.withWorkers</c>); 0 means "unset — use the compiled max". Used by
     /// <c>withWorkers</c> lowering to save/restore the enclosing scope's value.
     /// </summary>
     public sealed record LoadParallelWorkerOverride(int Target) : IrInst;
@@ -595,7 +595,7 @@ public abstract record IrInst
     public sealed record StoreParallelWorkerOverride(int Source) : IrInst;
 
     /// <summary>
-    /// Work-conserving parallel reduce (queued lowering of Ashes.Parallel.reduce). Snapshots the
+    /// Work-conserving parallel reduce (queued lowering of Ashes.Task.Parallel.reduce). Snapshots the
     /// list elements into a shared queue region, spawns up to the worker-cap worker threads that
     /// pull element indexes from a shared atomic counter, record <c>f(element)</c> per index, and
     /// then merge the results pairwise through <c>combine</c> — adjacent index pairs per round,
@@ -644,7 +644,7 @@ public abstract record IrInst
     /// <summary>
     /// Creates a sleep task that completes after the given number of milliseconds.
     /// Returns a Task(Str, Int) that suspends and resumes after the timeout.
-    /// Used by Ashes.Async.sleep.
+    /// Used by Ashes.Task.sleep.
     /// </summary>
     public sealed record AsyncSleep(int Target, int MillisecondsTemp) : IrInst;
 
@@ -751,14 +751,14 @@ public abstract record IrInst
     /// <summary>
     /// Runs all tasks in a list to completion and collects results into a list.
     /// Returns a completed Task(E, List(A)) containing all result values.
-    /// Used by Ashes.Async.all.
+    /// Used by Ashes.Task.all.
     /// </summary>
     public sealed record AsyncAll(int Target, int TaskListTemp) : IrInst;
 
     /// <summary>
     /// Runs the first task in a list to completion and returns its result.
     /// Returns a completed Task(E, A) with the first task's result value.
-    /// Used by Ashes.Async.race.
+    /// Used by Ashes.Task.race.
     /// </summary>
     public sealed record AsyncRace(int Target, int TaskListTemp) : IrInst;
 
@@ -886,14 +886,14 @@ public static class TaskStructLayout
     /// <summary>State index value indicating a leaf server-side TLS handshake task.</summary>
     public const long StateTlsServerHandshake = -24;
     /// <summary>
-    /// Run-queue composite task: <c>Ashes.Async.all</c>. Holds the child task list in <c>IoArg0</c>,
+    /// Run-queue composite task: <c>Ashes.Task.all</c>. Holds the child task list in <c>IoArg0</c>,
     /// a phase flag in <c>IoArg1</c> (0 = children not yet enqueued, 1 = enqueued), and a pending
     /// child counter in <c>WaitData0</c> (decremented by each child's completion; the composite is
     /// re-enqueued and collects results when it reaches 0).
     /// </summary>
     public const long StateAllComposite = -40;
     /// <summary>
-    /// Run-queue composite task: <c>Ashes.Async.race</c>. Holds the child list in <c>IoArg0</c>, a
+    /// Run-queue composite task: <c>Ashes.Task.race</c>. Holds the child list in <c>IoArg0</c>, a
     /// phase flag in <c>IoArg1</c>, and a resolved flag in <c>WaitData0</c> (0 until the first child
     /// completes, whose result is delivered to the composite's <c>ResultSlot</c> and which re-enqueues
     /// the composite; later child completions are ignored).

@@ -319,7 +319,7 @@ public sealed partial class Lowering
     // concrete-result-typed `both` primitive, so a monomorphic specialization at a concrete element type
     // lets `both` genuinely fork (the polymorphic copy runs sequentially). `map`/`reduce` are the grain-1
     // wrappers — a saturated call to one routes to the corresponding grained combinator with grain = 1.
-    private static readonly string ParallelModulePrefix = ProjectSupport.SanitizeModuleBindingName("Ashes.Parallel");
+    private static readonly string ParallelModulePrefix = ProjectSupport.SanitizeModuleBindingName("Ashes.Task.Parallel");
     private static readonly string ParallelMapName = ParallelModulePrefix + "_map";
     private static readonly string ParallelReduceName = ParallelModulePrefix + "_reduce";
     private static readonly string ParallelMapGrainedName = ParallelModulePrefix + "_mapGrained";
@@ -3392,7 +3392,7 @@ public sealed partial class Lowering
         // Indirect in-place reuse: f(acc) where f is a specializable recursive function and acc is a
         // loop accumulator we deep-copied to uniqueness at loop entry. Route to f$reuse, which rewrites
         // the unique tree in place. The accumulator is dead after this call (it's the loop's only use).
-        // f may be a plain Var or a qualified stdlib reference (Ashes.Map.set → Ashes_Map_set).
+        // f may be a plain Var or a qualified stdlib reference (Ashes.Collection.Map.set → Ashes_Map_set).
         if (ResolveSpecializableCalleeName(rootExpr) is { } specName
             && _specializableFunctions.TryGetValue(specName, out var specInfo)
             && collectedArgs.Count == specInfo.ArgCount
@@ -3455,7 +3455,7 @@ public sealed partial class Lowering
     // top-level function the specialization didn't capture).
     // The callee may be a plain Var (module code, where the stitcher already rewrote member
     // references to flat names) or a qualified stdlib reference from user code
-    // (Ashes.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
+    // (Ashes.Collection.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
     // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
     // isolated scope where only inline/by-label resolution works.
     private (int, TypeRef)? LowerCallTryReuseInlineForm(Expr rootExpr, List<Expr> collectedArgs)
@@ -3765,12 +3765,12 @@ public sealed partial class Lowering
         IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
         IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
         IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-        IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
-        IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
-        IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
-        IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
-        IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
-        IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
+        IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false),
+        IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false),
+        IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false),
+        IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false),
+        IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false),
+        IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
         IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
         IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
         IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
@@ -3830,14 +3830,14 @@ public sealed partial class Lowering
         IntrinsicKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
         IntrinsicKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
         IntrinsicKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
-        IntrinsicKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
-        IntrinsicKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
-        IntrinsicKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
-        IntrinsicKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
-        IntrinsicKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
-        IntrinsicKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
-        IntrinsicKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
-        IntrinsicKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
+        IntrinsicKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.sqrt", "llvm.sqrt.f64"),
+        IntrinsicKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.floor", "llvm.floor.f64"),
+        IntrinsicKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.ceil", "llvm.ceil.f64"),
+        IntrinsicKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.round", "llvm.round.f64"),
+        IntrinsicKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.trunc", "llvm.trunc.f64"),
+        IntrinsicKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.floorToInt", "llvm.floor.f64"),
+        IntrinsicKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.roundToInt", "llvm.round.f64"),
+        IntrinsicKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.truncToInt", null),
         IntrinsicKind k when LibmIntrinsics.ContainsKey(k) => LowerLibm(k, collectedArgs),
         IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
         IntrinsicKind.ReadExact => LowerReadExact(collectedArgs[0]),
@@ -3917,12 +3917,12 @@ public sealed partial class Lowering
         BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
+        BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
         BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
         BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
@@ -3981,14 +3981,14 @@ public sealed partial class Lowering
         BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
-        BuiltinRegistry.BuiltinValueKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
+        BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.sqrt", "llvm.sqrt.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.floor", "llvm.floor.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.ceil", "llvm.ceil.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.round", "llvm.round.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.trunc", "llvm.trunc.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.floorToInt", "llvm.floor.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.roundToInt", "llvm.round.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Number.Math.truncToInt", null),
         BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerLibm(libmKind, collectedArgs),
         BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
         BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerReadExact(collectedArgs[0]),
@@ -4718,7 +4718,7 @@ public sealed partial class Lowering
 
         // An intrinsic member (Ashes.IO.print, Ashes.Text.uncons, ...) lowers directly
         // to a builtin and introduces no free variable. A SHIPPED-helper or user-module
-        // member (Ashes.String.indexOf, Ashes.Map.get, ...) lowers to a stitched
+        // member (Ashes.Text.indexOf, Ashes.Collection.Map.get, ...) lowers to a stitched
         // top-level binding `Module_name`; when such a reference appears inside a lambda
         // body it IS a free variable that the closure must capture, otherwise the
         // synthesized binding is out of scope inside the lambda and resolution fails with

@@ -19,12 +19,12 @@ It is a regular-expression throughput benchmark over a multi-megabyte string.
 
 ## Intended Ashes approach
 
-Use the shipped `Ashes.Regex` module to match/count and substitute over the cleaned
+Use the shipped `Ashes.Text.Regex` module to match/count and substitute over the cleaned
 sequence. Threading the whole input as one large `Str`.
 
 ## What it probes (expected flaws)
 
-- **`Ashes.Regex` engine under load** — alternations and character classes matched against a
+- **`Ashes.Text.Regex` engine under load** — alternations and character classes matched against a
   multi-MB input, repeated for eight patterns. Probes the self-hosted regex's time and memory
   behaviour at a scale unit tests don't reach; likely surfaces allocation/leak and
   backtracking-cost issues.
@@ -40,7 +40,7 @@ cap noted in 1BRC #1 — large inputs may need the chunked file API rather than 
 ## Status
 
 **Implemented + benchmarked.** [`regex-redux.ash`](regex-redux.ash) runs the canonical workload on
-`Ashes.Regex` (hermetic PCRE2): strip FASTA headers/newlines, count the nine variant patterns, then
+`Ashes.Text.Regex` (hermetic PCRE2): strip FASTA headers/newlines, count the nine variant patterns, then
 apply the five substitution passes and print the three lengths. Writing it originally surfaced the
 chained->4 MiB-allocation OOM (~28 GB) — fixed by variable-sized heap chunks; the whole chain now
 runs in bounded memory.

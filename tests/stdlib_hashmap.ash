@@ -1,25 +1,25 @@
 // expect: ok
-import Ashes.HashMap
+import Ashes.Collection.HashMap
 import Ashes.IO
-let m = Ashes.HashMap.set("zebra")(26)(Ashes.HashMap.set("apple")(1)(Ashes.HashMap.set("mango")(13)(Ashes.HashMap.set("apple")(99)(Ashes.HashMap.empty))))
+let m = Ashes.Collection.HashMap.set("zebra")(26)(Ashes.Collection.HashMap.set("apple")(1)(Ashes.Collection.HashMap.set("mango")(13)(Ashes.Collection.HashMap.set("apple")(99)(Ashes.Collection.HashMap.empty))))
 
 let appleVal =
-    match Ashes.HashMap.get("apple")(m) with
+    match Ashes.Collection.HashMap.get("apple")(m) with
         | Some(v) -> v
         | None -> -1
 
 let summary =
-    Ashes.HashMap.foldLeft(given (acc) ->
+    Ashes.Collection.HashMap.foldLeft(given (acc) ->
         given (_k) ->
             given (v) -> acc + v)(0)(m)
 in
-    if Ashes.HashMap.size(m) == 3
+    if Ashes.Collection.HashMap.size(m) == 3
     then
         if appleVal == 1
         then
-            if Ashes.HashMap.contains("mango")(m)
+            if Ashes.Collection.HashMap.contains("mango")(m)
             then
-                if Ashes.HashMap.contains("nope")(m)
+                if Ashes.Collection.HashMap.contains("nope")(m)
                 then Ashes.IO.print("fail-contains")
                 else
                     if summary == 40

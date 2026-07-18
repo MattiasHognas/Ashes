@@ -5,12 +5,12 @@
 // `serve` is parallel by default: it runs one independent reactor per online CPU (a fork-based
 // multi-reactor), so an endpoint scales across cores without the program choosing a worker count.
 // Each reactor binds the port, then loops accepting connections, spawning the handler on each
-// (Ashes.Async.spawn), so a slow handler never blocks the accept loop. The handler owns its
+// (Ashes.Task.spawn), so a slow handler never blocks the accept loop. The handler owns its
 // connection (it should close the socket when done) and runs detached — its result is dropped and its
 // failure is isolated to its connection, never stopping the loop. A listener/bind failure ends the
 // reactor (Error).
 import Ashes.Net.Tcp
-import Ashes.Async
+import Ashes.Task
 let serveOne port handler =
     async(let recursive loop listener =
         match await Ashes.Net.Tcp.Server.accept(listener) with
@@ -19,7 +19,7 @@ let serveOne port handler =
                 then Ok(0)
                 else Error(e)
             | Ok(client) ->
-                let _ = Ashes.Async.spawn(handler(client))
+                let _ = Ashes.Task.spawn(handler(client))
                 in loop(listener)
     in
         match await Ashes.Net.Tcp.Server.listen(port) with

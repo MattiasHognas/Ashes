@@ -1,4 +1,4 @@
-// Ashes.Math — hermetic integer core (Layer 1).
+// Ashes.Number.Math — hermetic integer core (Layer 1).
 // Pure Ashes: no native payload, no new intrinsics. Float and transcendental
 // layers (sqrt, toFloat, sin, ...) are added separately.
 

@@ -18,7 +18,7 @@ public sealed class AsyncCoroutinePathTests
     public void AsyncBodyWithAwait_LowersThroughCoroutineStateMachine()
     {
         var ir = LowerProgram(
-            "Ashes.Async.run(async(match await async 10 with | Ok(a) -> a | Error(e) -> 0))");
+            "Ashes.Task.run(async(match await async 10 with | Ok(a) -> a | Error(e) -> 0))");
 
         // A coroutine function with a multi-state machine is produced (the await split it into >1
         // state), and the task is created as a live coroutine (CreateTask), not an eager completed
@@ -33,7 +33,7 @@ public sealed class AsyncCoroutinePathTests
     [Test]
     public void AwaitFreeAsyncBody_StaysEagerCompletedTask()
     {
-        var ir = LowerProgram("Ashes.Async.run(async 10)");
+        var ir = LowerProgram("Ashes.Task.run(async 10)");
 
         // No suspension point → no coroutine, no CreateTask; the eager pre-completed path is kept.
         ir.Functions.Any(f => f.Coroutine is not null).ShouldBeFalse();

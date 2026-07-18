@@ -7,7 +7,7 @@
 // mistaken for it. Inserts 300k growing string keys (bounded 30k keyspace, half via a match arm that
 // binds kk), then reads back a spread and sums values; a reset-driven use-after-free would corrupt a
 // stored value and change the checksum, which is computed independently.
-import Ashes.Map
+import Ashes.Collection.Map
 import Ashes.Text
 import Ashes.IO
 type Choice =
@@ -27,8 +27,8 @@ let recursive build i n m =
             in
                 let m2 =
                     match tag with
-                        | Even -> Ashes.Map.setStr(Ashes.Text.fromInt(k))(i)(m)
-                        | Odd(kk) -> Ashes.Map.setStr(Ashes.Text.fromInt(kk))(i + 7)(m)
+                        | Even -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(k))(i)(m)
+                        | Odd(kk) -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(kk))(i + 7)(m)
                 in build(i + 1)(n)(m2)
 
 let recursive checksum i n m acc =
@@ -36,12 +36,12 @@ let recursive checksum i n m acc =
     then acc
     else
         let v =
-            match Ashes.Map.getStr(Ashes.Text.fromInt(i))(m) with
+            match Ashes.Collection.Map.getStr(Ashes.Text.fromInt(i))(m) with
                 | Some(x) -> x
                 | None -> -1
         in checksum(i + 11)(n)(m)(acc + v)
 
 let n = 300000
 
-let built = build(0)(n)(Ashes.Map.empty)
-in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(built)) + "|" + Ashes.Text.fromInt(checksum(0)(30000)(built)(0)))
+let built = build(0)(n)(Ashes.Collection.Map.empty)
+in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(built)) + "|" + Ashes.Text.fromInt(checksum(0)(30000)(built)(0)))

@@ -185,21 +185,17 @@ public static class BuiltinRegistry
                     ["readLine"] = new("readLine", BuiltinValueKind.ReadLine, IsCallable: true, Arity: 1),
                     ["readExact"] = new("readExact", BuiltinValueKind.IoReadExact, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Result"] = new(
-                "Ashes.Result",
-                "Ashes.Semantics.StdLib.Ashes.Result.ash",
+            ["Ashes.Core.Result"] = new(
+                "Ashes.Core.Result",
+                "Ashes.Semantics.StdLib.Ashes.Core.Result.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.String"] = new(
-                "Ashes.String",
-                "Ashes.Semantics.StdLib.Ashes.String.ash",
+            ["Ashes.Collection.List"] = new(
+                "Ashes.Collection.List",
+                "Ashes.Semantics.StdLib.Ashes.Collection.List.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.List"] = new(
-                "Ashes.List",
-                "Ashes.Semantics.StdLib.Ashes.List.ash",
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.Math"] = new(
-                "Ashes.Math",
-                "Ashes.Semantics.StdLib.Ashes.Math.ash",
+            ["Ashes.Number.Math"] = new(
+                "Ashes.Number.Math",
+                "Ashes.Semantics.StdLib.Ashes.Number.Math.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["toFloat"] = new("toFloat", BuiltinValueKind.MathToFloat, IsCallable: true, Arity: 1),
@@ -232,25 +228,25 @@ public static class BuiltinRegistry
                     ["hypot"] = new("hypot", BuiltinValueKind.MathHypot, IsCallable: true, Arity: 2),
                     ["fmod"] = new("fmod", BuiltinValueKind.MathFmod, IsCallable: true, Arity: 2)
                 }),
-            ["Ashes.Array"] = new(
-                "Ashes.Array",
-                "Ashes.Semantics.StdLib.Ashes.Array.ash",
+            ["Ashes.Collection.Array"] = new(
+                "Ashes.Collection.Array",
+                "Ashes.Semantics.StdLib.Ashes.Collection.Array.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.Map"] = new(
-                "Ashes.Map",
-                "Ashes.Semantics.StdLib.Ashes.Map.ash",
+            ["Ashes.Collection.Map"] = new(
+                "Ashes.Collection.Map",
+                "Ashes.Semantics.StdLib.Ashes.Collection.Map.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.HashMap"] = new(
-                "Ashes.HashMap",
-                "Ashes.Semantics.StdLib.Ashes.HashMap.ash",
+            ["Ashes.Collection.HashMap"] = new(
+                "Ashes.Collection.HashMap",
+                "Ashes.Semantics.StdLib.Ashes.Collection.HashMap.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.HashTrie"] = new(
-                "Ashes.HashTrie",
-                "Ashes.Semantics.StdLib.Ashes.HashTrie.ash",
+            ["Ashes.Collection.HashTrie"] = new(
+                "Ashes.Collection.HashTrie",
+                "Ashes.Semantics.StdLib.Ashes.Collection.HashTrie.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.Parallel"] = new(
-                "Ashes.Parallel",
-                "Ashes.Semantics.StdLib.Ashes.Parallel.ash",
+            ["Ashes.Task.Parallel"] = new(
+                "Ashes.Task.Parallel",
+                "Ashes.Semantics.StdLib.Ashes.Task.Parallel.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     // Hybrid module: `both` and `withWorkers` are compiler intrinsics (lowered at
@@ -260,9 +256,9 @@ public static class BuiltinRegistry
                     ["both"] = new("both", BuiltinValueKind.ParallelBoth, IsCallable: true, Arity: 2),
                     ["withWorkers"] = new("withWorkers", BuiltinValueKind.ParallelWithWorkers, IsCallable: true, Arity: 2)
                 }),
-            ["Ashes.Maybe"] = new(
-                "Ashes.Maybe",
-                "Ashes.Semantics.StdLib.Ashes.Maybe.ash",
+            ["Ashes.Core.Maybe"] = new(
+                "Ashes.Core.Maybe",
+                "Ashes.Semantics.StdLib.Ashes.Core.Maybe.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Test"] = new(
                 "Ashes.Test",
@@ -277,8 +273,8 @@ public static class BuiltinRegistry
                     // produces an independent deep copy. Semantically identity for immutable values.
                     ["deepCopy"] = new("deepCopy", BuiltinValueKind.InternalDeepCopy, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.File"] = new(
-                "Ashes.File",
+            ["Ashes.IO.File"] = new(
+                "Ashes.IO.File",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -295,7 +291,7 @@ public static class BuiltinRegistry
                 }),
             ["Ashes.Text"] = new(
                 "Ashes.Text",
-                null,
+                "Ashes.Semantics.StdLib.Ashes.Text.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
@@ -311,8 +307,8 @@ public static class BuiltinRegistry
                     ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1),
                     ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.BigInt"] = new(
-                "Ashes.BigInt",
+            ["Ashes.Number.BigInt"] = new(
+                "Ashes.Number.BigInt",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -325,8 +321,8 @@ public static class BuiltinRegistry
                     ["mod"] = new("mod", BuiltinValueKind.BigIntMod, IsCallable: true, Arity: 2),
                     ["compare"] = new("compare", BuiltinValueKind.BigIntCompare, IsCallable: true, Arity: 2)
                 }),
-            ["Ashes.Bytes"] = new(
-                "Ashes.Bytes",
+            ["Ashes.Byte"] = new(
+                "Ashes.Byte",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -351,16 +347,16 @@ public static class BuiltinRegistry
                     ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
                     ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)
                 }),
-            ["Ashes.UInt"] = new(
-                "Ashes.UInt",
+            ["Ashes.Number.UInt"] = new(
+                "Ashes.Number.UInt",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1),
                     ["fromInt"] = new("fromInt", BuiltinValueKind.UIntFromInt, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Http"] = new(
-                "Ashes.Http",
+            ["Ashes.Net.Http"] = new(
+                "Ashes.Net.Http",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -387,9 +383,9 @@ public static class BuiltinRegistry
                     ["forkWorkers"] = new("forkWorkers", BuiltinValueKind.NetTcpForkWorkers, IsCallable: true, Arity: 2),
                     ["setDrainTimeout"] = new("setDrainTimeout", BuiltinValueKind.NetTcpSetDrainTimeout, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Http.Server"] = new(
-                "Ashes.Http.Server",
-                "Ashes.Semantics.StdLib.Ashes.Http.Server.ash",
+            ["Ashes.Net.Http.Server"] = new(
+                "Ashes.Net.Http.Server",
+                "Ashes.Semantics.StdLib.Ashes.Net.Http.Server.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Net.Tls.Server"] = new(
                 "Ashes.Net.Tls.Server",
@@ -408,8 +404,8 @@ public static class BuiltinRegistry
                     ["receive"] = new("receive", BuiltinValueKind.NetTlsReceive, IsCallable: true, Arity: 2),
                     ["close"] = new("close", BuiltinValueKind.NetTlsClose, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Async"] = new(
-                "Ashes.Async",
+            ["Ashes.Task"] = new(
+                "Ashes.Task",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -421,8 +417,8 @@ public static class BuiltinRegistry
                     ["spawn"] = new("spawn", BuiltinValueKind.AsyncSpawn, IsCallable: true, Arity: 1),
                     ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Process"] = new(
-                "Ashes.Process",
+            ["Ashes.IO.Process"] = new(
+                "Ashes.IO.Process",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -433,8 +429,8 @@ public static class BuiltinRegistry
                     ["waitForExit"] = new("waitForExit", BuiltinValueKind.ProcessWaitForExit, IsCallable: true, Arity: 1),
                     ["kill"] = new("kill", BuiltinValueKind.ProcessKill, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Console"] = new(
-                "Ashes.Console",
+            ["Ashes.IO.Console"] = new(
+                "Ashes.IO.Console",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
@@ -443,21 +439,21 @@ public static class BuiltinRegistry
                     ["pollInput"] = new("pollInput", BuiltinValueKind.ConsolePoll, IsCallable: true, Arity: 1),
                     ["monotonicMillis"] = new("monotonicMillis", BuiltinValueKind.ConsoleMonotonicMillis, IsCallable: true, Arity: 1)
                 }),
-            ["Ashes.Json"] = new(
-                "Ashes.Json",
-                "Ashes.Semantics.StdLib.Ashes.Json.ash",
+            ["Ashes.Text.Json"] = new(
+                "Ashes.Text.Json",
+                "Ashes.Semantics.StdLib.Ashes.Text.Json.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            ["Ashes.Rpc"] = new(
-                "Ashes.Rpc",
-                "Ashes.Semantics.StdLib.Ashes.Rpc.ash",
+            ["Ashes.Net.Rpc"] = new(
+                "Ashes.Net.Rpc",
+                "Ashes.Semantics.StdLib.Ashes.Net.Rpc.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
-            // Ashes.Regex is backed by PCRE2. The native members below are the low-level primitives
+            // Ashes.Text.Regex is backed by PCRE2. The native members below are the low-level primitives
             // (a compiled pattern is a pcre2_code* carried as an Int handle); the ergonomic pattern-
             // string API (compile/isMatch/find/findAll/captures/replace and the Regex type) is defined
-            // on top of them in Regex.ash, which references them as Ashes.Regex.<primitive>.
-            ["Ashes.Regex"] = new(
-                "Ashes.Regex",
-                "Ashes.Semantics.StdLib.Ashes.Regex.ash",
+            // on top of them in Regex.ash, which references them as Ashes.Text.Regex.<primitive>.
+            ["Ashes.Text.Regex"] = new(
+                "Ashes.Text.Regex",
+                "Ashes.Semantics.StdLib.Ashes.Text.Regex.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["compileRaw"] = new("compileRaw", BuiltinValueKind.RegexCompile, IsCallable: true, Arity: 1),

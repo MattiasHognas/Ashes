@@ -56,8 +56,8 @@ Two compiler bugs were found and fixed during this very benchmark rerun — the 
 
 ## Math-lib coverage
 
-`Ashes.Math` (see [the standard library](../docs/md/reference/standard-library.md#ashesmath))
-plus `Ashes.Text.formatFloat` (fixed-precision formatting) and native `Ashes.BigInt` cover the
+`Ashes.Number.Math` (see [the standard library](../docs/md/reference/standard-library.md#ashesmath))
+plus `Ashes.Text.formatFloat` (fixed-precision formatting) and native `Ashes.Number.BigInt` cover the
 whole set; **none of these benchmarks needs a Layer-2 transcendental** (`sin`/`cos`/`exp`/`ln`) —
 only the hermetic core (`sqrt`, `toFloat`, `*ToInt`) is on any critical path.
 
@@ -66,4 +66,4 @@ only the hermetic core (`sqrt`, `toFloat`, `*ToInt`) is on any critical path.
 | binary-trees, fannkuch-redux, reverse-complement, regex-redux | none |
 | fasta, mandelbrot, k-nucleotide | `toFloat` (+ `formatFloat` percentages) |
 | n-body, spectral-norm | `sqrt` + `formatFloat` (9 dp) |
-| pidigits | native `Ashes.BigInt` |
+| pidigits | native `Ashes.Number.BigInt` |

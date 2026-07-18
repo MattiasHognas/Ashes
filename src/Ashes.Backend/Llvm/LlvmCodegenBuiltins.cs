@@ -707,7 +707,7 @@ internal static partial class LlvmCodegen
         var (destPtr, readSoFarSlot, resultSlot, stringRef, stdinHandle, bytesReadSlot) = slots;
 
         // Drain bytes already buffered by readLine (the shared stdin buffer) before touching the
-        // fd, so readLine + readExact interleave correctly — e.g. Ashes.Rpc reads the header with
+        // fd, so readLine + readExact interleave correctly — e.g. Ashes.Net.Rpc reads the header with
         // readLine then the body with readExact. Without this, readLine's read-ahead would be lost.
         LlvmTypeHandle reStdinBufType = LlvmApi.ArrayType2(state.I8, StdinReadBufSize);
         LlvmValueHandle reStdinBuf = ReadLineScratchGlobal(state, "__ashes_stdin_rbuf", reStdinBufType);

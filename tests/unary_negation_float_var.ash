@@ -6,7 +6,7 @@
 // expect: -5.00 -6.00 2.00 -7 -42
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let total = 5.0
 
 let f x = 0.0 - x

@@ -913,7 +913,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Emits a static provider resolution: lowers the provider's operation implementation (a normal
-    /// expression, e.g. <c>Ashes.String.compare</c> or a lambda), unifies it against the operation's
+    /// expression, e.g. <c>Ashes.Text.compare</c> or a lambda), unifies it against the operation's
     /// instantiated signature (so a wrong-typed implementation is a type error), and applies the
     /// operation's arguments as an ordinary curried call. No handler evidence is involved.
     /// </summary>

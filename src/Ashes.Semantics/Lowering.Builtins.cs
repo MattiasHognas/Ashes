@@ -155,7 +155,7 @@ public sealed partial class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.readText() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.readText() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -164,7 +164,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
-    // Ashes.File.open : Str -> Result(Str, FileHandle)
+    // Ashes.IO.File.open : Str -> Result(Str, FileHandle)
     private Binding.Intrinsic CreateFileOpenBinding()
     {
         return new Binding.Intrinsic(
@@ -192,7 +192,7 @@ public sealed partial class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.open() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.open() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, CreateStringResultType(_resolvedTypes["FileHandle"]));
         }
 
@@ -201,7 +201,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(_resolvedTypes["FileHandle"]));
     }
 
-    // Ashes.File.readChunk : FileHandle -> Int -> Result(Str, Str)
+    // Ashes.IO.File.readChunk : FileHandle -> Int -> Result(Str, Str)
     private Binding.Intrinsic CreateFileReadChunkBinding()
     {
         return new Binding.Intrinsic(
@@ -224,7 +224,7 @@ public sealed partial class Lowering
         }
         else if (prunedCount is not TypeRef.TInt and not TypeRef.TNever)
         {
-            ReportDiagnostic(GetSpan(countArg), $"Ashes.File.readChunk() expects Int but got {Pretty(prunedCount)}.");
+            ReportDiagnostic(GetSpan(countArg), $"Ashes.IO.File.readChunk() expects Int but got {Pretty(prunedCount)}.");
         }
 
         var target = NewTemp();
@@ -232,7 +232,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
-    // Ashes.File.readLine : FileHandle -> Maybe(Str). Reads one line (newline stripped) through a
+    // Ashes.IO.File.readLine : FileHandle -> Maybe(Str). Reads one line (newline stripped) through a
     // refillable module-global buffer, returning None at EOF. Unlike readChunk it threads no buffer
     // state through the caller, so a whole-file fold can be a single loop that carries only its
     // accumulator (the fold's in-place reuse then stays constant-memory instead of re-deep-copying).
@@ -255,7 +255,7 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
-    // Ashes.File.close : FileHandle -> Result(Str, Unit)
+    // Ashes.IO.File.close : FileHandle -> Result(Str, Unit)
     private Binding.Intrinsic CreateFileCloseBinding()
     {
         return new Binding.Intrinsic(
@@ -305,7 +305,7 @@ public sealed partial class Lowering
         return (EmitDeepCopy(temp, pruned), pruned);
     }
 
-    // Ashes.Parallel.both : forall a b. (Unit -> a) -> (Unit -> b) -> (a, b)
+    // Ashes.Task.Parallel.both : forall a b. (Unit -> a) -> (Unit -> b) -> (a, b)
     // Evaluates left(Unit) and right(Unit) and returns the pair. Purity makes the result
     // order-independent, so it is identical to the sequential pair regardless of which thunk
     // finishes first. At concrete result types `right` may run on a worker thread; abstract
@@ -367,7 +367,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Jump(okLabel));
             Emit(new IrInst.Label(okLabel + "_bad"));
             int panicTemp = NewTemp();
-            Emit(new IrInst.LoadConstStr(panicTemp, InternString("Ashes.Parallel.withWorkers: worker count must be positive.")));
+            Emit(new IrInst.LoadConstStr(panicTemp, InternString("Ashes.Task.Parallel.withWorkers: worker count must be positive.")));
             Emit(new IrInst.PanicStr(panicTemp));
             Emit(new IrInst.Label(okLabel));
 
@@ -477,7 +477,7 @@ public sealed partial class Lowering
 
         if (pathLoweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.writeText() expects Str for path but got {Pretty(pathLoweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.writeText() expects Str for path but got {Pretty(pathLoweredType)}.");
             return (pathTemp, pathLoweredType);
         }
 
@@ -498,7 +498,7 @@ public sealed partial class Lowering
 
         if (textLoweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(textArg), $"Ashes.File.writeText() expects Str for text but got {Pretty(textLoweredType)}.");
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.IO.File.writeText() expects Str for text but got {Pretty(textLoweredType)}.");
             return (textTemp, textLoweredType);
         }
 
@@ -526,7 +526,7 @@ public sealed partial class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.exists() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.exists() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -563,8 +563,8 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 
-    // Ashes.Regex.Native (PCRE2) primitives.
-    // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Regex (Regex.ash) wraps
+    // Ashes.Text.Regex.Native (PCRE2) primitives.
+    // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Text.Regex (Regex.ash) wraps
     // it in a Regex ADT and composes the ergonomic Result/Option API from these.
 
     private int LowerRegexScalarArg(Expr arg, TypeRef expected, string label)
@@ -600,7 +600,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerRegexCompile(Expr patternArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(patternArg);
-        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Regex.Native.compile()");
+        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.compile()");
         var target = NewTemp();
         Emit(new IrInst.RegexCompile(target, patternTemp));
         return (target, new TypeRef.TInt());
@@ -609,7 +609,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerRegexCompileError(Expr patternArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(patternArg);
-        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Regex.Native.compileError()");
+        int patternTemp = LowerRegexScalarArg(patternArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.compileError()");
         var target = NewTemp();
         Emit(new IrInst.RegexCompileError(target, patternTemp));
         return (target, new TypeRef.TStr());
@@ -617,9 +617,9 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerRegexFind(Expr codeArg, Expr subjectArg, Expr startArg)
     {
-        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.find()");
-        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.find()");
-        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Regex.Native.find()");
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Text.Regex.Native.find()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.find()");
+        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Text.Regex.Native.find()");
         var target = NewTemp();
         Emit(new IrInst.RegexFind(target, codeTemp, subjectTemp, startTemp));
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()])));
@@ -627,9 +627,9 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerRegexCaptures(Expr codeArg, Expr subjectArg, Expr startArg)
     {
-        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.captures()");
-        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.captures()");
-        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Regex.Native.captures()");
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Text.Regex.Native.captures()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.captures()");
+        int startTemp = LowerRegexScalarArg(startArg, new TypeRef.TInt(), "Ashes.Text.Regex.Native.captures()");
         var target = NewTemp();
         Emit(new IrInst.RegexCaptures(target, codeTemp, subjectTemp, startTemp));
         return (target, CreateMaybeType(new TypeRef.TList(CreateMaybeType(new TypeRef.TStr()))));
@@ -637,9 +637,9 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerRegexSubstitute(Expr codeArg, Expr subjectArg, Expr replacementArg)
     {
-        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Regex.Native.substitute()");
-        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Regex.Native.substitute()");
-        int replacementTemp = LowerRegexScalarArg(replacementArg, new TypeRef.TStr(), "Ashes.Regex.Native.substitute()");
+        int codeTemp = LowerRegexScalarArg(codeArg, new TypeRef.TInt(), "Ashes.Text.Regex.Native.substitute()");
+        int subjectTemp = LowerRegexScalarArg(subjectArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.substitute()");
+        int replacementTemp = LowerRegexScalarArg(replacementArg, new TypeRef.TStr(), "Ashes.Text.Regex.Native.substitute()");
         var target = NewTemp();
         Emit(new IrInst.RegexSubstitute(target, codeTemp, subjectTemp, replacementTemp));
         return (target, new TypeRef.TStr());
@@ -1403,7 +1403,7 @@ public sealed partial class Lowering
 
         if (prunedUrlType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Http.get() expects Str for url but got {Pretty(prunedUrlType)}.");
+            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Net.Http.get() expects Str for url but got {Pretty(prunedUrlType)}.");
             return (urlTemp, prunedUrlType);
         }
 
@@ -1431,7 +1431,7 @@ public sealed partial class Lowering
 
         if (prunedUrlType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Http.post() expects Str for url but got {Pretty(prunedUrlType)}.");
+            ReportDiagnostic(GetSpan(urlArg), $"Ashes.Net.Http.post() expects Str for url but got {Pretty(prunedUrlType)}.");
             return (urlTemp, prunedUrlType);
         }
 
@@ -1451,7 +1451,7 @@ public sealed partial class Lowering
 
         if (prunedBodyType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(bodyArg), $"Ashes.Http.post() expects Str for body but got {Pretty(prunedBodyType)}.");
+            ReportDiagnostic(GetSpan(bodyArg), $"Ashes.Net.Http.post() expects Str for body but got {Pretty(prunedBodyType)}.");
             return (bodyTemp, prunedBodyType);
         }
 
@@ -1701,7 +1701,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.run(task) — synchronous execution.
+    /// Ashes.Task.run(task) — synchronous execution.
     /// Drives the task's coroutine to completion using RunTask
     /// and returns the resulting Result(E, A).
     /// </summary>
@@ -1733,7 +1733,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.task(value) — creates a pre-completed successful task.
+    /// Ashes.Task.task(value) — creates a pre-completed successful task.
     /// Convenience form of creating a successful task with error type Str.
     /// </summary>
     private (int, TypeRef) LowerAsyncTask(Expr valueArg)
@@ -1743,7 +1743,7 @@ public sealed partial class Lowering
 
         // An `async(E)` whose body contains an `await` becomes a genuine suspending coroutine (built
         // through StateMachineTransform), so the await is a suspension point rather than an inline
-        // blocking run. `Ashes.Async.run` still drives it to completion blockingly, so behavior is
+        // blocking run. `Ashes.Task.run` still drives it to completion blockingly, so behavior is
         // identical — but the task is now a live state machine instead of an eager completed value.
         // An await-free body has no suspension point, so it stays the eager pre-completed task.
         if (ExprContainsAwait(valueArg))
@@ -1769,7 +1769,7 @@ public sealed partial class Lowering
     /// Lowers <c>async(E)</c> (where <c>E</c> awaits) into a suspending coroutine task. The body's free
     /// variables are captured; the body is emitted into a coroutine (with awaits as suspension points)
     /// via <see cref="LowerCapturedStringTask"/>, and the coroutine returns <c>Ok(E)</c>.
-    /// Semantics-preserving: <c>Ashes.Async.run</c> drives the state machine to completion.
+    /// Semantics-preserving: <c>Ashes.Task.run</c> drives the state machine to completion.
     /// </summary>
     private (int, TypeRef) LowerAsyncTaskCoroutine(Expr valueArg)
     {
@@ -1856,7 +1856,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Whether an expression references <c>Ashes.Async.spawn</c> anywhere (including inside nested
+    /// Whether an expression references <c>Ashes.Task.spawn</c> anywhere (including inside nested
     /// lambdas, which run synchronously during a loop iteration). Used as the static safety gate for
     /// the async-loop arena reset: a spawned task's captures may point at allocations made during the
     /// current iteration, which the back-edge reset would free under the detached task. Var references
@@ -2226,7 +2226,7 @@ public sealed partial class Lowering
         expr is Expr.Call { Func: Expr.Var av } && Lookup(av.Name) is Binding.Intrinsic { Kind: IntrinsicKind.AsyncTask };
 
     /// <summary>
-    /// Ashes.Async.fromResult(result) — creates a pre-completed task.
+    /// Ashes.Task.fromResult(result) — creates a pre-completed task.
     /// Wraps a Result(E, A) into a Task(E, A) that is already completed.
     /// </summary>
     private (int, TypeRef) LowerAsyncFromResult(Expr resultArg)
@@ -2252,7 +2252,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.sleep(ms) — creates a sleep task.
+    /// Ashes.Task.sleep(ms) — creates a sleep task.
     /// Returns Task(Str, Int) — a task that completes after the given milliseconds
     /// and returns 0 (Unit placeholder).
     /// </summary>
@@ -2281,7 +2281,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.all(tasks) — runs all tasks and collects results.
+    /// Ashes.Task.all(tasks) — runs all tasks and collects results.
     /// Returns Task(E, List(A)) — a task containing a list of all results.
     /// </summary>
     private (int, TypeRef) LowerAsyncAll(Expr taskListArg)
@@ -2314,7 +2314,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.race(tasks) — runs the first task to completion.
+    /// Ashes.Task.race(tasks) — runs the first task to completion.
     /// Returns Task(E, A) — a task with the first task's result.
     /// </summary>
     private (int, TypeRef) LowerAsyncRace(Expr taskListArg)
@@ -2490,7 +2490,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.BigInt intrinsics
+    // Ashes.Number.BigInt intrinsics
     private Binding.Intrinsic CreateBigIntFromIntBinding() =>
         new(IntrinsicKind.BigIntFromInt, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TBigInt())));
 
@@ -2518,7 +2518,7 @@ public sealed partial class Lowering
         }
         else if (pruned is not TypeRef.TBigInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.toInt() expects BigInt but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.BigInt.toInt() expects BigInt but got {Pretty(pruned)}.");
             return (valueTemp, pruned);
         }
         var target = NewTemp();
@@ -2611,7 +2611,7 @@ public sealed partial class Lowering
         }
         else if (pruned is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.fromInt() expects Int but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.BigInt.fromInt() expects Int but got {Pretty(pruned)}.");
             return (valueTemp, pruned);
         }
         var target = NewTemp();
@@ -2634,7 +2634,7 @@ public sealed partial class Lowering
         }
         else if (pruned is not TypeRef.TBigInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.BigInt.toString() expects BigInt but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.BigInt.toString() expects BigInt but got {Pretty(pruned)}.");
             return (valueTemp, pruned);
         }
         var target = NewTemp();
@@ -2718,7 +2718,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.File.readAllBytes(path) : Result(Str, Bytes) — read a whole file into a Bytes with no UTF-8
+    // Ashes.IO.File.readAllBytes(path) : Result(Str, Bytes) — read a whole file into a Bytes with no UTF-8
     // validation. On Linux the read is uncapped (sized by the file); on Windows it currently shares the
     // fixed readText buffer and so caps at the same limit. Enables random-access / chunked processing
     // (e.g. a data-parallel fold that splits the input at record boundaries).
@@ -2730,7 +2730,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.File.mmap(path) : Result(Str, Bytes) — memory-map the whole file read-only and return a
+    // Ashes.IO.File.mmap(path) : Result(Str, Bytes) — memory-map the whole file read-only and return a
     // zero-copy Bytes view over it (no read/copy). The mapping is program-lifetime, so fields sliced out
     // of it stay valid; on a data-parallel fold each worker faults in its own chunk's pages, so the I/O
     // is parallelized for free. On Windows this currently falls back to the capped readAllBytes read.
@@ -2761,7 +2761,7 @@ public sealed partial class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.mmap() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.mmap() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -2789,7 +2789,7 @@ public sealed partial class Lowering
 
         if (loweredType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.readAllBytes() expects Str but got {Pretty(loweredType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.readAllBytes() expects Str but got {Pretty(loweredType)}.");
             return (pathTemp, loweredType);
         }
 
@@ -2982,7 +2982,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.run : Task(E, A) -> Result(E, A)
+    // Ashes.Task.run : Task(E, A) -> Result(E, A)
     private Binding.Intrinsic CreateAsyncRunBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
@@ -3001,7 +3001,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.task : A -> Task(Str, A)
+    // Ashes.Task.task : A -> Task(Str, A)
     private Binding.Intrinsic CreateAsyncTaskBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3017,7 +3017,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.fromResult : Result(E, A) -> Task(E, A)
+    // Ashes.Task.fromResult : Result(E, A) -> Task(E, A)
     private Binding.Intrinsic CreateAsyncFromResultBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
@@ -3036,7 +3036,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.sleep : Int -> Task(Str, Int)
+    // Ashes.Task.sleep : Int -> Task(Str, Int)
     private Binding.Intrinsic CreateAsyncSleepBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3051,7 +3051,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.spawn : Task(E, A) -> Unit
+    // Ashes.Task.spawn : Task(E, A) -> Unit
     private Binding.Intrinsic CreateAsyncSpawnBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3069,7 +3069,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Ashes.Async.spawn(task) — detach a task for fire-and-forget cooperative execution.
+    /// Ashes.Task.spawn(task) — detach a task for fire-and-forget cooperative execution.
     /// The task's frame is copied into a private arena and it advances whenever any driver
     /// blocks waiting on a pending leaf; its result is dropped.
     /// </summary>
@@ -3107,7 +3107,7 @@ public sealed partial class Lowering
         return (unitTemp, _resolvedTypes["Unit"]);
     }
 
-    // Ashes.Async.all : List(Task(E, A)) -> Task(E, List(A))
+    // Ashes.Task.all : List(Task(E, A)) -> Task(E, List(A))
     private Binding.Intrinsic CreateAsyncAllBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3126,7 +3126,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Async.race : List(Task(E, A)) -> Task(E, A)
+    // Ashes.Task.race : List(Task(E, A)) -> Task(E, A)
     private Binding.Intrinsic CreateAsyncRaceBinding()
     {
         if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
@@ -3145,7 +3145,7 @@ public sealed partial class Lowering
         );
     }
 
-    // --- Ashes.Bytes lowering methods ---
+    // --- Ashes.Byte lowering methods ---
 
     private (int, TypeRef) LowerBytesEmpty(Expr arg)
     {
@@ -3181,7 +3181,7 @@ public sealed partial class Lowering
 
         if (prunedByteType is not TypeRef.TUInt { Bits: 8 })
         {
-            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Bytes.singleton() expects u8 but got {Pretty(prunedByteType)}.");
+            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Byte.singleton() expects u8 but got {Pretty(prunedByteType)}.");
             return (byteTemp, prunedByteType);
         }
 
@@ -3208,7 +3208,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.length() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Byte.length() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, prunedBytesType);
         }
 
@@ -3235,7 +3235,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.get() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Byte.get() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, prunedBytesType);
         }
 
@@ -3255,7 +3255,7 @@ public sealed partial class Lowering
 
         if (prunedIndexType is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(indexArg), $"Ashes.Bytes.get() expects Int for index but got {Pretty(prunedIndexType)}.");
+            ReportDiagnostic(GetSpan(indexArg), $"Ashes.Byte.get() expects Int for index but got {Pretty(prunedIndexType)}.");
             return (indexTemp, prunedIndexType);
         }
 
@@ -3319,19 +3319,19 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBytesIndexOf(Expr bytesArg, Expr needleArg, Expr fromArg)
     {
-        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.indexOf()");
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Byte.indexOf()");
         if (!bytesOk)
         {
             return (bytesTemp, new TypeRef.TInt());
         }
 
-        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Bytes.indexOf() needle");
+        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Byte.indexOf() needle");
         if (!needleOk)
         {
             return (needleTemp, new TypeRef.TInt());
         }
 
-        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Bytes.indexOf() from");
+        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Byte.indexOf() from");
         if (!fromOk)
         {
             return (fromTemp, new TypeRef.TInt());
@@ -3344,13 +3344,13 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBytesCompare(Expr leftArg, Expr rightArg)
     {
-        var (leftTemp, leftOk) = LowerBytesArgument(leftArg, "Ashes.Bytes.compare()");
+        var (leftTemp, leftOk) = LowerBytesArgument(leftArg, "Ashes.Byte.compare()");
         if (!leftOk)
         {
             return (leftTemp, new TypeRef.TInt());
         }
 
-        var (rightTemp, rightOk) = LowerBytesArgument(rightArg, "Ashes.Bytes.compare()");
+        var (rightTemp, rightOk) = LowerBytesArgument(rightArg, "Ashes.Byte.compare()");
         if (!rightOk)
         {
             return (rightTemp, new TypeRef.TInt());
@@ -3363,19 +3363,19 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBytesSubText(Expr bytesArg, Expr startArg, Expr lenArg)
     {
-        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subText()");
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Byte.subText()");
         if (!bytesOk)
         {
             return (bytesTemp, new TypeRef.TStr());
         }
 
-        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Bytes.subText() start");
+        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Byte.subText() start");
         if (!startOk)
         {
             return (startTemp, new TypeRef.TStr());
         }
 
-        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Bytes.subText() length");
+        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Byte.subText() length");
         if (!lenOk)
         {
             return (lenTemp, new TypeRef.TStr());
@@ -3388,20 +3388,20 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBytesScanHash(Expr bytesArg, Expr needleArg, Expr fromArg)
     {
-        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.scanHash()");
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Byte.scanHash()");
         var resultType = new TypeRef.TTuple([new TypeRef.TInt(), new TypeRef.TInt()]);
         if (!bytesOk)
         {
             return (bytesTemp, resultType);
         }
 
-        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Bytes.scanHash() needle");
+        var (needleTemp, needleOk) = LowerIntArgument(needleArg, "Ashes.Byte.scanHash() needle");
         if (!needleOk)
         {
             return (needleTemp, resultType);
         }
 
-        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Bytes.scanHash() from");
+        var (fromTemp, fromOk) = LowerIntArgument(fromArg, "Ashes.Byte.scanHash() from");
         if (!fromOk)
         {
             return (fromTemp, resultType);
@@ -3414,19 +3414,19 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBytesSubView(Expr bytesArg, Expr startArg, Expr lenArg)
     {
-        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Bytes.subView()");
+        var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Byte.subView()");
         if (!bytesOk)
         {
             return (bytesTemp, new TypeRef.TStr());
         }
 
-        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Bytes.subView() start");
+        var (startTemp, startOk) = LowerIntArgument(startArg, "Ashes.Byte.subView() start");
         if (!startOk)
         {
             return (startTemp, new TypeRef.TStr());
         }
 
-        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Bytes.subView() length");
+        var (lenTemp, lenOk) = LowerIntArgument(lenArg, "Ashes.Byte.subView() length");
         if (!lenOk)
         {
             return (lenTemp, new TypeRef.TStr());
@@ -3455,7 +3455,7 @@ public sealed partial class Lowering
 
         if (prunedLeftType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(leftArg), $"Ashes.Bytes.append() expects Bytes for first argument but got {Pretty(prunedLeftType)}.");
+            ReportDiagnostic(GetSpan(leftArg), $"Ashes.Byte.append() expects Bytes for first argument but got {Pretty(prunedLeftType)}.");
             return (leftTemp, prunedLeftType);
         }
 
@@ -3475,7 +3475,7 @@ public sealed partial class Lowering
 
         if (prunedRightType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(rightArg), $"Ashes.Bytes.append() expects Bytes for second argument but got {Pretty(prunedRightType)}.");
+            ReportDiagnostic(GetSpan(rightArg), $"Ashes.Byte.append() expects Bytes for second argument but got {Pretty(prunedRightType)}.");
             return (rightTemp, prunedRightType);
         }
 
@@ -3502,7 +3502,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.appendByte() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Byte.appendByte() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, prunedBytesType);
         }
 
@@ -3522,7 +3522,7 @@ public sealed partial class Lowering
 
         if (prunedByteType is not TypeRef.TUInt { Bits: 8 })
         {
-            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Bytes.appendByte() expects u8 for byte argument but got {Pretty(prunedByteType)}.");
+            ReportDiagnostic(GetSpan(byteArg), $"Ashes.Byte.appendByte() expects u8 for byte argument but got {Pretty(prunedByteType)}.");
             return (byteTemp, prunedByteType);
         }
 
@@ -3549,7 +3549,7 @@ public sealed partial class Lowering
 
         if (prunedListType is not TypeRef.TList listT)
         {
-            ReportDiagnostic(GetSpan(listArg), $"Ashes.Bytes.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
+            ReportDiagnostic(GetSpan(listArg), $"Ashes.Byte.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
             return (listTemp, prunedListType);
         }
 
@@ -3561,7 +3561,7 @@ public sealed partial class Lowering
         }
         else if (prunedElem is not TypeRef.TUInt { Bits: 8 })
         {
-            ReportDiagnostic(GetSpan(listArg), $"Ashes.Bytes.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
+            ReportDiagnostic(GetSpan(listArg), $"Ashes.Byte.fromList() expects List(u8) but got {Pretty(prunedListType)}.");
             return (listTemp, prunedListType);
         }
 
@@ -3588,7 +3588,7 @@ public sealed partial class Lowering
 
         if (prunedValueType is not TypeRef.TUInt { Bits: 16 })
         {
-            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u16Le() expects u16 but got {Pretty(prunedValueType)}.");
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Byte.u16Le() expects u16 but got {Pretty(prunedValueType)}.");
             return (valueTemp, prunedValueType);
         }
 
@@ -3615,7 +3615,7 @@ public sealed partial class Lowering
 
         if (prunedValueType is not TypeRef.TUInt { Bits: 32 })
         {
-            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u32Le() expects u32 but got {Pretty(prunedValueType)}.");
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Byte.u32Le() expects u32 but got {Pretty(prunedValueType)}.");
             return (valueTemp, prunedValueType);
         }
 
@@ -3642,7 +3642,7 @@ public sealed partial class Lowering
 
         if (prunedValueType is not TypeRef.TUInt { Bits: 64 })
         {
-            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Bytes.u64Le() expects u64 but got {Pretty(prunedValueType)}.");
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Byte.u64Le() expects u64 but got {Pretty(prunedValueType)}.");
             return (valueTemp, prunedValueType);
         }
 
@@ -3685,7 +3685,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.{name}() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Byte.{name}() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, prunedBytesType);
         }
 
@@ -3705,7 +3705,7 @@ public sealed partial class Lowering
 
         if (prunedOffsetType is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(offsetArg), $"Ashes.Bytes.{name}() expects Int for offset but got {Pretty(prunedOffsetType)}.");
+            ReportDiagnostic(GetSpan(offsetArg), $"Ashes.Byte.{name}() expects Int for offset but got {Pretty(prunedOffsetType)}.");
             return (offsetTemp, prunedOffsetType);
         }
 
@@ -3732,7 +3732,7 @@ public sealed partial class Lowering
 
         if (prunedPathType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(pathArg), $"Ashes.File.writeBytes() expects Str for path but got {Pretty(prunedPathType)}.");
+            ReportDiagnostic(GetSpan(pathArg), $"Ashes.IO.File.writeBytes() expects Str for path but got {Pretty(prunedPathType)}.");
             return (pathTemp, prunedPathType);
         }
 
@@ -3752,7 +3752,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.File.writeBytes() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.IO.File.writeBytes() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, prunedBytesType);
         }
 
@@ -3761,7 +3761,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
-    // --- Ashes.Bytes binding factories ---
+    // --- Ashes.Byte binding factories ---
 
     private Binding.Intrinsic CreateBytesEmptyBinding()
     {
@@ -3787,7 +3787,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.UInt.toInt : u8 -> Int (the value type of the partially-applied reference). A saturated
+    // Ashes.Number.UInt.toInt : u8 -> Int (the value type of the partially-applied reference). A saturated
     // call accepts any unsigned width (u8/u16/u32/u64) — the width is checked in LowerUIntToInt, which
     // does not go through this scheme.
     private Binding.Intrinsic CreateUIntToIntBinding()
@@ -3798,7 +3798,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.UInt.toInt(x) : Int — widen an unsigned integer to a signed Int. Every uN is stored as a
+    // Ashes.Number.UInt.toInt(x) : Int — widen an unsigned integer to a signed Int. Every uN is stored as a
     // width-masked i64, so reinterpreting it as Int is value-preserving for u8/u16/u32 (and a
     // bit-reinterpret for u64); no runtime instruction is needed, just a retype.
     private (int, TypeRef) LowerUIntToInt(Expr arg)
@@ -3813,15 +3813,15 @@ public sealed partial class Lowering
 
         if (pruned is TypeRef.TVar)
         {
-            // A bare `Ashes.UInt.toInt(x)` with an otherwise-unconstrained argument defaults to u8 (the
-            // common case: a byte from Ashes.Bytes.get).
+            // A bare `Ashes.Number.UInt.toInt(x)` with an otherwise-unconstrained argument defaults to u8 (the
+            // common case: a byte from Ashes.Byte.get).
             Unify(pruned, new TypeRef.TUInt(8));
             pruned = new TypeRef.TUInt(8);
         }
 
         if (pruned is not TypeRef.TUInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.UInt.toInt() expects an unsigned integer (u8/u16/u32/u64) but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.UInt.toInt() expects an unsigned integer (u8/u16/u32/u64) but got {Pretty(pruned)}.");
             return (argTemp, new TypeRef.TInt());
         }
 
@@ -3836,9 +3836,9 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.UInt.fromInt(x) : u8 — narrow a signed Int to an unsigned byte, wrapping modulo 256 (mask
+    // Ashes.Number.UInt.fromInt(x) : u8 — narrow a signed Int to an unsigned byte, wrapping modulo 256 (mask
     // to the low 8 bits) so the value is a valid u8 regardless of the input's magnitude/sign. The
-    // inverse of Ashes.UInt.toInt; unlike toInt this needs a real mask because the internal i64 could
+    // inverse of Ashes.Number.UInt.toInt; unlike toInt this needs a real mask because the internal i64 could
     // carry bits above the byte width.
     private (int, TypeRef) LowerUIntFromInt(Expr arg)
     {
@@ -3858,7 +3858,7 @@ public sealed partial class Lowering
 
         if (pruned is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.UInt.fromInt() expects Int but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.UInt.fromInt() expects Int but got {Pretty(pruned)}.");
             return (argTemp, new TypeRef.TUInt(8));
         }
 
@@ -3869,7 +3869,7 @@ public sealed partial class Lowering
         return (resultTemp, new TypeRef.TUInt(8));
     }
 
-    // Ashes.Math Layer-1 numeric conversions and Float unary primitives.
+    // Ashes.Number.Math Layer-1 numeric conversions and Float unary primitives.
 
     private Binding.Intrinsic CreateMathToFloatBinding() =>
         new(IntrinsicKind.MathToFloat, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFloat())));
@@ -3890,7 +3890,7 @@ public sealed partial class Lowering
     private static Binding.Intrinsic CreateFloatToIntBinding(IntrinsicKind kind) =>
         new(kind, new TypeScheme([], new TypeRef.TFun(new TypeRef.TFloat(), new TypeRef.TInt())));
 
-    // Ashes.Math.toFloat(n) : Float — widen an Int to a Float (sitofp).
+    // Ashes.Number.Math.toFloat(n) : Float — widen an Int to a Float (sitofp).
     private (int, TypeRef) LowerMathToFloat(Expr arg)
     {
         using var span = PushDiagnosticSpan(arg);
@@ -3909,7 +3909,7 @@ public sealed partial class Lowering
 
         if (pruned is not TypeRef.TInt)
         {
-            ReportDiagnostic(GetSpan(arg), $"Ashes.Math.toFloat() expects Int but got {Pretty(pruned)}.");
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.Math.toFloat() expects Int but got {Pretty(pruned)}.");
             return (argTemp, new TypeRef.TFloat());
         }
 
@@ -3918,7 +3918,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TFloat());
     }
 
-    // Ashes.Math Float -> Float primitive (sqrt/floor/ceil/round/trunc), via the named LLVM intrinsic.
+    // Ashes.Number.Math Float -> Float primitive (sqrt/floor/ceil/round/trunc), via the named LLVM intrinsic.
     private (int, TypeRef) LowerMathFloatUnary(Expr arg, string functionName, string llvmIntrinsic)
     {
         using var span = PushDiagnosticSpan(arg);
@@ -3933,7 +3933,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TFloat());
     }
 
-    // Ashes.Math Float -> Int narrowing. `preRound` is the LLVM intrinsic applied before the
+    // Ashes.Number.Math Float -> Int narrowing. `preRound` is the LLVM intrinsic applied before the
     // truncating fptosi (floor/round), or null for truncToInt (fptosi truncates toward zero).
     private (int, TypeRef) LowerMathFloatToInt(Expr arg, string functionName, string? preRound)
     {
@@ -3956,7 +3956,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
-    // Ashes.Math Layer-2 transcendentals (openlibm), data-driven.
+    // Ashes.Number.Math Layer-2 transcendentals (openlibm), data-driven.
 
     // IntrinsicKind -> (openlibm symbol, arity). Arity 1 = Float -> Float, arity 2 = Float -> Float -> Float.
     private static readonly IReadOnlyDictionary<IntrinsicKind, (string Symbol, int Arity)> LibmIntrinsics =
@@ -4020,14 +4020,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(kind, new TypeScheme([], type));
     }
 
-    // Lowers a transcendental call (Ashes.Math.sin/pow/...) to a CallLibm over its Float arguments.
+    // Lowers a transcendental call (Ashes.Number.Math.sin/pow/...) to a CallLibm over its Float arguments.
     private (int, TypeRef) LowerLibm(IntrinsicKind kind, IReadOnlyList<Expr> args)
     {
         var (symbol, arity) = LibmIntrinsics[kind];
         var argTemps = new int[arity];
         for (int i = 0; i < arity; i++)
         {
-            argTemps[i] = LowerFloatArg(args[i], $"Ashes.Math.{symbol}", out bool ok);
+            argTemps[i] = LowerFloatArg(args[i], $"Ashes.Number.Math.{symbol}", out bool ok);
             if (!ok)
             {
                 return (argTemps[i], new TypeRef.TFloat());
@@ -4076,7 +4076,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.indexOf : Bytes -> Int -> Int -> Int. Returns the index of the first byte
+    // Ashes.Byte.indexOf : Bytes -> Int -> Int -> Int. Returns the index of the first byte
     // equal to the needle at or after `from`, or -1 if none. O(len - from), no allocation — a
     // memchr for scanning a buffer by integer position without materializing views.
     private Binding.Intrinsic CreateBytesIndexOfBinding()
@@ -4087,7 +4087,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.compare : Bytes -> Bytes -> Int. Three-way lexicographic byte comparison:
+    // Ashes.Byte.compare : Bytes -> Bytes -> Int. Three-way lexicographic byte comparison:
     // -1 / 0 / 1 for less / equal / greater. A memcmp over min(len) with a length tie-break —
     // one call per comparison instead of a byte-at-a-time loop.
     private Binding.Intrinsic CreateBytesCompareBinding()
@@ -4098,7 +4098,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.subText : Bytes -> Int -> Int -> Str. Copies `len` bytes starting at `start`
+    // Ashes.Byte.subText : Bytes -> Int -> Int -> Str. Copies `len` bytes starting at `start`
     // into a fresh Str ([length][bytes]). O(len). The caller must ensure the range lies on valid
     // UTF-8 boundaries (splitting at ASCII delimiters like ';'/'\n' always does). Together with
     // indexOf this lets a chunk be scanned by integer index instead of a shrinking Str view.
@@ -4110,10 +4110,10 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.scanHash : Bytes -> Int -> Int -> (Int, Int). One fused pass from `from`: scans
+    // Ashes.Byte.scanHash : Bytes -> Int -> Int -> (Int, Int). One fused pass from `from`: scans
     // for the needle byte while accumulating the FNV-1a hash of the bytes before it. Returns
     // (index of the needle or -1, hash of [from, index) — or of [from, len) when not found). The
-    // hash matches Ashes.Bytes.hash of the same range, so it keys Ashes.HashTrie directly. Saves
+    // hash matches Ashes.Byte.hash of the same range, so it keys Ashes.Collection.HashTrie directly. Saves
     // the separate memchr and hash passes over per-record fields in scan loops.
     private Binding.Intrinsic CreateBytesScanHashBinding()
     {
@@ -4123,10 +4123,10 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.subView : Bytes -> Int -> Int -> Str. A zero-copy VIEW of `len` bytes starting
+    // Ashes.Byte.subView : Bytes -> Int -> Int -> Str. A zero-copy VIEW of `len` bytes starting
     // at `start` (bounds-clamped like subText, O(1), no byte copy). The backing bytes must outlive
     // the view; a view stored into a structure is materialized by the copy-out/blob paths, and a
-    // view over an Ashes.File.mmap mapping is valid for the program's lifetime. Same UTF-8
+    // view over an Ashes.IO.File.mmap mapping is valid for the program's lifetime. Same UTF-8
     // boundary caveat as subText.
     private Binding.Intrinsic CreateBytesSubViewBinding()
     {
@@ -4160,7 +4160,7 @@ public sealed partial class Lowering
         );
     }
 
-    // Ashes.Bytes.fromText : Str -> Bytes. Str and Bytes share the runtime layout
+    // Ashes.Byte.fromText : Str -> Bytes. Str and Bytes share the runtime layout
     // ([length:i64][bytes...]) and are both immutable, so this is an identity reinterpret
     // exposing a string's UTF-8 bytes. Byte-lexicographic order over the result equals Unicode
     // codepoint order, which makes a correct total order over strings constructible in pure Ashes.
@@ -4191,7 +4191,7 @@ public sealed partial class Lowering
 
         if (prunedTextType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(textArg), $"Ashes.Bytes.fromText() expects Str but got {Pretty(prunedTextType)}.");
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.Byte.fromText() expects Str but got {Pretty(prunedTextType)}.");
             return (textTemp, new TypeRef.TBytes());
         }
 
@@ -4199,7 +4199,7 @@ public sealed partial class Lowering
         return (textTemp, new TypeRef.TBytes());
     }
 
-    // Ashes.Bytes.hash : Bytes -> Int. 64-bit FNV-1a over the bytes. With Ashes.Bytes.fromText
+    // Ashes.Byte.hash : Bytes -> Int. 64-bit FNV-1a over the bytes. With Ashes.Byte.fromText
     // this gives string hashing, the basis for hash-keyed maps (see lib/Ashes/HashMap.ash).
     private Binding.Intrinsic CreateBytesHashBinding()
     {
@@ -4228,7 +4228,7 @@ public sealed partial class Lowering
 
         if (prunedBytesType is not TypeRef.TBytes)
         {
-            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Bytes.hash() expects Bytes but got {Pretty(prunedBytesType)}.");
+            ReportDiagnostic(GetSpan(bytesArg), $"Ashes.Byte.hash() expects Bytes but got {Pretty(prunedBytesType)}.");
             return (bytesTemp, new TypeRef.TInt());
         }
 
@@ -4330,7 +4330,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
-    // Ashes.Console.enableRawInput : Unit -> Bool
+    // Ashes.IO.Console.enableRawInput : Unit -> Bool
     private Binding.Intrinsic CreateConsoleEnableRawBinding()
     {
         return new Binding.Intrinsic(
@@ -4357,7 +4357,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TBool());
     }
 
-    // Ashes.Console.restoreInput : Unit -> Unit
+    // Ashes.IO.Console.restoreInput : Unit -> Unit
     private Binding.Intrinsic CreateConsoleRestoreBinding()
     {
         return new Binding.Intrinsic(
@@ -4384,7 +4384,7 @@ public sealed partial class Lowering
         return (target, _resolvedTypes["Unit"]);
     }
 
-    // Ashes.Console.pollInput : Int -> Maybe(Str)
+    // Ashes.IO.Console.pollInput : Int -> Maybe(Str)
     private Binding.Intrinsic CreateConsolePollBinding()
     {
         return new Binding.Intrinsic(
@@ -4411,7 +4411,7 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
-    // Ashes.Console.monotonicMillis : Unit -> Int
+    // Ashes.IO.Console.monotonicMillis : Unit -> Int
     private Binding.Intrinsic CreateConsoleMonotonicMillisBinding()
     {
         return new Binding.Intrinsic(
@@ -4475,7 +4475,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
-    // Ashes.Process.spawn : Str -> List(Str) -> Result(Str, Process)
+    // Ashes.IO.Process.spawn : Str -> List(Str) -> Result(Str, Process)
     private Binding.Intrinsic CreateSpawnProcessBinding()
     {
         return new Binding.Intrinsic(
@@ -4503,7 +4503,7 @@ public sealed partial class Lowering
 
         if (prunedExeType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(exeArg), $"Ashes.Process.spawn() expects Str for exe but got {Pretty(prunedExeType)}.");
+            ReportDiagnostic(GetSpan(exeArg), $"Ashes.IO.Process.spawn() expects Str for exe but got {Pretty(prunedExeType)}.");
             return (exeTemp, prunedExeType);
         }
 
@@ -4524,7 +4524,7 @@ public sealed partial class Lowering
 
         if (prunedArgsType is not TypeRef.TList)
         {
-            ReportDiagnostic(GetSpan(argsArg), $"Ashes.Process.spawn() expects List(Str) for args but got {Pretty(prunedArgsType)}.");
+            ReportDiagnostic(GetSpan(argsArg), $"Ashes.IO.Process.spawn() expects List(Str) for args but got {Pretty(prunedArgsType)}.");
             return (argsTemp, prunedArgsType);
         }
 
@@ -4533,7 +4533,7 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Process"]));
     }
 
-    // Ashes.Process.writeStdin : Process -> Str -> Unit
+    // Ashes.IO.Process.writeStdin : Process -> Str -> Unit
     private Binding.Intrinsic CreateProcessWriteStdinBinding()
     {
         return new Binding.Intrinsic(
@@ -4554,7 +4554,7 @@ public sealed partial class Lowering
             return (procTemp, prunedProcType);
         }
 
-        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.writeStdin() expects Process."))
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.IO.Process.writeStdin() expects Process."))
         {
             return (procTemp, prunedProcType);
         }
@@ -4576,7 +4576,7 @@ public sealed partial class Lowering
 
         if (prunedTextType is not TypeRef.TStr)
         {
-            ReportDiagnostic(GetSpan(textArg), $"Ashes.Process.writeStdin() expects Str but got {Pretty(prunedTextType)}.");
+            ReportDiagnostic(GetSpan(textArg), $"Ashes.IO.Process.writeStdin() expects Str but got {Pretty(prunedTextType)}.");
             return (textTemp, prunedTextType);
         }
 
@@ -4585,7 +4585,7 @@ public sealed partial class Lowering
         return (target, _resolvedTypes["Unit"]);
     }
 
-    // Ashes.Process.readStdoutLine : Process -> Maybe(Str)
+    // Ashes.IO.Process.readStdoutLine : Process -> Maybe(Str)
     private Binding.Intrinsic CreateProcessReadStdoutLineBinding()
     {
         return new Binding.Intrinsic(
@@ -4606,7 +4606,7 @@ public sealed partial class Lowering
             return (procTemp, prunedProcType);
         }
 
-        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.readStdoutLine() expects Process."))
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.IO.Process.readStdoutLine() expects Process."))
         {
             return (procTemp, prunedProcType);
         }
@@ -4616,7 +4616,7 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
-    // Ashes.Process.readStderrLine : Process -> Maybe(Str)
+    // Ashes.IO.Process.readStderrLine : Process -> Maybe(Str)
     private Binding.Intrinsic CreateProcessReadStderrLineBinding()
     {
         return new Binding.Intrinsic(
@@ -4637,7 +4637,7 @@ public sealed partial class Lowering
             return (procTemp, prunedProcType);
         }
 
-        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.readStderrLine() expects Process."))
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.IO.Process.readStderrLine() expects Process."))
         {
             return (procTemp, prunedProcType);
         }
@@ -4647,7 +4647,7 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TStr()));
     }
 
-    // Ashes.Process.waitForExit : Process -> Int
+    // Ashes.IO.Process.waitForExit : Process -> Int
     private Binding.Intrinsic CreateProcessWaitForExitBinding()
     {
         return new Binding.Intrinsic(
@@ -4668,7 +4668,7 @@ public sealed partial class Lowering
             return (procTemp, prunedProcType);
         }
 
-        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.waitForExit() expects Process."))
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.IO.Process.waitForExit() expects Process."))
         {
             return (procTemp, prunedProcType);
         }
@@ -4678,7 +4678,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
-    // Ashes.Process.kill : Process -> Unit
+    // Ashes.IO.Process.kill : Process -> Unit
     private Binding.Intrinsic CreateProcessKillBinding()
     {
         return new Binding.Intrinsic(
@@ -4699,7 +4699,7 @@ public sealed partial class Lowering
             return (procTemp, prunedProcType);
         }
 
-        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.Process.kill() expects Process."))
+        if (!TryRequireBuiltinNamedType(prunedProcType, "Process", procArg, "Ashes.IO.Process.kill() expects Process."))
         {
             return (procTemp, prunedProcType);
         }

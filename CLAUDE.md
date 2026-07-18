@@ -37,7 +37,7 @@ backend-related:
 bash scripts/download-llvm-native.sh --all   # provisions Linux x64, Linux arm64, Windows x64
 ```
 
-The Mbed TLS bitcode payloads (used by `Ashes.Net.Tls` / `Ashes.Http`) are vendored under
+The Mbed TLS bitcode payloads (used by `Ashes.Net.Tls` / `Ashes.Net.Http`) are vendored under
 `runtimes/` and normally don't need fetching. Refresh them only when `<MbedTlsVersion>` in
 `Directory.Build.props` changes:
 
@@ -45,14 +45,14 @@ The Mbed TLS bitcode payloads (used by `Ashes.Net.Tls` / `Ashes.Http`) are vendo
 bash scripts/download-mbedtls.sh --all       # builds libmbedtls.bc for all targets on one host (needs clang, llvm-link, opt)
 ```
 
-The openlibm bitcode payloads (used by `Ashes.Math` transcendentals) are likewise vendored under
+The openlibm bitcode payloads (used by `Ashes.Number.Math` transcendentals) are likewise vendored under
 `runtimes/` and normally don't need fetching. Refresh them only when `<OpenlibmVersion>` changes:
 
 ```bash
 bash scripts/download-openlibm.sh --all       # builds libopenlibm.bc for all targets on one host (needs clang, llvm-link, opt)
 ```
 
-The PCRE2 bitcode payloads (used by `Ashes.Regex`) are likewise vendored under `runtimes/` and
+The PCRE2 bitcode payloads (used by `Ashes.Text.Regex`) are likewise vendored under `runtimes/` and
 normally don't need fetching. Refresh them only when `<Pcre2Version>` changes:
 
 ```bash
@@ -163,7 +163,7 @@ pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this sur
 **Memory model:** no GC and no reference counting — memory is managed by deterministic destruction,
 with ownership + borrowing in `Lowering.Ownership.cs`. Don't reach for GC/RC-style designs.
 
-The standard library is written in Ashes under `lib/Ashes/` (e.g. `List.ash`, `IO.ash`); `dist/`
+The standard library is written in Ashes under `lib/Ashes/` (e.g. `Collection.List.ash`, `Text.ash`; file names encode the module path under the implicit `Ashes.` prefix); `dist/`
 holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as ordinary programs with a leading `//` directive block
 (see [docs/md/guide/testing.md](docs/md/guide/testing.md) for the full surface): `// expect:` (exact stdout, default exit 0),
 `// expect-compile-error:` (substring match, exit 1), `// exit: N`, `// stdin:`, `// file:`/

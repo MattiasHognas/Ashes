@@ -5,7 +5,7 @@ capability Clock =
 
 let bad : Str -> Int needs {Clock} =
     given (url) ->
-        let _t = Ashes.Http.get(url)
+        let _t = Ashes.Net.Http.get(url)
         in 42
 
 Ashes.IO.print("unreachable")

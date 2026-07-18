@@ -15,7 +15,7 @@ public sealed class ExampleSocketFixtureTests
     public async Task Http_get_should_run_against_loopback_fixture()
     {
         const string source = """
-Ashes.IO.print(match await Ashes.Http.get("http://127.0.0.1:8080/") with
+Ashes.IO.print(match await Ashes.Net.Http.get("http://127.0.0.1:8080/") with
     | Ok(body) -> body
     | Error(err) -> err)
 """;
@@ -44,7 +44,7 @@ Ashes.IO.print(match await Ashes.Http.get("http://127.0.0.1:8080/") with
     public async Task Https_get_should_run_against_loopback_tls_fixture()
     {
         const string source = """
-Ashes.IO.print(match await Ashes.Http.get("https://localhost:8080/") with
+Ashes.IO.print(match await Ashes.Net.Http.get("https://localhost:8080/") with
     | Ok(body) -> body
     | Error(err) -> err)
 """;
@@ -69,9 +69,9 @@ Ashes.IO.print(match await Ashes.Http.get("https://localhost:8080/") with
     {
         const string source = """
 Ashes.IO.print(
-    match await Ashes.Async.all([
-        Ashes.Http.get("http://127.0.0.1:8080/first"),
-        Ashes.Http.get("http://127.0.0.1:8080/second")
+    match await Ashes.Task.all([
+        Ashes.Net.Http.get("http://127.0.0.1:8080/first"),
+        Ashes.Net.Http.get("http://127.0.0.1:8080/second")
     ]) with
         | Error(err) -> err
         | Ok(responses) ->
@@ -108,9 +108,9 @@ Ashes.IO.print(
     {
         const string source = """
 Ashes.IO.print(
-    match await Ashes.Async.race([
-        Ashes.Http.get("http://127.0.0.1:8080/slow"),
-        Ashes.Http.get("http://127.0.0.1:8080/fast")
+    match await Ashes.Task.race([
+        Ashes.Net.Http.get("http://127.0.0.1:8080/slow"),
+        Ashes.Net.Http.get("http://127.0.0.1:8080/fast")
     ]) with
         | Ok(text) -> text
         | Error(err) -> err)
@@ -193,7 +193,7 @@ Ashes.IO.print(
     {
         const string source = """
 Ashes.IO.print(
-    match await Ashes.Http.get("http://127.0.0.1:8080/fail") with
+    match await Ashes.Net.Http.get("http://127.0.0.1:8080/fail") with
         | Ok(response) -> "unreachable:" + response
         | Error(err) -> err)
 """;

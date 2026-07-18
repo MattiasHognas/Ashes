@@ -9,10 +9,10 @@
 | FFI surface (`external` functions/types, pointer signatures, symbol@library imports) | Yes |
 | Immutable `Bytes` type with indexed access and append helpers | Yes |
 | Little-endian byte encode/decode helpers (`u16/u32/u64`) | Yes |
-| Binary file output (`Ashes.File.writeBytes`) | Yes |
+| Binary file output (`Ashes.IO.File.writeBytes`) | Yes |
 | String helper module (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`, char predicates) | Yes |
-| Persistent immutable map (`Ashes.Map`) | Yes |
-| Persistent immutable array (`Ashes.Array`) | Yes |
+| Persistent immutable map (`Ashes.Collection.Map`) | Yes |
+| Persistent immutable array (`Ashes.Collection.Array`) | Yes |
 | Records and record-update syntax | Yes |
 | User-written type annotations | Yes |
 | Project/module compilation support across multiple files | Yes |

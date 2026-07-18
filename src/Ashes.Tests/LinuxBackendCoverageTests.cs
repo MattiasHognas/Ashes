@@ -53,7 +53,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_parallel_worker_stack_size_tunable_is_honored()
     {
-        var ir = LowerExpression("match Ashes.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with | (a, b) -> Ashes.IO.print(a + b)");
+        var ir = LowerExpression("match Ashes.Task.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with | (a, b) -> Ashes.IO.print(a + b)");
 
         byte[] unset = new LinuxX64LlvmBackend().Compile(ir);
         byte[] explicitDefault = new LinuxX64LlvmBackend().Compile(ir,
@@ -147,13 +147,13 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_file_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("""match Ashes.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0"""));
+        AssertLinuxLlvmCompiles(LowerExpression("""match Ashes.IO.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0"""));
     }
 
     [Test]
     public void Linux_backend_llvm_support_check_should_accept_network_programs()
     {
-        AssertLinuxLlvmCompiles(LowerExpression("""match await Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertLinuxLlvmCompiles(LowerExpression("""match await Ashes.Net.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
@@ -276,7 +276,7 @@ public sealed class LinuxBackendCoverageTests
             await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello").ConfigureAwait(false);
 
             var result = await CompileRunWithLinuxLlvmAsync(
-                """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
@@ -298,9 +298,9 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             var result = await CompileRunWithLinuxLlvmAsync(
-                """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
-            result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
+            result.Stdout.ShouldBe("Ashes.IO.File.readText() failed\n");
         }
         finally
         {
@@ -322,9 +322,9 @@ public sealed class LinuxBackendCoverageTests
             await File.WriteAllBytesAsync(Path.Combine(tmpDir, "invalid_utf8.bin"), [0xFF, 0xFE, 0xFD]).ConfigureAwait(false);
 
             var result = await CompileRunWithLinuxLlvmAsync(
-                """match Ashes.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
-            result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
+            result.Stdout.ShouldBe("Ashes.IO.File.readText() encountered invalid UTF-8\n");
         }
         finally
         {
@@ -344,7 +344,7 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             var result = await CompileRunWithLinuxLlvmAsync(
-                """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.IO.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
@@ -456,7 +456,7 @@ public sealed class LinuxBackendCoverageTests
             await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x").ConfigureAwait(false);
 
             var result = await CompileRunWithLinuxLlvmAsync(
-                """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
+                """match (Ashes.IO.File.exists("present.txt"), Ashes.IO.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("true:false\n");
         }
@@ -547,7 +547,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("http://__HOST__:__PORT__/hello") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("http://__HOST__:__PORT__/hello") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 var stream = client.GetStream();
@@ -573,7 +573,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.post("http://__HOST__:__PORT__/echo")("hello") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.post("http://__HOST__:__PORT__/echo")("hello") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 var stream = client.GetStream();
@@ -600,7 +600,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -624,7 +624,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -647,7 +647,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -671,7 +671,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Task.race([Ashes.Net.Http.get("https://__HOST__:__PORT__/a"), Ashes.Net.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -699,7 +699,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -724,7 +724,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("http://__HOST__:__PORT__/missing") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("http://__HOST__:__PORT__/missing") with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 var stream = client.GetStream();
@@ -872,7 +872,7 @@ public sealed class LinuxBackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tls
             import Ashes.Net.Tls.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient tls =
                 async(match await Ashes.Net.Tls.receive(tls)(4096) with
                     | Error(e) -> Error(e)
@@ -880,7 +880,7 @@ public sealed class LinuxBackendCoverageTests
                         match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tls.close(tls))
-            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -954,7 +954,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_should_serve_http_over_the_tcp_server()
     {
-        // HTTP layer coverage: Ashes.Http.Server.serve parses the request line, routes on the path,
+        // HTTP layer coverage: Ashes.Net.Http.Server.serve parses the request line, routes on the path,
         // and writes an HTTP/1.1 response. The test drives it with raw HTTP GETs over loopback.
         if (!OperatingSystem.IsLinux())
         {
@@ -983,19 +983,19 @@ public sealed class LinuxBackendCoverageTests
 
     private static string HttpRoutingServerSource(int port) => $$"""
         import Ashes.IO
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         let route req =
-            async(match Ashes.Http.Server.path(req) with
-                | "/health" -> Ashes.Http.Server.text(200)("ok")
-                | "/echo" -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req))
+            async(match Ashes.Net.Http.Server.path(req) with
+                | "/health" -> Ashes.Net.Http.Server.text(200)("ok")
+                | "/echo" -> Ashes.Net.Http.Server.text(200)("body=" + Ashes.Net.Http.Server.body(req))
                 | "/ua" ->
-                    match Ashes.Http.Server.header(req)("user-agent") with
-                        | Some(ua) -> Ashes.Http.Server.text(200)(ua)
-                        | None -> Ashes.Http.Server.text(200)("no-ua")
-                | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
-                | _p -> Ashes.Http.Server.text(404)("not found"))
-        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                    match Ashes.Net.Http.Server.header(req)("user-agent") with
+                        | Some(ua) -> Ashes.Net.Http.Server.text(200)(ua)
+                        | None -> Ashes.Net.Http.Server.text(200)("no-ua")
+                | "/data" -> Ashes.Net.Http.Server.json(200)("{\"ok\":true}")
+                | _p -> Ashes.Net.Http.Server.text(404)("not found"))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(route)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1105,8 +1105,8 @@ public sealed class LinuxBackendCoverageTests
 
     private static string HttpKeepAliveMemoryServerSource(int port) => $$"""
         import Ashes.IO
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         import Ashes.Text
         let recursive repeat s n =
             if n == 0
@@ -1114,8 +1114,8 @@ public sealed class LinuxBackendCoverageTests
             else repeat(s + s)(n - 1)
         let big = repeat("x")(14)
         let route req =
-            async(Ashes.Http.Server.text(200)(big))
-        in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(1)(route)) with
+            async(Ashes.Net.Http.Server.text(200)(big))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serveParallel({{port}})(1)(route)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1293,12 +1293,12 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(m) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped-clean")
             | Error(e) -> Ashes.IO.print("err: " + e)
         """;
@@ -1342,7 +1342,7 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
@@ -1352,7 +1352,7 @@ public sealed class LinuxBackendCoverageTests
                         | Ok(_n) ->
                             let _s = Stop.stop(Unit)
                             in await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped-by-request")
             | Error(e) -> Ashes.IO.print("err: " + e)
         """;
@@ -1418,18 +1418,18 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(msg) ->
-                    match await Ashes.Async.sleep(700) with
+                    match await Ashes.Task.sleep(700) with
                         | Error(e2) -> Error(e2)
                         | Ok(_t) ->
                             match await Ashes.Net.Tcp.send(client)("done: " + msg) with
                                 | Error(e3) -> Error(e3)
                                 | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped-clean")
             | Error(e) -> Ashes.IO.print("err: " + e)
         """;
@@ -1488,12 +1488,12 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(m) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped-clean")
             | Error(e) -> Ashes.IO.print("err: " + e)
         """;
@@ -1572,15 +1572,15 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(msg) ->
-                    match await Ashes.Async.sleep(60000) with
+                    match await Ashes.Task.sleep(60000) with
                         | Error(e2) -> Error(e2)
                         | Ok(_t) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped-clean")
             | Error(e) -> Ashes.IO.print("err: " + e)
         """;
@@ -1633,13 +1633,13 @@ public sealed class LinuxBackendCoverageTests
 
     private static string QueryParsingServerSource(int port) => $$"""
         import Ashes.IO
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         let onReq req =
-            async(match Ashes.Http.Server.queryParam(req)("name") with
-                | Some(v) -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " n=" + v)
-                | None -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " none"))
-        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+            async(match Ashes.Net.Http.Server.queryParam(req)("name") with
+                | Some(v) -> Ashes.Net.Http.Server.text(200)("p=" + Ashes.Net.Http.Server.path(req) + " n=" + v)
+                | None -> Ashes.Net.Http.Server.text(200)("p=" + Ashes.Net.Http.Server.path(req) + " none"))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(onReq)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1647,7 +1647,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_should_stream_a_chunked_response()
     {
-        // Response streaming: the handler returns Ashes.Http.Server.streamed with a pull `step`
+        // Response streaming: the handler returns Ashes.Net.Http.Server.streamed with a pull `step`
         // producer (a function-typed field of the StreamStep ADT). The server frames the body with
         // Transfer-Encoding: chunked, one chunk per pulled StreamChunk, terminated by StreamDone.
         if (!OperatingSystem.IsLinux())
@@ -1686,8 +1686,8 @@ public sealed class LinuxBackendCoverageTests
     private static string ChunkedResponseServerSource(int port) => $$"""
         import Ashes.IO
         import Ashes.Text
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         let step acc =
             async(match Ashes.Text.parseInt(acc) with
                 | Error(_e) -> StreamDone
@@ -1696,8 +1696,8 @@ public sealed class LinuxBackendCoverageTests
                     then StreamDone
                     else StreamChunk("part" + Ashes.Text.fromInt(i) + "-")(Ashes.Text.fromInt(i + 1)))
         let route _req =
-            async(Ashes.Http.Server.streamed(200)("Content-Type: text/plain\r\n")("0")(step))
-        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+            async(Ashes.Net.Http.Server.streamed(200)("Content-Type: text/plain\r\n")("0")(step))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(route)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1758,10 +1758,10 @@ public sealed class LinuxBackendCoverageTests
 
     private static string ChunkedRequestServerSource(int port) => $$"""
         import Ashes.IO
-        import Ashes.Http.Server
-        import Ashes.Async
-        let onReq req = async(Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
-        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+        import Ashes.Net.Http.Server
+        import Ashes.Task
+        let onReq req = async(Ashes.Net.Http.Server.text(200)("body=" + Ashes.Net.Http.Server.body(req)))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(onReq)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1801,13 +1801,13 @@ public sealed class LinuxBackendCoverageTests
     private static string ChunkedFramesServerSource(int port) => $$"""
         import Ashes.IO
         import Ashes.Text
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         let onReq req =
-            async(match Ashes.Http.Server.path(req) with
-                | "/len" -> Ashes.Http.Server.text(200)("len=" + Ashes.Text.fromInt(Ashes.Text.byteLength(Ashes.Http.Server.body(req))))
-                | _p -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
-        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+            async(match Ashes.Net.Http.Server.path(req) with
+                | "/len" -> Ashes.Net.Http.Server.text(200)("len=" + Ashes.Text.fromInt(Ashes.Text.byteLength(Ashes.Net.Http.Server.body(req))))
+                | _p -> Ashes.Net.Http.Server.text(200)("body=" + Ashes.Net.Http.Server.body(req)))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(onReq)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1915,11 +1915,11 @@ public sealed class LinuxBackendCoverageTests
 
     private static string ConcurrentHttpServerSource(int port) => $$"""
         import Ashes.IO
-        import Ashes.Http.Server
-        import Ashes.Async
+        import Ashes.Net.Http.Server
+        import Ashes.Task
         let route req =
-            async(Ashes.Http.Server.text(200)("ok"))
-        in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(3)(route)) with
+            async(Ashes.Net.Http.Server.text(200)("ok"))
+        in match Ashes.Task.run(Ashes.Net.Http.Server.serveParallel({{port}})(3)(route)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -1983,7 +1983,7 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
+        import Ashes.Task
         let onConn client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
@@ -1991,7 +1991,7 @@ public sealed class LinuxBackendCoverageTests
                     match await Ashes.Net.Tcp.send(client)("echo:" + msg) with
                         | Error(e2) -> Error(e2)
                         | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -2054,11 +2054,11 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
-        import Ashes.String
+        import Ashes.Task
+        import Ashes.Text
         let onClient client =
             async(let recursive loop buffered =
-                if Ashes.String.length(buffered) >= 11
+                if Ashes.Text.length(buffered) >= 11
                 then
                     match await Ashes.Net.Tcp.send(client)("got:" + buffered) with
                         | Error(e) -> Error(e)
@@ -2068,7 +2068,7 @@ public sealed class LinuxBackendCoverageTests
                         | Error(e2) -> Error(e2)
                         | Ok(chunk) -> loop(buffered + chunk)
             in loop(""))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -2076,7 +2076,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_should_serve_connections_concurrently()
     {
-        // serve() spawns each handler (Ashes.Async.spawn), so a slow handler must not serialize
+        // serve() spawns each handler (Ashes.Task.spawn), so a slow handler must not serialize
         // other connections. Concurrency is asserted from the handlers' own monotonic sleep
         // windows rather than client wall-clock time: all four connections are opened and their
         // payloads sent up front, each handler reports [sleepStart, sleepEnd] around a 500 ms
@@ -2158,24 +2158,24 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
-        import Ashes.Async
-        import Ashes.Console
+        import Ashes.Task
+        import Ashes.IO.Console
         import Ashes.Text
         let onClient client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(msg) ->
-                    let sleepStart = Ashes.Console.monotonicMillis()
+                    let sleepStart = Ashes.IO.Console.monotonicMillis()
                     in
-                        match await Ashes.Async.sleep(500) with
+                        match await Ashes.Task.sleep(500) with
                             | Error(e2) -> Error(e2)
                             | Ok(_t) ->
-                                let sleepEnd = Ashes.Console.monotonicMillis()
+                                let sleepEnd = Ashes.IO.Console.monotonicMillis()
                                 in
                                     match await Ashes.Net.Tcp.send(client)("echo: " + msg + ";" + Ashes.Text.fromInt(sleepStart) + ";" + Ashes.Text.fromInt(sleepEnd)) with
                                         | Error(e3) -> Error(e3)
                                         | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+        in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
         """;
@@ -2196,7 +2196,7 @@ public sealed class LinuxBackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tcp
             import Ashes.Net.Tcp.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient client =
                 async(match await Ashes.Net.Tcp.receive(client)(4096) with
                     | Error(e) -> Error(e)
@@ -2204,7 +2204,7 @@ public sealed class LinuxBackendCoverageTests
                         match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;

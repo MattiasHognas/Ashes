@@ -1,6 +1,6 @@
 // expect: 42 fits -9223372036854775808 overflow 12345 999999999999999999999999 bad
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let showInt r =
     match r with
         | Ok(v) -> Ashes.Text.fromInt(v)

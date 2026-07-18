@@ -2,10 +2,10 @@
 // composite key (FNV-1a hash of the key, then the key itself). Tree navigation is
 // dominated by cheap 64-bit integer hash comparisons; only on a hash collision does
 // it fall back to comparing the key strings. This removes the caller-supplied
-// ordering that Ashes.Map requires and the per-node string-compare cost.
-// Self-contained: uses only the Ashes.Bytes/Ashes.Text intrinsics.
+// ordering that Ashes.Collection.Map requires and the per-node string-compare cost.
+// Self-contained: uses only the Ashes.Byte/Ashes.Text intrinsics.
 //
-// It does NOT change the memory model: like Ashes.Map it is a persistent structure
+// It does NOT change the memory model: like Ashes.Collection.Map it is a persistent structure
 // that allocates O(log K) nodes per update.
 //
 // NOTE: ADT field types in Ashes must be simple type names, so the node stores the
@@ -17,16 +17,16 @@ type HashMapTree(V) =
 
 let empty = HEmpty
 
-let hashKey key = Ashes.Bytes.hash(Ashes.Bytes.fromText(key))
+let hashKey key = Ashes.Byte.hash(Ashes.Byte.fromText(key))
 
 let strCompare a b =
-    (let ab = Ashes.Bytes.fromText(a)
+    (let ab = Ashes.Byte.fromText(a)
     in
-        let bb = Ashes.Bytes.fromText(b)
+        let bb = Ashes.Byte.fromText(b)
         in
-            let alen = Ashes.Bytes.length(ab)
+            let alen = Ashes.Byte.length(ab)
             in
-                let blen = Ashes.Bytes.length(bb)
+                let blen = Ashes.Byte.length(bb)
                 in
                     let recursive go i =
                         if i >= alen
@@ -38,9 +38,9 @@ let strCompare a b =
                             if i >= blen
                             then 1
                             else
-                                let x = Ashes.Bytes.get(ab)(i)
+                                let x = Ashes.Byte.get(ab)(i)
                                 in
-                                    let y = Ashes.Bytes.get(bb)(i)
+                                    let y = Ashes.Byte.get(bb)(i)
                                     in
                                         if x == y
                                         then go(i + 1)

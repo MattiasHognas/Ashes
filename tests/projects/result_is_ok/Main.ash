@@ -1,3 +1,3 @@
 // expect: true
-import Ashes.Result
+import Ashes.Core.Result
 Ashes.IO.print(Result.isOk(Ok(1)))

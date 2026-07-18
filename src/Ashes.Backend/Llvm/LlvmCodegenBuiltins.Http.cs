@@ -12,7 +12,7 @@ internal static partial class LlvmCodegen
         {
             case "FileHandle":
                 // Auto-close the fd/HANDLE when the resource leaves scope. Fire-and-forget; a
-                // double-close (after an explicit Ashes.File.close) is harmless (EBADF ignored).
+                // double-close (after an explicit Ashes.IO.File.close) is harmless (EBADF ignored).
                 EmitFileHandleClose(state, value);
                 return false;
 

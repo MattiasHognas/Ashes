@@ -136,12 +136,12 @@ public sealed class EndToEndWindowsBackendTests
         }
 
         var src = """
-            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "echo hello"]) with
+            match Ashes.IO.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "echo hello"]) with
                 | Error(msg) -> Ashes.IO.print(msg)
                 | Ok(proc) ->
-                    match Ashes.Process.readStdoutLine(proc) with
+                    match Ashes.IO.Process.readStdoutLine(proc) with
                         | None -> Ashes.IO.print("no output")
-                        | Some(line) -> let _ = Ashes.Process.waitForExit(proc) in Ashes.IO.print(line)
+                        | Some(line) -> let _ = Ashes.IO.Process.waitForExit(proc) in Ashes.IO.print(line)
             """;
         (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("hello\n");
     }
@@ -155,9 +155,9 @@ public sealed class EndToEndWindowsBackendTests
         }
 
         var src = """
-            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "exit 3"]) with
+            match Ashes.IO.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/c", "exit 3"]) with
                 | Error(msg) -> Ashes.IO.print(msg)
-                | Ok(proc) -> Ashes.IO.print(Ashes.Process.waitForExit(proc))
+                | Ok(proc) -> Ashes.IO.print(Ashes.IO.Process.waitForExit(proc))
             """;
         (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("3\n");
     }
@@ -176,13 +176,13 @@ public sealed class EndToEndWindowsBackendTests
         // read it back without having to close the child's stdin (which the language
         // has no API for) — mirroring the `read x; echo $x` shell child used on Unix.
         var src = """
-            match Ashes.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/v:on", "/c", "set /p line=&echo !line!"]) with
+            match Ashes.IO.Process.spawn("C:\\Windows\\System32\\cmd.exe")(["/v:on", "/c", "set /p line=&echo !line!"]) with
                 | Error(msg) -> Ashes.IO.print(msg)
                 | Ok(proc) ->
-                    let _ = Ashes.Process.writeStdin(proc)("hello\n")
-                    in match Ashes.Process.readStdoutLine(proc) with
+                    let _ = Ashes.IO.Process.writeStdin(proc)("hello\n")
+                    in match Ashes.IO.Process.readStdoutLine(proc) with
                         | None -> Ashes.IO.print("no output")
-                        | Some(line) -> let _ = Ashes.Process.waitForExit(proc) in Ashes.IO.print(line)
+                        | Some(line) -> let _ = Ashes.IO.Process.waitForExit(proc) in Ashes.IO.print(line)
             """;
         (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("hello\n");
     }

@@ -16,16 +16,16 @@
 // remaining per-row miss once the tuple load and the closure are gone. It assumes no two distinct
 // station names collide in 64 bits of FNV-1a, which holds for this data set (41,343 names,
 // collision probability ~5e-11), and the output is verified byte-identical. Restore the
-// `Ashes.Bytes.compare` guard in `upsertStat`'s hash-match arm (chaining to `go(next)` on mismatch)
+// `Ashes.Byte.compare` guard in `upsertStat`'s hash-match arm (chaining to `go(next)` on mismatch)
 // for adversarial-input safety, at roughly +2 s.
 import Ashes.IO
-import Ashes.File
-import Ashes.Map
+import Ashes.IO.File
+import Ashes.Collection.Map
 import Ashes.Text
-import Ashes.String
-import Ashes.Bytes
-import Ashes.UInt
-import Ashes.Parallel
+import Ashes.Text
+import Ashes.Byte
+import Ashes.Number.UInt
+import Ashes.Task.Parallel
 type Trie =
     | TrieEmpty
     | TrieLeaf(Int, Str, Int, Int, Int, Int, Trie)
@@ -332,28 +332,28 @@ let parseFixed bytes start stop =
     (let len = stop - start
     in
         if len == 3
-        then Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 2)) - 528
+        then Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start)) * 10 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 2)) - 528
         else
             if len == 4
             then
-                if Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) == 45
-                then -(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 3)) - 528)
-                else Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start)) * 100 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 3)) - 5328
+                if Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start)) == 45
+                then -(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 1)) * 10 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 3)) - 528)
+                else Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start)) * 100 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 1)) * 10 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 3)) - 5328
             else
                 if len == 5
-                then -(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 1)) * 100 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 2)) * 10 + Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(start + 4)) - 5328)
+                then -(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 1)) * 100 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 2)) * 10 + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(start + 4)) - 5328)
                 else 0)
 
 let recursive foldLines bytes pos hi map =
     if pos >= hi
     then map
     else
-        match Ashes.Bytes.scanHash(bytes)(59)(pos) with
+        match Ashes.Byte.scanHash(bytes)(59)(pos) with
             | (sep, nameHash) ->
                 let nlRaw =
                     if sep < 0
-                    then Ashes.Bytes.indexOf(bytes)(10)(pos)
-                    else Ashes.Bytes.indexOf(bytes)(10)(sep + 1)
+                    then Ashes.Byte.indexOf(bytes)(10)(pos)
+                    else Ashes.Byte.indexOf(bytes)(10)(sep + 1)
                 in
                     let lineEnd =
                         if nlRaw < 0
@@ -369,7 +369,7 @@ let recursive foldLines bytes pos hi map =
                             if sep >= lineEnd
                             then foldLines(bytes)(lineEnd + 1)(hi)(map)
                             else
-                                let name = Ashes.Bytes.subView(bytes)(pos)(sep - pos)
+                                let name = Ashes.Byte.subView(bytes)(pos)(sep - pos)
                                 in
                                     let tenths = parseFixed(bytes)(sep + 1)(lineEnd)
                                     in foldLines(bytes)(lineEnd + 1)(hi)(upsertStat(nameHash)(name)(tenths)(map))
@@ -381,7 +381,7 @@ let foldChunk triple =
 let recursive mergeEntries entries acc =
     match entries with
         | [] -> acc
-        | (key, mn, mx, sm, ct) :: tail -> mergeEntries(tail)(upsertMerge(Ashes.Bytes.hash(Ashes.Bytes.fromText(key)))(key)(mn)(mx)(sm)(ct)(acc))
+        | (key, mn, mx, sm, ct) :: tail -> mergeEntries(tail)(upsertMerge(Ashes.Byte.hash(Ashes.Byte.fromText(key)))(key)(mn)(mx)(sm)(ct)(acc))
 
 let merge a b = mergeEntries(toList(b))(a)
 
@@ -391,7 +391,7 @@ let recursive buildChunks bytes len lo n acc =
     else
         let target = lo + (len - lo) / n
         in
-            let nl = Ashes.Bytes.indexOf(bytes)(10)(target)
+            let nl = Ashes.Byte.indexOf(bytes)(10)(target)
             in
                 if nl < 0
                 then (bytes, lo, len) :: acc
@@ -403,7 +403,7 @@ let recursive buildChunks bytes len lo n acc =
 let recursive sortEntries entries acc =
     match entries with
         | [] -> acc
-        | (key, mn, mx, sm, ct) :: tail -> sortEntries(tail)(Ashes.Map.setStr(key)((mn, mx, sm, ct))(acc))
+        | (key, mn, mx, sm, ct) :: tail -> sortEntries(tail)(Ashes.Collection.Map.setStr(key)((mn, mx, sm, ct))(acc))
 
 let formatEntry pair =
     match pair with
@@ -417,19 +417,19 @@ let recursive formatAll pairs acc =
         | h :: t -> formatAll(t)(formatEntry(h) :: acc)
 
 let run path =
-    match Ashes.File.mmap(path) with
+    match Ashes.IO.File.mmap(path) with
         | Error(_e) -> "{}"
         | Ok(bytes) ->
-            let len = Ashes.Bytes.length(bytes)
+            let len = Ashes.Byte.length(bytes)
             in
                 let chunks = buildChunks(bytes)(len)(0)(128)([])
                 in
-                    let final = Ashes.Parallel.reduce(merge)(empty)(foldChunk)(chunks)
+                    let final = Ashes.Task.Parallel.reduce(merge)(empty)(foldChunk)(chunks)
                     in
-                        let sorted = sortEntries(toList(final))(Ashes.Map.empty)
+                        let sorted = sortEntries(toList(final))(Ashes.Collection.Map.empty)
                         in
-                            let entries = formatAll(Ashes.Map.toList(sorted))([])
-                            in "{" + Ashes.String.join(", ")(entries) + "}"
+                            let entries = formatAll(Ashes.Collection.Map.toList(sorted))([])
+                            in "{" + Ashes.Text.join(", ")(entries) + "}"
 in
     match Ashes.IO.args with
         | path :: _ -> Ashes.IO.writeLine(run(path))

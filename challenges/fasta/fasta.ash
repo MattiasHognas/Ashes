@@ -10,7 +10,7 @@
 // Usage: ./fasta 1000   (defaults to 1000)
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.Math as math
+import Ashes.Number.Math as math
 let im = 139968
 
 let ia = 3877

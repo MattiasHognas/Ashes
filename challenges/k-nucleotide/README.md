@@ -19,7 +19,7 @@ It is a hash-map throughput benchmark over a very large number of short keys.
 ## Intended Ashes approach
 
 Slide a k-wide window across the sequence, keying a map by the window substring. Ashes has
-`Ashes.Map` (persistent AVL, needs a `compare`) and `Ashes.HashMap` (persistent, hashed by
+`Ashes.Collection.Map` (persistent AVL, needs a `compare`) and `Ashes.Collection.HashMap` (persistent, hashed by
 `Str`); both are persistent, so each update allocates.
 
 ## What it probes (expected flaws)
@@ -28,7 +28,7 @@ Slide a k-wide window across the sequence, keying a map by the window substring.
   1BRC #2/#3, on a different shape.** Millions of `get`-then-`set` updates with no mutable
   hashtable and no arena reclamation: expect linear memory growth toward OOM on large `N`.
 - Substring/window extraction cost — whether `substring`/`take` are view-based or copy
-  (`uncons` views are fixed; byte-indexed windows go through `Ashes.Bytes.subText`).
+  (`uncons` views are fixed; byte-indexed windows go through `Ashes.Byte.subText`).
 - Sorting map entries by frequency then key (needs a total order and a stable sort).
 - Float formatting for the printed percentages (`Ashes.Text.formatFloat(value)(3)`).
 
@@ -41,7 +41,7 @@ division). The interesting blocker is the missing mutable/O(1) hashtable, not ma
 
 **Implemented + benchmarked.** [`k-nucleotide.ash`](k-nucleotide.ash) extracts the `>THREE`
 sequence via `Bytes`, counts k-mers (k = 1, 2, then the six named oligonucleotides) with the
-persistent `Ashes.Map`, and prints frequency-sorted percentages to 3 dp. Writing it originally
+persistent `Ashes.Collection.Map`, and prints frequency-sorted percentages to 3 dp. Writing it originally
 surfaced the superlinear character-indexed `String.substring` (fixed: single offset walk + one
 `Bytes.subText`, ~2000x on the sliding window) — the sliding k-mer windows now run on `Bytes`.
 

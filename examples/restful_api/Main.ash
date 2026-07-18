@@ -1,9 +1,8 @@
 import Api
-import Ashes.Async as tasks
-import Ashes.File as file
-import Ashes.Http.Server as http
+import Ashes.Task as tasks
+import Ashes.IO.File as file
+import Ashes.Net.Http.Server as http
 import Ashes.IO as io
-
 provide Store =
     | load =
         given (_) ->

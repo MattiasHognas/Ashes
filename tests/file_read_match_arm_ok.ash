@@ -2,13 +2,13 @@
 // expect: hello
 // A FileHandle bound by a match arm (Ok(fh)), read before it is closed, is a
 // legitimate use and must still compile and run.
-match Ashes.File.open("greeting.txt") with
+match Ashes.IO.File.open("greeting.txt") with
     | Error(_) -> Ashes.IO.print("error")
     | Ok(fh) ->
-        match Ashes.File.readLine(fh) with
+        match Ashes.IO.File.readLine(fh) with
             | None ->
-                let _ = Ashes.File.close(fh)
+                let _ = Ashes.IO.File.close(fh)
                 in Ashes.IO.print("none")
             | Some(line) ->
-                let _ = Ashes.File.close(fh)
+                let _ = Ashes.IO.File.close(fh)
                 in Ashes.IO.print(line)

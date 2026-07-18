@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 
 /// <summary>
 /// Loads the vendored hermetic LLVM bitcode payloads that back the built-in runtimes: Mbed TLS
-/// (Ashes.Net.Tls / Ashes.Http), openlibm (Ashes.Math transcendentals), and PCRE2 (Ashes.Regex).
+/// (Ashes.Net.Tls / Ashes.Net.Http), openlibm (Ashes.Number.Math transcendentals), and PCRE2 (Ashes.Text.Regex).
 /// Each payload is linked into the program module at codegen time only when the program actually
 /// uses the corresponding runtime ABI. Loading a payload validates the provisioned
 /// <c>runtimes/&lt;rid&gt;/&lt;payload&gt;.version</c> marker against the version the compiler was

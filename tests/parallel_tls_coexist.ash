@@ -11,10 +11,10 @@
 // tls-expect: ping
 // tls-send: pong
 // expect: 499999500000|pong|499999500000
-import Ashes.Parallel
+import Ashes.Task.Parallel
 import Ashes.Text
 import Ashes.IO
-import Ashes.Async
+import Ashes.Task
 import Ashes.Net.Tls
 let recursive psum lo hi =
     if hi - lo <= 1
@@ -22,13 +22,13 @@ let recursive psum lo hi =
     else
         let mid = lo + (hi - lo) / 2
         in
-            match Ashes.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
+            match Ashes.Task.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
                 | (a, b) -> a + b
 
 let before = psum(0)(1000000)
 
 let tlsResult =
-    match Ashes.Async.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
+    match Ashes.Task.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
         | Error(err) -> err
         | Ok(sock) ->
             match await Ashes.Net.Tls.send(sock)("ping") with

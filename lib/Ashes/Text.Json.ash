@@ -76,23 +76,23 @@ let recursive parseStrBody acc text =
                 else parseStrBody(acc + h)(t)
 
 let noEscapeString text =
-    (let tb = Ashes.Bytes.fromText(text)
+    (let tb = Ashes.Byte.fromText(text)
     in
-        let tlen = Ashes.Bytes.length(tb)
+        let tlen = Ashes.Byte.length(tb)
         in
-            let q = Ashes.Bytes.indexOf(tb)(34)(0)
+            let q = Ashes.Byte.indexOf(tb)(34)(0)
             in
                 if q < 0
                 then None
                 else
-                    let bs = Ashes.Bytes.indexOf(tb)(92)(0)
+                    let bs = Ashes.Byte.indexOf(tb)(92)(0)
                     in
                         if bs >= 0
                         then
                             if bs < q
                             then None
-                            else Some((Ashes.Bytes.subText(tb)(0)(q), Ashes.Bytes.subView(tb)(q + 1)(tlen - q - 1)))
-                        else Some((Ashes.Bytes.subText(tb)(0)(q), Ashes.Bytes.subView(tb)(q + 1)(tlen - q - 1))))
+                            else Some((Ashes.Byte.subText(tb)(0)(q), Ashes.Byte.subView(tb)(q + 1)(tlen - q - 1)))
+                        else Some((Ashes.Byte.subText(tb)(0)(q), Ashes.Byte.subView(tb)(q + 1)(tlen - q - 1))))
 
 let parseQuotedStr text =
     match Ashes.Text.uncons(text) with

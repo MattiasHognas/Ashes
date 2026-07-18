@@ -16,18 +16,18 @@ public sealed class DebugSourceLocationTests
     public void Entry_locations_keep_original_line_numbers_when_imports_are_present()
     {
         var source = """
-            import Ashes.String
-            import Ashes.List
+            import Ashes.Text
+            import Ashes.Collection.List
 
             let greeting = "hello world"
 
             let numbers = [1, 2, 3]
 
-            let flag = Ashes.String.length(greeting) > 5
+            let flag = Ashes.Text.length(greeting) > 5
 
             let count =
                 if flag
-                then Ashes.List.length(numbers)
+                then Ashes.Collection.List.length(numbers)
                 else 0
 
             Ashes.IO.print(count)

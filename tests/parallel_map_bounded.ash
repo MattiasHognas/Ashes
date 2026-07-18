@@ -1,5 +1,5 @@
 // expect: 3494400
-import Ashes.Parallel
+import Ashes.Task.Parallel
 import Ashes.Text
 import Ashes.IO
 let recursive range lo hi =
@@ -18,5 +18,5 @@ let recursive loop i acc =
     if i <= 0
     then acc
     else
-        loop(i - 1)(acc + sumList(Ashes.Parallel.map(given (x) -> x + i)(base)))
+        loop(i - 1)(acc + sumList(Ashes.Task.Parallel.map(given (x) -> x + i)(base)))
 in Ashes.IO.print(Ashes.Text.fromInt(loop(300)(0)))

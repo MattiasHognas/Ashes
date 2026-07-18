@@ -5,12 +5,12 @@
 // ("Expected In but found EOF") because the paramless `let..in` pyramid-head EOF carve-out
 // also caught it. `ashes fmt` canonicalizes the RHS into a parenthesized `(let..in)`, the
 // escape form that was never broken, so it would no longer cover this unit's fix.
-let id x = 
+let id x =
     (let g = x
     in g)
 
-let f x = 
-    (let recursive go n = 
+let f x =
+    (let recursive go n =
         match n with
             | 0 -> x
             | _ -> go(n - 1)

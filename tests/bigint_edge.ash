@@ -1,6 +1,6 @@
 // expect: 0 0 -5 42 -42 265252859812191058636308480000000 0 -3 -2 -1
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let sp = " "
 
 let recursive fact n acc =

@@ -1,3 +1,3 @@
 // expect: true
-import Ashes.Maybe
+import Ashes.Core.Maybe
 Ashes.IO.print(Maybe.isNone(None))

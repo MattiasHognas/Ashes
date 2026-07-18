@@ -1,5 +1,5 @@
 // expect: 6
-import Ashes.Result
+import Ashes.Core.Result
 let addOneIfSmall =
     given (x) ->
         if x <= 5

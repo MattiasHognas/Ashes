@@ -5,7 +5,7 @@ terminal. The left paddle is yours; the right paddle tracks the ball with a
 capped speed and can be beaten. First to 5 points wins, `q` (or `Ctrl-C`)
 quits.
 
-The example is built on `Ashes.Console`, the raw terminal-input module:
+The example is built on `Ashes.IO.Console`, the raw terminal-input module:
 
 - `enableRawInput` / `restoreInput` switch stdin to raw mode (press-by-press
   delivery, no echo) and back. When stdin is not a terminal — a pipe, a test

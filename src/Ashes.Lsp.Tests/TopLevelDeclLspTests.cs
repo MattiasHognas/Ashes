@@ -51,7 +51,7 @@ public sealed class TopLevelDeclLspTests
     [Test]
     public void Analyze_should_surface_conflicting_unqualified_import_selectors()
     {
-        const string source = "import Ashes.List.map\nimport Ashes.Maybe.map\n0";
+        const string source = "import Ashes.Collection.List.map\nimport Ashes.Core.Maybe.map\n0";
         var diagnostics = DocumentService.Analyze(source);
 
         var conflict = diagnostics.ShouldHaveSingleItem();
@@ -59,9 +59,9 @@ public sealed class TopLevelDeclLspTests
         conflict.Message.ShouldContain("Conflicting unqualified import selectors for 'map'");
 
         // The span points at the second (conflicting) import line.
-        var secondImportStart = source.IndexOf("import Ashes.Maybe.map", StringComparison.Ordinal);
+        var secondImportStart = source.IndexOf("import Ashes.Core.Maybe.map", StringComparison.Ordinal);
         conflict.Start.ShouldBe(secondImportStart);
-        conflict.End.ShouldBe(secondImportStart + "import Ashes.Maybe.map".Length);
+        conflict.End.ShouldBe(secondImportStart + "import Ashes.Core.Maybe.map".Length);
     }
 
     [Test]

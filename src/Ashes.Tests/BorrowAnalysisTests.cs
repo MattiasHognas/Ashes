@@ -157,7 +157,7 @@ public sealed class BorrowAnalysisTests
     {
         var ir = LowerProgram(
             """
-            match Ashes.File.readText("test.txt") with
+            match Ashes.IO.File.readText("test.txt") with
                 | Ok(content) -> Ashes.IO.print(content)
                 | Error(msg) -> Ashes.IO.print(msg)
             """);

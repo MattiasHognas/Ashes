@@ -1,6 +1,6 @@
 // expect: 100 150
 // Nested re-entry of an in-place-reuse fold (roadmap CO-2). `setFold` is a flat loop that threads a
-// Map accumulator (last arg to `Ashes.Map.set`, so `set` specializes to `set$reuse` and the fold's
+// Map accumulator (last arg to `Ashes.Collection.Map.set`, so `set` specializes to `set$reuse` and the fold's
 // accumulator is deep-copied once at the fold's entry to make it uniquely owned). `outer` then calls
 // `setFold` once per batch, threading the *same* growing map through each call. This guards
 // CORRECTNESS of that shape: nested reuse must never corrupt the accumulator — after 30 batches the
@@ -11,7 +11,7 @@
 // harness cannot assert peak RSS); eliminating it needs interprocedural move/linearity analysis to
 // prove the accumulator is moved (not aliased after the call) at every call site — the ownership
 // milestone. Sizes are kept small so this stays a fast, green correctness regression.
-import Ashes.Map
+import Ashes.Collection.Map
 import Ashes.IO
 import Ashes.Text
 let cmp a b =
@@ -25,15 +25,15 @@ let cmp a b =
 let recursive setFold i lim m =
     if i > lim
     then m
-    else setFold(i + 1)(lim)(Ashes.Map.set(cmp)(i)(i * 3)(m))
+    else setFold(i + 1)(lim)(Ashes.Collection.Map.set(cmp)(i)(i * 3)(m))
 
 let recursive outer batch nbatch m =
     if batch >= nbatch
     then m
     else outer(batch + 1)(nbatch)(setFold(0)(99)(m))
 
-let final = outer(0)(30)(Ashes.Map.empty)
+let final = outer(0)(30)(Ashes.Collection.Map.empty)
 in
-    match Ashes.Map.get(cmp)(50)(final) with
+    match Ashes.Collection.Map.get(cmp)(50)(final) with
         | None -> Ashes.IO.print("fail")
-        | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + " " + Ashes.Text.fromInt(v))
+        | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + " " + Ashes.Text.fromInt(v))

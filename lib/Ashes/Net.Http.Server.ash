@@ -1,4 +1,4 @@
-// Ashes.Http.Server — an HTTP/1.1 server layered over Ashes.Net.Tcp.Server. A handler maps a request
+// Ashes.Net.Http.Server — an HTTP/1.1 server layered over Ashes.Net.Tcp.Server. A handler maps a request
 // to a response (handler : HttpRequest -> Task(E, HttpResponse), so handlers can `await` async work
 // such as a downstream call); `serve` reads a request, runs the handler, writes the response, and —
 // per HTTP/1.1 — keeps the connection alive (closing on `Connection: close`, on handler failure, or
@@ -19,12 +19,12 @@
 // accessors and builders below hide that representation.
 import Ashes.Net.Tcp
 import Ashes.Net.Tcp.Server
-import Ashes.String
 import Ashes.Text
-import Ashes.Bytes
-import Ashes.UInt
-import Ashes.List
-import Ashes.Async
+import Ashes.Text
+import Ashes.Byte
+import Ashes.Number.UInt
+import Ashes.Collection.List
+import Ashes.Task
 type HttpRequest =
     | HttpRequest(Str, Str, Str, Str)
 
@@ -64,11 +64,11 @@ let target req =
 let path req =
     (let t = target(req)
     in
-        let q = Ashes.String.indexOf(t)("?")
+        let q = Ashes.Text.indexOf(t)("?")
         in
             if q < 0
             then t
-            else Ashes.String.take(t)(q))
+            else Ashes.Text.take(t)(q))
 
 let rawHeaders req =
     match req with
@@ -79,7 +79,7 @@ let body req =
         | HttpRequest(_m, _p, _h, b) -> b
 
 let charLowerCode c =
-    (let code = Ashes.UInt.toInt(Ashes.Bytes.get(Ashes.Bytes.fromText(c))(0))
+    (let code = Ashes.Number.UInt.toInt(Ashes.Byte.get(Ashes.Byte.fromText(c))(0))
     in
         if code >= 65
         then
@@ -107,15 +107,15 @@ let headerInBlock block name =
         match lines with
             | [] -> None
             | line :: rest ->
-                let idx = Ashes.String.indexOf(line)(":")
+                let idx = Ashes.Text.indexOf(line)(":")
                 in
                     if idx < 0
                     then scan(rest)
                     else
-                        if sameHeaderName(Ashes.String.trim(Ashes.String.take(line)(idx)))(name)
-                        then Some(Ashes.String.trim(Ashes.String.drop(line)(idx + 1)))
+                        if sameHeaderName(Ashes.Text.trim(Ashes.Text.take(line)(idx)))(name)
+                        then Some(Ashes.Text.trim(Ashes.Text.drop(line)(idx + 1)))
                         else scan(rest)
-    in scan(Ashes.String.split(block)("\r\n")))
+    in scan(Ashes.Text.split(block)("\r\n")))
 
 let header req name = headerInBlock(rawHeaders(req))(name)
 
@@ -131,12 +131,12 @@ let withHeader name value resp =
         | HttpStreamed(status, headerBlock, step, seed) -> HttpStreamed(status)(name + ": " + value + "\r\n" + headerBlock)(step)(seed)
 
 let requestFromLine requestLine headerBlock bodyText =
-    match Ashes.String.split(requestLine)(" ") with
+    match Ashes.Text.split(requestLine)(" ") with
         | m :: pth :: _v -> HttpRequest(m)(pth)(headerBlock)(bodyText)
         | _other -> HttpRequest("GET")("/")(headerBlock)(bodyText)
 
 let parseRequest raw =
-    (let sections = Ashes.String.split(raw)("\r\n\r\n")
+    (let sections = Ashes.Text.split(raw)("\r\n\r\n")
     in
         let headSection =
             match sections with
@@ -149,18 +149,18 @@ let parseRequest raw =
                     | _other -> ""
             in
                 let requestLine =
-                    match Ashes.String.split(headSection)("\r\n") with
+                    match Ashes.Text.split(headSection)("\r\n") with
                         | first :: _rest -> first
                         | [] -> ""
                 in
-                    let idx = Ashes.String.indexOf(headSection)("\r\n")
+                    let idx = Ashes.Text.indexOf(headSection)("\r\n")
                     in
                         let headerBlock =
                             if idx < 0
                             then ""
-                            else Ashes.String.drop(headSection)(idx + 2)
+                            else Ashes.Text.drop(headSection)(idx + 2)
                         in
-                            match Ashes.String.split(requestLine)(" ") with
+                            match Ashes.Text.split(requestLine)(" ") with
                                 | m :: p :: _v -> HttpRequest(m)(p)(headerBlock)(bodyText)
                                 | _other -> HttpRequest("GET")("/")(headerBlock)(bodyText))
 
@@ -201,7 +201,7 @@ let hexDigitChar d =
         if d < 10
         then 48 + d
         else 87 + d
-    in Ashes.Bytes.subText(Ashes.Bytes.appendByte(Ashes.Bytes.fromText(""))(Ashes.UInt.fromInt(code)))(0)(1))
+    in Ashes.Byte.subText(Ashes.Byte.appendByte(Ashes.Byte.fromText(""))(Ashes.Number.UInt.fromInt(code)))(0)(1))
 
 let recursive hexOf n =
     if n <= 0
@@ -249,52 +249,52 @@ let hexVal b =
     else -1
 
 let percentDecode s =
-    (let bytes = Ashes.Bytes.fromText(s)
+    (let bytes = Ashes.Byte.fromText(s)
     in
         let recursive go i acc =
-            if i >= Ashes.Bytes.length(bytes)
+            if i >= Ashes.Byte.length(bytes)
             then acc
             else
-                let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i))
+                let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
                 in
                     if b == 37
                     then
-                        if i + 2 < Ashes.Bytes.length(bytes)
+                        if i + 2 < Ashes.Byte.length(bytes)
                         then
-                            let h1 = hexVal(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i + 1)))
+                            let h1 = hexVal(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i + 1)))
                             in
-                                let h2 = hexVal(Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(i + 2)))
+                                let h2 = hexVal(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i + 2)))
                                 in
                                     if h1 < 0
-                                    then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
+                                    then go(i + 1)(Ashes.Byte.appendByte(acc)(Ashes.Number.UInt.fromInt(37)))
                                     else
                                         if h2 < 0
-                                        then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
-                                        else go(i + 3)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(h1 * 16 + h2)))
-                        else go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(37)))
+                                        then go(i + 1)(Ashes.Byte.appendByte(acc)(Ashes.Number.UInt.fromInt(37)))
+                                        else go(i + 3)(Ashes.Byte.appendByte(acc)(Ashes.Number.UInt.fromInt(h1 * 16 + h2)))
+                        else go(i + 1)(Ashes.Byte.appendByte(acc)(Ashes.Number.UInt.fromInt(37)))
                     else
                         if b == 43
-                        then go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.UInt.fromInt(32)))
-                        else go(i + 1)(Ashes.Bytes.appendByte(acc)(Ashes.Bytes.get(bytes)(i)))
+                        then go(i + 1)(Ashes.Byte.appendByte(acc)(Ashes.Number.UInt.fromInt(32)))
+                        else go(i + 1)(Ashes.Byte.appendByte(acc)(Ashes.Byte.get(bytes)(i)))
         in
-            let decoded = go(0)(Ashes.Bytes.fromText(""))
-            in Ashes.Bytes.subText(decoded)(0)(Ashes.Bytes.length(decoded)))
+            let decoded = go(0)(Ashes.Byte.fromText(""))
+            in Ashes.Byte.subText(decoded)(0)(Ashes.Byte.length(decoded)))
 
 let query req =
     (let t = target(req)
     in
-        let q = Ashes.String.indexOf(t)("?")
+        let q = Ashes.Text.indexOf(t)("?")
         in
             if q < 0
             then ""
-            else Ashes.String.drop(t)(q + 1))
+            else Ashes.Text.drop(t)(q + 1))
 
 let queryParam req name =
     (let recursive scan pairs =
         match pairs with
             | [] -> None
             | pair :: rest ->
-                let eq = Ashes.String.indexOf(pair)("=")
+                let eq = Ashes.Text.indexOf(pair)("=")
                 in
                     if eq < 0
                     then
@@ -302,16 +302,16 @@ let queryParam req name =
                         then Some("")
                         else scan(rest)
                     else
-                        if percentDecode(Ashes.String.take(pair)(eq)) == name
-                        then Some(percentDecode(Ashes.String.drop(pair)(eq + 1)))
+                        if percentDecode(Ashes.Text.take(pair)(eq)) == name
+                        then Some(percentDecode(Ashes.Text.drop(pair)(eq + 1)))
                         else scan(rest)
-    in scan(Ashes.String.split(query(req))("&")))
+    in scan(Ashes.Text.split(query(req))("&")))
 
 let recursive parseHexRange bytes pos endPos acc =
     if pos >= endPos
     then acc
     else
-        let b = Ashes.UInt.toInt(Ashes.Bytes.get(bytes)(pos))
+        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(pos))
         in
             let d =
                 if b >= 48
@@ -338,7 +338,7 @@ let recursive parseHexRange bytes pos endPos acc =
                 else parseHexRange(bytes)(pos + 1)(endPos)(acc * 16 + d)
 
 let recursive decodeChunkedFrom allBytes pos acc =
-    (let nl = Ashes.Bytes.indexOf(allBytes)(10)(pos)
+    (let nl = Ashes.Byte.indexOf(allBytes)(10)(pos)
     in
         if nl < 0
         then ChunkPartial(acc)(pos)
@@ -347,7 +347,7 @@ let recursive decodeChunkedFrom allBytes pos acc =
             in
                 if size == 0
                 then
-                    if Ashes.Bytes.length(allBytes) < nl + 3
+                    if Ashes.Byte.length(allBytes) < nl + 3
                     then ChunkPartial(acc)(pos)
                     else ChunkDone(acc)(nl + 3)
                 else
@@ -355,36 +355,36 @@ let recursive decodeChunkedFrom allBytes pos acc =
                     in
                         let need = dataStart + size + 2
                         in
-                            if Ashes.Bytes.length(allBytes) < need
+                            if Ashes.Byte.length(allBytes) < need
                             then ChunkPartial(acc)(pos)
-                            else decodeChunkedFrom(allBytes)(need)(acc + Ashes.Bytes.subText(allBytes)(dataStart)(size)))
+                            else decodeChunkedFrom(allBytes)(need)(acc + Ashes.Byte.subText(allBytes)(dataStart)(size)))
 
 let tryParseBuffered buffered =
-    (let headEnd = Ashes.String.indexOf(buffered)("\r\n\r\n")
+    (let headEnd = Ashes.Text.indexOf(buffered)("\r\n\r\n")
     in
         if headEnd < 0
         then HttpNeedMore
         else
-            let headSection = Ashes.String.take(buffered)(headEnd)
+            let headSection = Ashes.Text.take(buffered)(headEnd)
             in
-                let firstLineEnd = Ashes.String.indexOf(headSection)("\r\n")
+                let firstLineEnd = Ashes.Text.indexOf(headSection)("\r\n")
                 in
                     let requestLine =
                         if firstLineEnd < 0
                         then headSection
-                        else Ashes.String.take(headSection)(firstLineEnd)
+                        else Ashes.Text.take(headSection)(firstLineEnd)
                     in
                         let headerBlock =
                             if firstLineEnd < 0
                             then ""
-                            else Ashes.String.drop(headSection)(firstLineEnd + 2)
+                            else Ashes.Text.drop(headSection)(firstLineEnd + 2)
                         in
-                            let allBytes = Ashes.Bytes.fromText(buffered)
+                            let allBytes = Ashes.Byte.fromText(buffered)
                             in
                                 let headBytes = headEnd + 4
                                 in
                                     let version =
-                                        match Ashes.String.split(requestLine)(" ") with
+                                        match Ashes.Text.split(requestLine)(" ") with
                                             | _m :: _p :: v :: _more -> v
                                             | _other -> "HTTP/1.1"
                                     in
@@ -396,14 +396,14 @@ let tryParseBuffered buffered =
                                             in
                                                 let isChunked =
                                                     match headerInBlock(headerBlock)("transfer-encoding") with
-                                                        | Some(te) -> sameHeaderName(Ashes.String.trim(te))("chunked")
+                                                        | Some(te) -> sameHeaderName(Ashes.Text.trim(te))("chunked")
                                                         | None -> false
                                                 in
                                                     if isChunked
                                                     then
                                                         match decodeChunkedFrom(allBytes)(headBytes)("") with
-                                                            | ChunkPartial(piece, frameStart) -> HttpNeedChunked(requestLine)(headerBlock)(keepAlive)(piece)(Ashes.Bytes.subText(allBytes)(frameStart)(Ashes.Bytes.length(allBytes) - frameStart))
-                                                            | ChunkDone(body, endOffset) -> build(body)(Ashes.Bytes.subText(allBytes)(endOffset)(Ashes.Bytes.length(allBytes) - endOffset))
+                                                            | ChunkPartial(piece, frameStart) -> HttpNeedChunked(requestLine)(headerBlock)(keepAlive)(piece)(Ashes.Byte.subText(allBytes)(frameStart)(Ashes.Byte.length(allBytes) - frameStart))
+                                                            | ChunkDone(body, endOffset) -> build(body)(Ashes.Byte.subText(allBytes)(endOffset)(Ashes.Byte.length(allBytes) - endOffset))
                                                     else
                                                         let contentLength =
                                                             match headerInBlock(headerBlock)("content-length") with
@@ -419,11 +419,11 @@ let tryParseBuffered buffered =
                                                             if contentLength > maxRequestBytes
                                                             then HttpTooLarge
                                                             else
-                                                                let availableBody = Ashes.Bytes.length(allBytes) - headBytes
+                                                                let availableBody = Ashes.Byte.length(allBytes) - headBytes
                                                                 in
                                                                     if availableBody < contentLength
-                                                                    then HttpNeedBody(requestLine)(headerBlock)(keepAlive)(Ashes.Bytes.subText(allBytes)(headBytes)(availableBody))(contentLength)
-                                                                    else build(Ashes.Bytes.subText(allBytes)(headBytes)(contentLength))(Ashes.Bytes.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
+                                                                    then HttpNeedBody(requestLine)(headerBlock)(keepAlive)(Ashes.Byte.subText(allBytes)(headBytes)(availableBody))(contentLength)
+                                                                    else build(Ashes.Byte.subText(allBytes)(headBytes)(contentLength))(Ashes.Byte.subText(allBytes)(headBytes + contentLength)(availableBody - contentLength)))
 
 let connectionHandler handler =
     given (client) ->
@@ -467,10 +467,10 @@ let connectionHandler handler =
                                 let recursive bodyLoop chunks got =
                                     if got >= need
                                     then
-                                        let joined = Ashes.String.join("")(Ashes.List.reverse(chunks))
+                                        let joined = Ashes.Text.join("")(Ashes.Collection.List.reverse(chunks))
                                         in
-                                            let allBytes = Ashes.Bytes.fromText(joined)
-                                            in BodyDone(requestFromLine(requestLine)(headerBlock)(Ashes.Bytes.subText(allBytes)(0)(need)))(keepAlive)(Ashes.Bytes.subText(allBytes)(need)(got - need))
+                                            let allBytes = Ashes.Byte.fromText(joined)
+                                            in BodyDone(requestFromLine(requestLine)(headerBlock)(Ashes.Byte.subText(allBytes)(0)(need)))(keepAlive)(Ashes.Byte.subText(allBytes)(need)(got - need))
                                     else
                                         match await Ashes.Net.Tcp.receive(client)(65536) with
                                             | Error(e4) -> BodyFailed(e4)
@@ -512,13 +512,13 @@ let connectionHandler handler =
                                                 if Ashes.Text.byteLength(chunk) == 0
                                                 then BodyPeerClosed
                                                 else
-                                                    let tailBytes = Ashes.Bytes.fromText(tail + chunk)
+                                                    let tailBytes = Ashes.Byte.fromText(tail + chunk)
                                                     in
                                                         match decodeChunkedFrom(tailBytes)(0)("") with
                                                             | ChunkDone(piece, endOffset) ->
-                                                                let body = Ashes.String.join("")(Ashes.List.reverse(piece :: pieces))
-                                                                in BodyDone(requestFromLine(requestLine)(headerBlock)(body))(keepAlive)(Ashes.Bytes.subText(tailBytes)(endOffset)(Ashes.Bytes.length(tailBytes) - endOffset))
-                                                            | ChunkPartial(piece, frameStart) -> chunkedLoop(piece :: pieces)(Ashes.Bytes.subText(tailBytes)(frameStart)(Ashes.Bytes.length(tailBytes) - frameStart))(got + Ashes.Text.byteLength(piece))
+                                                                let body = Ashes.Text.join("")(Ashes.Collection.List.reverse(piece :: pieces))
+                                                                in BodyDone(requestFromLine(requestLine)(headerBlock)(body))(keepAlive)(Ashes.Byte.subText(tailBytes)(endOffset)(Ashes.Byte.length(tailBytes) - endOffset))
+                                                            | ChunkPartial(piece, frameStart) -> chunkedLoop(piece :: pieces)(Ashes.Byte.subText(tailBytes)(frameStart)(Ashes.Byte.length(tailBytes) - frameStart))(got + Ashes.Text.byteLength(piece))
                                 in
                                     match chunkedLoop(firstPiece :: [])(firstTail)(Ashes.Text.byteLength(firstPiece)) with
                                         | BodyFailed(e10) -> Error(e10)

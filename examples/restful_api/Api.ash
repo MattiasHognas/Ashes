@@ -1,9 +1,8 @@
-import Ashes.Http.Server as http
-import Ashes.Json as json
-import Ashes.List as list
-import Ashes.String as str
+import Ashes.Net.Http.Server as http
+import Ashes.Text.Json as json
+import Ashes.Collection.List as list
+import Ashes.Text as str
 import Ashes.Text as text
-
 capability Store =
     | load : Unit -> Str
     | save : Str -> Unit

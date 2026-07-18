@@ -1,6 +1,6 @@
 # RESTful todo API with capability-based storage
 
-A small CRUD API over `Ashes.Http.Server` that keeps its storage behind a custom
+A small CRUD API over `Ashes.Net.Http.Server` that keeps its storage behind a custom
 `Store` capability. The routing layer (`Api.ash`) is a pure function from request
 to response and never decides where the todos live: `Main.ash` satisfies `Store`
 with a static `provide` backed by a JSON file, while `ApiMock.ash` satisfies the
@@ -65,8 +65,8 @@ Each check prints an `ok - ...` line and the run ends with `all tests passed`.
 - The example works around some current compiler constraints in project mode:
   - Stitched module functions are single shared instances, for both types and
     capability rows. `Api.ash` carries its own `reverseTodos` because
-    `Ashes.List.reverse` is already instantiated at `Str` inside
-    `Ashes.Http.Server`, and the `Store` row spreads through shared stdlib
+    `Ashes.Collection.List.reverse` is already instantiated at `Str` inside
+    `Ashes.Net.Http.Server`, and the `Store` row spreads through shared stdlib
     instances (the response builders, `requestFromLine`, even `Text.fromInt`),
     so everything touching them in the test program runs inside the handled
     scope of `ApiMock.runTests`.

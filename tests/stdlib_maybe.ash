@@ -1,17 +1,17 @@
 // expect: ok
-import Ashes.Maybe
+import Ashes.Core.Maybe
 import Ashes.IO
 let mapped =
-    Ashes.Maybe.map(given (x) -> x + 1)(Some(41))
+    Ashes.Core.Maybe.map(given (x) -> x + 1)(Some(41))
 in
     let flatMapped =
-        Ashes.Maybe.flatMap(given (x) -> Some(x + 1))(Some(41))
+        Ashes.Core.Maybe.flatMap(given (x) -> Some(x + 1))(Some(41))
     in
-        let fallback = Ashes.Maybe.getOrElse(99)(None)
+        let fallback = Ashes.Core.Maybe.getOrElse(99)(None)
         in
-            let hasValue = Ashes.Maybe.isSome(Some(1))
+            let hasValue = Ashes.Core.Maybe.isSome(Some(1))
             in
-                let missingValue = Ashes.Maybe.isNone(None)
+                let missingValue = Ashes.Core.Maybe.isNone(None)
                 in
                     match mapped with
                         | None -> Ashes.IO.print("fail")

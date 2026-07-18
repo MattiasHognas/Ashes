@@ -10,10 +10,10 @@
 // Usage: ./mandelbrot 1000   (defaults to 200)
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.Math as math
-import Ashes.Bytes as bytes
-import Ashes.UInt as uint
-import Ashes.List as list
+import Ashes.Number.Math as math
+import Ashes.Byte as bytes
+import Ashes.Number.UInt as uint
+import Ashes.Collection.List as list
 let recursive pow2 k =
     if k == 0
     then 1

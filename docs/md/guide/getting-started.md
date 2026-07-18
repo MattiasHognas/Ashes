@@ -69,7 +69,7 @@ declarations followed by an expression. Iteration is recursion plus pattern matc
 
 ```ash
 import Ashes.IO as io
-import Ashes.List as list
+import Ashes.Collection.List as list
 
 type Shape =
     | Circle(Float)

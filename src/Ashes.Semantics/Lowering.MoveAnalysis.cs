@@ -24,7 +24,7 @@ namespace Ashes.Semantics;
 //      parameter of its enclosing function — recursively, down to a base seed. A greatest-fixpoint
 //      computed on demand (cycles resolve to "not proven" = keep copy).
 //   3. Seed safety: the base case is a value that is the *sole nullary constructor* of its type
-//      (e.g. `Ashes.Map.empty = Empty`). Such a cell holds only its tag; the only reuse token it
+//      (e.g. `Ashes.Collection.Map.empty = Empty`). Such a cell holds only its tag; the only reuse token it
 //      can produce is a 0-field token, which — in a well-typed program — is consumed to rebuild the
 //      same unique nullary constructor, writing the identical tag (a no-op). It therefore can never
 //      be observably mutated, so it is safe to move even when shared. Field-bearing seeds have no
@@ -667,7 +667,7 @@ public sealed partial class Lowering
     /// <summary>
     /// True when <paramref name="arg"/> resolves to the sole nullary constructor of its type — a
     /// value whose cell can never be observably overwritten by in-place reuse (see the file header).
-    /// Follows top-level value aliases (e.g. <c>Ashes.Map.empty → Empty</c>), cycle-guarded.
+    /// Follows top-level value aliases (e.g. <c>Ashes.Collection.Map.empty → Empty</c>), cycle-guarded.
     /// </summary>
     private bool IsNullarySeed(Expr arg, HashSet<string> visiting)
     {

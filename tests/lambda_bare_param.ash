@@ -6,6 +6,11 @@
 import Ashes.IO as io
 import Ashes.Text as text
 let apply f x = f(x)
-let inc = given n -> n + 1
-let addp = given (a, b) -> a + b
+
+let inc =
+    given (n) -> n + 1
+
+let addp =
+    given (a) ->
+        given (b) -> a + b
 in io.print(text.fromInt(apply(inc)(41)) + " " + text.fromInt(addp(2)(3)))

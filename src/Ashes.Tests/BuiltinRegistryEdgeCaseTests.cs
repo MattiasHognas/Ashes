@@ -58,7 +58,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
     [Test]
     public void Ashes_File_module_should_contain_expected_members()
     {
-        BuiltinRegistry.TryGetModule("Ashes.File", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.IO.File", out var module).ShouldBeTrue();
 
         module.Members.ContainsKey("readText").ShouldBeTrue();
         module.Members.ContainsKey("writeText").ShouldBeTrue();
@@ -68,7 +68,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
     [Test]
     public void Ashes_File_writeText_should_have_arity_2()
     {
-        BuiltinRegistry.TryGetModule("Ashes.File", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.IO.File", out var module).ShouldBeTrue();
 
         module.Members["writeText"].Arity.ShouldBe(2);
     }
@@ -118,12 +118,12 @@ public sealed class BuiltinRegistryEdgeCaseTests
     {
         BuiltinRegistry.IsBuiltinModule("Ashes").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.IO").ShouldBeTrue();
-        BuiltinRegistry.IsBuiltinModule("Ashes.File").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.IO.File").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Text").ShouldBeTrue();
-        BuiltinRegistry.IsBuiltinModule("Ashes.Http").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Net.Http").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tcp").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tls").ShouldBeTrue();
-        BuiltinRegistry.IsBuiltinModule("Ashes.Array").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Collection.Array").ShouldBeTrue();
     }
 
     [Test]
@@ -196,17 +196,17 @@ public sealed class BuiltinRegistryEdgeCaseTests
 
         names.ShouldContain("Ashes");
         names.ShouldContain("Ashes.IO");
-        names.ShouldContain("Ashes.File");
+        names.ShouldContain("Ashes.IO.File");
         names.ShouldContain("Ashes.Text");
-        names.ShouldContain("Ashes.Http");
+        names.ShouldContain("Ashes.Net.Http");
         names.ShouldContain("Ashes.Net.Tcp");
         names.ShouldContain("Ashes.Net.Tls");
-        names.ShouldContain("Ashes.Result");
-        names.ShouldContain("Ashes.String");
-        names.ShouldContain("Ashes.List");
-        names.ShouldContain("Ashes.Array");
-        names.ShouldContain("Ashes.Map");
-        names.ShouldContain("Ashes.Maybe");
+        names.ShouldContain("Ashes.Core.Result");
+        names.ShouldContain("Ashes.Text");
+        names.ShouldContain("Ashes.Collection.List");
+        names.ShouldContain("Ashes.Collection.Array");
+        names.ShouldContain("Ashes.Collection.Map");
+        names.ShouldContain("Ashes.Core.Maybe");
         names.ShouldContain("Ashes.Test");
     }
 
@@ -225,49 +225,49 @@ public sealed class BuiltinRegistryEdgeCaseTests
     [Test]
     public void Ashes_Result_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Result", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Core.Result", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Result.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Core.Result.ash");
     }
 
     [Test]
     public void Ashes_List_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.List", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Collection.List", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.List.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.List.ash");
     }
 
     [Test]
     public void Ashes_String_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.String", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Text", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.String.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Text.ash");
     }
 
     [Test]
     public void Ashes_Maybe_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Maybe", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Core.Maybe", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Maybe.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Core.Maybe.ash");
     }
 
     [Test]
     public void Ashes_Map_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Map", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Collection.Map", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Map.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.Map.ash");
     }
 
     [Test]
     public void Ashes_Array_module_should_have_resource_name()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Array", out var module).ShouldBeTrue();
+        BuiltinRegistry.TryGetModule("Ashes.Collection.Array", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Array.ash");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.Array.ash");
     }
 
     [Test]
@@ -279,10 +279,10 @@ public sealed class BuiltinRegistryEdgeCaseTests
     }
 
     [Test]
-    public void Ashes_Text_module_should_have_null_resource_name()
+    public void Ashes_Text_module_should_have_the_merged_string_overlay_resource()
     {
         BuiltinRegistry.TryGetModule("Ashes.Text", out var module).ShouldBeTrue();
 
-        module.ResourceName.ShouldBeNull();
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Text.ash");
     }
 }

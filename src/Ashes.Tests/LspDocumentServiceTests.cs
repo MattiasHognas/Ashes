@@ -232,7 +232,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Result_for_unqualified_helpers_and_constructors()
     {
-        const string source = "import Ashes.Result\nif isOk(Ok(1)) then 1 else 0";
+        const string source = "import Ashes.Core.Result\nif isOk(Ok(1)) then 1 else 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -252,7 +252,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_File()
     {
-        const string source = "import Ashes.File\nmatch Ashes.File.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
+        const string source = "import Ashes.IO.File\nmatch Ashes.IO.File.exists(\"file.txt\") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -262,7 +262,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void Analyze_should_allow_standalone_import_of_Ashes_Http()
     {
-        const string source = "import Ashes.Http\nmatch await Ashes.Http.get(\"http://example.com\") with | Ok(text) -> 1 | Error(_) -> 0";
+        const string source = "import Ashes.Net.Http\nmatch await Ashes.Net.Http.get(\"http://example.com\") with | Ok(text) -> 1 | Error(_) -> 0";
 
         var diagnostics = DocumentService.Analyze(source);
 
@@ -375,7 +375,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetCompletions_should_include_imported_standard_library_constructors()
     {
-        const string source = "import Ashes.Result\n0";
+        const string source = "import Ashes.Core.Result\n0";
 
         var completions = DocumentService.GetCompletions(source);
 
@@ -391,11 +391,14 @@ public sealed class LspDocumentServiceTests
         var completions = DocumentService.GetCompletions(source, source.Length);
 
         completions.ShouldContain("IO");
-        completions.ShouldContain("File");
-        completions.ShouldContain("Http");
         completions.ShouldContain("Net");
-        completions.ShouldContain("List");
-        completions.ShouldContain("String");
+        completions.ShouldContain("Number");
+        completions.ShouldContain("Collection");
+        completions.ShouldContain("Text");
+        completions.ShouldContain("Task");
+        completions.ShouldContain("Core");
+        completions.ShouldContain("Byte");
+        completions.ShouldNotContain("Internal");
     }
 
     [Test]
@@ -414,7 +417,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetCompletions_should_return_imported_leaf_module_members()
     {
-        const string source = "import Ashes.List\nList.";
+        const string source = "import Ashes.Collection.List\nList.";
 
         var completions = DocumentService.GetCompletions(source, source.Length);
 
@@ -426,7 +429,7 @@ public sealed class LspDocumentServiceTests
     [Test]
     public void GetCompletions_should_return_imported_string_module_members()
     {
-        const string source = "import Ashes.String\nString.";
+        const string source = "import Ashes.Text\nText.";
 
         var completions = DocumentService.GetCompletions(source, source.Length);
 

@@ -4,7 +4,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    // Structured parallelism (Ashes.Parallel.both)
+    // Structured parallelism (Ashes.Task.Parallel.both)
     //
     // `both(left)(right)` runs `right(Unit)` on a worker thread (linux-x64) while `left(Unit)`
     // runs inline, then joins and returns the pair. The worker gets its own per-thread bump arena
@@ -50,11 +50,11 @@ internal static partial class LlvmCodegen
     private const string ParallelCapGlobalName = "__ashes_parallel_cap";
     private const string ParallelCapFnName = "__ashes_parallel_cap_get";
 
-    // Dynamically-scoped worker override set by Ashes.Parallel.withWorkers; 0 = unset (use the
+    // Dynamically-scoped worker override set by Ashes.Task.Parallel.withWorkers; 0 = unset (use the
     // compiled max). The effective fork cap is min(override, compiledMax) when set.
     internal const string ParallelWorkerOverrideName = "__ashes_parallel_override";
 
-    // Work-conserving parallel reduce (queued Ashes.Parallel.reduce)
+    // Work-conserving parallel reduce (queued Ashes.Task.Parallel.reduce)
     //
     // One OS-allocated, zero-initialized region holds the whole queue: a fixed header, the
     // snapshotted list elements, an item slot and a publish-flag word for every node of the
@@ -112,7 +112,7 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Emits the shared worker-cap globals and detection function used by both Ashes.Parallel and the
+    /// Emits the shared worker-cap globals and detection function used by both Ashes.Task.Parallel and the
     /// server's fork-based multi-reactor (serveParallel): the withWorkers override slot and
     /// <c>__ashes_parallel_cap_get()</c>. Idempotent, so a program that uses both surfaces emits them
     /// once. This lets `serve` respect the same <c>--parallel-workers</c> cap and runtime override as

@@ -1,4 +1,4 @@
-// regex-redux -- Benchmarks Game challenge, driven by native Ashes.Regex (PCRE2).
+// regex-redux -- Benchmarks Game challenge, driven by native Ashes.Text.Regex (PCRE2).
 //
 // Reads a FASTA DNA stream from stdin, strips header lines and newlines, then (a) counts
 // non-overlapping matches of nine IUPAC variant patterns and prints each pattern with its count,
@@ -8,10 +8,10 @@
 //
 // Usage: ./fasta 1000000 | ./regex-redux
 import Ashes.IO as io
-import Ashes.Regex as regex
-import Ashes.List as list
+import Ashes.Text.Regex as regex
+import Ashes.Collection.List as list
 import Ashes.Text as text
-import Ashes.String as string
+import Ashes.Text as string
 let compileOrDie pattern =
     match regex.compile(pattern) with
         | Ok(re) -> re

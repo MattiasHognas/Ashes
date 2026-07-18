@@ -1,5 +1,5 @@
 // expect: area=12,9|len=3|tagged=Square:9
-import Ashes.String
+import Ashes.Text
 import Ashes.Text
 import Ashes.IO
 type Shape =
@@ -25,6 +25,6 @@ let describe t =
 
 let areas = "area=" + Ashes.Text.fromInt(area(Circle(2))) + "," + Ashes.Text.fromInt(area(Square(3)))
 
-let len = "len=" + Ashes.Text.fromInt(Ashes.String.length(Ashes.String.trim("  abc  ")))
+let len = "len=" + Ashes.Text.fromInt(Ashes.Text.length(Ashes.Text.trim("  abc  ")))
 
 Ashes.IO.print(areas + "|" + len + "|" + "tagged=" + describe(tag(Square(3))))

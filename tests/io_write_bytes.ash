@@ -4,7 +4,7 @@
 // code path. Exercises both the qualified alias call and a plain u8 list -> Bytes builder.
 // expect: P4
 import Ashes.IO as io
-import Ashes.Bytes as bytes
+import Ashes.Byte as bytes
 let header = bytes.fromList([80u8, 52u8, 10u8])
 
 io.writeBytes(header)

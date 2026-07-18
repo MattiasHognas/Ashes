@@ -3,12 +3,13 @@
 // A tiny order-pricing pipeline.
 // Pure, immutable, strictly typed — iteration is recursion + match, never loops.
 import Ashes.IO as io
-import Ashes.List as list
+import Ashes.Collection.List as list
 import Ashes.Text as text
-import Ashes.Math as math
-import Ashes.Async as async
-
+import Ashes.Number.Math as math
+import Ashes.Task as async
 // An algebraic data type: the drinks on the menu...
+// let! awaits a task with no async() wrapper; async.all joins the two tasks
+// into one. |?> maps the Ok branch, |!> tags the Error branch.
 type Drink =
     | Espresso
     | Latte
@@ -43,7 +44,7 @@ let lineCount line =
 let recursive priceAll lines acc =
     match lines with
         | [] -> acc
-        | Line(drink, qty) :: rest -> priceAll rest (Priced.cost(drink) * math.toFloat(qty) + acc)
+        | Line(drink, qty) :: rest -> priceAll rest(Priced.cost(drink) * math.toFloat(qty) + acc)
 
 // Symbol pipeline: the number of drinks on the order.
 let count lines =
@@ -51,9 +52,13 @@ let count lines =
     |> list.map lineCount
     |> list.foldLeft add 0
 
-let priceLabel order = text.formatFloat(priceAll order 0.0)(2)
+let priceLabel order =
+    text.formatFloat(priceAll order 0.0)(2)
 
-let countLabel order = text.fromInt(count order)
+let countLabel order =
+    order
+    |> count
+    |> text.fromInt
 
 let fail e = "order failed: " + e
 
@@ -67,15 +72,14 @@ let merge result =
         | Ok(line) -> line
         | Error(line) -> line
 
-let order = [
-    Line(drink = Espresso, qty = 2),
-    Line(drink = Latte, qty = 1),
-    Line(drink = Drip, qty = 3)
-]
+let order = [Line(drink = Espresso, qty = 2), Line(drink = Latte, qty = 1), Line(drink = Drip, qty = 3)]
 
-// let! awaits a task with no async() wrapper; async.all joins the two tasks
-// into one. |?> maps the Ok branch, |!> tags the Error branch.
-let! purchase = async.all [async.task(priceLabel order), async.task(countLabel order)]
+let purchase =
+    await async.all [order
+    |> priceLabel
+    |> async.task, order
+    |> countLabel
+    |> async.task]
 in
     purchase
     |?> render

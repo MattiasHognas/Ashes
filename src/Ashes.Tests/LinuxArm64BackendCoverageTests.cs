@@ -16,7 +16,7 @@ namespace Ashes.Tests;
 
 public sealed class LinuxArm64BackendCoverageTests
 {
-    private const string HttpsProgram = """match await Ashes.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg""";
+    private const string HttpsProgram = """match await Ashes.Net.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg""";
     private static readonly string[] LinuxArm64EmulatorCandidates = ["qemu-aarch64", "qemu-aarch64-static"];
     private static readonly string[] LinuxArm64SysrootCandidates = ["/usr/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/aarch64-linux-gnu", "/opt/aarch64-linux-gnu"];
 
@@ -73,7 +73,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -104,9 +104,9 @@ public sealed class LinuxArm64BackendCoverageTests
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
             """
             let doubled =
-                match Ashes.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with
+                match Ashes.Task.Parallel.both(given (u) -> 3 + 4)(given (u) -> 5 + 6) with
                     | (a, b) -> a + b
-            in Ashes.IO.print(Ashes.Text.fromInt(doubled) + "|" + (match await Ashes.Http.get("https://__HOST__:__PORT__/") with
+            in Ashes.IO.print(Ashes.Text.fromInt(doubled) + "|" + (match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with
                 | Ok(text) -> text
                 | Error(msg) -> msg))
             """,
@@ -138,14 +138,14 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgramWithImports("""
-            import Ashes.Parallel
+            import Ashes.Task.Parallel
 
             let recursive range lo hi =
                 if lo >= hi
                 then []
                 else lo :: range(lo + 1)(hi)
 
-            let joined = Ashes.Parallel.reduce(given (a) -> given (b) -> a + "," + b)("")(given (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
+            let joined = Ashes.Task.Parallel.reduce(given (a) -> given (b) -> a + "," + b)("")(given (x) -> Ashes.Text.fromInt(x * x))(range(0)(7))
 
             Ashes.IO.print(joined)
             """)).ConfigureAwait(false);
@@ -176,7 +176,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -199,7 +199,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -228,7 +228,7 @@ public sealed class LinuxArm64BackendCoverageTests
         // observed to exceed SocketTestConstants.ProcessExitTimeout on loaded CI runners. The
         // equivalent HTTPS race coverage continues to run natively on Linux x64 and Windows x64.
         var result = await CompileRunWithLinuxArm64LlvmHttpLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("http://__HOST__:__PORT__/a"), Ashes.Http.get("http://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Task.race([Ashes.Net.Http.get("http://__HOST__:__PORT__/a"), Ashes.Net.Http.get("http://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async client =>
             {
                 var stream = client.GetStream();
@@ -259,7 +259,7 @@ public sealed class LinuxArm64BackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxArm64LlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -290,7 +290,7 @@ public sealed class LinuxArm64BackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tls
             import Ashes.Net.Tls.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient tls =
                 async(match await Ashes.Net.Tls.receive(tls)(4096) with
                     | Error(e) -> Error(e)
@@ -298,7 +298,7 @@ public sealed class LinuxArm64BackendCoverageTests
                         match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tls.close(tls))
-            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -379,7 +379,7 @@ public sealed class LinuxArm64BackendCoverageTests
     [Test]
     public async Task Linux_arm64_backend_llvm_should_serve_http_over_the_tcp_server()
     {
-        // HTTP layer coverage under qemu-aarch64: Ashes.Http.Server.serve parses the request line,
+        // HTTP layer coverage under qemu-aarch64: Ashes.Net.Http.Server.serve parses the request line,
         // routes on the path, and writes an HTTP/1.1 response; the C# test drives it with raw GETs.
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
         {
@@ -389,14 +389,14 @@ public sealed class LinuxArm64BackendCoverageTests
         int port = GetFreeLoopbackPort();
         var source = $$"""
             import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
+            import Ashes.Net.Http.Server
+            import Ashes.Task
             let route req =
-                async(match Ashes.Http.Server.path(req) with
-                    | "/health" -> Ashes.Http.Server.text(200)("ok")
-                    | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-                    | _p -> Ashes.Http.Server.text(404)("not found"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                async(match Ashes.Net.Http.Server.path(req) with
+                    | "/health" -> Ashes.Net.Http.Server.text(200)("ok")
+                    | "/" -> Ashes.Net.Http.Server.text(200)("hello from ashes")
+                    | _p -> Ashes.Net.Http.Server.text(404)("not found"))
+            in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(route)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -476,7 +476,7 @@ public sealed class LinuxArm64BackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tcp
             import Ashes.Net.Tcp.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient client =
                 async(match await Ashes.Net.Tcp.receive(client)(4096) with
                     | Error(e) -> Error(e)
@@ -484,7 +484,7 @@ public sealed class LinuxArm64BackendCoverageTests
                         match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -758,7 +758,7 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     // Stitches `import Ashes.*` module sources exactly like the CLI's standalone-compile path, so
-    // stdlib bindings that live in embedded module source (e.g. Ashes.Parallel.reduce) resolve.
+    // stdlib bindings that live in embedded module source (e.g. Ashes.Task.Parallel.reduce) resolve.
     private static IrProgram LowerProgramWithImports(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");

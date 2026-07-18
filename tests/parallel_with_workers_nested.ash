@@ -1,5 +1,5 @@
 // expect: 9
-import Ashes.Parallel
+import Ashes.Task.Parallel
 import Ashes.IO
 let plus =
     given (a) ->
@@ -9,7 +9,7 @@ let inc =
     given (x) -> x + 1
 
 let mapped =
-    Ashes.Parallel.withWorkers(8)(given (_u) ->
-        Ashes.Parallel.withWorkers(2)(given (_v) -> Ashes.Parallel.map(inc)([1, 2, 3])))
+    Ashes.Task.Parallel.withWorkers(8)(given (_u) ->
+        Ashes.Task.Parallel.withWorkers(2)(given (_v) -> Ashes.Task.Parallel.map(inc)([1, 2, 3])))
 
-Ashes.IO.print(Ashes.Parallel.reduce(plus)(0)(given (x) -> x)(mapped))
+Ashes.IO.print(Ashes.Task.Parallel.reduce(plus)(0)(given (x) -> x)(mapped))

@@ -107,8 +107,8 @@ public sealed class OwnershipTests
     [Test]
     public void Result_adt_binding_emits_drop()
     {
-        // Ashes.File.exists returns Result(Str, Bool) — an ADT
-        var ir = LowerProgram("let r = Ashes.File.exists(\"test.txt\") in Ashes.IO.print(1)");
+        // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT
+        var ir = LowerProgram("let r = Ashes.IO.File.exists(\"test.txt\") in Ashes.IO.print(1)");
         HasDropInstruction(ir.EntryFunction.Instructions, "Result").ShouldBeTrue();
     }
 
@@ -220,7 +220,7 @@ public sealed class OwnershipTests
     {
         var ir = LowerProgram(
             """
-            match Ashes.File.readText("test.txt") with
+            match Ashes.IO.File.readText("test.txt") with
                 | Ok(content) -> Ashes.IO.print(content)
                 | Error(msg) -> Ashes.IO.print(msg)
             """);

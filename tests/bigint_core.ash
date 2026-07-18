@@ -1,6 +1,6 @@
 // expect: 1000000000000000000 1000000000000000000000000 -3 142857 1 -1 0
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let sp = " "
 
 let a = big.fromInt(999999999999999999)

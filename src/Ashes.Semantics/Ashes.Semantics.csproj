@@ -13,40 +13,40 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\lib\Ashes\Array.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Array.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\List.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.List.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Math.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Math.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Map.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Map.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\HashMap.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.HashMap.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\HashTrie.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.HashTrie.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Collection.Array.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.Array.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Collection.List.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.List.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Number.Math.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Number.Math.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Collection.Map.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.Map.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Collection.HashMap.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.HashMap.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Collection.HashTrie.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.HashTrie.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Net.Tcp.Server.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Tcp.Server.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Net.Tls.Server.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Tls.Server.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Http.Server.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Http.Server.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Parallel.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Parallel.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Maybe.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Maybe.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Result.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Result.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\String.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.String.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Net.Http.Server.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Http.Server.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Task.Parallel.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Task.Parallel.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Core.Maybe.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Core.Maybe.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Core.Result.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Core.Result.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Text.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Text.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Test.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Test.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Json.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Json.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Rpc.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Rpc.ash" />
-    <EmbeddedResource Include="..\..\lib\Ashes\Regex.ash"
-      LogicalName="Ashes.Semantics.StdLib.Ashes.Regex.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Text.Json.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Text.Json.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Net.Rpc.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Rpc.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Text.Regex.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Text.Regex.ash" />
   </ItemGroup>
 
 </Project>

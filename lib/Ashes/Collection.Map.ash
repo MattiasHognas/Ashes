@@ -76,7 +76,7 @@ let getStr searchKey =
         match map with
             | Empty -> None
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(searchKey))(Ashes.Bytes.fromText(key))
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(searchKey))(Ashes.Byte.fromText(key))
                 in
                     if ordering == 0
                     then Some(value)
@@ -111,7 +111,7 @@ let setStr newKey newValue =
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
                 in
                     if ordering == 0
                     then makeNode(left)(key)(newValue)(right)
@@ -126,7 +126,7 @@ let upsertStr newKey missValue onHit =
         match map with
             | Empty -> makeNode(Empty)(newKey)(missValue)(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
                 in
                     if ordering == 0
                     then makeNode(left)(key)(onHit(value))(right)

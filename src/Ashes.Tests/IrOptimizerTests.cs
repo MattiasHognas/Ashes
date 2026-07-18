@@ -744,7 +744,7 @@ public sealed class IrOptimizerTests
         }
 
         var source = """
-            match Ashes.File.exists("nonexistent.txt") with
+            match Ashes.IO.File.exists("nonexistent.txt") with
                 | Ok(result) -> if result then Ashes.IO.print("yes") else Ashes.IO.print("no")
                 | Error(msg) -> Ashes.IO.print(msg)
             """;

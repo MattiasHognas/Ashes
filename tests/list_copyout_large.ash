@@ -4,7 +4,7 @@
 // memory. Exercises both the direct binding copy and a second copy of the reversed list.
 // expect: 1500000 1 1500000
 import Ashes.IO as io
-import Ashes.List as list
+import Ashes.Collection.List as list
 import Ashes.Text as text
 let recursive build i acc =
     if i == 0

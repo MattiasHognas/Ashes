@@ -1,5 +1,5 @@
 // expect: 3
-Ashes.IO.print(match Ashes.Async.run(async(match await async 1 with
+Ashes.IO.print(match Ashes.Task.run(async(match await async 1 with
     | Error(_) -> 0
     | Ok(a) ->
         match await async 2 with

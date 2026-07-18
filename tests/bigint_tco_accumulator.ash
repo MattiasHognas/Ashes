@@ -6,7 +6,7 @@
 // expect: 265252859812191058636308480000000 1073741824
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let recursive run fac pow i n =
     if i > n
     then text.fromBigInt(fac) + " " + text.fromBigInt(pow)

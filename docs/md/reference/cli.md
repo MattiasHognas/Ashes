@@ -80,8 +80,8 @@ The following options are accepted by **compile**, **run**, **repl**, and **test
 |--------|-----------|---------|------------|-------------|
 | `--target <id>` | enum | OS-dependent (see below) | No | Select the code-generation back end. |
 | `--target-cpu <cpu>` | string | `generic` / `x86-64` | No | Target a specific CPU microarchitecture (e.g. `skylake`, `znver3`, `apple-m1`). Use `native` to auto-detect the host CPU. Default is safe generic codegen for the target arch. |
-| `--parallel-stack-size <size>` | size | `1M` | No | Per-worker stack size for structured parallelism (`Ashes.Parallel`). Accepts a byte count or a `K`/`M`/`G` suffix (e.g. `2M`, `1048576`); must be positive. On linux this sets the mmap'd worker-stack length; on win-x64 it is passed to `CreateThread` (unset leaves the OS default). |
-| `--parallel-workers <n>` | int | core count | No | The executable's **compiled maximum / hard ceiling** for concurrent structured-parallelism workers. Must be positive. When unset, the compiled program detects the machine's core count once at first fork (linux: `sched_getaffinity` popcount, so `taskset`/cgroup masks are respected; win-x64: `GetSystemInfo`), falling back to 8 if detection fails. A program can request *fewer* workers for a scoped computation with `Ashes.Parallel.withWorkers` (effective count is `min(override, this maximum)`); it can never exceed this ceiling. |
+| `--parallel-stack-size <size>` | size | `1M` | No | Per-worker stack size for structured parallelism (`Ashes.Task.Parallel`). Accepts a byte count or a `K`/`M`/`G` suffix (e.g. `2M`, `1048576`); must be positive. On linux this sets the mmap'd worker-stack length; on win-x64 it is passed to `CreateThread` (unset leaves the OS default). |
+| `--parallel-workers <n>` | int | core count | No | The executable's **compiled maximum / hard ceiling** for concurrent structured-parallelism workers. Must be positive. When unset, the compiled program detects the machine's core count once at first fork (linux: `sched_getaffinity` popcount, so `taskset`/cgroup masks are respected; win-x64: `GetSystemInfo`), falling back to 8 if detection fails. A program can request *fewer* workers for a scoped computation with `Ashes.Task.Parallel.withWorkers` (effective count is `min(override, this maximum)`); it can never exceed this ceiling. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 
 The following option is accepted by **compile** and **run** only:
@@ -148,7 +148,7 @@ ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
 | `--target` | | enum | OS default | No | Target back end (`linux-x64` or `win-x64`). |
 | `--target-cpu` | | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
-| `--parallel-stack-size` | | size | `1M` | No | Per-worker stack size for `Ashes.Parallel` (byte count or `K`/`M`/`G` suffix). |
+| `--parallel-stack-size` | | size | `1M` | No | Per-worker stack size for `Ashes.Task.Parallel` (byte count or `K`/`M`/`G` suffix). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | | enum | `-O2` | No | Select LLVM optimization level. |
 | `--debug` | `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |
@@ -247,7 +247,7 @@ ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [-
 | `--expr` | string | — | No | Inline Ashes source to compile and run. |
 | `--target` | enum | OS default | No | Target back end. |
 | `--target-cpu` | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
-| `--parallel-stack-size` | size | `1M` | No | Per-worker stack size for `Ashes.Parallel` (byte count or `K`/`M`/`G` suffix). |
+| `--parallel-stack-size` | size | `1M` | No | Per-worker stack size for `Ashes.Task.Parallel` (byte count or `K`/`M`/`G` suffix). |
 | `--project` | file path | — | No | Path to an `ashes.json` project file. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level. |
 | `--debug` / `-g` | bool (flag) | false | No | Emit DWARF debug info (see [Debug Mode](#debug-mode)). |

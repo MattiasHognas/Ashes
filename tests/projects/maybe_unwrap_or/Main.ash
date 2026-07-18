@@ -1,3 +1,3 @@
 // expect: 11
-import Ashes.Maybe
+import Ashes.Core.Maybe
 Ashes.IO.print(Maybe.unwrapOr(11)(None))

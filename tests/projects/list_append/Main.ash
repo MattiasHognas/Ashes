@@ -1,5 +1,5 @@
 // expect: 1234
-import Ashes.List
+import Ashes.Collection.List
 let digits =
     given (acc) ->
         given (x) -> acc * 10 + x

@@ -20,7 +20,7 @@ permutation as a plain `List(Int)`: reading `p[0]` is `head` (O(1)), and the inn
 the first `k` elements" operation is a single-pass `flipPrefix k p` that conses the first `k`
 onto the tail — **O(k), the same asymptotic cost as an in-place array reverse**. Permutation
 generation uses the standard counting/rotation scheme, also pure. A plain `List` matches the
-access pattern (O(1) head); `Ashes.Array` (persistent tree, O(log N)) is the *wrong* choice
+access pattern (O(1) head); `Ashes.Collection.Array` (persistent tree, O(log N)) is the *wrong* choice
 here.
 
 > Implementation note: do **not** build the flip from stdlib `take`+`reverse`+`append` —
@@ -41,7 +41,7 @@ capability. What it stresses:
   the whole point of the benchmark.
 - Tail-recursion / TCO behaviour of the permutation-generation and flip loops.
 - Data-parallel sharding of permutation ranges that the reference uses for its
-  speed — inexpressible while `Ashes.Parallel` is sequential.
+  speed — inexpressible while `Ashes.Task.Parallel` is sequential.
 
 ## Dependencies / blockers
 
@@ -88,5 +88,5 @@ the reference:
 
 Constant resident memory at every N (the `State(perm, count)` accumulator deep-copies across the
 fixed-watermark reset); larger N is bounded only by time (`N!` enumeration). Permutation-range
-sharding over `Ashes.Parallel` (still sequential here) is what would close the speed gap to the
+sharding over `Ashes.Task.Parallel` (still sequential here) is what would close the speed gap to the
 reference at N=12.

@@ -8,20 +8,20 @@
 //
 // It is a hash-map throughput benchmark over a very large number of short keys.
 //
-// The window keys are cut with Ashes.Bytes.subText over a byte buffer (O(k) per
-// slice, byte-indexed). The natural spelling with Ashes.String.substring is
+// The window keys are cut with Ashes.Byte.subText over a byte buffer (O(k) per
+// slice, byte-indexed). The natural spelling with Ashes.Text.substring is
 // catastrophically slow -- its character index makes a sliding window superlinear
 // (a 5000-base sequence took ~2 minutes) -- so the buffer is materialized once
-// with Ashes.Bytes.fromText and sliced by byte offset.
+// with Ashes.Byte.fromText and sliced by byte offset.
 //
 // Usage: ./fasta 1000 | ./k-nucleotide
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.String as str
-import Ashes.Bytes as bytes
-import Ashes.HashMap as map
-import Ashes.List as list
-import Ashes.Math as math
+import Ashes.Text as str
+import Ashes.Byte as bytes
+import Ashes.Collection.HashMap as map
+import Ashes.Collection.List as list
+import Ashes.Number.Math as math
 let recursive collect started acc =
     match io.readLine(Unit) with
         | None -> acc

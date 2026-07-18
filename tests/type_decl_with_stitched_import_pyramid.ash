@@ -1,5 +1,5 @@
 // expect: Some:5
-import Ashes.String
+import Ashes.Text
 import Ashes.IO
 type Box =
     | Full(Int)
@@ -9,4 +9,4 @@ let unbox b =
     match b with
         | Full(v) -> "Some:" + Ashes.Text.fromInt(v)
         | Empty -> "None"
-in Ashes.IO.print(unbox(Full(Ashes.String.length("hello"))))
+in Ashes.IO.print(unbox(Full(Ashes.Text.length("hello"))))

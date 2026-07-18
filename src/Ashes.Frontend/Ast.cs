@@ -136,7 +136,7 @@ public sealed record CapabilityOperation(string Name, TypeExpr? Signature);
 /// <summary>A <c>capability</c> declaration: <c>capability Clock = | now : Unit -> Int</c>.</summary>
 public sealed record CapabilityDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<CapabilityOperation> Operations);
 
-/// <summary>One operation implementation in a <c>provide</c>: <c>| compare = Ashes.String.compare</c>.</summary>
+/// <summary>One operation implementation in a <c>provide</c>: <c>| compare = Ashes.Text.compare</c>.</summary>
 public sealed record ProvideBinding(string OperationName, Expr Implementation);
 
 /// <summary>

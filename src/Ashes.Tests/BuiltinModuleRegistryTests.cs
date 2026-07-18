@@ -53,8 +53,8 @@ public sealed class BuiltinModuleRegistryTests
     [Test]
     public void Ashes_http_module_is_registered()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Http", out var module).ShouldBeTrue();
-        module.Name.ShouldBe("Ashes.Http");
+        BuiltinRegistry.TryGetModule("Ashes.Net.Http", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Net.Http");
         module.Members.ContainsKey("get").ShouldBeTrue();
         module.Members.ContainsKey("post").ShouldBeTrue();
     }
@@ -62,8 +62,8 @@ public sealed class BuiltinModuleRegistryTests
     [Test]
     public void Ashes_http_is_known_standard_library_module()
     {
-        ProjectSupport.IsStdModule("Ashes.Http").ShouldBeTrue();
-        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Http");
+        ProjectSupport.IsStdModule("Ashes.Net.Http").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Net.Http");
     }
 
     [Test]
@@ -90,46 +90,46 @@ public sealed class BuiltinModuleRegistryTests
     [Test]
     public void Ashes_string_module_is_registered()
     {
-        BuiltinRegistry.TryGetModule("Ashes.String", out var module).ShouldBeTrue();
-        module.Name.ShouldBe("Ashes.String");
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.String.ash");
+        BuiltinRegistry.TryGetModule("Ashes.Text", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Text");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Text.ash");
     }
 
     [Test]
     public void Ashes_string_is_known_standard_library_module()
     {
-        ProjectSupport.IsStdModule("Ashes.String").ShouldBeTrue();
-        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.String");
+        ProjectSupport.IsStdModule("Ashes.Text").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Text");
     }
 
     [Test]
     public void Ashes_map_module_is_registered()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Map", out var module).ShouldBeTrue();
-        module.Name.ShouldBe("Ashes.Map");
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Map.ash");
+        BuiltinRegistry.TryGetModule("Ashes.Collection.Map", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Collection.Map");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.Map.ash");
     }
 
     [Test]
     public void Ashes_map_is_known_standard_library_module()
     {
-        ProjectSupport.IsStdModule("Ashes.Map").ShouldBeTrue();
-        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Map");
+        ProjectSupport.IsStdModule("Ashes.Collection.Map").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Collection.Map");
     }
 
     [Test]
     public void Ashes_array_module_is_registered()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Array", out var module).ShouldBeTrue();
-        module.Name.ShouldBe("Ashes.Array");
-        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Array.ash");
+        BuiltinRegistry.TryGetModule("Ashes.Collection.Array", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Collection.Array");
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.Array.ash");
     }
 
     [Test]
     public void Ashes_array_is_known_standard_library_module()
     {
-        ProjectSupport.IsStdModule("Ashes.Array").ShouldBeTrue();
-        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Array");
+        ProjectSupport.IsStdModule("Ashes.Collection.Array").ShouldBeTrue();
+        ProjectSupport.KnownStandardLibraryModules.ShouldContain("Ashes.Collection.Array");
     }
 
     [Test]
@@ -159,7 +159,7 @@ public sealed class BuiltinModuleRegistryTests
         var diag = new Diagnostics();
         var program = new Parser(
             """
-            Ashes.IO.print(match await Ashes.Http.get("http://example.com") with
+            Ashes.IO.print(match await Ashes.Net.Http.get("http://example.com") with
                 | Error(_) -> "fail"
                 | Ok(text) -> text)
             """,
@@ -226,8 +226,8 @@ public sealed class BuiltinModuleRegistryTests
     [Test]
     public void Ashes_async_module_is_registered()
     {
-        BuiltinRegistry.TryGetModule("Ashes.Async", out var module).ShouldBeTrue();
-        module.Name.ShouldBe("Ashes.Async");
+        BuiltinRegistry.TryGetModule("Ashes.Task", out var module).ShouldBeTrue();
+        module.Name.ShouldBe("Ashes.Task");
         module.Members.ContainsKey("run").ShouldBeTrue();
         module.Members.ContainsKey("fromResult").ShouldBeTrue();
     }
