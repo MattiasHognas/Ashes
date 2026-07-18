@@ -1,73 +1,76 @@
 import Ansi as ansi
 import Game as game
+import Input as input
 import Physics as physics
+import Physics.State
+import Ashes.Console as console
 import Ashes.IO as io
-import Ashes.Text as text
-let showShot who trail message playerScore computerScore wind =
-    (let _cleared = io.write(ansi.clearScreen(Unit))
+let frameMs = 33
+
+let recursive collectInput pending deadline =
+    (let now = console.monotonicMillis(Unit)
     in
-        let _logo = io.writeLine(ansi.logo(Unit))
-        in
-            let _board = io.write(game.renderBoard(trail))
-            in
-                let _score = io.writeLine(game.scoreLine(playerScore)(computerScore)(wind))
-                in io.writeLine(who + " " + message))
-
-let resolveLanding shooterName targetX flight =
-    match flight with
-        | NetBall(trail) -> (trail, shooterName + " hit the net", false)
-        | Landed(trail, land) ->
-            if game.landedNear(targetX)(land)
-            then (trail, shooterName + " smashed the paddle zone at " + text.fromInt(land) + " - point", true)
-            else (trail, shooterName + " landed at " + text.fromInt(land) + " - no point", false)
-
-let recursive gameLoop playerScore computerScore round =
-    if playerScore >= 3
-    then io.writeLine(ansi.green("you win the rally " + text.fromInt(playerScore) + "-" + text.fromInt(computerScore)))
-    else
-        if computerScore >= 3
-        then io.writeLine(ansi.red("the computer wins " + text.fromInt(computerScore) + "-" + text.fromInt(playerScore)))
+        if now >= deadline
+        then Some(pending)
         else
-            let wind = physics.windFor(round)
-            in
-                let _prompt = io.writeLine(game.scoreLine(playerScore)(computerScore)(wind))
-                in
-                    let _ask = io.write(ansi.cyan("your serve") + " angle power (10-80 10-99, q quits) > ")
-                    in
-                        match io.readLine(Unit) with
-                            | None -> io.writeLine("bye")
-                            | Some(line) ->
-                                if line == "q"
-                                then io.writeLine("bye")
-                                else
-                                    match game.parseShot(line) with
-                                        | Error(problem) ->
-                                            let _oops = io.writeLine(ansi.yellow(problem))
-                                            in gameLoop(playerScore)(computerScore)(round)
-                                        | Ok((angle, power)) ->
-                                            match resolveLanding("you")(game.computerX)(physics.shoot(game.playerX)(1)(angle)(power)(wind)) with
-                                                | (trail, message, scored) ->
-                                                    let _shown = showShot(">")(trail)(message)(playerScore)(computerScore)(wind)
-                                                    in
-                                                        let newPlayerScore =
-                                                            if scored
-                                                            then playerScore + 1
-                                                            else playerScore
-                                                        in
-                                                            match game.aiShot(round) with
-                                                                | (aiAngle, aiPower) ->
-                                                                    match resolveLanding("cpu")(game.playerX)(physics.shoot(game.computerX)(-1)(aiAngle)(aiPower)(wind)) with
-                                                                        | (aiTrail, aiMessage, aiScored) ->
-                                                                            let _aiShown = io.writeLine("< " + aiMessage + " (" + text.fromInt(aiAngle) + " " + text.fromInt(aiPower) + ")")
-                                                                            in
-                                                                                let newComputerScore =
-                                                                                    if aiScored
-                                                                                    then computerScore + 1
-                                                                                    else computerScore
-                                                                                in gameLoop(newPlayerScore)(newComputerScore)(round + 1)
+            match console.pollInput(deadline - now) with
+                | None -> None
+                | Some(chunk) -> collectInput(pending + chunk)(deadline))
 
-let _welcome = io.write(ansi.clearScreen(Unit))
+let recursive hasQuit events =
+    match events with
+        | [] -> false
+        | Quit :: _rest -> true
+        | _event :: rest -> hasQuit(rest)
 
-let _shownLogo = io.writeLine(ansi.logo(Unit))
+let render (state: State) =
+    (let _drawn =
+        state
+        |> game.renderFrame
+        |> io.write
+    in state)
 
-gameLoop(0)(0)(1)
+let recursive loop state pending =
+    match collectInput(pending)(console.monotonicMillis(Unit) + frameMs) with
+        | None -> state
+        | Some(collected) ->
+            match input.decode(collected) with
+                | (events, leftover) ->
+                    if hasQuit(events)
+                    then state
+                    else
+                        let next =
+                            events
+                            |> physics.step(state)
+                            |> render
+                        in
+                            if physics.finished(next)
+                            then next
+                            else loop(next)(leftover)
+
+let setup _ = io.write(ansi.altScreenOn + ansi.clearScreen(Unit) + ansi.hideCursor + ansi.mouseOn + game.renderFrame(physics.initialState))
+
+let runGame _ = loop(physics.initialState)("")
+
+let cleanup (outcome: State) =
+    (let _screen = io.write(ansi.mouseOff + ansi.showCursor + ansi.altScreenOff)
+    in
+        let _mode = console.restoreInput(Unit)
+        in outcome)
+
+let report (outcome: State) =
+    outcome
+    |> game.finalLine
+    |> io.writeLine
+
+let play _ =
+    if console.enableRawInput(Unit)
+    then
+        Unit
+        |> setup
+        |> runGame
+        |> cleanup
+        |> report
+    else io.writeLine("terminal-pong needs an interactive terminal; run it directly from a TTY, not through a pipe")
+
+play(Unit)

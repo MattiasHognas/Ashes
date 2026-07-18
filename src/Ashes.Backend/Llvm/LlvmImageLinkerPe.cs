@@ -128,7 +128,8 @@ internal static partial class LlvmImageLinker
         int VirtualAlloc, int VirtualFree, int CreateIoCompletionPort, int GetQueuedCompletionStatus,
         int LoadLibrary, int GetProcAddress, int CertOpenSystemStore, int CertEnumCertificatesInStore,
         int CertCloseStore, int CreatePipe, int CreateProcessA, int TerminateProcess,
-        int WaitForSingleObject, int GetExitCodeProcess, int CreateThread, int GetSystemInfo);
+        int WaitForSingleObject, int GetExitCodeProcess, int CreateThread, int GetSystemInfo,
+        int GetConsoleMode, int SetConsoleMode);
 
     private readonly record struct WindowsIatLayout(
         int IatSectionOffset,
@@ -179,7 +180,7 @@ internal static partial class LlvmImageLinker
         var externalHintOffsets = WriteWindowsExternalHints(rdataStream, externalImports);
 
         // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [hintsA.ExitProcess, hintsA.GetStdHandle, hintsA.WriteFile, hintsA.ReadFile, hintsA.CreateFile, hintsA.CloseHandle, hintsA.GetFileAttributes, hintsA.GetCommandLine, hintsA.WideCharToMultiByte, hintsA.LocalFree, hintsB.Sleep, hintsB.VirtualAlloc, hintsB.VirtualFree, hintsB.CreateIoCompletionPort, hintsB.GetQueuedCompletionStatus, hintsB.LoadLibrary, hintsB.GetProcAddress, hintsB.CreatePipe, hintsB.CreateProcessA, hintsB.TerminateProcess, hintsB.WaitForSingleObject, hintsB.GetExitCodeProcess, hintsB.CreateThread, hintsB.GetSystemInfo, hintsB.GetTickCount64];
+        int[] kernel32Hints = [hintsA.ExitProcess, hintsA.GetStdHandle, hintsA.WriteFile, hintsA.ReadFile, hintsA.CreateFile, hintsA.CloseHandle, hintsA.GetFileAttributes, hintsA.GetCommandLine, hintsA.WideCharToMultiByte, hintsA.LocalFree, hintsB.Sleep, hintsB.VirtualAlloc, hintsB.VirtualFree, hintsB.CreateIoCompletionPort, hintsB.GetQueuedCompletionStatus, hintsB.LoadLibrary, hintsB.GetProcAddress, hintsB.CreatePipe, hintsB.CreateProcessA, hintsB.TerminateProcess, hintsB.WaitForSingleObject, hintsB.GetExitCodeProcess, hintsB.CreateThread, hintsB.GetSystemInfo, hintsB.GetTickCount64, hintsB.GetConsoleMode, hintsB.SetConsoleMode];
         int[] shell32Hints = [hintsA.CommandLineToArgv];
         int[] ws2Hints = [hintsA.WsaStartup, hintsA.Socket, hintsA.Connect, hintsA.Send, hintsA.Recv, hintsA.CloseSocket, hintsA.IoctlSocket, hintsA.WsaGetLastError, hintsA.Bind, hintsA.SetSockOpt, hintsA.WsaIoctl, hintsA.WsaSend, hintsB.WsaRecv, hintsB.WsaPoll, hintsB.Listen, hintsB.Accept];
         int[] crypt32Hints = [hintsB.CertOpenSystemStore, hintsB.CertEnumCertificatesInStore, hintsB.CertCloseStore];
@@ -341,7 +342,9 @@ internal static partial class LlvmImageLinker
             WaitForSingleObject: WriteHintName(rdataStream, 0, "WaitForSingleObject"),
             GetExitCodeProcess: WriteHintName(rdataStream, 0, "GetExitCodeProcess"),
             CreateThread: WriteHintName(rdataStream, 0, "CreateThread"),
-            GetSystemInfo: WriteHintName(rdataStream, 0, "GetSystemInfo"));
+            GetSystemInfo: WriteHintName(rdataStream, 0, "GetSystemInfo"),
+            GetConsoleMode: WriteHintName(rdataStream, 0, "GetConsoleMode"),
+            SetConsoleMode: WriteHintName(rdataStream, 0, "SetConsoleMode"));
     }
 
     private static Dictionary<string, int> WriteWindowsExternalHints(
@@ -476,7 +479,7 @@ internal static partial class LlvmImageLinker
         ulong LocalFree, ulong Sleep, ulong VirtualAlloc, ulong VirtualFree, ulong CreateIoCompletionPort,
         ulong GetQueuedCompletionStatus, ulong LoadLibrary, ulong GetProcAddress, ulong CreatePipe,
         ulong CreateProcessA, ulong TerminateProcess, ulong WaitForSingleObject, ulong GetExitCodeProcess,
-        ulong CreateThread, ulong GetSystemInfo, ulong GetTickCount64);
+        ulong CreateThread, ulong GetSystemInfo, ulong GetTickCount64, ulong GetConsoleMode, ulong SetConsoleMode);
 
     private readonly record struct WindowsNetIatVas(
         ulong CommandLineToArgv, ulong WsaStartup, ulong Socket, ulong Connect, ulong Send, ulong Recv,
@@ -541,7 +544,9 @@ internal static partial class LlvmImageLinker
             GetExitCodeProcess: kernel32IatVa + 21 * 8,
             CreateThread: kernel32IatVa + 22 * 8,
             GetSystemInfo: kernel32IatVa + 23 * 8,
-            GetTickCount64: kernel32IatVa + 24 * 8);
+            GetTickCount64: kernel32IatVa + 24 * 8,
+            GetConsoleMode: kernel32IatVa + 25 * 8,
+            SetConsoleMode: kernel32IatVa + 26 * 8);
     }
 
     private static WindowsNetIatVas ComputeWindowsNetIatVas(ulong shell32IatVa, ulong ws2IatVa, ulong crypt32IatVa)
@@ -621,6 +626,8 @@ internal static partial class LlvmImageLinker
             ["__imp_GetExitCodeProcess"] = kernel.GetExitCodeProcess,
             ["__imp_CreateThread"] = kernel.CreateThread,
             ["__imp_GetSystemInfo"] = kernel.GetSystemInfo,
+            ["__imp_GetConsoleMode"] = kernel.GetConsoleMode,
+            ["__imp_SetConsoleMode"] = kernel.SetConsoleMode,
             ["__chkstk"] = chkstkStubVa,
         };
     }

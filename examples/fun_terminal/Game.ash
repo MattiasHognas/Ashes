@@ -1,117 +1,61 @@
 import Ansi as ansi
 import Physics as physics
+import Physics.State
 import Ashes.Math as math
-import Ashes.Regex as regex
-import Ashes.String as str
 import Ashes.Text as text
-let playerX = 3
+let netColumn = 31
 
-let computerX = 58
-
-let boardHeight = 13
-
-let shotPattern = regex.compile("^\\s*(\\d{1,2})\\s+(\\d{1,3})\\s*$")
-
-let parseShot line =
-    match shotPattern with
-        | Error(bad) -> Error("bad pattern: " + bad)
-        | Ok(pattern) ->
-            match regex.captures(pattern)(line) with
-                | None -> Error("type angle and power, like: 45 70")
-                | Some(groups) ->
-                    match groups with
-                        | _full :: Some(angleText) :: Some(powerText) :: [] ->
-                            match text.parseInt(angleText) with
-                                | Error(_badAngle) -> Error("angle must be a number")
-                                | Ok(angle) ->
-                                    match text.parseInt(powerText) with
-                                        | Error(_badPower) -> Error("power must be a number")
-                                        | Ok(power) ->
-                                            if angle < 10
-                                            then Error("angle must be between 10 and 80")
-                                            else
-                                                if angle > 80
-                                                then Error("angle must be between 10 and 80")
-                                                else
-                                                    if power < 10
-                                                    then Error("power must be between 10 and 99")
-                                                    else
-                                                        if power > 99
-                                                        then Error("power must be between 10 and 99")
-                                                        else Ok((angle, power))
-                        | _other -> Error("type angle and power, like: 45 70")
-
-let recursive onTrail col row trail =
-    match trail with
-        | [] -> false
-        | (x, y) :: rest ->
-            if x == col
-            then
-                if y == row
-                then true
-                else onTrail(col)(row)(rest)
-            else onTrail(col)(row)(rest)
-
-let cellAt col row trail =
-    if onTrail(col)(row)(trail)
-    then ansi.yellow("o")
+let paddleCell col row playerRow cpuRow =
+    if col == physics.playerColumn
+    then
+        if math.abs(row - playerRow) <= 1
+        then ansi.green("#")
+        else " "
     else
-        if col == physics.netX
+        if col == physics.cpuColumn
         then
-            if row < physics.netHeight
-            then ansi.cyan("|")
+            if math.abs(row - cpuRow) <= 1
+            then ansi.red("#")
             else " "
         else
-            if col == playerX
+            if col == netColumn
             then
-                if row < 3
-                then ansi.green("#")
+                if row / 2 * 2 == row
+                then ansi.dim("|")
                 else " "
-            else
-                if col == computerX
-                then
-                    if row < 3
-                    then ansi.red("#")
-                    else " "
-                else " "
+            else " "
 
-let recursive renderRow col row trail acc =
-    if col >= physics.tableWidth
-    then acc
-    else renderRow(col + 1)(row)(trail)(acc + cellAt(col)(row)(trail))
+let cellAt col row ballCol ballRow playerRow cpuRow =
+    if col == ballCol
+    then
+        if row == ballRow
+        then ansi.yellow("o")
+        else paddleCell(col)(row)(playerRow)(cpuRow)
+    else paddleCell(col)(row)(playerRow)(cpuRow)
 
-let recursive renderRows row trail acc =
-    if row < 0
+let recursive renderRow col row ballCol ballRow playerRow cpuRow acc =
+    if col >= physics.courtWidth
     then acc
-    else renderRows(row - 1)(trail)(acc + renderRow(0)(row)(trail)("") + "\n")
+    else renderRow(col + 1)(row)(ballCol)(ballRow)(playerRow)(cpuRow)(acc + cellAt(col)(row)(ballCol)(ballRow)(playerRow)(cpuRow))
+
+let recursive renderRows row ballCol ballRow playerRow cpuRow acc =
+    if row >= physics.courtHeight
+    then acc
+    else renderRows(row + 1)(ballCol)(ballRow)(playerRow)(cpuRow)(acc + renderRow(0)(row)(ballCol)(ballRow)(playerRow)(cpuRow)("") + "\n")
 
 let recursive tableEdge col acc =
-    if col >= physics.tableWidth
+    if col >= physics.courtWidth
     then acc
     else tableEdge(col + 1)(acc + "=")
 
-let renderBoard trail = renderRows(boardHeight)(trail)("") + ansi.blue(tableEdge(0)("")) + "\n"
+let scoreLine (state: State) = ansi.green("you " + text.fromInt(state.playerScore)) + "  " + ansi.red("cpu " + text.fromInt(state.cpuScore)) + "  " + ansi.dim("first to " + text.fromInt(physics.winningScore) + " | w/s, arrows or mouse | q quits")
 
-let windLabel wind =
-    if wind > 0.6
-    then "wind --> " + text.fromFloat(wind)
+let renderFrame (state: State) = ansi.home + scoreLine(state) + "\n" + ansi.blue(tableEdge(0)("")) + "\n" + renderRows(0)(math.roundToInt(state.ballX))(math.roundToInt(state.ballY))(math.roundToInt(state.playerY))(math.roundToInt(state.cpuY))("") + ansi.blue(tableEdge(0)(""))
+
+let finalLine (state: State) =
+    if state.playerScore >= physics.winningScore
+    then ansi.green("you win " + text.fromInt(state.playerScore) + "-" + text.fromInt(state.cpuScore))
     else
-        if wind < 0.0 - 0.6
-        then "wind <-- " + text.fromFloat(math.absF(wind))
-        else "wind ~ calm"
-
-let scoreLine playerScore computerScore wind = ansi.green("you " + text.fromInt(playerScore)) + "  " + ansi.red("cpu " + text.fromInt(computerScore)) + "  " + ansi.dim(windLabel(wind))
-
-let landedNear target land = math.abs(land - target) <= 3
-
-let aiJitter round =
-    (let magnitude = math.max(0)(10 - round * 2)
-    in
-        let noise = physics.frac(math.absF(math.sin(math.toFloat(round) * 78.233) * 12543.21))
-        in math.roundToInt((noise - 0.5) * 2.0 * math.toFloat(magnitude)))
-
-let aiShot round =
-    (let angle = 55
-    in
-        let power = physics.idealPower(computerX)(playerX + aiJitter(round))(angle)
-        in (angle, power))
+        if state.cpuScore >= physics.winningScore
+        then ansi.red("the cpu wins " + text.fromInt(state.cpuScore) + "-" + text.fromInt(state.playerScore))
+        else ansi.dim("rally stopped at " + text.fromInt(state.playerScore) + "-" + text.fromInt(state.cpuScore))

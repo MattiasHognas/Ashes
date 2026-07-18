@@ -129,6 +129,10 @@ public static class BuiltinRegistry
         FileWriteBytes,
         IoWriteBytes,
         IoReadExact,
+        ConsoleEnableRaw,
+        ConsoleRestore,
+        ConsolePoll,
+        ConsoleMonotonicMillis,
         TextByteLength,
         SpawnProcess,
         ProcessWriteStdin,
@@ -428,6 +432,16 @@ public static class BuiltinRegistry
                     ["readStderrLine"] = new("readStderrLine", BuiltinValueKind.ProcessReadStderrLine, IsCallable: true, Arity: 1),
                     ["waitForExit"] = new("waitForExit", BuiltinValueKind.ProcessWaitForExit, IsCallable: true, Arity: 1),
                     ["kill"] = new("kill", BuiltinValueKind.ProcessKill, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.Console"] = new(
+                "Ashes.Console",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["enableRawInput"] = new("enableRawInput", BuiltinValueKind.ConsoleEnableRaw, IsCallable: true, Arity: 1),
+                    ["restoreInput"] = new("restoreInput", BuiltinValueKind.ConsoleRestore, IsCallable: true, Arity: 1),
+                    ["pollInput"] = new("pollInput", BuiltinValueKind.ConsolePoll, IsCallable: true, Arity: 1),
+                    ["monotonicMillis"] = new("monotonicMillis", BuiltinValueKind.ConsoleMonotonicMillis, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Json"] = new(
                 "Ashes.Json",

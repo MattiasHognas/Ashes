@@ -3841,6 +3841,10 @@ public sealed partial class Lowering
         IntrinsicKind k when LibmIntrinsics.ContainsKey(k) => LowerLibm(k, collectedArgs),
         IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
         IntrinsicKind.ReadExact => LowerReadExact(collectedArgs[0]),
+        IntrinsicKind.ConsoleEnableRaw => LowerConsoleEnableRaw(collectedArgs[0]),
+        IntrinsicKind.ConsoleRestore => LowerConsoleRestore(collectedArgs[0]),
+        IntrinsicKind.ConsolePoll => LowerConsolePoll(collectedArgs[0]),
+        IntrinsicKind.ConsoleMonotonicMillis => LowerConsoleMonotonicMillis(collectedArgs[0]),
         IntrinsicKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
         IntrinsicKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
         IntrinsicKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
@@ -3988,6 +3992,10 @@ public sealed partial class Lowering
         BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerLibm(libmKind, collectedArgs),
         BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
         BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerReadExact(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw => LowerConsoleEnableRaw(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ConsoleRestore => LowerConsoleRestore(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ConsolePoll => LowerConsolePoll(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => LowerConsoleMonotonicMillis(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
         BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
@@ -4726,6 +4734,19 @@ public sealed partial class Lowering
             && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
         {
             res.Add(synthesized);
+            return;
+        }
+
+        // `receiver.field` record access: when the "module" position is actually a value binding
+        // in the enclosing scope (a parameter or let), the closure must capture the receiver like
+        // any other free variable, or field access inside the lambda body finds no binding and
+        // fails with a spurious "Unknown module".
+        if (!bnd.Contains(qv.Module)
+            && !_capabilitySymbols.ContainsKey(qv.Module)
+            && !_moduleAliases.ContainsKey(qv.Module)
+            && Lookup(qv.Module) is Binding.Local or Binding.Scheme or Binding.Env or Binding.EnvScheme)
+        {
+            res.Add(qv.Module);
         }
     }
 
