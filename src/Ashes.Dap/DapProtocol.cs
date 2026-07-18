@@ -64,7 +64,7 @@ public sealed record DapEvent : DapMessage
     public object? Body { get; init; }
 }
 
-// ── Capability types ────────────────────────────────────────────────────
+// Capability types
 
 public sealed record DapCapabilities
 {
@@ -84,7 +84,7 @@ public sealed record DapCapabilities
     public bool SupportsTerminateRequest => true;
 }
 
-// ── Event body types ────────────────────────────────────────────────────
+// Event body types
 
 public sealed record DapInitializedEventBody;
 
@@ -108,7 +108,7 @@ public sealed record DapExitedEventBody
     public int ExitCode { get; init; }
 }
 
-// ── Request argument types ──────────────────────────────────────────────
+// Request argument types
 
 public sealed record DapLaunchArguments
 {
@@ -165,7 +165,7 @@ public sealed record DapSourceBreakpoint
     public int Column { get; init; }
 }
 
-// ── Response body types ─────────────────────────────────────────────────
+// Response body types
 
 public sealed record DapBreakpoint
 {

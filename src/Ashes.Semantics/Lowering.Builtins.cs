@@ -563,7 +563,7 @@ public sealed partial class Lowering
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 
-    // ── Ashes.Regex.Native (PCRE2) primitives. ──
+    // Ashes.Regex.Native (PCRE2) primitives.
     // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Regex (Regex.ash) wraps
     // it in a Regex ADT and composes the ergonomic Result/Option API from these.
 
@@ -2490,7 +2490,7 @@ public sealed partial class Lowering
         );
     }
 
-    // ── Ashes.BigInt intrinsics ──────────────────────────────────────────────────────────────
+    // Ashes.BigInt intrinsics
     private Binding.Intrinsic CreateBigIntFromIntBinding() =>
         new(IntrinsicKind.BigIntFromInt, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TBigInt())));
 
@@ -3869,7 +3869,7 @@ public sealed partial class Lowering
         return (resultTemp, new TypeRef.TUInt(8));
     }
 
-    // ── Ashes.Math Layer-1 numeric conversions and Float unary primitives. ──
+    // Ashes.Math Layer-1 numeric conversions and Float unary primitives.
 
     private Binding.Intrinsic CreateMathToFloatBinding() =>
         new(IntrinsicKind.MathToFloat, new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TFloat())));
@@ -3956,7 +3956,7 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
-    // ── Ashes.Math Layer-2 transcendentals (openlibm), data-driven. ──
+    // Ashes.Math Layer-2 transcendentals (openlibm), data-driven.
 
     // IntrinsicKind -> (openlibm symbol, arity). Arity 1 = Float -> Float, arity 2 = Float -> Float -> Float.
     private static readonly IReadOnlyDictionary<IntrinsicKind, (string Symbol, int Arity)> LibmIntrinsics =

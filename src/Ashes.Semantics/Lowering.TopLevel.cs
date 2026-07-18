@@ -844,7 +844,7 @@ public sealed partial class Lowering
         Dictionary<string, int> tagOf,
         int arity)
     {
-        // ── Synthesize and lower the dispatch function. ──
+        // Synthesize and lower the dispatch function.
         string dispatchName = $"__recgroup_dispatch_{_nextLambdaId++}";
         var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, arity);
 
@@ -873,7 +873,7 @@ public sealed partial class Lowering
         Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
 
-        // ── Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…). ──
+        // Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…).
         var wrapperSlots = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {

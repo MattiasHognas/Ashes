@@ -50,7 +50,7 @@ public static class IrOptimizer
         };
     }
 
-    // ── Redundant arena-bracket elision ─────────────────────────────────
+    // Redundant arena-bracket elision
     // Lowering brackets every function body and every copy-type-returning helper call in
     // SaveArenaState / RestoreArenaState / ReclaimArenaChunks. For a region that provably
     // performs no arena allocation the bracket is pure overhead — worse, the reclaim's chunk
@@ -217,7 +217,7 @@ public static class IrOptimizer
         return toRemove;
     }
 
-    // ── Known-closure devirtualization ──────────────────────────────────
+    // Known-closure devirtualization
     // A CallClosure whose closure temp is produced by MakeClosure/MakeClosureStack with a
     // statically-known function label becomes a direct CallKnown of that label with the
     // closure's captured env pointer. The indirect call through the closure struct's code
@@ -270,7 +270,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Trivial borrow elision ──────────────────────────────────────────
+    // Trivial borrow elision
     // Remove Borrow instructions and remap all uses of the borrow target
     // back to the original source temp, eliminating trivial borrows.
     //
@@ -638,7 +638,7 @@ public static class IrOptimizer
         };
     }
 
-    // ── Constant folding ───────────────────────────────────────────────
+    // Constant folding
     // Evaluate arithmetic on known constant operands at compile time.
     // Labels with a single predecessor preserve constant knowledge from
     // that predecessor, enabling folding across branch boundaries.
@@ -1069,7 +1069,7 @@ public static class IrOptimizer
         savedBoolStates.Remove(lbl.Name);
     }
 
-    // ── Identity elimination and strength reduction ──────────────────────
+    // Identity elimination and strength reduction
     // Simplify arithmetic with known identity values:
     //   x + 0 → x, 0 + x → x, x - 0 → x
     //   x * 1 → x, 1 * x → x, x * 0 → 0, 0 * x → 0
@@ -1318,7 +1318,7 @@ public static class IrOptimizer
         }
     }
 
-    // ── Unreachable code elimination ────────────────────────────────────
+    // Unreachable code elimination
     // Remove instructions after unconditional jumps or returns until the
     // next label (which re-establishes reachability).
 
@@ -1358,7 +1358,7 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // ── Dead code elimination ──────────────────────────────────────────
+    // Dead code elimination
     // Remove LoadConst instructions whose target temp is never used,
     // and StoreLocal instructions whose slot is never loaded.
 
@@ -1460,7 +1460,7 @@ public static class IrOptimizer
         return false;
     }
 
-    // ── Drop elision ───────────────────────────────────────────────────
+    // Drop elision
     // Remove Drop instructions that perform no useful work.
     //
     // Elidable drops:

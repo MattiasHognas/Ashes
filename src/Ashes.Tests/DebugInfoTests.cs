@@ -8,7 +8,7 @@ namespace Ashes.Tests;
 
 public sealed class DebugInfoTests
 {
-    // ── SourceTextUtils tests ────────────────────────────────────────────
+    // SourceTextUtils tests
 
     [Test]
     public void GetLineStarts_returns_offsets_of_line_beginnings()
@@ -90,7 +90,7 @@ public sealed class DebugInfoTests
         col.ShouldBe(4);
     }
 
-    // ── SourceLocation propagation tests ─────────────────────────────────
+    // SourceLocation propagation tests
 
     [Test]
     public void IrInst_Location_defaults_to_null()
@@ -173,7 +173,7 @@ public sealed class DebugInfoTests
         lambdaLocated.Count.ShouldBeGreaterThan(0);
     }
 
-    // ── BackendCompileOptions tests ──────────────────────────────────────
+    // BackendCompileOptions tests
 
     [Test]
     public void BackendCompileOptions_EmitDebugInfo_defaults_to_false()
@@ -189,7 +189,7 @@ public sealed class DebugInfoTests
         options.OptimizationLevel.ShouldBe(BackendOptimizationLevel.O0);
     }
 
-    // ── CombinedCompilationLayout ModuleOffsets tests ────────────────────
+    // CombinedCompilationLayout ModuleOffsets tests
 
     [Test]
     public void Standalone_layout_includes_entry_module_offset()
@@ -235,7 +235,7 @@ public sealed class DebugInfoTests
         locatedInstructions.ShouldAllBe(inst => inst.Location!.Value.FilePath == "/tmp/example.ash");
     }
 
-    // ── CLI flag parsing tests ───────────────────────────────────────────
+    // CLI flag parsing tests
 
     [Test]
     public async Task Compile_accepts_debug_flag()
