@@ -1103,12 +1103,16 @@ return a **new** list. The original list is never modified.
 
 ### 9.1 Empty List
 
+```ash
 []
+```
 
 ### 9.2 List Literals
 
+```ash
 [1,2,3]
 [“a”,“b”]
+```
 
 All elements must have the same type.
 
