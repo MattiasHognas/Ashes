@@ -281,20 +281,36 @@ matrix() {
 }
 
 # Run the example/test matrix for a SINGLE arch — the single-leg inner loop for
-# iterating on one target without paying for all three. $1 is the RID:
-# linux-x64 | linux-arm64 | win-x64. Publishes only that RID (the full `matrix`
-# relies on `publish_cli` for all three), then runs the same per-leg body as the
-# full matrix (`_matrix_one`), including the arm64 emulation env. fmt stability is
-# arch-independent, so it is verified only by the full `matrix`, not here.
+# iterating on one target without paying for all four. $1 is the RID:
+# linux-x64 | linux-arm64 | win-x64 | win-arm64. Publishes only that RID (the full
+# `matrix` relies on `publish_cli` for the three host RIDs), then runs the same
+# per-leg body as the full matrix (`_matrix_one`), including the arm64 emulation
+# env. win-arm64 is a compile-and-link-only target with no run leg, so it dispatches
+# to the same `_matrix_win_arm64` smoke the full matrix uses (see its comment) and
+# needs no publish of its own — it cross-compiles with the linux-x64 host CLI. fmt
+# stability is arch-independent, so it is verified only by the full `matrix`, not here.
 matrix_one() {
-  local rid="${1:?usage: jobs.sh matrix_one <linux-x64|linux-arm64|win-x64>}"
+  local rid="${1:?usage: jobs.sh matrix_one <linux-x64|linux-arm64|win-x64|win-arm64>}"
+
+  if [[ "$rid" == "win-arm64" ]]; then
+    # No run leg and no win-arm64 host CLI: cross-compile with the linux-x64 host
+    # binary, which _matrix_win_arm64 invokes. Publish it first so this leg is
+    # self-contained (the full matrix gets it from publish_cli).
+    run_in base "
+      set -e
+      dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-x64
+    "
+    _matrix_win_arm64
+    return
+  fi
+
   local runner cli
   case "$rid" in
     linux-x64)   runner=base;  cli="./artifacts/ashes/linux-x64/ashes" ;;
     linux-arm64) runner=arm64; cli="./artifacts/ashes/linux-arm64/ashes" ;;
     win-x64)     runner=win;   cli="wine ./artifacts/ashes/win-x64/ashes.exe" ;;
     *)
-      echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64)" >&2
+      echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64|win-arm64)" >&2
       return 1
       ;;
   esac
