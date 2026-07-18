@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -2076,8 +2077,12 @@ public sealed class LinuxBackendCoverageTests
     public async Task Linux_backend_llvm_should_serve_connections_concurrently()
     {
         // serve() spawns each handler (Ashes.Async.spawn), so a slow handler must not serialize
-        // other connections: four simultaneous clients against a handler that sleeps 300 ms before
-        // echoing should all complete in roughly one sleep, not four.
+        // other connections. Concurrency is asserted from the handlers' own monotonic sleep
+        // windows rather than client wall-clock time: all four connections are opened and their
+        // payloads sent up front, each handler reports [sleepStart, sleepEnd] around a 500 ms
+        // sleep, and the windows must pairwise overlap. Serialized handlers can never produce
+        // overlapping windows, while load on the test box merely delays everything uniformly —
+        // an absolute wall-clock bound here was flaky under a parallel suite run.
         if (!OperatingSystem.IsLinux())
         {
             return;
@@ -2094,23 +2099,30 @@ public sealed class LinuxBackendCoverageTests
         {
             proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
-            // Wait for the listener, then fire four clients at once.
+            // Wait for the listener, then open the four measured connections.
             _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
 
-            var sw = Stopwatch.StartNew();
-            var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(
-                i => ConnectSendReceiveWithRetryAsync(port, $"conc-{i}"))).ConfigureAwait(false);
-            sw.Stop();
-
-            for (int i = 0; i < replies.Length; i++)
+            var clients = new List<TcpClient>();
+            try
             {
-                replies[i].ShouldBe($"echo: conc-{i}");
-            }
+                for (int i = 0; i < 4; i++)
+                {
+                    clients.Add(await ConnectAndSendAsync(port, $"conc-{i}").ConfigureAwait(false));
+                }
 
-            // Four sequential 300 ms handlers would take >= 1200 ms; concurrent ones finish in
-            // roughly one sleep. Allow generous headroom for a loaded CI box.
-            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(900),
-                "connections should be served concurrently, not serialized");
+                var replies = await Task.WhenAll(clients.Select(ReadWholeReplyAsync)).ConfigureAwait(false);
+                var windows = replies.Select(ParseConcurrencyReply).ToList();
+
+                windows.Max(w => w.SleepStart).ShouldBeLessThan(windows.Min(w => w.SleepEnd),
+                    "handler sleep windows should overlap; serialized handlers can never overlap");
+            }
+            finally
+            {
+                foreach (var client in clients)
+                {
+                    client.Dispose();
+                }
+            }
         }
         finally
         {
@@ -2118,21 +2130,51 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    private static async Task<TcpClient> ConnectAndSendAsync(int port, string payload)
+    {
+        var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+        var outBytes = Encoding.UTF8.GetBytes(payload);
+        await client.GetStream().WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+        return client;
+    }
+
+    private static async Task<string> ReadWholeReplyAsync(TcpClient client)
+    {
+        var buffer = new byte[4096];
+        int read = await client.GetStream().ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.AcceptTimeout).ConfigureAwait(false);
+        return Encoding.UTF8.GetString(buffer, 0, read);
+    }
+
+    private static (long SleepStart, long SleepEnd) ParseConcurrencyReply(string reply, int index)
+    {
+        var parts = reply.Split(';');
+        parts.Length.ShouldBe(3, $"reply '{reply}' should be 'echo: <payload>;<sleepStart>;<sleepEnd>'");
+        parts[0].ShouldBe($"echo: conc-{index}");
+        return (long.Parse(parts[1], CultureInfo.InvariantCulture), long.Parse(parts[2], CultureInfo.InvariantCulture));
+    }
+
     private static string ConcurrentConnectionsServerSource(int port) => $$"""
         import Ashes.IO
         import Ashes.Net.Tcp
         import Ashes.Net.Tcp.Server
         import Ashes.Async
+        import Ashes.Console
+        import Ashes.Text
         let onClient client =
             async(match await Ashes.Net.Tcp.receive(client)(4096) with
                 | Error(e) -> Error(e)
                 | Ok(msg) ->
-                    match await Ashes.Async.sleep(300) with
-                        | Error(e2) -> Error(e2)
-                        | Ok(_t) ->
-                            match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
-                                | Error(e3) -> Error(e3)
-                                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+                    let sleepStart = Ashes.Console.monotonicMillis()
+                    in
+                        match await Ashes.Async.sleep(500) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_t) ->
+                                let sleepEnd = Ashes.Console.monotonicMillis()
+                                in
+                                    match await Ashes.Net.Tcp.send(client)("echo: " + msg + ";" + Ashes.Text.fromInt(sleepStart) + ";" + Ashes.Text.fromInt(sleepEnd)) with
+                                        | Error(e3) -> Error(e3)
+                                        | Ok(_n) -> await Ashes.Net.Tcp.close(client))
         in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
             | Ok(_u) -> Ashes.IO.print("stopped")
             | Error(e) -> Ashes.IO.print(e)
