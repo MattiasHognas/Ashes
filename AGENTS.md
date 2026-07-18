@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Ashes is a .NET 10 compiler/toolchain for `.ash`, targeting `linux-x64`, `linux-arm64`, and `win-x64`. Core projects live under `src/`: `Ashes.Frontend` handles lexer/parser/AST, `Ashes.Semantics` binding/type inference/IR, `Ashes.Backend` LLVM codegen, and `Ashes.Cli` user commands. Tooling includes `Ashes.Formatter`, `Ashes.Lsp`, `Ashes.Dap`, and `Ashes.TestRunner`. Unit tests live in `src/Ashes.*.Tests`; end-to-end `.ash` tests live in `tests/`. Use `lib/Ashes` for stdlib, `examples/` for examples, `docs/md` for authoritative docs, `runtimes/` for payloads, and `vscode-extension/` for extension code.
+Ashes is a .NET 10 compiler/toolchain for `.ash`, targeting `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` (win-arm64 is compile-and-link-only for now). Core projects live under `src/`: `Ashes.Frontend` handles lexer/parser/AST, `Ashes.Semantics` binding/type inference/IR, `Ashes.Backend` LLVM codegen, and `Ashes.Cli` user commands. Tooling includes `Ashes.Formatter`, `Ashes.Lsp`, `Ashes.Dap`, and `Ashes.TestRunner`. Unit tests live in `src/Ashes.*.Tests`; end-to-end `.ash` tests live in `tests/`. Use `lib/Ashes` for stdlib, `examples/` for examples, `docs/md` for authoritative docs, `runtimes/` for payloads, and `vscode-extension/` for extension code.
 
 ## Build, Test, and Development Commands
 

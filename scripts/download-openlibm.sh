@@ -9,6 +9,7 @@
 #   - runtimes/linux-x64/libopenlibm.bc
 #   - runtimes/linux-arm64/libopenlibm.bc
 #   - runtimes/win-x64/libopenlibm.bc
+#   - runtimes/win-arm64/libopenlibm.bc
 #
 # This script is intended to run on Linux directly or under WSL on Windows.
 
@@ -113,6 +114,7 @@ while [ "$#" -gt 0 ]; do
             ensure_target_selected "linux-x64"
             ensure_target_selected "linux-arm64"
             ensure_target_selected "win-x64"
+            ensure_target_selected "win-arm64"
             shift
             ;;
         --linux-x64)
@@ -125,6 +127,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --win-x64)
             ensure_target_selected "win-x64"
+            shift
+            ;;
+        --win-arm64)
+            ensure_target_selected "win-arm64"
             shift
             ;;
         --version)
@@ -212,6 +218,7 @@ openlibm_triple_for() {
         # the bitcode links into the compiler's MSVC-target module (LinkModules2 gates on datalayout,
         # not the triple string).
         win-x64) echo "x86_64-w64-windows-gnu" ;;
+        win-arm64) echo "aarch64-w64-windows-gnu" ;;
         *) echo "ERROR: Unsupported target '$1'." >&2; exit 1 ;;
     esac
 }
@@ -219,7 +226,7 @@ openlibm_triple_for() {
 # Windows-only openlibm quirks: its GNU long-double weak aliases and per-precision sibling functions
 # pull in symbols that do not reduce to the double-precision set. Neuter the weak-alias macro, skip
 # the float/long-double/complex/gamma/bessel source variants, and supply a few forwarding shims.
-openlibm_is_win() { [ "$1" = "win-x64" ]; }
+openlibm_is_win() { [ "$1" = "win-x64" ] || [ "$1" = "win-arm64" ]; }
 
 openlibm_win_should_skip_source() {
     # $1 = base source name (e.g. s_cosf, s_ccos, e_lgamma). Returns 0 (skip) for non-double variants.
@@ -333,6 +340,9 @@ for target in "${TARGETS[@]}"; do
             ;;
         win-x64)
             echo "  $RUNTIMES_DIR/win-x64/libopenlibm.bc"
+            ;;
+        win-arm64)
+            echo "  $RUNTIMES_DIR/win-arm64/libopenlibm.bc"
             ;;
     esac
 done

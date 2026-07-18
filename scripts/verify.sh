@@ -73,6 +73,21 @@ dotnet publish src/Ashes.Cli/Ashes.Cli.csproj \
 
 ashesCli="${repoRoot}/artifacts/ashes/${os}-${arch}/${executableName}"
 
+### Cross-compile smoke: win-arm64 is a compile-and-link-only target — Windows-on-ARM PE cannot be
+### executed on an x64 CI host, so there is no run leg for it. Structural PE validation (machine
+### 0xAA64, imports, resolved relocations) runs in the C# suite (WindowsArm64BackendTests); here we
+### confirm the full toolchain emits an ARM64 PE end-to-end from source.
+echo "--- Verifying win-arm64 cross-compilation..."
+winArm64Src="$(mktemp --suffix=.ash)"
+winArm64Out="$(mktemp --suffix=.exe)"
+printf 'Ashes.IO.print("win-arm64 ok")\n' > "$winArm64Src"
+"$ashesCli" compile --target win-arm64 "$winArm64Src" -o "$winArm64Out"
+# PE machine field (COFF header at e_lfanew+4) must be IMAGE_FILE_MACHINE_ARM64 (0xAA64, little-endian 64 AA).
+peOff=$(od -An -tu4 -j60 -N4 "$winArm64Out" | tr -d ' ')
+machine=$(od -An -tx1 -j$((peOff + 4)) -N2 "$winArm64Out" | tr -d ' ')
+[ "$machine" = "64aa" ] || { echo "win-arm64 PE machine mismatch: got $machine, want 64aa" >&2; exit 1; }
+rm -f "$winArm64Src" "$winArm64Out"
+
 ### Format all examples.
 echo "--- Formatting examples..."
 for example in examples/**/*.ash; do

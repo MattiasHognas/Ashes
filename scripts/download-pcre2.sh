@@ -22,6 +22,7 @@
 #   - runtimes/linux-x64/libpcre2.bc
 #   - runtimes/linux-arm64/libpcre2.bc
 #   - runtimes/win-x64/libpcre2.bc
+#   - runtimes/win-arm64/libpcre2.bc
 #
 # This script is intended to run on Linux directly or under WSL on Windows.
 
@@ -118,6 +119,7 @@ while [ "$#" -gt 0 ]; do
             ensure_target_selected "linux-x64"
             ensure_target_selected "linux-arm64"
             ensure_target_selected "win-x64"
+            ensure_target_selected "win-arm64"
             shift
             ;;
         --linux-x64)
@@ -130,6 +132,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --win-x64)
             ensure_target_selected "win-x64"
+            shift
+            ;;
+        --win-arm64)
+            ensure_target_selected "win-arm64"
             shift
             ;;
         --version)
@@ -216,6 +222,7 @@ pcre2_triple_for() {
         # backend's windows-msvc program module. The windows-gnu triple yields the same datalayout as
         # windows-msvc (LinkModules2 gates on datalayout, not the triple string).
         win-x64) echo "x86_64-w64-windows-gnu" ;;
+        win-arm64) echo "aarch64-w64-windows-gnu" ;;
         *) echo "ERROR: Unsupported target '$1'." >&2; exit 1 ;;
     esac
 }
@@ -349,7 +356,7 @@ build_pcre2_bitcode() {
     # backend's libc import, and the remaining leaf functions are backend-emitted.
     extra_include=""
     local expected_undefined
-    if [ "$rid" = "win-x64" ]; then
+    if [ "$rid" = "win-x64" ] || [ "$rid" = "win-arm64" ]; then
         write_win_stub_headers "$tmpdir/winstub"
         extra_include="-isystem $tmpdir/winstub"
         write_shims_c "$tmpdir/ashes_pcre2_shims.c"
@@ -368,7 +375,7 @@ build_pcre2_bitcode() {
             fail=1
         fi
     done
-    if [ "$rid" = "win-x64" ]; then
+    if [ "$rid" = "win-x64" ] || [ "$rid" = "win-arm64" ]; then
         if ! clang $cflags -c "$tmpdir/ashes_pcre2_shims.c" -o "$bc/ashes_pcre2_shims.bc" 2>"$bc/shims.err"; then
             echo "ERROR: Failed to compile libc shims for ${rid}:" >&2
             head -3 "$bc/shims.err" >&2

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Ashes is a **compiler** (not an application) for a pure functional ML-family language, written in
 C#/.NET 10. It compiles `.ash` source to **standalone native executables** (ELF on Linux, PE on
 Windows) via LLVM, with zero runtime dependencies — no GC, no runtime. Targets: `linux-x64`,
-`linux-arm64`, `win-x64`.
+`linux-arm64`, `win-x64`, `win-arm64` (win-arm64 is a compile-and-link-only target — no execution on x64 hosts yet).
 
 `docs/md/` is the source of truth (also published as the documentation site; the VitePress app
 lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
@@ -59,7 +59,7 @@ normally don't need fetching. Refresh them only when `<Pcre2Version>` changes:
 bash scripts/download-pcre2.sh --all          # builds libpcre2.bc (8-bit, Unicode, JIT off) for all targets on one host (needs clang, llvm-link, opt, llvm-nm)
 ```
 
-All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
+All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`, `--win-arm64`) instead of
 `--all`. Mbed TLS, openlibm, and PCRE2 are compiled to LLVM bitcode by the clang frontend, so every
 target builds on one host with no cross toolchain.
 

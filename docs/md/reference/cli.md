@@ -112,6 +112,7 @@ The following option is accepted by **compile** and **run** only:
 | `linux-x64` | Linux x86-64 — emits a native ELF64 binary |
 | `linux-arm64` | Linux AArch64 — emits a native ELF64 binary |
 | `win-x64` | Windows x86-64 — emits a native PE32+ binary |
+| `win-arm64` | Windows on ARM64 — emits a native PE32+ (AArch64) binary; a compile-and-link-only target (Windows-on-ARM images are not executable on x64 hosts) |
 
 Any other value is rejected with an error message and exit code **1**.
 
@@ -146,7 +147,7 @@ ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>
 |--------|-----------|-----------|---------|------------|-------------|
 | `-o` | `--out` | file path | Derived from input name (see below) | No | Path for the compiled output binary. |
 | `--expr` | | string | — | No | Inline Ashes source to compile instead of reading a file. |
-| `--target` | | enum | OS default | No | Target back end (`linux-x64` or `win-x64`). |
+| `--target` | | enum | OS default | No | Target back end (`linux-x64`, `linux-arm64`, `win-x64`, or `win-arm64`). |
 | `--target-cpu` | | string | `generic` / `x86-64` | No | Target CPU microarchitecture (e.g. `skylake`, `native`). |
 | `--parallel-stack-size` | | size | `1M` | No | Per-worker stack size for `Ashes.Task.Parallel` (byte count or `K`/`M`/`G` suffix). |
 | `--project` | | file path | — | No | Path to an `ashes.json` project file. |
@@ -313,7 +314,7 @@ ashes repl [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3]
 | `:help` | `:h` | Show REPL help. |
 | `:quit` | `:q`, `:exit` | Exit the REPL (exit code 0). |
 | `:target` | | Show the current target. |
-| `:target linux-x64\|linux-arm64\|win-x64` | | Change the active target for subsequent expressions. |
+| `:target linux-x64\|linux-arm64\|win-x64\|win-arm64` | | Change the active target for subsequent expressions. |
 
 Multi-line input is supported: if the parser detects an incomplete expression (unbalanced parentheses or an expected-token error), the REPL shows a `...>` continuation prompt.
 

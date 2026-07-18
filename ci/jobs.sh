@@ -183,6 +183,28 @@ _matrix_one() {
   "
 }
 
+# win-arm64 is a compile-and-link-only target: a Windows-on-ARM PE cannot be executed on the x64 CI
+# host (Wine on x64 can't load ARM64 PEs; qemu-user runs ELF, not PE), so there is no run leg for it.
+# It is validated two ways instead: the C# suite (WindowsArm64BackendTests, run in build_and_test)
+# parses the emitted PE structurally, and here on the base runner we confirm the full source->PE
+# toolchain end-to-end and check the machine field is IMAGE_FILE_MACHINE_ARM64 (0xAA64). Execution
+# coverage awaits real Windows-on-ARM hardware or a qemu-aarch64 + ARM64-Wine chain.
+_matrix_win_arm64() {
+  run_in base "
+    set -euo pipefail
+    git config --global --add safe.directory /work
+    CLI='./artifacts/ashes/linux-x64/ashes'
+    echo '--- Verifying win-arm64 cross-compilation...'
+    src=\$(mktemp --suffix=.ash); out=\$(mktemp --suffix=.exe)
+    printf 'Ashes.IO.print(\"win-arm64 ok\")\n' > \"\$src\"
+    \$CLI compile --target win-arm64 \"\$src\" -o \"\$out\"
+    peOff=\$(od -An -tu4 -j60 -N4 \"\$out\" | tr -d ' ')
+    machine=\$(od -An -tx1 -j\$((peOff + 4)) -N2 \"\$out\" | tr -d ' ')
+    [ \"\$machine\" = 64aa ] || { echo \"win-arm64 PE machine mismatch: \$machine != 64aa\" >&2; exit 1; }
+    echo 'win-arm64 PE (machine 0xAA64) linked OK'
+  "
+}
+
 # Verify fmt stability once, on the base runner. The formatter is pure
 # Ashes.Formatter C# with no arch dependence — running it under qemu/wine would
 # produce byte-identical output — so there's no value in repeating it per arch,
@@ -248,6 +270,9 @@ matrix() {
 
   # fmt stability — once, sequentially (writes the shared /work tree in place).
   _matrix_fmt || failed+=("fmt")
+
+  # win-arm64 compile-and-link smoke — once, on the base runner (no run leg; see above).
+  _matrix_win_arm64 || failed+=("win-arm64")
 
   if (( ${#failed[@]} )); then
     echo "Matrix failed for: ${failed[*]}" >&2
