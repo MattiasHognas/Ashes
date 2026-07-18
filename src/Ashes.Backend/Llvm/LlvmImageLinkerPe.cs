@@ -16,6 +16,38 @@ internal static partial class LlvmImageLinker
     private const int WindowsTrampolineLength = 24;
     private const int WindowsChkstkStubLength = 35;
     private const int WindowsTextPrefixLength = WindowsTrampolineLength + WindowsChkstkStubLength;
+
+    // Per-architecture PE image parameters. The header/section/import machinery is arch-neutral;
+    // only the machine constant, minimum OS version, and the byte lengths + encodings of the entry
+    // trampoline, __chkstk stub, and import call thunks differ between x86-64 and AArch64. Threading
+    // this descriptor keeps LinkWindowsExecutable (x64) byte-identical while adding win-arm64.
+    private sealed record WindowsImageArch(
+        ushort MachineType,
+        ushort MinOsVersion,
+        int ImportThunkLength,
+        int TrampolineLength,
+        int ChkstkStubLength,
+        bool IsArm64)
+    {
+        public int TextPrefixLength => TrampolineLength + ChkstkStubLength;
+
+        public static readonly WindowsImageArch X64 = new(
+            MachineType: 0x8664, MinOsVersion: 6,
+            ImportThunkLength: WindowsImportThunkLength,
+            TrampolineLength: WindowsTrampolineLength,
+            ChkstkStubLength: WindowsChkstkStubLength,
+            IsArm64: false);
+
+        // AArch64: adrp/ldr/br import thunk (12 bytes); 6-instruction entry trampoline (24 bytes);
+        // 8-instruction __chkstk (32 bytes). Windows-on-ARM requires OS version >= 10.
+        public static readonly WindowsImageArch Arm64 = new(
+            MachineType: 0xAA64, MinOsVersion: 10,
+            ImportThunkLength: 12,
+            TrampolineLength: 24,
+            ChkstkStubLength: 32,
+            IsArm64: true);
+    }
+
     private const ushort CoffRelocAmd64Addr64 = 0x0001;
     private const ushort CoffRelocAmd64Addr32 = 0x0002;
     private const ushort CoffRelocAmd64Rel32 = 0x0004;
