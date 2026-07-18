@@ -56,6 +56,18 @@ public sealed class PublishPipeline(
                     $"Version {meta.Version} of '{meta.Namespace}' already exists.");
         }
 
+        return await ValidateAndStoreAsync(request, sources, existingPackage, computedHash, ct);
+    }
+
+    private async Task<PublishResult> ValidateAndStoreAsync(
+        PublishRequest request,
+        IReadOnlyList<SourceFile> sources,
+        PackageInfo? existingPackage,
+        string computedHash,
+        CancellationToken ct)
+    {
+        var meta = request.Metadata;
+
         // 6. Namespace lint.
         var lint = validator.Validate(sources, meta.Namespace);
         if (!lint.Ok)

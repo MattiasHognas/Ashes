@@ -754,20 +754,7 @@ internal static partial class LlvmCodegen
     private static bool EmitPrintInt(LlvmCodegenState state, LlvmValueHandle value)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_idx");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_work");
-        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_negative");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
-
-        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, "print_buf");
-
-        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, "is_negative");
-        LlvmValueHandle negativeValue = LlvmApi.BuildZExt(builder, isNegative, state.I64, "negative_i64");
-        LlvmApi.BuildStore(builder, negativeValue, negativeSlot);
-        LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildSub(builder, zero, value, "negated_value"), value, "abs_value");
-        LlvmApi.BuildStore(builder, absValue, workSlot);
+        var (indexSlot, workSlot, negativeSlot, buffer, bufferType, absValue, zero) = EmitPrintIntPrologue(state, value);
 
         var zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_zero");
         var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "print_int_loop_check");
@@ -790,16 +777,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle loopDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, "loop_done");
         LlvmApi.BuildCondBr(builder, loopDone, maybeSignBlock, loopBodyBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle digit = LlvmApi.BuildSRem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "digit");
-        LlvmValueHandle nextWork = LlvmApi.BuildSDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "next_work");
-        LlvmApi.BuildStore(builder, nextWork, workSlot);
-        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "digit_idx");
-        LlvmValueHandle writeIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, "digit_write_index");
-        LlvmValueHandle asciiDigit = LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), "ascii_digit");
-        StoreBufferByte(state, buffer, writeIndex, asciiDigit);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "idx_inc"), indexSlot);
-        LlvmApi.BuildBr(builder, loopCheckBlock);
+        EmitPrintIntDigitLoopBody(state, buffer, workSlot, indexSlot, work, loopCheckBlock, loopBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, maybeSignBlock);
         LlvmValueHandle negative = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "negative_value");
@@ -814,15 +792,56 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, writeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, writeBlock);
+        EmitPrintIntWriteAndNewline(state, buffer, bufferType, indexSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return false;
+    }
+
+    private static void EmitPrintIntDigitLoopBody(LlvmCodegenState state, LlvmValueHandle buffer, LlvmValueHandle workSlot, LlvmValueHandle indexSlot, LlvmValueHandle work, LlvmBasicBlockHandle loopCheckBlock, LlvmBasicBlockHandle loopBodyBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
+        LlvmValueHandle digit = LlvmApi.BuildSRem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "digit");
+        LlvmValueHandle nextWork = LlvmApi.BuildSDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "next_work");
+        LlvmApi.BuildStore(builder, nextWork, workSlot);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "digit_idx");
+        LlvmValueHandle writeIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, "digit_write_index");
+        LlvmValueHandle asciiDigit = LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), "ascii_digit");
+        StoreBufferByte(state, buffer, writeIndex, asciiDigit);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "idx_inc"), indexSlot);
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static (LlvmValueHandle IndexSlot, LlvmValueHandle WorkSlot, LlvmValueHandle NegativeSlot, LlvmValueHandle Buffer, LlvmTypeHandle BufferType, LlvmValueHandle AbsValue, LlvmValueHandle Zero) EmitPrintIntPrologue(LlvmCodegenState state, LlvmValueHandle value)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_idx");
+        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_work");
+        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_negative");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+
+        LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
+        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, "print_buf");
+
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, "is_negative");
+        LlvmValueHandle negativeValue = LlvmApi.BuildZExt(builder, isNegative, state.I64, "negative_i64");
+        LlvmApi.BuildStore(builder, negativeValue, negativeSlot);
+        LlvmValueHandle absValue = LlvmApi.BuildSelect(builder, isNegative, LlvmApi.BuildSub(builder, zero, value, "negated_value"), value, "abs_value");
+        LlvmApi.BuildStore(builder, absValue, workSlot);
+        return (indexSlot, workSlot, negativeSlot, buffer, bufferType, absValue, zero);
+    }
+
+    private static void EmitPrintIntWriteAndNewline(LlvmCodegenState state, LlvmValueHandle buffer, LlvmTypeHandle bufferType, LlvmValueHandle indexSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "print_count");
         LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, "start_index");
         LlvmValueHandle dataPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, "print_data_ptr");
         EmitWriteBytes(state, dataPtr, count);
         EmitWriteBytes(state, EmitStackByteArray(state, [10]), LlvmApi.ConstInt(state.I64, 1, 0));
-        LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return false;
     }
 
     private static void EmitWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)

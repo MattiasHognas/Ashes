@@ -688,12 +688,42 @@ public static class BuiltinRegistry
 
     private static IReadOnlyDictionary<string, BuiltinType> CreateBuiltinTypes()
     {
+        return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
+        {
+            ["Unit"] = CreateUnitBuiltinType(),
+            ["List"] = CreateListBuiltinType(),
+            ["Maybe"] = CreateMaybeBuiltinType(),
+            ["Result"] = CreateResultBuiltinType(),
+            ["Socket"] = CreateSocketBuiltinType(),
+            ["TlsSocket"] = CreateTlsSocketBuiltinType(),
+            ["Task"] = CreateTaskBuiltinType(),
+            ["Process"] = CreateProcessBuiltinType(),
+            ["FileHandle"] = CreateFileHandleBuiltinType()
+        };
+    }
+
+    private static BuiltinType CreateUnitBuiltinType()
+    {
         var unitTypeParameters = Array.Empty<TypeParameterSymbol>();
         var unitDecl = new TypeDecl(
             "Unit",
             [],
             [new TypeConstructor("Unit", [])]);
 
+        return new BuiltinType(
+            "Unit",
+            unitTypeParameters,
+            [
+                new BuiltinConstructor(
+                    "Unit",
+                    [],
+                    unitDecl.Constructors[0])
+            ],
+            unitDecl);
+    }
+
+    private static BuiltinType CreateListBuiltinType()
+    {
         var listTypeParameters = new[]
         {
             new TypeParameterSymbol("T")
@@ -703,6 +733,15 @@ public static class BuiltinRegistry
             [new TypeParameter("T")],
             []);
 
+        return new BuiltinType(
+            "List",
+            listTypeParameters,
+            [],
+            listDecl);
+    }
+
+    private static BuiltinType CreateMaybeBuiltinType()
+    {
         var maybeTypeParameters = new[]
         {
             new TypeParameterSymbol("T")
@@ -715,6 +754,24 @@ public static class BuiltinRegistry
                 new TypeConstructor("Some", [new TypeExpr.Named("T")])
             ]);
 
+        return new BuiltinType(
+            "Maybe",
+            maybeTypeParameters,
+            [
+                new BuiltinConstructor(
+                    "None",
+                    [],
+                    maybeDecl.Constructors[0]),
+                new BuiltinConstructor(
+                    "Some",
+                    [new TypeRef.TTypeParam(maybeTypeParameters[0])],
+                    maybeDecl.Constructors[1])
+            ],
+            maybeDecl);
+    }
+
+    private static BuiltinType CreateResultBuiltinType()
+    {
         var resultTypeParameters = new[]
         {
             new TypeParameterSymbol("E"),
@@ -728,18 +785,54 @@ public static class BuiltinRegistry
                 new TypeConstructor("Error", [new TypeExpr.Named("E")])
             ]);
 
+        return new BuiltinType(
+            "Result",
+            resultTypeParameters,
+            [
+                new BuiltinConstructor(
+                    "Ok",
+                    [new TypeRef.TTypeParam(resultTypeParameters[1])],
+                    resultDecl.Constructors[0]),
+                new BuiltinConstructor(
+                    "Error",
+                    [new TypeRef.TTypeParam(resultTypeParameters[0])],
+                    resultDecl.Constructors[1])
+            ],
+            resultDecl);
+    }
+
+    private static BuiltinType CreateSocketBuiltinType()
+    {
         var socketTypeParameters = Array.Empty<TypeParameterSymbol>();
         var socketDecl = new TypeDecl(
             "Socket",
             [],
             []);
 
+        return new BuiltinType(
+            "Socket",
+            socketTypeParameters,
+            [],
+            socketDecl);
+    }
+
+    private static BuiltinType CreateTlsSocketBuiltinType()
+    {
         var tlsSocketTypeParameters = Array.Empty<TypeParameterSymbol>();
         var tlsSocketDecl = new TypeDecl(
             "TlsSocket",
             [],
             []);
 
+        return new BuiltinType(
+            "TlsSocket",
+            tlsSocketTypeParameters,
+            [],
+            tlsSocketDecl);
+    }
+
+    private static BuiltinType CreateTaskBuiltinType()
+    {
         var taskTypeParameters = new[]
         {
             new TypeParameterSymbol("E"),
@@ -750,88 +843,40 @@ public static class BuiltinRegistry
             [new TypeParameter("E"), new TypeParameter("A")],
             []);
 
+        return new BuiltinType(
+            "Task",
+            taskTypeParameters,
+            [],
+            taskDecl);
+    }
+
+    private static BuiltinType CreateProcessBuiltinType()
+    {
         var processTypeParameters = Array.Empty<TypeParameterSymbol>();
         var processDecl = new TypeDecl(
             "Process",
             [],
             []);
 
+        return new BuiltinType(
+            "Process",
+            processTypeParameters,
+            [],
+            processDecl);
+    }
+
+    private static BuiltinType CreateFileHandleBuiltinType()
+    {
         var fileHandleTypeParameters = Array.Empty<TypeParameterSymbol>();
         var fileHandleDecl = new TypeDecl(
             "FileHandle",
             [],
             []);
 
-        return new Dictionary<string, BuiltinType>(StringComparer.Ordinal)
-        {
-            ["Unit"] = new(
-                "Unit",
-                unitTypeParameters,
-                [
-                    new BuiltinConstructor(
-                        "Unit",
-                        [],
-                        unitDecl.Constructors[0])
-                ],
-                unitDecl),
-            ["List"] = new(
-                "List",
-                listTypeParameters,
-                [],
-                listDecl),
-            ["Maybe"] = new(
-                "Maybe",
-                maybeTypeParameters,
-                [
-                    new BuiltinConstructor(
-                        "None",
-                        [],
-                        maybeDecl.Constructors[0]),
-                    new BuiltinConstructor(
-                        "Some",
-                        [new TypeRef.TTypeParam(maybeTypeParameters[0])],
-                        maybeDecl.Constructors[1])
-                ],
-                maybeDecl),
-            ["Result"] = new(
-                "Result",
-                resultTypeParameters,
-                [
-                    new BuiltinConstructor(
-                        "Ok",
-                        [new TypeRef.TTypeParam(resultTypeParameters[1])],
-                        resultDecl.Constructors[0]),
-                    new BuiltinConstructor(
-                        "Error",
-                        [new TypeRef.TTypeParam(resultTypeParameters[0])],
-                        resultDecl.Constructors[1])
-                ],
-                resultDecl),
-            ["Socket"] = new(
-                "Socket",
-                socketTypeParameters,
-                [],
-                socketDecl),
-            ["TlsSocket"] = new(
-                "TlsSocket",
-                tlsSocketTypeParameters,
-                [],
-                tlsSocketDecl),
-            ["Task"] = new(
-                "Task",
-                taskTypeParameters,
-                [],
-                taskDecl),
-            ["Process"] = new(
-                "Process",
-                processTypeParameters,
-                [],
-                processDecl),
-            ["FileHandle"] = new(
-                "FileHandle",
-                fileHandleTypeParameters,
-                [],
-                fileHandleDecl)
-        };
+        return new BuiltinType(
+            "FileHandle",
+            fileHandleTypeParameters,
+            [],
+            fileHandleDecl);
     }
 }

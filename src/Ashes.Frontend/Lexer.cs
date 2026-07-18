@@ -82,97 +82,35 @@ public sealed class Lexer
         }
     }
 
+    // Ordered longest-first so maximal munch holds among shared prefixes
+    // (e.g. "|?>" before "|>", "<=" and "<<" before "<").
+    private static readonly (string Text, TokenKind Kind)[] MultiCharacterTokens =
+    {
+        ("|?>", TokenKind.PipeQuestionGreater),
+        ("|!>", TokenKind.PipeBangGreater),
+        ("->", TokenKind.Arrow),
+        (">=", TokenKind.GreaterEquals),
+        ("<=", TokenKind.LessEquals),
+        ("==", TokenKind.EqualsEquals),
+        ("!=", TokenKind.BangEquals),
+        ("<<", TokenKind.LessLess),
+        (">>", TokenKind.GreaterGreater),
+        ("::", TokenKind.ColonColon),
+        ("|>", TokenKind.PipeGreater),
+        ("<", TokenKind.LessThan),
+        (">", TokenKind.GreaterThan),
+    };
+
     private bool TryReadDoubleCharacterToken(int start, out Token token)
     {
-        if (TryMatch('|', '?', '>'))
+        foreach ((string text, TokenKind kind) in MultiCharacterTokens)
         {
-            _pos += 3;
-            token = new Token(TokenKind.PipeQuestionGreater, "|?>", 0, start, 3);
-            return true;
-        }
-
-        if (TryMatch('|', '!', '>'))
-        {
-            _pos += 3;
-            token = new Token(TokenKind.PipeBangGreater, "|!>", 0, start, 3);
-            return true;
-        }
-
-        if (TryMatch('-', '>'))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.Arrow, "->", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('>', '='))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.GreaterEquals, ">=", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('<', '='))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.LessEquals, "<=", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('=', '='))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.EqualsEquals, "==", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('!', '='))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.BangEquals, "!=", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('<', '<'))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.LessLess, "<<", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('>', '>'))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.GreaterGreater, ">>", 0, start, 2);
-            return true;
-        }
-
-        if (_text[_pos] == '<')
-        {
-            _pos++;
-            token = new Token(TokenKind.LessThan, "<", 0, start, 1);
-            return true;
-        }
-
-        if (_text[_pos] == '>')
-        {
-            _pos++;
-            token = new Token(TokenKind.GreaterThan, ">", 0, start, 1);
-            return true;
-        }
-
-        if (TryMatch(':', ':'))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.ColonColon, "::", 0, start, 2);
-            return true;
-        }
-
-        if (TryMatch('|', '>'))
-        {
-            _pos += 2;
-            token = new Token(TokenKind.PipeGreater, "|>", 0, start, 2);
-            return true;
+            if (_text.AsSpan(_pos).StartsWith(text, StringComparison.Ordinal))
+            {
+                _pos += text.Length;
+                token = new Token(kind, text, 0, start, text.Length);
+                return true;
+            }
         }
 
         token = default;
@@ -212,19 +150,6 @@ public sealed class Lexer
 
         _pos++;
         return true;
-    }
-
-    private bool TryMatch(char first, char second)
-    {
-        return _pos + 1 < _text.Length && _text[_pos] == first && _text[_pos + 1] == second;
-    }
-
-    private bool TryMatch(char first, char second, char third)
-    {
-        return _pos + 2 < _text.Length
-            && _text[_pos] == first
-            && _text[_pos + 1] == second
-            && _text[_pos + 2] == third;
     }
 
     private Token ReadString(int start)

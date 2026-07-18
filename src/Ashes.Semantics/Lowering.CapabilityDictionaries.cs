@@ -280,58 +280,21 @@ public sealed partial class Lowering
     {
         var (fnTemp, fnTypeRaw) = LowerExpr(fnExpr);
 
-        // Peel one arrow per op-parameter to expose the (body-shared) op-parameter types.
-        var opTypes = new List<TypeRef>(info.Ops.Count);
-        var cursor = fnTypeRaw;
-        for (int i = 0; i < info.Ops.Count; i++)
+        var peeled = PeelDictOpParameterTypes(info, fnTypeRaw, fnName, span);
+        if (peeled is null)
         {
-            cursor = Prune(cursor);
-            if (cursor is TypeRef.TVar)
-            {
-                Unify(cursor, new TypeRef.TFun(NewTypeVar(), NewTypeVar()));
-                cursor = Prune(cursor);
-            }
-
-            if (cursor is not TypeRef.TFun fun)
-            {
-                ReportDiagnostic(span, $"'{fnName}' is not applied as a capability-generic function.", UnknownCapabilityCode);
-                return ReturnNeverWithDummyTemp();
-            }
-
-            SubsumeCalleeRow(fun.Row, span);
-            opTypes.Add(fun.Arg);
-            cursor = fun.Ret;
+            return ReturnNeverWithDummyTemp();
         }
 
-        // Lower the real arguments, unifying to pin the instance type variables shared with opTypes.
-        var realTemps = new List<int>(realArgs.Count);
-        var currentType = cursor;
-        foreach (var arg in realArgs)
+        var (opTypes, cursor) = peeled.Value;
+
+        var loweredArgs = LowerDictRealArguments(realArgs, cursor, fnName, span);
+        if (loweredArgs is null)
         {
-            var (argTemp, argType) = LowerExpr(arg);
-            realTemps.Add(argTemp);
-            currentType = Prune(currentType);
-            if (currentType is TypeRef.TNever)
-            {
-                return ReturnNeverWithDummyTemp();
-            }
-
-            if (currentType is TypeRef.TVar)
-            {
-                Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()));
-                currentType = Prune(currentType);
-            }
-
-            if (currentType is not TypeRef.TFun fun)
-            {
-                ReportDiagnostic(span, $"'{fnName}' applied to too many arguments.", UnknownCapabilityCode);
-                return ReturnNeverWithDummyTemp();
-            }
-
-            Unify(fun.Arg, argType);
-            SubsumeCalleeRow(fun.Row, span);
-            currentType = Prune(fun.Ret);
+            return ReturnNeverWithDummyTemp();
         }
+
+        var (realTemps, currentType) = loweredArgs.Value;
 
         // Synthesize each op-argument now that the instance is pinned, then apply the function.
         int applied = fnTemp;
@@ -351,6 +314,77 @@ public sealed partial class Lowering
         }
 
         return (applied, currentType);
+    }
+
+    /// <summary>
+    /// Peels one arrow per op-parameter to expose the (body-shared) op-parameter types, returning
+    /// them together with the remaining (real-argument) type. Returns null (after reporting) when
+    /// the callee is not applied as a capability-generic function.
+    /// </summary>
+    private (List<TypeRef> OpTypes, TypeRef Cursor)? PeelDictOpParameterTypes(DictFnInfo info, TypeRef fnType, string fnName, TextSpan span)
+    {
+        var opTypes = new List<TypeRef>(info.Ops.Count);
+        var cursor = fnType;
+        for (int i = 0; i < info.Ops.Count; i++)
+        {
+            cursor = Prune(cursor);
+            if (cursor is TypeRef.TVar)
+            {
+                Unify(cursor, new TypeRef.TFun(NewTypeVar(), NewTypeVar()));
+                cursor = Prune(cursor);
+            }
+
+            if (cursor is not TypeRef.TFun fun)
+            {
+                ReportDiagnostic(span, $"'{fnName}' is not applied as a capability-generic function.", UnknownCapabilityCode);
+                return null;
+            }
+
+            SubsumeCalleeRow(fun.Row, span);
+            opTypes.Add(fun.Arg);
+            cursor = fun.Ret;
+        }
+
+        return (opTypes, cursor);
+    }
+
+    /// <summary>
+    /// Lowers the real arguments, unifying to pin the instance type variables shared with the
+    /// op-parameter types. Returns the argument temps and the resulting type, or null when the
+    /// application bottoms out (a never-typed result, or too many arguments).
+    /// </summary>
+    private (List<int> RealTemps, TypeRef CurrentType)? LowerDictRealArguments(List<Expr> realArgs, TypeRef cursor, string fnName, TextSpan span)
+    {
+        var realTemps = new List<int>(realArgs.Count);
+        var currentType = cursor;
+        foreach (var arg in realArgs)
+        {
+            var (argTemp, argType) = LowerExpr(arg);
+            realTemps.Add(argTemp);
+            currentType = Prune(currentType);
+            if (currentType is TypeRef.TNever)
+            {
+                return null;
+            }
+
+            if (currentType is TypeRef.TVar)
+            {
+                Unify(currentType, new TypeRef.TFun(NewTypeVar(), NewTypeVar()));
+                currentType = Prune(currentType);
+            }
+
+            if (currentType is not TypeRef.TFun fun)
+            {
+                ReportDiagnostic(span, $"'{fnName}' applied to too many arguments.", UnknownCapabilityCode);
+                return null;
+            }
+
+            Unify(fun.Arg, argType);
+            SubsumeCalleeRow(fun.Row, span);
+            currentType = Prune(fun.Ret);
+        }
+
+        return (realTemps, currentType);
     }
 
     /// <summary>Produces the implementation value for a capability operation at the instance pinned in <paramref name="opType"/>: a provider (concrete) or a threaded op-parameter (abstract).</summary>

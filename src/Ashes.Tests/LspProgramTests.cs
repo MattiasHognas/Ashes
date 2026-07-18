@@ -12,7 +12,15 @@ public sealed class LspProgramTests
     public async Task Lsp_program_should_handle_basic_document_lifecycle_requests()
     {
         using var process = StartLspProcess();
+        const string uri = "file:///tmp/test.ash";
 
+        await LifecycleInitializeAndOpenAsync(process, uri).ConfigureAwait(false);
+        await LifecycleFormatChangeReformatAsync(process, uri).ConfigureAwait(false);
+        await LifecycleUnknownCloseShutdownExitAsync(process, uri).ConfigureAwait(false);
+    }
+
+    private static async Task LifecycleInitializeAndOpenAsync(Process process, string uri)
+    {
         await WriteMessageAsync(process, new
         {
             jsonrpc = "2.0",
@@ -24,8 +32,6 @@ public sealed class LspProgramTests
         var initializeResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         initializeResponse.GetProperty("id").GetInt32().ShouldBe(1);
         initializeResponse.GetProperty("result").GetProperty("capabilities").GetProperty("documentFormattingProvider").GetBoolean().ShouldBeTrue();
-
-        const string uri = "file:///tmp/test.ash";
 
         await WriteMessageAsync(process, new
         {
@@ -44,7 +50,10 @@ public sealed class LspProgramTests
         var openDiagnostics = await ReadMessageAsync(process).ConfigureAwait(false);
         openDiagnostics.GetProperty("method").GetString().ShouldBe("textDocument/publishDiagnostics");
         openDiagnostics.GetProperty("params").GetProperty("diagnostics").GetArrayLength().ShouldBeGreaterThan(0);
+    }
 
+    private static async Task LifecycleFormatChangeReformatAsync(Process process, string uri)
+    {
         await WriteMessageAsync(process, new
         {
             jsonrpc = "2.0",
@@ -94,7 +103,10 @@ public sealed class LspProgramTests
         var edits = formattingResponse.GetProperty("result");
         edits.GetArrayLength().ShouldBe(1);
         edits[0].GetProperty("newText").GetString().ShouldBe("Ashes.IO.print(40 + 2)\n");
+    }
 
+    private static async Task LifecycleUnknownCloseShutdownExitAsync(Process process, string uri)
+    {
         await WriteMessageAsync(process, new
         {
             jsonrpc = "2.0",
@@ -179,77 +191,85 @@ public sealed class LspProgramTests
             var uri = new Uri(filePath).AbsoluteUri;
 
             using var process = StartLspProcess();
-
-            await WriteMessageAsync(process, new
-            {
-                jsonrpc = "2.0",
-                id = 1,
-                method = "initialize",
-                @params = new { }
-            }).ConfigureAwait(false);
-            _ = await ReadMessageAsync(process).ConfigureAwait(false);
-
-            await WriteMessageAsync(process, new
-            {
-                jsonrpc = "2.0",
-                method = "textDocument/didOpen",
-                @params = new
-                {
-                    textDocument = new
-                    {
-                        uri,
-                        text = "let x = if true then 1 else 2 in Ashes.IO.print(x)"
-                    }
-                }
-            }).ConfigureAwait(false);
-            _ = await ReadMessageAsync(process).ConfigureAwait(false); // diagnostics
-
-            await WriteMessageAsync(process, new
-            {
-                jsonrpc = "2.0",
-                id = 2,
-                method = "textDocument/formatting",
-                @params = new
-                {
-                    textDocument = new { uri }
-                }
-            }).ConfigureAwait(false);
-
-            var defaultFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
-            var defaultText = defaultFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
-            defaultText.ShouldContain("\tif true");
-
-            await WriteMessageAsync(process, new
-            {
-                jsonrpc = "2.0",
-                id = 3,
-                method = "textDocument/formatting",
-                @params = new
-                {
-                    textDocument = new { uri },
-                    options = new
-                    {
-                        tabSize = 2,
-                        insertSpaces = true
-                    }
-                }
-            }).ConfigureAwait(false);
-
-            var overrideFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
-            var overrideText = overrideFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
-            overrideText.ShouldContain("  if true");
-            overrideText.ShouldNotContain("\tif true");
-
-            await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
-            _ = await ReadMessageAsync(process).ConfigureAwait(false);
-            await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            process.ExitCode.ShouldBe(0);
+            await FormattingInitializeOpenAndCheckDefaultAsync(process, uri).ConfigureAwait(false);
+            await FormattingCheckOverrideAndShutdownAsync(process, uri).ConfigureAwait(false);
         }
         finally
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static async Task FormattingInitializeOpenAndCheckDefaultAsync(Process process, string uri)
+    {
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "initialize",
+            @params = new { }
+        }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            method = "textDocument/didOpen",
+            @params = new
+            {
+                textDocument = new
+                {
+                    uri,
+                    text = "let x = if true then 1 else 2 in Ashes.IO.print(x)"
+                }
+            }
+        }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false); // diagnostics
+
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 2,
+            method = "textDocument/formatting",
+            @params = new
+            {
+                textDocument = new { uri }
+            }
+        }).ConfigureAwait(false);
+
+        var defaultFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
+        var defaultText = defaultFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
+        defaultText.ShouldContain("\tif true");
+    }
+
+    private static async Task FormattingCheckOverrideAndShutdownAsync(Process process, string uri)
+    {
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 3,
+            method = "textDocument/formatting",
+            @params = new
+            {
+                textDocument = new { uri },
+                options = new
+                {
+                    tabSize = 2,
+                    insertSpaces = true
+                }
+            }
+        }).ConfigureAwait(false);
+
+        var overrideFormatting = await ReadMessageAsync(process).ConfigureAwait(false);
+        var overrideText = overrideFormatting.GetProperty("result")[0].GetProperty("newText").GetString()!;
+        overrideText.ShouldContain("  if true");
+        overrideText.ShouldNotContain("\tif true");
+
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        process.ExitCode.ShouldBe(0);
     }
 
     [Test]
@@ -294,6 +314,19 @@ public sealed class LspProgramTests
         tokenResponse.GetProperty("id").GetInt32().ShouldBe(2);
         var data = tokenResponse.GetProperty("result").GetProperty("data");
         data.GetArrayLength().ShouldBeGreaterThan(0);
+        AssertAdtSemanticTokens(data, source);
+
+        await AssertAdtCompletionsAsync(process, uri).ConfigureAwait(false);
+
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        process.ExitCode.ShouldBe(0);
+    }
+
+    private static void AssertAdtSemanticTokens(JsonElement data, string source)
+    {
         var decodedTokens = DecodeSemanticTokens(data, source);
         decodedTokens.ShouldContain(t => t.Text == "Maybe" && t.TokenType == DocumentService.TokenTypeType);
         decodedTokens.ShouldContain(t => t.Text == "None" && t.TokenType == DocumentService.TokenTypeEnumMember);
@@ -311,7 +344,10 @@ public sealed class LspProgramTests
                 current.Character.ShouldBeGreaterThanOrEqualTo(previous.Character);
             }
         }
+    }
 
+    private static async Task AssertAdtCompletionsAsync(Process process, string uri)
+    {
         await WriteMessageAsync(process, new
         {
             jsonrpc = "2.0",
@@ -329,12 +365,6 @@ public sealed class LspProgramTests
             .ToArray();
         labels.ShouldContain("None");
         labels.ShouldContain("Some");
-
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 4, method = "shutdown", @params = new { } }).ConfigureAwait(false);
-        _ = await ReadMessageAsync(process).ConfigureAwait(false);
-        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit" }).ConfigureAwait(false);
-        await process.WaitForExitAsync().ConfigureAwait(false);
-        process.ExitCode.ShouldBe(0);
     }
 
     [Test]

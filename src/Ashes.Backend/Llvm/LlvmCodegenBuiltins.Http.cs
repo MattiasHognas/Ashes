@@ -79,7 +79,84 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, endBlock);
     }
 
+    /// <summary>
+    /// The alloca slots that back the mutable state of the HTTP request emitter (URL parse cursors,
+    /// parsed host/path/port, socket, and accumulated response). All are <c>i64</c> stack slots.
+    /// </summary>
+    private readonly record struct EmitHttpRequestSlots(
+        LlvmValueHandle ResultSlot,
+        LlvmValueHandle HostSlot,
+        LlvmValueHandle PathSlot,
+        LlvmValueHandle PortSlot,
+        LlvmValueHandle ResponseSlot,
+        LlvmValueHandle SocketSlot,
+        LlvmValueHandle IndexSlot,
+        LlvmValueHandle HostStartSlot,
+        LlvmValueHandle HostEndSlot,
+        LlvmValueHandle PathStartSlot,
+        LlvmValueHandle PathLenSlot,
+        LlvmValueHandle PortValueSlot,
+        LlvmValueHandle PortDigitsSlot);
+
+    /// <summary>
+    /// The basic blocks that the HTTP request emitter branches between. Every block that is targeted
+    /// across more than one emit phase lives here so each phase helper can reference it.
+    /// </summary>
+    private readonly record struct EmitHttpRequestBlocks(
+        LlvmBasicBlockHandle HttpsCheckBlock,
+        LlvmBasicBlockHandle HttpCheckBlock,
+        LlvmBasicBlockHandle ScanHostSetupBlock,
+        LlvmBasicBlockHandle ScanHostBlock,
+        LlvmBasicBlockHandle ParsePortBlock,
+        LlvmBasicBlockHandle ParsePortLoopBlock,
+        LlvmBasicBlockHandle ParsePortInspectBlock,
+        LlvmBasicBlockHandle HavePathBlock,
+        LlvmBasicBlockHandle DefaultPathBlock,
+        LlvmBasicBlockHandle ConnectBlock,
+        LlvmBasicBlockHandle SendBlock,
+        LlvmBasicBlockHandle RecvLoopBlock,
+        LlvmBasicBlockHandle RecvInspectBlock,
+        LlvmBasicBlockHandle RecvDoneBlock,
+        LlvmBasicBlockHandle ParseResponseBlock,
+        LlvmBasicBlockHandle HttpsErrorBlock,
+        LlvmBasicBlockHandle CloseErrorBlock,
+        LlvmBasicBlockHandle MalformedResponseBlock,
+        LlvmBasicBlockHandle ChunkedErrorBlock,
+        LlvmBasicBlockHandle ContinueBlock,
+        LlvmBasicBlockHandle MalformedUrlBlock,
+        LlvmBasicBlockHandle ParseDigitsContinueBlock,
+        LlvmBasicBlockHandle StatusOkBlock,
+        LlvmBasicBlockHandle StatusErrorBlock);
+
     private static LlvmValueHandle EmitHttpRequest(LlvmCodegenState state, LlvmValueHandle urlRef, LlvmValueHandle bodyRef, bool hasBody)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        EmitHttpRequestSlots slots = EmitHttpRequestBuildSlots(state);
+        LlvmValueHandle urlLen = LoadStringLength(state, urlRef, "http_url_len");
+        LlvmValueHandle urlBytes = GetStringBytesPointer(state, urlRef, "http_url_bytes");
+        EmitHttpRequestBlocks blocks = EmitHttpRequestBuildBlocks(state);
+
+        LlvmApi.BuildBr(builder, blocks.HttpsCheckBlock);
+
+        EmitHttpRequestSchemeCheck(state, slots, blocks, urlRef);
+        EmitHttpRequestScanHost(state, slots, blocks, urlLen, urlBytes);
+        EmitHttpRequestParsePortSetup(state, slots, blocks);
+        EmitHttpRequestParsePortLoop(state, slots, blocks, urlLen, urlBytes);
+        EmitHttpRequestBuildHost(state, slots, blocks, urlBytes);
+        EmitHttpRequestHavePath(state, slots, blocks, urlLen, urlBytes);
+        EmitHttpRequestConnectSend(state, slots, blocks, bodyRef, hasBody);
+        EmitHttpRequestReceive(state, slots, blocks);
+        EmitHttpRequestReceiveDone(state, slots, blocks);
+        var (responseBytes, responseLen, separatorIndex, statusSpaceIndex) = EmitHttpRequestParseResponse(state, slots, blocks);
+        var (statusCode, bodyString) = EmitHttpRequestBuildBody(state, slots, blocks, responseBytes, responseLen, separatorIndex, statusSpaceIndex);
+        EmitHttpRequestStatusBodies(state, slots, blocks, statusCode, bodyString);
+        EmitHttpRequestErrorBlocks(state, slots, blocks);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.ContinueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, slots.ResultSlot, "http_result_value");
+    }
+
+    private static EmitHttpRequestSlots EmitHttpRequestBuildSlots(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_result");
@@ -108,10 +185,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pathLenSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 80, 0), portValueSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), portDigitsSlot);
+        return new EmitHttpRequestSlots(resultSlot, hostSlot, pathSlot, portSlot, responseSlot, socketSlot, indexSlot, hostStartSlot, hostEndSlot, pathStartSlot, pathLenSlot, portValueSlot, portDigitsSlot);
+    }
 
-        LlvmValueHandle urlLen = LoadStringLength(state, urlRef, "http_url_len");
-        LlvmValueHandle urlBytes = GetStringBytesPointer(state, urlRef, "http_url_bytes");
-
+    private static EmitHttpRequestBlocks EmitHttpRequestBuildBlocks(LlvmCodegenState state)
+    {
         var httpsCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_https_check");
         var httpCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_http_check");
         var scanHostSetupBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_scan_host_setup");
@@ -132,8 +210,23 @@ internal static partial class LlvmCodegen
         var malformedResponseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_malformed_response");
         var chunkedErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_chunked_error");
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_continue");
+        var malformedUrlBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_malformed_url");
+        var parseDigitsContinueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_parse_digits_continue");
+        var statusOkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_status_ok_block");
+        var statusErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_status_error_block");
+        return new EmitHttpRequestBlocks(httpsCheckBlock, httpCheckBlock, scanHostSetupBlock, scanHostBlock, parsePortBlock, parsePortLoopBlock, parsePortInspectBlock, havePathBlock, defaultPathBlock, connectBlock, sendBlock, recvLoopBlock, recvInspectBlock, recvDoneBlock, parseResponseBlock, httpsErrorBlock, closeErrorBlock, malformedResponseBlock, chunkedErrorBlock, continueBlock, malformedUrlBlock, parseDigitsContinueBlock, statusOkBlock, statusErrorBlock);
+    }
 
-        LlvmApi.BuildBr(builder, httpsCheckBlock);
+    private static void EmitHttpRequestSchemeCheck(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle urlRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        var httpsCheckBlock = blocks.HttpsCheckBlock;
+        var httpCheckBlock = blocks.HttpCheckBlock;
+        var httpsErrorBlock = blocks.HttpsErrorBlock;
+        var scanHostSetupBlock = blocks.ScanHostSetupBlock;
+        var malformedUrlBlock = blocks.MalformedUrlBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, httpsCheckBlock);
         LlvmValueHandle httpsPrefix = EmitHeapStringLiteral(state, "https://");
@@ -151,12 +244,22 @@ internal static partial class LlvmCodegen
             EmitStartsWith(state, urlRef, httpPrefix, "http_is_http"),
             LlvmApi.ConstInt(state.I64, 0, 0),
             "http_is_http_bool");
-        var malformedUrlBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_malformed_url");
         LlvmApi.BuildCondBr(builder, isHttp, scanHostSetupBlock, malformedUrlBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, malformedUrlBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedUrlMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
+    }
+
+    private static void EmitHttpRequestScanHost(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle urlLen, LlvmValueHandle urlBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = slots.IndexSlot;
+        var scanHostSetupBlock = blocks.ScanHostSetupBlock;
+        var scanHostBlock = blocks.ScanHostBlock;
+        var defaultPathBlock = blocks.DefaultPathBlock;
+        var parsePortBlock = blocks.ParsePortBlock;
+        var malformedUrlBlock = blocks.MalformedUrlBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, scanHostSetupBlock);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 7, 0), indexSlot);
@@ -192,6 +295,18 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, hostAdvanceBlock);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, hostLoopIndex, LlvmApi.ConstInt(state.I64, 1, 0), "http_host_index_next"), indexSlot);
         LlvmApi.BuildBr(builder, scanHostBlock);
+    }
+
+    private static void EmitHttpRequestParsePortSetup(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = slots.IndexSlot;
+        LlvmValueHandle hostEndSlot = slots.HostEndSlot;
+        LlvmValueHandle portValueSlot = slots.PortValueSlot;
+        LlvmValueHandle portDigitsSlot = slots.PortDigitsSlot;
+        var parsePortBlock = blocks.ParsePortBlock;
+        var malformedUrlBlock = blocks.MalformedUrlBlock;
+        var parsePortLoopBlock = blocks.ParsePortLoopBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, parsePortBlock);
         LlvmValueHandle hostEnd = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "http_host_end");
@@ -206,6 +321,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), portDigitsSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, hostEnd, LlvmApi.ConstInt(state.I64, 1, 0), "http_port_index_start"), indexSlot);
         LlvmApi.BuildBr(builder, parsePortLoopBlock);
+    }
+
+    private static void EmitHttpRequestParsePortLoop(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle urlLen, LlvmValueHandle urlBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = slots.IndexSlot;
+        LlvmValueHandle portValueSlot = slots.PortValueSlot;
+        LlvmValueHandle portDigitsSlot = slots.PortDigitsSlot;
+        var parsePortLoopBlock = blocks.ParsePortLoopBlock;
+        var defaultPathBlock = blocks.DefaultPathBlock;
+        var parsePortInspectBlock = blocks.ParsePortInspectBlock;
+        var malformedUrlBlock = blocks.MalformedUrlBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, parsePortLoopBlock);
         LlvmValueHandle portIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "http_port_index");
@@ -237,6 +364,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, portDigitsSlot, "http_port_digits_value"), LlvmApi.ConstInt(state.I64, 1, 0), "http_port_digits_next"), portDigitsSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, portIndex, LlvmApi.ConstInt(state.I64, 1, 0), "http_port_index_next"), indexSlot);
         LlvmApi.BuildBr(builder, parsePortLoopBlock);
+    }
+
+    private static void EmitHttpRequestBuildHost(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle urlBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle hostEndSlot = slots.HostEndSlot;
+        LlvmValueHandle indexSlot = slots.IndexSlot;
+        LlvmValueHandle hostSlot = slots.HostSlot;
+        LlvmValueHandle portDigitsSlot = slots.PortDigitsSlot;
+        LlvmValueHandle portValueSlot = slots.PortValueSlot;
+        LlvmValueHandle portSlot = slots.PortSlot;
+        var defaultPathBlock = blocks.DefaultPathBlock;
+        var malformedUrlBlock = blocks.MalformedUrlBlock;
+        var havePathBlock = blocks.HavePathBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, defaultPathBlock);
         LlvmValueHandle finalHostEnd = LlvmApi.BuildLoad2(builder, state.I64, hostEndSlot, "http_final_host_end");
@@ -268,6 +409,15 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, storeParsedPortBlock);
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, portValueSlot, "http_port_value_final"), portSlot);
         LlvmApi.BuildBr(builder, havePathBlock);
+    }
+
+    private static void EmitHttpRequestHavePath(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle urlLen, LlvmValueHandle urlBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle indexSlot = slots.IndexSlot;
+        LlvmValueHandle pathSlot = slots.PathSlot;
+        var havePathBlock = blocks.HavePathBlock;
+        var connectBlock = blocks.ConnectBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, havePathBlock);
         LlvmValueHandle pathIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "http_path_index");
@@ -285,6 +435,20 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, defaultPathStoreBlock);
         LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, "/"), pathSlot);
         LlvmApi.BuildBr(builder, connectBlock);
+    }
+
+    private static void EmitHttpRequestConnectSend(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle bodyRef, bool hasBody)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle hostSlot = slots.HostSlot;
+        LlvmValueHandle portSlot = slots.PortSlot;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        LlvmValueHandle socketSlot = slots.SocketSlot;
+        LlvmValueHandle pathSlot = slots.PathSlot;
+        var connectBlock = blocks.ConnectBlock;
+        var sendBlock = blocks.SendBlock;
+        var recvLoopBlock = blocks.RecvLoopBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, connectBlock);
         LlvmValueHandle connectResult = EmitTcpConnect(state, LlvmApi.BuildLoad2(builder, state.I64, hostSlot, "http_host_value"), LlvmApi.BuildLoad2(builder, state.I64, portSlot, "http_port_value"));
@@ -311,6 +475,18 @@ internal static partial class LlvmCodegen
         EmitTcpClose(state, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "http_send_error_socket"));
         LlvmApi.BuildStore(builder, sendResult, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
+    }
+
+    private static void EmitHttpRequestReceive(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle socketSlot = slots.SocketSlot;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        LlvmValueHandle responseSlot = slots.ResponseSlot;
+        var recvLoopBlock = blocks.RecvLoopBlock;
+        var recvInspectBlock = blocks.RecvInspectBlock;
+        var recvDoneBlock = blocks.RecvDoneBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, recvLoopBlock);
         LlvmValueHandle recvResult = EmitTcpReceive(state, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "http_recv_socket"), LlvmApi.ConstInt(state.I64, 65536, 0));
@@ -345,12 +521,36 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, concatResponseBlock);
         LlvmApi.BuildStore(builder, EmitStringConcat(state, currentResponse, chunkRef), responseSlot);
         LlvmApi.BuildBr(builder, recvLoopBlock);
+    }
+
+    private static void EmitHttpRequestReceiveDone(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle socketSlot = slots.SocketSlot;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        var recvDoneBlock = blocks.RecvDoneBlock;
+        var closeErrorBlock = blocks.CloseErrorBlock;
+        var parseResponseBlock = blocks.ParseResponseBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, recvDoneBlock);
         LlvmValueHandle closeResult = EmitTcpClose(state, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "http_close_socket"));
         LlvmValueHandle closeTag = LoadMemory(state, closeResult, 0, "http_close_tag");
         LlvmValueHandle closeFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, closeTag, LlvmApi.ConstInt(state.I64, 0, 0), "http_close_failed");
         LlvmApi.BuildCondBr(builder, closeFailed, closeErrorBlock, parseResponseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, closeErrorBlock);
+        LlvmApi.BuildStore(builder, closeResult, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+    }
+
+    private static (LlvmValueHandle ResponseBytes, LlvmValueHandle ResponseLen, LlvmValueHandle SeparatorIndex, LlvmValueHandle StatusSpaceIndex) EmitHttpRequestParseResponse(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle responseSlot = slots.ResponseSlot;
+        var parseResponseBlock = blocks.ParseResponseBlock;
+        var malformedResponseBlock = blocks.MalformedResponseBlock;
+        var parseDigitsContinueBlock = blocks.ParseDigitsContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, parseResponseBlock);
         LlvmValueHandle responseRef = LlvmApi.BuildLoad2(builder, state.I64, responseSlot, "http_response_value");
@@ -387,8 +587,20 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, parseDigitsBlock);
         LlvmValueHandle statusEnd = LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 3, 0), "http_status_end");
         LlvmValueHandle digitsInRange = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, statusEnd, headerLength, "http_status_digits_in_range");
-        var parseDigitsContinueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_parse_digits_continue");
         LlvmApi.BuildCondBr(builder, digitsInRange, parseDigitsContinueBlock, malformedResponseBlock);
+
+        return (responseBytes, responseLen, separatorIndex, statusSpaceIndex);
+    }
+
+    private static (LlvmValueHandle StatusCode, LlvmValueHandle BodyString) EmitHttpRequestBuildBody(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle responseBytes, LlvmValueHandle responseLen, LlvmValueHandle separatorIndex, LlvmValueHandle statusSpaceIndex)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle headerLength = separatorIndex;
+        var parseDigitsContinueBlock = blocks.ParseDigitsContinueBlock;
+        var malformedResponseBlock = blocks.MalformedResponseBlock;
+        var chunkedErrorBlock = blocks.ChunkedErrorBlock;
+        var statusOkBlock = blocks.StatusOkBlock;
+        var statusErrorBlock = blocks.StatusErrorBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, parseDigitsContinueBlock);
         LlvmValueHandle hundredsByte = LoadByteAt(state, responseBytes, LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 1, 0), "http_hundreds_idx"), "http_hundreds_byte");
@@ -426,9 +638,18 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, statusCode, LlvmApi.ConstInt(state.I64, 200, 0), "http_status_ge_200"),
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, statusCode, LlvmApi.ConstInt(state.I64, 299, 0), "http_status_le_299"),
             "http_status_ok");
-        var statusOkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_status_ok_block");
-        var statusErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "http_status_error_block");
         LlvmApi.BuildCondBr(builder, statusOk, statusOkBlock, statusErrorBlock);
+
+        return (statusCode, bodyString);
+    }
+
+    private static void EmitHttpRequestStatusBodies(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks, LlvmValueHandle statusCode, LlvmValueHandle bodyString)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        var statusOkBlock = blocks.StatusOkBlock;
+        var statusErrorBlock = blocks.StatusErrorBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, statusOkBlock);
         LlvmApi.BuildStore(builder, EmitResultOk(state, bodyString), resultSlot);
@@ -437,13 +658,19 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, statusErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHttpStatusErrorString(state, statusCode, "http_status_error")), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
+    }
+
+    private static void EmitHttpRequestErrorBlocks(LlvmCodegenState state, EmitHttpRequestSlots slots, EmitHttpRequestBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = slots.ResultSlot;
+        var httpsErrorBlock = blocks.HttpsErrorBlock;
+        var malformedResponseBlock = blocks.MalformedResponseBlock;
+        var chunkedErrorBlock = blocks.ChunkedErrorBlock;
+        var continueBlock = blocks.ContinueBlock;
 
         LlvmApi.PositionBuilderAtEnd(builder, httpsErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpHttpsNotSupportedMessage)), resultSlot);
-        LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, closeErrorBlock);
-        LlvmApi.BuildStore(builder, closeResult, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, malformedResponseBlock);
@@ -453,9 +680,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, chunkedErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpUnsupportedTransferEncodingMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "http_result_value");
     }
 
     private static LlvmValueHandle EmitHttpRequestString(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle hostRef, LlvmValueHandle bodyRef, bool hasBody)

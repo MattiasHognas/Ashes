@@ -115,6 +115,34 @@ internal static partial class LlvmImageLinker
             : BuildLinuxDynamicImportLayout(imports, dataVa, checked((uint)importDataOffset), objectTextVa + (ulong)parsed.TextBytes.Length);
 
         var externalSymbolVas = new Dictionary<string, ulong>(importLayout.ImportStubVas, StringComparer.Ordinal);
+        List<LinkerDataSegment> extraDataSegments = LinkLinuxExecutableCollectExtraDataSegments(
+            linkedPayload, importLayout, importDataOffset, laidOutData.DataBytes.Length, dataVa, externalSymbolVas);
+
+        LinkLinuxExecutableApplyRelocations(
+            objectBytes, parsed, laidOutData.DataBytes, dataVa, objectTextVa, sectionBaseVas, externalSymbolVas);
+
+        byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
+            .Concat(parsed.TextBytes)
+            .Concat(importLayout.StubBytes)
+            .ToArray();
+
+        byte[] finalDataBytes = extraDataSegments.Count == 0
+            ? laidOutData.DataBytes
+            : BuildLinuxDataBytes(laidOutData.DataBytes, extraDataSegments);
+
+        return LinkLinuxExecutableEmitImage(
+            parsed, imports.Count > 0, importLayout, codeBytes, finalDataBytes,
+            textVa, textFileOffset, dataFileOffset, dataVa);
+    }
+
+    private static List<LinkerDataSegment> LinkLinuxExecutableCollectExtraDataSegments(
+        LinkedImagePayload? linkedPayload,
+        LinuxDynamicImportLayout importLayout,
+        int importDataOffset,
+        int laidOutDataLength,
+        ulong dataVa,
+        Dictionary<string, ulong> externalSymbolVas)
+    {
         var extraDataSegments = new List<LinkerDataSegment>();
         if (importLayout.Bytes.Length > 0)
         {
@@ -123,7 +151,7 @@ internal static partial class LlvmImageLinker
 
         int payloadDataOffset = importLayout.Bytes.Length > 0
             ? importDataOffset + importLayout.Bytes.Length
-            : laidOutData.DataBytes.Length;
+            : laidOutDataLength;
         if (linkedPayload is LinkedImagePayload payload)
         {
             payloadDataOffset = Align(payloadDataOffset, payload.Alignment);
@@ -133,6 +161,18 @@ internal static partial class LlvmImageLinker
             externalSymbolVas[payload.EndSymbolName] = payloadStartVa + (ulong)payload.Bytes.Length;
         }
 
+        return extraDataSegments;
+    }
+
+    private static void LinkLinuxExecutableApplyRelocations(
+        byte[] objectBytes,
+        ParsedElfObject parsed,
+        byte[] laidOutDataBytes,
+        ulong dataVa,
+        ulong objectTextVa,
+        Dictionary<int, ulong> sectionBaseVas,
+        Dictionary<string, ulong> externalSymbolVas)
+    {
         ApplyElfTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -158,7 +198,7 @@ internal static partial class LlvmImageLinker
         // every allocated section its final VA.
         ApplyElfAllocatedSectionRelocations(
             objectBytes,
-            laidOutData.DataBytes,
+            laidOutDataBytes,
             dataVa,
             parsed.AllocatedRelocationSections,
             parsed.SymbolTable,
@@ -166,25 +206,66 @@ internal static partial class LlvmImageLinker
             objectTextVa,
             sectionBaseVas,
             externalSymbolVas);
+    }
 
-        byte[] codeBytes = BuildLinuxTrampoline(parsed.EntryOffsetInText)
-            .Concat(parsed.TextBytes)
-            .Concat(importLayout.StubBytes)
-            .ToArray();
-
-        byte[] finalDataBytes = extraDataSegments.Count == 0
-            ? laidOutData.DataBytes
-            : BuildLinuxDataBytes(laidOutData.DataBytes, extraDataSegments);
-
+    private static byte[] LinkLinuxExecutableEmitImage(
+        ParsedElfObject parsed,
+        bool hasDynamicImports,
+        LinuxDynamicImportLayout importLayout,
+        byte[] codeBytes,
+        byte[] finalDataBytes,
+        ulong textVa,
+        int textFileOffset,
+        int dataFileOffset,
+        ulong dataVa)
+    {
         bool hasData = finalDataBytes.Length > 0;
         bool hasDebug = parsed.DebugSections.Count > 0;
-        bool hasDynamicImports = imports.Count > 0;
         int programHeaderCount = 1 + (hasData ? 1 : 0) + (hasDynamicImports ? 2 : 0);
 
         int endOfLoadable = hasData
             ? dataFileOffset + finalDataBytes.Length
             : textFileOffset + codeBytes.Length;
 
+        var debugLayout = LinkLinuxExecutableLayoutDebugMetadata(parsed, hasData, endOfLoadable);
+
+        int totalSize = hasDebug
+            ? debugLayout.SectionHeaderOffset + debugLayout.SectionHeaderCount * ElfSectionHeaderSize
+            : endOfLoadable;
+
+        var output = new byte[totalSize];
+        WriteElf64Header(output, textVa, programHeaderCount,
+            sectionHeaderOffset: hasDebug ? debugLayout.SectionHeaderOffset : 0,
+            sectionHeaderCount: hasDebug ? debugLayout.SectionHeaderCount : 0,
+            shstrtabIndex: hasDebug ? debugLayout.ShstrtabIndex : 0);
+
+        LinkLinuxExecutableWriteProgramHeaders(
+            output, hasData, hasDynamicImports, importLayout,
+            codeBytes.Length, finalDataBytes.Length, textFileOffset, dataFileOffset, dataVa);
+
+        // Write .text content
+        Array.Copy(codeBytes, 0, output, textFileOffset, codeBytes.Length);
+
+        // Write .data content
+        if (hasData)
+        {
+            Array.Copy(finalDataBytes, 0, output, dataFileOffset, finalDataBytes.Length);
+        }
+
+        // Write debug sections and section headers
+        if (hasDebug)
+        {
+            LinkLinuxExecutableWriteDebugSections(
+                output, parsed, debugLayout, hasData, codeBytes, finalDataBytes,
+                textVa, textFileOffset, dataVa, dataFileOffset);
+        }
+
+        return output;
+    }
+
+    private static (List<int> DebugFileOffsets, byte[] ShstrtabBytes, Dictionary<string, int> ShstrtabNameOffsets, int ShstrtabOffset, int SectionHeaderCount, int ShstrtabIndex, int SectionHeaderOffset)
+        LinkLinuxExecutableLayoutDebugMetadata(ParsedElfObject parsed, bool hasData, int endOfLoadable)
+    {
         // Layout debug sections after loadable content
         var debugFileOffsets = new List<int>();
         int debugCursor = endOfLoadable;
@@ -204,7 +285,7 @@ internal static partial class LlvmImageLinker
         int shstrtabIndex = 0;
         int sectionHeaderOffset = 0;
 
-        if (hasDebug)
+        if (parsed.DebugSections.Count > 0)
         {
             (shstrtabBytes, shstrtabNameOffsets) = BuildSectionNameStringTable(hasData, parsed.DebugSections);
             shstrtabOffset = debugCursor;
@@ -216,24 +297,21 @@ internal static partial class LlvmImageLinker
             sectionHeaderOffset = Align(shstrtabOffset + shstrtabBytes.Length, 8);
         }
 
-        int totalSize = hasDebug
-            ? sectionHeaderOffset + sectionHeaderCount * ElfSectionHeaderSize
-            : endOfLoadable;
+        return (debugFileOffsets, shstrtabBytes, shstrtabNameOffsets, shstrtabOffset, sectionHeaderCount, shstrtabIndex, sectionHeaderOffset);
+    }
 
-        var output = new byte[totalSize];
-        WriteElf64Header(output, textVa, programHeaderCount,
-            sectionHeaderOffset: hasDebug ? sectionHeaderOffset : 0,
-            sectionHeaderCount: hasDebug ? sectionHeaderCount : 0,
-            shstrtabIndex: hasDebug ? shstrtabIndex : 0);
-
+    private static void LinkLinuxExecutableWriteProgramHeaders(
+        byte[] output, bool hasData, bool hasDynamicImports, LinuxDynamicImportLayout importLayout,
+        int codeLength, int dataLength, int textFileOffset, int dataFileOffset, ulong dataVa)
+    {
         // Program header 1: headers + text (R+X).
         // Dynamic Linux executables need the ELF and program headers mapped so
         // the interpreter can walk them before transferring control to entry.
         WriteElf64ProgramHeader(output, 0,
             fileOffset: 0,
             virtualAddress: ElfBaseVa,
-            fileSize: (ulong)(textFileOffset + codeBytes.Length),
-            memorySize: (ulong)(textFileOffset + codeBytes.Length),
+            fileSize: (ulong)(textFileOffset + codeLength),
+            memorySize: (ulong)(textFileOffset + codeLength),
             flags: 0x05); // PF_R | PF_X
 
         if (hasData)
@@ -242,8 +320,8 @@ internal static partial class LlvmImageLinker
             WriteElf64ProgramHeader(output, 1,
                 fileOffset: (ulong)dataFileOffset,
                 virtualAddress: dataVa,
-                fileSize: (ulong)finalDataBytes.Length,
-                memorySize: (ulong)finalDataBytes.Length,
+                fileSize: (ulong)dataLength,
+                memorySize: (ulong)dataLength,
                 flags: 0x06); // PF_R | PF_W
         }
 
@@ -268,80 +346,85 @@ internal static partial class LlvmImageLinker
                 type: ElfProgramTypeDynamic,
                 alignment: 8);
         }
+    }
 
-        // Write .text content
-        Array.Copy(codeBytes, 0, output, textFileOffset, codeBytes.Length);
+    private static void LinkLinuxExecutableWriteDebugSections(
+        byte[] output, ParsedElfObject parsed,
+        (List<int> DebugFileOffsets, byte[] ShstrtabBytes, Dictionary<string, int> ShstrtabNameOffsets, int ShstrtabOffset, int SectionHeaderCount, int ShstrtabIndex, int SectionHeaderOffset) debugLayout,
+        bool hasData, byte[] codeBytes, byte[] finalDataBytes,
+        ulong textVa, int textFileOffset, ulong dataVa, int dataFileOffset)
+    {
+        for (int i = 0; i < parsed.DebugSections.Count; i++)
+        {
+            Array.Copy(parsed.DebugSections[i].Bytes, 0, output, debugLayout.DebugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
+        }
 
-        // Write .data content
+        Array.Copy(debugLayout.ShstrtabBytes, 0, output, debugLayout.ShstrtabOffset, debugLayout.ShstrtabBytes.Length);
+
+        LinkLinuxExecutableWriteSectionHeaders(
+            output, parsed, hasData, debugLayout.SectionHeaderOffset,
+            debugLayout.ShstrtabNameOffsets, debugLayout.DebugFileOffsets,
+            debugLayout.ShstrtabOffset, debugLayout.ShstrtabBytes, codeBytes, finalDataBytes,
+            textVa, textFileOffset, dataVa, dataFileOffset);
+    }
+
+    private static void LinkLinuxExecutableWriteSectionHeaders(
+        byte[] output, ParsedElfObject parsed, bool hasData, int sectionHeaderOffset,
+        Dictionary<string, int> shstrtabNameOffsets, List<int> debugFileOffsets,
+        int shstrtabOffset, byte[] shstrtabBytes, byte[] codeBytes, byte[] finalDataBytes,
+        ulong textVa, int textFileOffset, ulong dataVa, int dataFileOffset)
+    {
+        // Write section headers
+        int shIdx = 0;
+
+        // SHT_NULL entry
+        WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++, 0, 0, 0, 0, 0, 0, 0);
+
+        // .text
+        WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
+            nameOffset: (uint)shstrtabNameOffsets[".text"],
+            type: 1, // SHT_PROGBITS
+            flags: 0x06, // SHF_ALLOC | SHF_EXECINSTR
+            fileOffset: (ulong)textFileOffset,
+            size: (ulong)codeBytes.Length,
+            addr: textVa,
+            alignment: 16);
+
+        // .data (if present)
         if (hasData)
         {
-            Array.Copy(finalDataBytes, 0, output, dataFileOffset, finalDataBytes.Length);
-        }
-
-        // Write debug sections and section headers
-        if (hasDebug)
-        {
-            for (int i = 0; i < parsed.DebugSections.Count; i++)
-            {
-                Array.Copy(parsed.DebugSections[i].Bytes, 0, output, debugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
-            }
-
-            Array.Copy(shstrtabBytes, 0, output, shstrtabOffset, shstrtabBytes.Length);
-
-            // Write section headers
-            int shIdx = 0;
-
-            // SHT_NULL entry
-            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++, 0, 0, 0, 0, 0, 0, 0);
-
-            // .text
             WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                nameOffset: (uint)shstrtabNameOffsets[".text"],
+                nameOffset: (uint)shstrtabNameOffsets[".data"],
                 type: 1, // SHT_PROGBITS
-                flags: 0x06, // SHF_ALLOC | SHF_EXECINSTR
-                fileOffset: (ulong)textFileOffset,
-                size: (ulong)codeBytes.Length,
-                addr: textVa,
-                alignment: 16);
-
-            // .data (if present)
-            if (hasData)
-            {
-                WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                    nameOffset: (uint)shstrtabNameOffsets[".data"],
-                    type: 1, // SHT_PROGBITS
-                    flags: 0x03, // SHF_ALLOC | SHF_WRITE
-                    fileOffset: (ulong)dataFileOffset,
-                    size: (ulong)finalDataBytes.Length,
-                    addr: dataVa,
-                    alignment: 8);
-            }
-
-            // Debug sections
-            for (int i = 0; i < parsed.DebugSections.Count; i++)
-            {
-                WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
-                    nameOffset: (uint)shstrtabNameOffsets[parsed.DebugSections[i].Name],
-                    type: 1, // SHT_PROGBITS
-                    flags: 0, // no flags (non-ALLOC)
-                    fileOffset: (ulong)debugFileOffsets[i],
-                    size: (ulong)parsed.DebugSections[i].Bytes.Length,
-                    addr: 0,
-                    alignment: Math.Max(1, parsed.DebugSections[i].Alignment));
-            }
-
-            // .shstrtab
-            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx,
-                nameOffset: (uint)shstrtabNameOffsets[".shstrtab"],
-                type: 3, // SHT_STRTAB
-                flags: 0,
-                fileOffset: (ulong)shstrtabOffset,
-                size: (ulong)shstrtabBytes.Length,
-                addr: 0,
-                alignment: 1);
+                flags: 0x03, // SHF_ALLOC | SHF_WRITE
+                fileOffset: (ulong)dataFileOffset,
+                size: (ulong)finalDataBytes.Length,
+                addr: dataVa,
+                alignment: 8);
         }
 
-        return output;
+        // Debug sections
+        for (int i = 0; i < parsed.DebugSections.Count; i++)
+        {
+            WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx++,
+                nameOffset: (uint)shstrtabNameOffsets[parsed.DebugSections[i].Name],
+                type: 1, // SHT_PROGBITS
+                flags: 0, // no flags (non-ALLOC)
+                fileOffset: (ulong)debugFileOffsets[i],
+                size: (ulong)parsed.DebugSections[i].Bytes.Length,
+                addr: 0,
+                alignment: Math.Max(1, parsed.DebugSections[i].Alignment));
+        }
+
+        // .shstrtab
+        WriteElf64SectionHeader(output, sectionHeaderOffset, shIdx,
+            nameOffset: (uint)shstrtabNameOffsets[".shstrtab"],
+            type: 3, // SHT_STRTAB
+            flags: 0,
+            fileOffset: (ulong)shstrtabOffset,
+            size: (ulong)shstrtabBytes.Length,
+            addr: 0,
+            alignment: 1);
     }
 
     private const int ElfSectionHeaderSize = 64;
@@ -409,6 +492,46 @@ internal static partial class LlvmImageLinker
     private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)
     {
         ReadOnlySpan<byte> bytes = objectBytes;
+        (ElfSectionHeader[] sections, ushort sectionNamesIndex) = ParseElfObjectReadSectionHeaders(bytes);
+
+        var sectionNames = ReadStringTable(bytes, sections[sectionNamesIndex]);
+        (int textSectionIndex, ElfSectionHeader symtab) = ParseElfObjectFindTextAndSymtab(sections, sectionNames);
+
+        var textSection = sections[textSectionIndex];
+        byte[] textBytes = bytes.Slice(checked((int)textSection.Offset), checked((int)textSection.Size)).ToArray();
+        var textRelocationSections = sections
+            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
+            .Where(section => section.Info == (uint)textSectionIndex)
+            .ToList();
+
+        var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Link)]);
+        (List<ElfAllocatedSection> allocatedSections, List<ElfTlsSection> tlsSections, List<ElfDebugSection> debugSections, List<ElfSectionHeader> debugRelocationSections) =
+            ParseElfObjectClassifySections(bytes, sections, sectionNames, textSectionIndex);
+
+        // Relocations that target an allocated non-text section — most importantly `.rela.rodata`,
+        // which carries the entries of a `switch` jump table (absolute `.text` block addresses).
+        var allocatedSectionIndices = new HashSet<int>(allocatedSections.Select(static s => s.SectionIndex));
+        var allocatedRelocationSections = sections
+            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
+            .Where(section => allocatedSectionIndices.Contains((int)section.Info))
+            .ToList();
+
+        int entryOffset = FindEntryOffset(bytes, symtab, symbolStrings, textSectionIndex, entrySymbolName);
+        return new ParsedElfObject(
+            TextBytes: textBytes,
+            EntryOffsetInText: entryOffset,
+            RelocationSections: textRelocationSections,
+            SymbolTable: symtab,
+            TextSectionIndex: textSectionIndex,
+            AllocatedSections: allocatedSections,
+            TlsSections: tlsSections,
+            DebugSections: debugSections,
+            DebugRelocationSections: debugRelocationSections,
+            AllocatedRelocationSections: allocatedRelocationSections);
+    }
+
+    private static (ElfSectionHeader[] Sections, ushort SectionNamesIndex) ParseElfObjectReadSectionHeaders(ReadOnlySpan<byte> bytes)
+    {
         if (bytes.Length < 64
             || bytes[0] != 0x7F
             || bytes[1] != (byte)'E'
@@ -449,7 +572,12 @@ internal static partial class LlvmImageLinker
                 EntrySize: BinaryPrimitives.ReadUInt64LittleEndian(bytes.Slice(offset + 56, 8)));
         }
 
-        var sectionNames = ReadStringTable(bytes, sections[sectionNamesIndex]);
+        return (sections, sectionNamesIndex);
+    }
+
+    private static (int TextSectionIndex, ElfSectionHeader Symtab) ParseElfObjectFindTextAndSymtab(
+        ElfSectionHeader[] sections, byte[] sectionNames)
+    {
         int textSectionIndex = -1;
         ElfSectionHeader? symtab = null;
         for (int i = 0; i < sections.Length; i++)
@@ -475,14 +603,12 @@ internal static partial class LlvmImageLinker
             throw new InvalidOperationException("LLVM object did not contain a symbol table.");
         }
 
-        var textSection = sections[textSectionIndex];
-        byte[] textBytes = bytes.Slice(checked((int)textSection.Offset), checked((int)textSection.Size)).ToArray();
-        var textRelocationSections = sections
-            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
-            .Where(section => section.Info == (uint)textSectionIndex)
-            .ToList();
+        return (textSectionIndex, symtab.Value);
+    }
 
-        var symbolStrings = ReadStringTable(bytes, sections[checked((int)symtab.Value.Link)]);
+    private static (List<ElfAllocatedSection> AllocatedSections, List<ElfTlsSection> TlsSections, List<ElfDebugSection> DebugSections, List<ElfSectionHeader> DebugRelocationSections)
+        ParseElfObjectClassifySections(ReadOnlySpan<byte> bytes, ElfSectionHeader[] sections, byte[] sectionNames, int textSectionIndex)
+    {
         var allocatedSections = new List<ElfAllocatedSection>();
         var tlsSections = new List<ElfTlsSection>();
         var debugSections = new List<ElfDebugSection>();
@@ -502,80 +628,71 @@ internal static partial class LlvmImageLinker
                 continue;
             }
 
-            // Collect debug sections (non-ALLOC, name starts with .debug)
-            if (sectionName.StartsWith(".debug", StringComparison.Ordinal)
-                && (section.Flags & ElfSectionFlagAlloc) == 0
-                && section.Type != SectionTypeRela
-                && section.Type != SectionTypeRel)
-            {
-                debugSections.Add(new ElfDebugSection(
-                    Name: sectionName,
-                    SectionIndex: i,
-                    Bytes: bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
-                    Alignment: section.AddressAlign));
-                continue;
-            }
-
-            // DWARF sections commonly require relocation fixups. This linker copies
-            // debug sections verbatim, so fail fast rather than emitting unusable
-            // debug information when relocatable DWARF is present.
-            if ((sectionName.StartsWith(".rela.debug", StringComparison.Ordinal)
-                    || sectionName.StartsWith(".rel.debug", StringComparison.Ordinal))
-                && (section.Type == SectionTypeRela || section.Type == SectionTypeRel))
-            {
-                debugRelocationSections.Add(section);
-                continue;
-            }
-
-            if ((section.Flags & ElfSectionFlagAlloc) == 0)
-            {
-                continue;
-            }
-
-            // Thread-local sections (.tdata/.tbss, SHF_TLS) are NOT placed at ordinary virtual
-            // addresses: they form the TLS initialization template addressed via PT_TLS + TPREL,
-            // so keep them out of the regular allocated-data layout. Only aarch64 emits these
-            // (its per-thread arena is real ELF TLS); other targets have no SHF_TLS sections.
-            if ((section.Flags & ElfSectionFlagTls) != 0)
-            {
-                tlsSections.Add(new ElfTlsSection(
-                    SectionIndex: i,
-                    InitBytes: section.Type == SectionTypeNoBits
-                        ? []
-                        : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
-                    Size: section.Size,
-                    Alignment: section.AddressAlign));
-                continue;
-            }
-
-            allocatedSections.Add(new ElfAllocatedSection(
-                SectionIndex: i,
-                Bytes: section.Type == SectionTypeNoBits
-                    ? new byte[checked((int)section.Size)]
-                    : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
-                Alignment: section.AddressAlign));
+            ParseElfObjectClassifySection(
+                bytes, section, sectionName, i,
+                allocatedSections, tlsSections, debugSections, debugRelocationSections);
         }
 
-        // Relocations that target an allocated non-text section — most importantly `.rela.rodata`,
-        // which carries the entries of a `switch` jump table (absolute `.text` block addresses).
-        var allocatedSectionIndices = new HashSet<int>(allocatedSections.Select(static s => s.SectionIndex));
-        var allocatedRelocationSections = sections
-            .Where(static section => (section.Type == SectionTypeRela || section.Type == SectionTypeRel) && section.Size != 0)
-            .Where(section => allocatedSectionIndices.Contains((int)section.Info))
-            .ToList();
+        return (allocatedSections, tlsSections, debugSections, debugRelocationSections);
+    }
 
-        int entryOffset = FindEntryOffset(bytes, symtab.Value, symbolStrings, textSectionIndex, entrySymbolName);
-        return new ParsedElfObject(
-            TextBytes: textBytes,
-            EntryOffsetInText: entryOffset,
-            RelocationSections: textRelocationSections,
-            SymbolTable: symtab.Value,
-            TextSectionIndex: textSectionIndex,
-            AllocatedSections: allocatedSections,
-            TlsSections: tlsSections,
-            DebugSections: debugSections,
-            DebugRelocationSections: debugRelocationSections,
-            AllocatedRelocationSections: allocatedRelocationSections);
+    private static void ParseElfObjectClassifySection(
+        ReadOnlySpan<byte> bytes, ElfSectionHeader section, string sectionName, int sectionIndex,
+        List<ElfAllocatedSection> allocatedSections, List<ElfTlsSection> tlsSections,
+        List<ElfDebugSection> debugSections, List<ElfSectionHeader> debugRelocationSections)
+    {
+        // Collect debug sections (non-ALLOC, name starts with .debug)
+        if (sectionName.StartsWith(".debug", StringComparison.Ordinal)
+            && (section.Flags & ElfSectionFlagAlloc) == 0
+            && section.Type != SectionTypeRela
+            && section.Type != SectionTypeRel)
+        {
+            debugSections.Add(new ElfDebugSection(
+                Name: sectionName,
+                SectionIndex: sectionIndex,
+                Bytes: bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                Alignment: section.AddressAlign));
+            return;
+        }
+
+        // DWARF sections commonly require relocation fixups. This linker copies
+        // debug sections verbatim, so fail fast rather than emitting unusable
+        // debug information when relocatable DWARF is present.
+        if ((sectionName.StartsWith(".rela.debug", StringComparison.Ordinal)
+                || sectionName.StartsWith(".rel.debug", StringComparison.Ordinal))
+            && (section.Type == SectionTypeRela || section.Type == SectionTypeRel))
+        {
+            debugRelocationSections.Add(section);
+            return;
+        }
+
+        if ((section.Flags & ElfSectionFlagAlloc) == 0)
+        {
+            return;
+        }
+
+        // Thread-local sections (.tdata/.tbss, SHF_TLS) are NOT placed at ordinary virtual
+        // addresses: they form the TLS initialization template addressed via PT_TLS + TPREL,
+        // so keep them out of the regular allocated-data layout. Only aarch64 emits these
+        // (its per-thread arena is real ELF TLS); other targets have no SHF_TLS sections.
+        if ((section.Flags & ElfSectionFlagTls) != 0)
+        {
+            tlsSections.Add(new ElfTlsSection(
+                SectionIndex: sectionIndex,
+                InitBytes: section.Type == SectionTypeNoBits
+                    ? []
+                    : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+                Size: section.Size,
+                Alignment: section.AddressAlign));
+            return;
+        }
+
+        allocatedSections.Add(new ElfAllocatedSection(
+            SectionIndex: sectionIndex,
+            Bytes: section.Type == SectionTypeNoBits
+                ? new byte[checked((int)section.Size)]
+                : bytes.Slice(checked((int)section.Offset), checked((int)section.Size)).ToArray(),
+            Alignment: section.AddressAlign));
     }
 
     private static void ApplyElfTextRelocations(
@@ -617,54 +734,60 @@ internal static partial class LlvmImageLinker
                 ElfSymbol symbol = ReadElfSymbol(objectBytes, symtab, symbolIndex);
                 long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, importSymbolVas) + addend);
                 long placeVa = checked((long)loadedTextVa + (long)relocOffset);
-                switch (relocationType)
-                {
-                    case ElfRelocX86_64_64:
-                        {
-                            // Absolute 64-bit: S + A.
-                            Span<byte> patch64 = textBytes.AsSpan(checked((int)relocOffset), 8);
-                            BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
-                        }
-                        break;
-                    case ElfRelocX86_64Pc32:
-                    case ElfRelocX86_64Plt32:
-                        {
-                            // PLT32 is resolved identically to PC32 for static executables (S + A - P).
-                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
-                        }
-                        break;
-                    case ElfRelocX86_64GotPcRelX:
-                    case ElfRelocX86_64RexGotPcRelX:
-                        {
-                            // Relax foo@GOTPCREL(%rip) loads into a direct RIP-relative LEA.
-                            // LLVM emits this for external-global address materialization.
-                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
-
-                            int opcodeOffset = checked((int)relocOffset - 2);
-                            if (opcodeOffset >= 0 && textBytes[opcodeOffset] == 0x8B)
-                            {
-                                textBytes[opcodeOffset] = 0x8D;
-                            }
-                        }
-                        break;
-                    case ElfRelocX86_64_32:
-                        {
-                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                            BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
-                        }
-                        break;
-                    case ElfRelocX86_64_32S:
-                        {
-                            Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
-                            BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
-                        }
-                        break;
-                    default:
-                        throw new InvalidOperationException($"LLVM ELF emitted unsupported .text relocation type {relocationType}.");
-                }
+                ApplyElfTextRelocationsPatch(textBytes, relocationType, relocOffset, targetVa, placeVa);
             }
+        }
+    }
+
+    private static void ApplyElfTextRelocationsPatch(
+        byte[] textBytes, uint relocationType, ulong relocOffset, long targetVa, long placeVa)
+    {
+        switch (relocationType)
+        {
+            case ElfRelocX86_64_64:
+                {
+                    // Absolute 64-bit: S + A.
+                    Span<byte> patch64 = textBytes.AsSpan(checked((int)relocOffset), 8);
+                    BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
+                }
+                break;
+            case ElfRelocX86_64Pc32:
+            case ElfRelocX86_64Plt32:
+                {
+                    // PLT32 is resolved identically to PC32 for static executables (S + A - P).
+                    Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                }
+                break;
+            case ElfRelocX86_64GotPcRelX:
+            case ElfRelocX86_64RexGotPcRelX:
+                {
+                    // Relax foo@GOTPCREL(%rip) loads into a direct RIP-relative LEA.
+                    // LLVM emits this for external-global address materialization.
+                    Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+
+                    int opcodeOffset = checked((int)relocOffset - 2);
+                    if (opcodeOffset >= 0 && textBytes[opcodeOffset] == 0x8B)
+                    {
+                        textBytes[opcodeOffset] = 0x8D;
+                    }
+                }
+                break;
+            case ElfRelocX86_64_32:
+                {
+                    Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
+                }
+                break;
+            case ElfRelocX86_64_32S:
+                {
+                    Span<byte> patch = textBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
+                }
+                break;
+            default:
+                throw new InvalidOperationException($"LLVM ELF emitted unsupported .text relocation type {relocationType}.");
         }
     }
 
@@ -827,53 +950,59 @@ internal static partial class LlvmImageLinker
             long targetVa = checked((long)ResolveElfTargetVa(symbol, textSectionIndex, loadedTextVa, sectionBaseVas, strtab, definedSymbolVas, importSymbolVas) + addend);
             long placeVa = checked((long)targetSectionBase + (long)relocOffset);
 
-            switch (relocationType)
-            {
-                // Absolute relocations are patched identically on both architectures; the
-                // aarch64 cases appear in debug sections linked through this shared path.
-                case ElfRelocX86_64_64:
-                case ElfRelocAArch64Abs64:
-                    {
-                        Span<byte> patch64 = targetSectionBytes.AsSpan(checked((int)relocOffset), 8);
-                        BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
-                    }
-                    break;
-                case ElfRelocX86_64Pc32:
-                case ElfRelocX86_64Plt32:
-                    {
-                        Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
-                    }
-                    break;
-                case ElfRelocX86_64GotPcRelX:
-                case ElfRelocX86_64RexGotPcRelX:
-                    {
-                        Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+            ApplyElfRelocationsToSectionPatch(targetSectionBytes, relocationType, relocOffset, targetVa, placeVa, sectionLabel);
+        }
+    }
 
-                        int opcodeOffset = checked((int)relocOffset - 2);
-                        if (opcodeOffset >= 0 && targetSectionBytes[opcodeOffset] == 0x8B)
-                        {
-                            targetSectionBytes[opcodeOffset] = 0x8D;
-                        }
-                    }
-                    break;
-                case ElfRelocX86_64_32:
-                case ElfRelocAArch64Abs32:
+    private static void ApplyElfRelocationsToSectionPatch(
+        byte[] targetSectionBytes, uint relocationType, ulong relocOffset, long targetVa, long placeVa, string sectionLabel)
+    {
+        switch (relocationType)
+        {
+            // Absolute relocations are patched identically on both architectures; the
+            // aarch64 cases appear in debug sections linked through this shared path.
+            case ElfRelocX86_64_64:
+            case ElfRelocAArch64Abs64:
+                {
+                    Span<byte> patch64 = targetSectionBytes.AsSpan(checked((int)relocOffset), 8);
+                    BinaryPrimitives.WriteInt64LittleEndian(patch64, targetVa);
+                }
+                break;
+            case ElfRelocX86_64Pc32:
+            case ElfRelocX86_64Plt32:
+                {
+                    Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+                }
+                break;
+            case ElfRelocX86_64GotPcRelX:
+            case ElfRelocX86_64RexGotPcRelX:
+                {
+                    Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)(targetVa - placeVa)));
+
+                    int opcodeOffset = checked((int)relocOffset - 2);
+                    if (opcodeOffset >= 0 && targetSectionBytes[opcodeOffset] == 0x8B)
                     {
-                        Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
+                        targetSectionBytes[opcodeOffset] = 0x8D;
                     }
-                    break;
-                case ElfRelocX86_64_32S:
-                    {
-                        Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
-                        BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
-                    }
-                    break;
-                default:
-                    throw new InvalidOperationException($"LLVM ELF emitted unsupported {sectionLabel} relocation type {relocationType}.");
-            }
+                }
+                break;
+            case ElfRelocX86_64_32:
+            case ElfRelocAArch64Abs32:
+                {
+                    Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteUInt32LittleEndian(patch, checked((uint)targetVa));
+                }
+                break;
+            case ElfRelocX86_64_32S:
+                {
+                    Span<byte> patch = targetSectionBytes.AsSpan(checked((int)relocOffset), 4);
+                    BinaryPrimitives.WriteInt32LittleEndian(patch, checked((int)targetVa));
+                }
+                break;
+            default:
+                throw new InvalidOperationException($"LLVM ELF emitted unsupported {sectionLabel} relocation type {relocationType}.");
         }
     }
 
@@ -1145,6 +1274,28 @@ internal static partial class LlvmImageLinker
         stream.Write(interpBytes);
         AlignImportStream(stream, 8);
 
+        (string[] libraries, byte[] dynstrBytes, Dictionary<string, int> dynstrOffsets) =
+            BuildLinuxDynamicImportLayoutStringTable(imports);
+
+        (uint gotDataOffset, uint dynamicDataOffset, byte[] dynamicBytes) = BuildLinuxDynamicImportLayoutSections(
+            stream, imports, libraries, dynstrBytes, dynstrOffsets, dataVa, dataOffset);
+
+        byte[] importBytes = stream.ToArray();
+        byte[] stubBytes = BuildLinuxDynamicImportLayoutStubs(imports, stubBaseVa, dataVa, gotDataOffset, importStubVas);
+
+        return new LinuxDynamicImportLayout(
+            StubBytes: stubBytes,
+            Bytes: importBytes,
+            ImportStubVas: importStubVas,
+            InterpDataOffset: interpDataOffset,
+            InterpByteCount: checked((uint)interpBytes.Length),
+            DynamicDataOffset: dynamicDataOffset,
+            DynamicByteCount: checked((uint)dynamicBytes.Length));
+    }
+
+    private static (string[] Libraries, byte[] DynstrBytes, Dictionary<string, int> DynstrOffsets)
+        BuildLinuxDynamicImportLayoutStringTable(IReadOnlyList<LinuxDynamicImport> imports)
+    {
         string[] libraries = imports.Select(static import => import.LibraryName).Distinct(StringComparer.Ordinal).ToArray();
         var dynstrStream = new MemoryStream();
         dynstrStream.WriteByte(0);
@@ -1161,7 +1312,18 @@ internal static partial class LlvmImageLinker
             dynstrStream.Write(Encoding.ASCII.GetBytes(import.SymbolName + "\0"));
         }
 
-        byte[] dynstrBytes = dynstrStream.ToArray();
+        return (libraries, dynstrStream.ToArray(), dynstrOffsets);
+    }
+
+    private static (uint GotDataOffset, uint DynamicDataOffset, byte[] DynamicBytes) BuildLinuxDynamicImportLayoutSections(
+        MemoryStream stream,
+        IReadOnlyList<LinuxDynamicImport> imports,
+        string[] libraries,
+        byte[] dynstrBytes,
+        Dictionary<string, int> dynstrOffsets,
+        ulong dataVa,
+        uint dataOffset)
+    {
         byte[] dynsymBytes = BuildLinuxDynamicSymbolTable(imports, dynstrOffsets);
         byte[] hashBytes = BuildLinuxElfHash(imports);
 
@@ -1198,7 +1360,16 @@ internal static partial class LlvmImageLinker
             relaBytes.Length);
         stream.Write(dynamicBytes);
 
-        byte[] importBytes = stream.ToArray();
+        return (gotDataOffset, dynamicDataOffset, dynamicBytes);
+    }
+
+    private static byte[] BuildLinuxDynamicImportLayoutStubs(
+        IReadOnlyList<LinuxDynamicImport> imports,
+        ulong stubBaseVa,
+        ulong dataVa,
+        uint gotDataOffset,
+        Dictionary<string, ulong> importStubVas)
+    {
         byte[] stubBytes = new byte[imports.Count * LinuxImportStubLength];
         for (int i = 0; i < imports.Count; i++)
         {
@@ -1212,14 +1383,7 @@ internal static partial class LlvmImageLinker
             importStubVas[imports[i].SymbolName] = stubVa;
         }
 
-        return new LinuxDynamicImportLayout(
-            StubBytes: stubBytes,
-            Bytes: importBytes,
-            ImportStubVas: importStubVas,
-            InterpDataOffset: interpDataOffset,
-            InterpByteCount: checked((uint)interpBytes.Length),
-            DynamicDataOffset: dynamicDataOffset,
-            DynamicByteCount: checked((uint)dynamicBytes.Length));
+        return stubBytes;
     }
 
     private static byte[] BuildLinuxDynamicSymbolTable(IReadOnlyList<LinuxDynamicImport> imports, IReadOnlyDictionary<string, int> dynstrOffsets)

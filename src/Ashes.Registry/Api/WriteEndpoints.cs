@@ -27,6 +27,15 @@ public static class WriteEndpoints
         ArgumentNullException.ThrowIfNull(app);
         var api = app.MapGroup("/api/v1");
 
+        MapTokenEndpoints(api);
+        MapPackageWriteEndpoints(api);
+        MapOwnerEndpoints(api);
+
+        return app;
+    }
+
+    private static void MapTokenEndpoints(RouteGroupBuilder api)
+    {
         // MVP bootstrap: create-or-get an account by name and mint a token. Production deployments front
         // this with the server CLI / disable it.
         api.MapPost("/tokens", async (
@@ -51,7 +60,10 @@ public static class WriteEndpoints
             var (_, secret) = await accounts.CreateTokenAsync(account.Id, ct);
             return Results.Ok(new TokenResponse(account.Name, secret));
         });
+    }
 
+    private static void MapPackageWriteEndpoints(RouteGroupBuilder api)
+    {
         api.MapPut("/packages/{ns}/{version}", PublishAsync);
 
         api.MapPost("/packages/{ns}/{version}/yank",
@@ -61,7 +73,10 @@ public static class WriteEndpoints
         api.MapPost("/packages/{ns}/{version}/unyank",
             (string ns, string version, HttpContext ctx, IAccountStore accounts, IMetadataStore store, CancellationToken ct) =>
                 SetYankedAsync(ns, version, yanked: false, ctx, accounts, store, ct));
+    }
 
+    private static void MapOwnerEndpoints(RouteGroupBuilder api)
+    {
         api.MapGet("/packages/{ns}/owners", async (
             string ns, HttpContext ctx, IAccountStore accounts, IMetadataStore store, CancellationToken ct) =>
         {
@@ -115,8 +130,6 @@ public static class WriteEndpoints
 
             return Results.Ok(new OwnersResponse(await store.GetOwnersAsync(ns, ct)));
         });
-
-        return app;
     }
 
     private static async Task<IResult> PublishAsync(

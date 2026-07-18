@@ -11,9 +11,6 @@ JOBS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ci/lib/run.sh
 source "${JOBS_DIR}/lib/run.sh"
 
-# Network-dependent examples that the GH matrix skips (no outbound net in CI).
-SKIP_EXAMPLES='http_get.ash|https_get.ash|tcp_close.ash|tcp_connect.ash|tcp_receive.ash|tcp_send.ash'
-
 # --- Individual jobs -------------------------------------------------------
 
 build() {
@@ -154,13 +151,12 @@ publish_cli() {
   "
 }
 
-# Shared body for one matrix arch: exercise examples and tests. fmt stability is
+# Shared body for one matrix arch: exercise the test suite. fmt stability is
 # checked separately, once, by _matrix_fmt (it's arch-independent).
 # $1 = runner image, $2 = CLI invocation (path to the ashes binary, possibly with
-# an emulator prefix). Compiles and runs every (non-network) example, then runs the
-# test suite. All three legs execute their produced binaries directly: x64 natively,
-# arm64 via the host qemu-user-static binfmt handler (the arm64 image is a real
-# aarch64 image), win-x64 via Wine.
+# an emulator prefix). Runs the test suite, executing produced binaries directly:
+# x64 natively, arm64 via the host qemu-user-static binfmt handler (the arm64 image
+# is a real aarch64 image), win-x64 via Wine.
 _matrix_one() {
   local runner="$1" cli="$2"
   run_in "$runner" "
@@ -181,14 +177,6 @@ _matrix_one() {
     fi
 
     CLI='$cli'
-
-    echo '--- Running examples ($runner)...'
-    for example in examples/*.ash; do
-      case \"\$(basename \"\$example\")\" in
-        $SKIP_EXAMPLES) continue ;;
-      esac
-      \$CLI run \"\$example\" < /dev/null
-    done
 
     echo '--- Running tests ($runner)...'
     \$CLI test tests

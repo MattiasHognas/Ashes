@@ -462,6 +462,17 @@ internal static partial class LlvmCodegen
             return LlvmApi.BuildLoad2(builder, state.I64, globals.InitStatusGlobal, prefix + "_status");
         }
 
+        var setup = EmitEnsureTlsRuntimeInitializedSetup(state, prefix);
+        EmitEnsureTlsRuntimeInitializedConfigure(state, globals, setup, doneBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, globals.InitStatusGlobal, prefix + "_status");
+    }
+
+    private static (LlvmValueHandle Runtime, LlvmValueHandle CtrDrbgPtr, LlvmValueHandle RootsPtr, LlvmValueHandle ClientConfigPtr, LlvmValueHandle RngCallback, LlvmValueHandle SeedStatus, LlvmValueHandle DefaultsStatus) EmitEnsureTlsRuntimeInitializedSetup(
+        LlvmCodegenState state, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle runtime = EmitTlsSingletonStorage(state, "__ashes_mbedtls_runtime", MbedTlsRuntimeTotalBytes);
         LlvmValueHandle entropyPtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, runtime, LlvmApi.ConstInt(state.I64, MbedTlsRuntimeEntropyOffset, 0), prefix + "_entropy_addr"), state.I8Ptr, prefix + "_entropy_ptr");
         LlvmValueHandle ctrDrbgPtr = LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, runtime, LlvmApi.ConstInt(state.I64, MbedTlsRuntimeCtrDrbgOffset, 0), prefix + "_ctr_drbg_addr"), state.I8Ptr, prefix + "_ctr_drbg_ptr");
@@ -496,6 +507,18 @@ internal static partial class LlvmCodegen
             LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I32, state.I32, state.I32]),
             [clientConfigPtr, LlvmApi.ConstInt(state.I32, 0, 0), LlvmApi.ConstInt(state.I32, 0, 0), LlvmApi.ConstInt(state.I32, 0, 0)],
             prefix + "_client_defaults");
+        return (runtime, ctrDrbgPtr, rootsPtr, clientConfigPtr, rngCallback, seedStatus, defaultsStatus);
+    }
+
+    private static void EmitEnsureTlsRuntimeInitializedConfigure(
+        LlvmCodegenState state,
+        LinuxTlsGlobals globals,
+        (LlvmValueHandle Runtime, LlvmValueHandle CtrDrbgPtr, LlvmValueHandle RootsPtr, LlvmValueHandle ClientConfigPtr, LlvmValueHandle RngCallback, LlvmValueHandle SeedStatus, LlvmValueHandle DefaultsStatus) setup,
+        LlvmBasicBlockHandle doneBlock,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (runtime, ctrDrbgPtr, rootsPtr, clientConfigPtr, rngCallback, seedStatus, defaultsStatus) = setup;
         LlvmValueHandle parseRootsStatusSlot = LlvmApi.BuildAlloca(builder, state.I32, prefix + "_parse_roots_status_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), parseRootsStatusSlot);
         LlvmValueHandle certFile = EmitLinuxGetEnv(state, "SSL_CERT_FILE", prefix + "_ssl_cert_file");
@@ -530,9 +553,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), globals.ServerConfigGlobal);
         LlvmApi.BuildStore(builder, initStatus, globals.InitStatusGlobal);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, globals.InitStatusGlobal, prefix + "_status");
     }
 
     private static LlvmValueHandle EmitTlsInitFailureResult(LlvmCodegenState state, LlvmValueHandle initStatus)

@@ -13,51 +13,10 @@ internal static class LlvmTargetSetup
     {
         EnsureInitialized();
 
-        string targetTriple = targetId switch
-        {
-            Backends.TargetIds.LinuxX64 => "x86_64-unknown-linux-gnu",
-            Backends.TargetIds.LinuxArm64 => "aarch64-unknown-linux-gnu",
-            Backends.TargetIds.WindowsX64 => "x86_64-pc-windows-msvc",
-            _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
-        };
-
-        int targetErr = LlvmApi.GetTargetFromTriple(targetTriple, out LlvmTargetHandle target, out nint targetErrMsg);
-        if (targetErr != 0)
-        {
-            string errorMessage = Marshal.PtrToStringAnsi(targetErrMsg) ?? "unknown error";
-            LlvmApi.DisposeMessage(targetErrMsg);
-            throw new InvalidOperationException($"LLVM target lookup failed for '{targetTriple}': {errorMessage}");
-        }
-
-        LlvmCodeGenOptLevel optLevel = optimizationLevel switch
-        {
-            BackendOptimizationLevel.O0 => LlvmCodeGenOptLevel.None,
-            BackendOptimizationLevel.O1 => LlvmCodeGenOptLevel.Less,
-            BackendOptimizationLevel.O2 => LlvmCodeGenOptLevel.Default,
-            BackendOptimizationLevel.O3 => LlvmCodeGenOptLevel.Aggressive,
-            _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
-        };
-
-        // Resolve CPU name and features. When --target-cpu is not specified,
-        // use safe generic defaults (runs on any CPU of the target arch).
-        // When "native" is specified, LLVM detects the host CPU at compile time.
-        string cpu;
-        string features;
-        if (targetCpu is not null && targetCpu.Equals("native", StringComparison.OrdinalIgnoreCase))
-        {
-            cpu = LlvmApi.GetHostCPUName();
-            features = LlvmApi.GetHostCPUFeatures();
-        }
-        else if (targetCpu is not null)
-        {
-            cpu = targetCpu;
-            features = string.Empty;
-        }
-        else
-        {
-            cpu = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal) ? "generic" : "x86-64";
-            features = string.Empty;
-        }
+        string targetTriple = ResolveTargetTriple(targetId);
+        LlvmTargetHandle target = ResolveTarget(targetTriple);
+        LlvmCodeGenOptLevel optLevel = ResolveOptLevel(optimizationLevel);
+        (string cpu, string features) = ResolveCpuAndFeatures(targetId, targetCpu);
 
         LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target,
             targetTriple,
@@ -70,29 +29,87 @@ internal static class LlvmTargetSetup
         LlvmContextHandle context = LlvmApi.ContextCreate();
         LlvmModuleHandle module = LlvmApi.ModuleCreateWithNameInContext($"ashes.{targetId}.module", context);
         LlvmApi.SetTarget(module, targetTriple);
-        {
-            LlvmTargetDataHandle dataLayout = LlvmApi.CreateTargetDataLayout(machine);
-            try
-            {
-                nint layoutText = LlvmApi.CopyStringRepOfTargetData(dataLayout);
-                try
-                {
-                    LlvmApi.SetDataLayout(module, Marshal.PtrToStringAnsi(layoutText)
-                        ?? throw new InvalidOperationException("LLVM returned an empty target data layout."));
-                }
-                finally
-                {
-                    LlvmApi.DisposeMessage(layoutText);
-                }
-            }
-            finally
-            {
-                LlvmApi.DisposeTargetData(dataLayout);
-            }
-        }
+        ApplyDataLayout(module, machine);
 
         LlvmBuilderHandle builder = LlvmApi.CreateBuilderInContext(context);
         return new LlvmTargetContext(context, module, builder, machine, targetTriple, parallelWorkerStackBytes, parallelWorkerCap);
+    }
+
+    private static string ResolveTargetTriple(string targetId)
+    {
+        return targetId switch
+        {
+            Backends.TargetIds.LinuxX64 => "x86_64-unknown-linux-gnu",
+            Backends.TargetIds.LinuxArm64 => "aarch64-unknown-linux-gnu",
+            Backends.TargetIds.WindowsX64 => "x86_64-pc-windows-msvc",
+            _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
+        };
+    }
+
+    private static LlvmTargetHandle ResolveTarget(string targetTriple)
+    {
+        int targetErr = LlvmApi.GetTargetFromTriple(targetTriple, out LlvmTargetHandle target, out nint targetErrMsg);
+        if (targetErr != 0)
+        {
+            string errorMessage = Marshal.PtrToStringAnsi(targetErrMsg) ?? "unknown error";
+            LlvmApi.DisposeMessage(targetErrMsg);
+            throw new InvalidOperationException($"LLVM target lookup failed for '{targetTriple}': {errorMessage}");
+        }
+
+        return target;
+    }
+
+    private static LlvmCodeGenOptLevel ResolveOptLevel(BackendOptimizationLevel optimizationLevel)
+    {
+        return optimizationLevel switch
+        {
+            BackendOptimizationLevel.O0 => LlvmCodeGenOptLevel.None,
+            BackendOptimizationLevel.O1 => LlvmCodeGenOptLevel.Less,
+            BackendOptimizationLevel.O2 => LlvmCodeGenOptLevel.Default,
+            BackendOptimizationLevel.O3 => LlvmCodeGenOptLevel.Aggressive,
+            _ => throw new ArgumentOutOfRangeException(nameof(optimizationLevel)),
+        };
+    }
+
+    // Resolve CPU name and features. When --target-cpu is not specified,
+    // use safe generic defaults (runs on any CPU of the target arch).
+    // When "native" is specified, LLVM detects the host CPU at compile time.
+    private static (string Cpu, string Features) ResolveCpuAndFeatures(string targetId, string? targetCpu)
+    {
+        if (targetCpu is not null && targetCpu.Equals("native", StringComparison.OrdinalIgnoreCase))
+        {
+            return (LlvmApi.GetHostCPUName(), LlvmApi.GetHostCPUFeatures());
+        }
+
+        if (targetCpu is not null)
+        {
+            return (targetCpu, string.Empty);
+        }
+
+        string cpu = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal) ? "generic" : "x86-64";
+        return (cpu, string.Empty);
+    }
+
+    private static void ApplyDataLayout(LlvmModuleHandle module, LlvmTargetMachineHandle machine)
+    {
+        LlvmTargetDataHandle dataLayout = LlvmApi.CreateTargetDataLayout(machine);
+        try
+        {
+            nint layoutText = LlvmApi.CopyStringRepOfTargetData(dataLayout);
+            try
+            {
+                LlvmApi.SetDataLayout(module, Marshal.PtrToStringAnsi(layoutText)
+                    ?? throw new InvalidOperationException("LLVM returned an empty target data layout."));
+            }
+            finally
+            {
+                LlvmApi.DisposeMessage(layoutText);
+            }
+        }
+        finally
+        {
+            LlvmApi.DisposeTargetData(dataLayout);
+        }
     }
 
     private static void EnsureInitialized()

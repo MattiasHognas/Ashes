@@ -589,6 +589,43 @@ async Task<int> RunCompileAsync(string[] a)
         return Usage(0);
     }
 
+    var arguments = ParseCompileArguments(a);
+    var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
+
+    var sw = Stopwatch.StartNew();
+    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions).ConfigureAwait(false);
+    if (image is null)
+    {
+        return 1;
+    }
+    sw.Stop();
+
+    var outPath = arguments.OutPath ?? (project is not null
+        ? DeriveProjectOutputPath(project, target)
+        : arguments.InputFile is not null
+            ? DeriveOutputPath(arguments.InputFile, target)
+            : "out" + (string.Equals(target, TargetIds.WindowsX64, StringComparison.Ordinal) ? ".exe" : ""));
+
+    var outDir = Path.GetDirectoryName(outPath);
+    if (!string.IsNullOrWhiteSpace(outDir))
+    {
+        Directory.CreateDirectory(outDir!);
+    }
+    await File.WriteAllBytesAsync(outPath, image).ConfigureAwait(false);
+    SetUnixExecutableModeIfSupported(outPath);
+
+    AnsiConsole.MarkupLine($"[green]OK[/] Wrote [bold]{Runner.FormatSize(image.Length)}[/] to [italic]{outPath}[/]");
+    AnsiConsole.MarkupLine($"     Target: [bold]{target}[/]");
+    if (arguments.DebugMode)
+    {
+        AnsiConsole.MarkupLine($"     Debug:  [bold]yes[/]");
+    }
+    AnsiConsole.MarkupLine($"     Time:   [bold]{Runner.FormatElapsed(sw.ElapsedMilliseconds)}[/]");
+    return 0;
+}
+
+static CompileCommandArguments ParseCompileArguments(string[] a)
+{
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     bool explicitOpt = false;
@@ -605,10 +642,7 @@ async Task<int> RunCompileAsync(string[] a)
     {
         var arg = a[i];
 
-        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; continue; }
-        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
-        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
-        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
+        if (TryParseTargetOptions(a, ref i, ref target, ref targetCpu, ref parallelStackBytes, ref parallelWorkers)) { continue; }
         if ((string.Equals(arg, "-o", StringComparison.Ordinal) || string.Equals(arg, "--out", StringComparison.Ordinal)) && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
@@ -627,18 +661,35 @@ async Task<int> RunCompileAsync(string[] a)
         optimizationLevel = BackendOptimizationLevel.O0;
     }
 
-    await AutoRestoreProjectAsync(projectPath, inputFile, expr).ConfigureAwait(false);
-    var project = ResolveProject(projectPath, inputFile, expr);
-    if (project is not null && (!string.IsNullOrEmpty(inputFile) || !string.IsNullOrEmpty(expr)))
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers);
+}
+
+static bool TryParseTargetOptions(string[] a, ref int i, ref string? target, ref string? targetCpu, ref long? parallelStackBytes, ref long? parallelWorkers)
+{
+    var arg = a[i];
+    if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; return true; }
+    if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; return true; }
+    if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); return true; }
+    if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); return true; }
+    return false;
+}
+
+static async Task<(AshesProject? Project, string Target, BackendCompileOptions Options)> ResolveCompileContextAsync(CompileCommandArguments arguments)
+{
+    await AutoRestoreProjectAsync(arguments.ProjectPath, arguments.InputFile, arguments.Expr).ConfigureAwait(false);
+    var project = ResolveProject(arguments.ProjectPath, arguments.InputFile, arguments.Expr);
+    if (project is not null && (!string.IsNullOrEmpty(arguments.InputFile) || !string.IsNullOrEmpty(arguments.Expr)))
     {
         throw new CliUsageException("Cannot combine --project with input file or --expr.");
     }
 
-    target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes, parallelWorkers);
+    var target = arguments.Target ?? project?.Target ?? BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(arguments.OptimizationLevel, arguments.DebugMode, arguments.TargetCpu, arguments.ParallelStackBytes, arguments.ParallelWorkers);
+    return (project, target, backendOptions);
+}
 
-    var sw = Stopwatch.StartNew();
-    byte[] image;
+static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? inputFile, string? expr, string target, BackendCompileOptions backendOptions)
+{
     if (project is null)
     {
         var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
@@ -648,60 +699,34 @@ async Task<int> RunCompileAsync(string[] a)
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
             diagnosticLayout = prepared.Layout;
-            image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
+            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
         }
         catch (CompileDiagnosticException ex)
         {
             PrintCompilerDiagnostics(ex, source, displayPath, diagnosticLayout);
-            return 1;
+            return null;
         }
         catch (InvalidOperationException ex)
         {
             PrintCompileFailure(ex.Message, displayPath);
-            return 1;
+            return null;
         }
     }
-    else
-    {
-        try
-        {
-            image = CompileProjectToImage(project, target, backendOptions);
-        }
-        catch (CompileDiagnosticException ex)
-        {
-            PrintCompilerDiagnostics(ex, null, project.EntryPath);
-            return 1;
-        }
-        catch (InvalidOperationException ex)
-        {
-            PrintCompileFailure(ex.Message, project.EntryPath);
-            return 1;
-        }
-    }
-    sw.Stop();
 
-    outPath ??= project is not null
-        ? DeriveProjectOutputPath(project, target)
-        : inputFile is not null
-            ? DeriveOutputPath(inputFile, target)
-            : "out" + (string.Equals(target, TargetIds.WindowsX64, StringComparison.Ordinal) ? ".exe" : "");
-
-    var outDir = Path.GetDirectoryName(outPath);
-    if (!string.IsNullOrWhiteSpace(outDir))
+    try
     {
-        Directory.CreateDirectory(outDir!);
+        return CompileProjectToImage(project, target, backendOptions);
     }
-    await File.WriteAllBytesAsync(outPath, image).ConfigureAwait(false);
-    SetUnixExecutableModeIfSupported(outPath);
-
-    AnsiConsole.MarkupLine($"[green]OK[/] Wrote [bold]{Runner.FormatSize(image.Length)}[/] to [italic]{outPath}[/]");
-    AnsiConsole.MarkupLine($"     Target: [bold]{target}[/]");
-    if (debugMode)
+    catch (CompileDiagnosticException ex)
     {
-        AnsiConsole.MarkupLine($"     Debug:  [bold]yes[/]");
+        PrintCompilerDiagnostics(ex, null, project.EntryPath);
+        return null;
     }
-    AnsiConsole.MarkupLine($"     Time:   [bold]{Runner.FormatElapsed(sw.ElapsedMilliseconds)}[/]");
-    return 0;
+    catch (InvalidOperationException ex)
+    {
+        PrintCompileFailure(ex.Message, project.EntryPath);
+        return null;
+    }
 }
 
 async Task<int> RunRunAsync(string[] a)
@@ -715,6 +740,20 @@ async Task<int> RunRunAsync(string[] a)
     var cliArgs = idx >= 0 ? a[..idx] : a;
     var progArgs = idx >= 0 ? a[(idx + 1)..] : Array.Empty<string>();
 
+    var arguments = ParseRunArguments(cliArgs);
+    var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
+
+    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions).ConfigureAwait(false);
+    if (image is null)
+    {
+        return 1;
+    }
+
+    return await RunImageWithInheritedStdioAsync(image, target, progArgs).ConfigureAwait(false);
+}
+
+static CompileCommandArguments ParseRunArguments(string[] cliArgs)
+{
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     bool explicitOpt = false;
@@ -729,10 +768,7 @@ async Task<int> RunRunAsync(string[] a)
     for (int i = 0; i < cliArgs.Length; i++)
     {
         var arg = cliArgs[i];
-        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { target = cliArgs[++i]; continue; }
-        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { targetCpu = cliArgs[++i]; continue; }
-        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { parallelStackBytes = ParseParallelStackSize(cliArgs[++i]); continue; }
-        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { parallelWorkers = ParseParallelWorkers(cliArgs[++i]); continue; }
+        if (TryParseTargetOptions(cliArgs, ref i, ref target, ref targetCpu, ref parallelStackBytes, ref parallelWorkers)) { continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
@@ -750,57 +786,7 @@ async Task<int> RunRunAsync(string[] a)
         optimizationLevel = BackendOptimizationLevel.O0;
     }
 
-    await AutoRestoreProjectAsync(projectPath, inputFile, expr).ConfigureAwait(false);
-    var project = ResolveProject(projectPath, inputFile, expr);
-    if (project is not null && (!string.IsNullOrEmpty(inputFile) || !string.IsNullOrEmpty(expr)))
-    {
-        throw new CliUsageException("Cannot combine --project with input file or --expr.");
-    }
-
-    target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, debugMode, targetCpu, parallelStackBytes, parallelWorkers);
-    byte[] image;
-    if (project is null)
-    {
-        var source = await ReadSourceAsync(inputFile, expr).ConfigureAwait(false);
-        var displayPath = inputFile ?? "<expr>";
-        CombinedCompilationLayout? diagnosticLayout = null;
-        try
-        {
-            var prepared = PrepareStandaloneCompilationSource(source, displayPath);
-            diagnosticLayout = prepared.Layout;
-            image = CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
-        }
-        catch (CompileDiagnosticException ex)
-        {
-            PrintCompilerDiagnostics(ex, source, displayPath, diagnosticLayout);
-            return 1;
-        }
-        catch (InvalidOperationException ex)
-        {
-            PrintCompileFailure(ex.Message, displayPath);
-            return 1;
-        }
-    }
-    else
-    {
-        try
-        {
-            image = CompileProjectToImage(project, target, backendOptions);
-        }
-        catch (CompileDiagnosticException ex)
-        {
-            PrintCompilerDiagnostics(ex, null, project.EntryPath);
-            return 1;
-        }
-        catch (InvalidOperationException ex)
-        {
-            PrintCompileFailure(ex.Message, project.EntryPath);
-            return 1;
-        }
-    }
-
-    return await RunImageWithInheritedStdioAsync(image, target, progArgs).ConfigureAwait(false);
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, null, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers);
 }
 
 async Task<int> RunReplAsync(string[] a)
@@ -810,25 +796,7 @@ async Task<int> RunReplAsync(string[] a)
         return Usage(0);
     }
 
-    string? target = null;
-    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
-    string? targetCpu = null;
-    long? parallelStackBytes = null;
-    long? parallelWorkers = null;
-
-    for (int i = 0; i < a.Length; i++)
-    {
-        var arg = a[i];
-        if (string.Equals(arg, "--target", StringComparison.Ordinal) && i + 1 < a.Length) { target = a[++i]; continue; }
-        if (string.Equals(arg, "--target-cpu", StringComparison.Ordinal) && i + 1 < a.Length) { targetCpu = a[++i]; continue; }
-        if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
-        if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
-        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
-        throw new CliUsageException("Unknown argument.");
-    }
-
-    target ??= BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
+    var (target, backendOptions) = ParseReplArguments(a);
     var sessionBindings = new List<ReplBinding>();
 
     AnsiConsole.Write(new Rule("[bold]Ashes REPL[/]").RuleStyle("grey").LeftJustified());
@@ -859,123 +827,164 @@ async Task<int> RunReplAsync(string[] a)
 
         if (trimmedFirst is ":h" or ":help")
         {
-            AnsiConsole.MarkupLine("[grey]REPL commands:[/]");
-            AnsiConsole.MarkupLine("  [yellow]:help[/]   Show this help");
-            AnsiConsole.MarkupLine("  [yellow]:quit[/]   Exit");
-            AnsiConsole.MarkupLine("  [yellow]:target[/] Show current target");
-            AnsiConsole.MarkupLine("  [yellow]:target linux-x64|linux-arm64|win-x64[/]  Change target");
-            AnsiConsole.MarkupLine("  [yellow]let name = ... in name[/]  Persist a binding in the session");
+            PrintReplHelp();
             continue;
         }
 
         if (trimmedFirst.StartsWith(":target", StringComparison.Ordinal))
         {
-            var parts = trimmedFirst.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length == 1)
-            {
-                AnsiConsole.MarkupLine($"Target: [bold]{target}[/]");
-                continue;
-            }
-            if (parts.Length == 2 && (string.Equals(parts[1], TargetIds.LinuxX64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.LinuxArm64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.WindowsX64, StringComparison.Ordinal)))
-            {
-                target = parts[1];
-                AnsiConsole.MarkupLine($"Target set to [bold]{target}[/]");
-                continue;
-            }
-
-            AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|linux-arm64|win-x64");
+            HandleReplTargetCommand(trimmedFirst, ref target);
             continue;
         }
 
         buffer.Add(first);
 
-        while (true)
-        {
-            var candidate = string.Join("\n", buffer).TrimEnd();
-
-            if (LooksIncomplete(candidate))
-            {
-                var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
-                if (more is null)
-                {
-                    break;
-                }
-
-                buffer.Add(more);
-                continue;
-            }
-
-            if (TryAnalyzeReplSubmission(sessionBindings, candidate, out var analysis, out var compileDiagnostics, out var compileError))
-            {
-                var isBindingSubmission = TryExtractPersistentBinding(candidate, out var persistedBinding);
-                if (!TryCompileReplSubmission(sessionBindings, candidate, autoPrint: analysis!.IsPrintable && !isBindingSubmission, target, backendOptions, out var image, out compileDiagnostics, out compileError))
-                {
-                    if (compileDiagnostics is not null)
-                    {
-                        PrintCompilerDiagnostics(compileDiagnostics, null, "<repl>");
-                    }
-                    else
-                    {
-                        PrintCompileFailure(compileError ?? "Unknown compile error", "<repl>");
-                    }
-
-                    break;
-                }
-
-                var (exit, stdout, stderr) = await RunImageCaptureAsync(image!, target).ConfigureAwait(false);
-
-                if (exit == 0)
-                {
-                    if (!string.IsNullOrEmpty(stdout))
-                    {
-                        AnsiConsole.Write(new Text(stdout));
-                    }
-
-                    if (!string.IsNullOrEmpty(stderr))
-                    {
-                        AnsiConsole.Write(new Text(stderr));
-                    }
-
-                    if (isBindingSubmission)
-                    {
-                        sessionBindings.Add(persistedBinding);
-                    }
-
-                    PrintReplTypeEcho(analysis!);
-
-                    break;
-                }
-
-                PrintRuntimeFailure(exit, stdout, stderr);
-                break;
-            }
-
-            if (compileError is not null && IsLikelyNeedMoreInput(compileError))
-            {
-                var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
-                if (more is null)
-                {
-                    break;
-                }
-
-                buffer.Add(more);
-                continue;
-            }
-
-            if (compileDiagnostics is not null)
-            {
-                PrintCompilerDiagnostics(compileDiagnostics, null, "<repl>");
-            }
-            else
-            {
-                PrintCompileFailure(compileError ?? "Unknown compile error", "<repl>");
-            }
-
-            break;
-        }
+        await ProcessReplSubmissionAsync(sessionBindings, buffer, target, backendOptions).ConfigureAwait(false);
     }
 
     return 0;
+}
+
+static (string Target, BackendCompileOptions Options) ParseReplArguments(string[] a)
+{
+    string? target = null;
+    BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
+    string? targetCpu = null;
+    long? parallelStackBytes = null;
+    long? parallelWorkers = null;
+
+    for (int i = 0; i < a.Length; i++)
+    {
+        var arg = a[i];
+        if (TryParseTargetOptions(a, ref i, ref target, ref targetCpu, ref parallelStackBytes, ref parallelWorkers)) { continue; }
+        if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
+        throw new CliUsageException("Unknown argument.");
+    }
+
+    target ??= BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
+    return (target, backendOptions);
+}
+
+static void PrintReplHelp()
+{
+    AnsiConsole.MarkupLine("[grey]REPL commands:[/]");
+    AnsiConsole.MarkupLine("  [yellow]:help[/]   Show this help");
+    AnsiConsole.MarkupLine("  [yellow]:quit[/]   Exit");
+    AnsiConsole.MarkupLine("  [yellow]:target[/] Show current target");
+    AnsiConsole.MarkupLine("  [yellow]:target linux-x64|linux-arm64|win-x64[/]  Change target");
+    AnsiConsole.MarkupLine("  [yellow]let name = ... in name[/]  Persist a binding in the session");
+}
+
+static void HandleReplTargetCommand(string trimmedFirst, ref string target)
+{
+    var parts = trimmedFirst.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (parts.Length == 1)
+    {
+        AnsiConsole.MarkupLine($"Target: [bold]{target}[/]");
+        return;
+    }
+    if (parts.Length == 2 && (string.Equals(parts[1], TargetIds.LinuxX64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.LinuxArm64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.WindowsX64, StringComparison.Ordinal)))
+    {
+        target = parts[1];
+        AnsiConsole.MarkupLine($"Target set to [bold]{target}[/]");
+        return;
+    }
+
+    AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|linux-arm64|win-x64");
+}
+
+static async Task ProcessReplSubmissionAsync(List<ReplBinding> sessionBindings, List<string> buffer, string target, BackendCompileOptions backendOptions)
+{
+    while (true)
+    {
+        var candidate = string.Join("\n", buffer).TrimEnd();
+
+        if (LooksIncomplete(candidate))
+        {
+            var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
+            if (more is null)
+            {
+                break;
+            }
+
+            buffer.Add(more);
+            continue;
+        }
+
+        if (TryAnalyzeReplSubmission(sessionBindings, candidate, out var analysis, out var compileDiagnostics, out var compileError))
+        {
+            await ExecuteReplSubmissionAsync(sessionBindings, candidate, analysis!, target, backendOptions).ConfigureAwait(false);
+            break;
+        }
+
+        if (compileError is not null && IsLikelyNeedMoreInput(compileError))
+        {
+            var more = await ReadReplLineAsync("| ").ConfigureAwait(false);
+            if (more is null)
+            {
+                break;
+            }
+
+            buffer.Add(more);
+            continue;
+        }
+
+        if (compileDiagnostics is not null)
+        {
+            PrintCompilerDiagnostics(compileDiagnostics, null, "<repl>");
+        }
+        else
+        {
+            PrintCompileFailure(compileError ?? "Unknown compile error", "<repl>");
+        }
+
+        break;
+    }
+}
+
+static async Task ExecuteReplSubmissionAsync(List<ReplBinding> sessionBindings, string candidate, ReplSubmissionAnalysis analysis, string target, BackendCompileOptions backendOptions)
+{
+    var isBindingSubmission = TryExtractPersistentBinding(candidate, out var persistedBinding);
+    if (!TryCompileReplSubmission(sessionBindings, candidate, autoPrint: analysis.IsPrintable && !isBindingSubmission, target, backendOptions, out var image, out var compileDiagnostics, out var compileError))
+    {
+        if (compileDiagnostics is not null)
+        {
+            PrintCompilerDiagnostics(compileDiagnostics, null, "<repl>");
+        }
+        else
+        {
+            PrintCompileFailure(compileError ?? "Unknown compile error", "<repl>");
+        }
+
+        return;
+    }
+
+    var (exit, stdout, stderr) = await RunImageCaptureAsync(image!, target).ConfigureAwait(false);
+
+    if (exit == 0)
+    {
+        if (!string.IsNullOrEmpty(stdout))
+        {
+            AnsiConsole.Write(new Text(stdout));
+        }
+
+        if (!string.IsNullOrEmpty(stderr))
+        {
+            AnsiConsole.Write(new Text(stderr));
+        }
+
+        if (isBindingSubmission)
+        {
+            sessionBindings.Add(persistedBinding);
+        }
+
+        PrintReplTypeEcho(analysis);
+
+        return;
+    }
+
+    PrintRuntimeFailure(exit, stdout, stderr);
 }
 
 async Task<int> RunTest(string[] a)
@@ -1026,6 +1035,30 @@ async Task<int> RunFmtAsync(string[] a)
         return Usage(0);
     }
 
+    var (writeInPlace, files) = ParseFmtArguments(a);
+    if (files.Count == 0)
+    {
+        AnsiConsole.MarkupLine("[yellow]No .ash files found.[/]");
+        return 0;
+    }
+
+    var sw = Stopwatch.StartNew();
+    foreach (var file in files)
+    {
+        await FormatSingleFileAsync(file, writeInPlace, files.Count).ConfigureAwait(false);
+    }
+    sw.Stop();
+
+    if (writeInPlace)
+    {
+        AnsiConsole.MarkupLine($"[green]OK[/] Formatted {files.Count} file(s) in [bold]{Runner.FormatElapsed(sw.ElapsedMilliseconds)}[/].");
+    }
+
+    return 0;
+}
+
+static (bool WriteInPlace, List<string> Files) ParseFmtArguments(string[] a)
+{
     // ashes fmt <file|dir> [-w]
     if (a.Length == 0)
     {
@@ -1061,83 +1094,75 @@ async Task<int> RunFmtAsync(string[] a)
     }
 
     files = files.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
-    if (files.Count == 0)
+    return (writeInPlace, files);
+}
+
+static async Task FormatSingleFileAsync(string file, bool writeInPlace, int fileCount)
+{
+    var src = await File.ReadAllTextAsync(file).ConfigureAwait(false);
+    // Inline `module` blocks are a compile-time stitching construct with no AST node, so the
+    // formatter cannot model them. Leave such files untouched (the author's layout is
+    // authoritative) rather than error or mangle; full formatting fidelity is future work.
+    if (ProjectSupport.ContainsInlineModule(src))
     {
-        AnsiConsole.MarkupLine("[yellow]No .ash files found.[/]");
-        return 0;
-    }
-
-    var sw = Stopwatch.StartNew();
-    foreach (var file in files)
-    {
-        var src = await File.ReadAllTextAsync(file).ConfigureAwait(false);
-        // Inline `module` blocks are a compile-time stitching construct with no AST node, so the
-        // formatter cannot model them. Leave such files untouched (the author's layout is
-        // authoritative) rather than error or mangle; full formatting fidelity is future work.
-        if (ProjectSupport.ContainsInlineModule(src))
+        if (!writeInPlace)
         {
-            if (!writeInPlace)
-            {
-                if (files.Count > 1)
-                {
-                    AnsiConsole.Write(new Rule(file).RuleStyle("grey").LeftJustified());
-                }
-
-                AnsiConsole.Write(new Text(src));
-            }
-
-            continue;
-        }
-
-        var formattingOptions = EditorConfigFormattingOptionsResolver.ResolveForPath(file);
-        var lineEnding = formattingOptions.NewLine;
-        var (leadingComments, sourceWithoutComments) = ExtractLeadingComments(src, lineEnding);
-        var (imports, sourceWithoutImports) = ExtractImports(sourceWithoutComments, file, lineEnding);
-        var diag = new Diagnostics();
-        var program = new Parser(sourceWithoutImports, diag).ParseProgram();
-        diag.ThrowIfAny();
-
-        var formattedBody = Formatter.Format(
-            program,
-            preferPipelines: sourceWithoutImports.Contains("|>", StringComparison.Ordinal)
-                || sourceWithoutImports.Contains("|?>", StringComparison.Ordinal)
-                || sourceWithoutImports.Contains("|!>", StringComparison.Ordinal),
-            options: formattingOptions);
-        // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
-        // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
-        formattedBody = CommentReinserter.ReinsertStandaloneCommentLines(sourceWithoutImports, formattedBody, lineEnding);
-        var formattedWithoutComments = imports.Count == 0
-            ? formattedBody
-            : string.Join(lineEnding, imports) + lineEnding + formattedBody;
-        var formatted = leadingComments.Count == 0
-            ? formattedWithoutComments
-            : string.Join(lineEnding, leadingComments) + lineEnding + formattedWithoutComments;
-
-        if (writeInPlace)
-        {
-            if (!string.Equals(formatted, src, StringComparison.Ordinal))
-            {
-                await File.WriteAllTextAsync(file, formatted).ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            if (files.Count > 1)
+            if (fileCount > 1)
             {
                 AnsiConsole.Write(new Rule(file).RuleStyle("grey").LeftJustified());
             }
 
-            AnsiConsole.Write(new Text(formatted));
+            AnsiConsole.Write(new Text(src));
         }
+
+        return;
     }
-    sw.Stop();
+
+    var formatted = FormatAshSource(src, file);
 
     if (writeInPlace)
     {
-        AnsiConsole.MarkupLine($"[green]OK[/] Formatted {files.Count} file(s) in [bold]{Runner.FormatElapsed(sw.ElapsedMilliseconds)}[/].");
+        if (!string.Equals(formatted, src, StringComparison.Ordinal))
+        {
+            await File.WriteAllTextAsync(file, formatted).ConfigureAwait(false);
+        }
     }
+    else
+    {
+        if (fileCount > 1)
+        {
+            AnsiConsole.Write(new Rule(file).RuleStyle("grey").LeftJustified());
+        }
 
-    return 0;
+        AnsiConsole.Write(new Text(formatted));
+    }
+}
+
+static string FormatAshSource(string src, string file)
+{
+    var formattingOptions = EditorConfigFormattingOptionsResolver.ResolveForPath(file);
+    var lineEnding = formattingOptions.NewLine;
+    var (leadingComments, sourceWithoutComments) = ExtractLeadingComments(src, lineEnding);
+    var (imports, sourceWithoutImports) = ExtractImports(sourceWithoutComments, file, lineEnding);
+    var diag = new Diagnostics();
+    var program = new Parser(sourceWithoutImports, diag).ParseProgram();
+    diag.ThrowIfAny();
+
+    var formattedBody = Formatter.Format(
+        program,
+        preferPipelines: sourceWithoutImports.Contains("|>", StringComparison.Ordinal)
+            || sourceWithoutImports.Contains("|?>", StringComparison.Ordinal)
+            || sourceWithoutImports.Contains("|!>", StringComparison.Ordinal),
+        options: formattingOptions);
+    // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
+    // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
+    formattedBody = CommentReinserter.ReinsertStandaloneCommentLines(sourceWithoutImports, formattedBody, lineEnding);
+    var formattedWithoutComments = imports.Count == 0
+        ? formattedBody
+        : string.Join(lineEnding, imports) + lineEnding + formattedBody;
+    return leadingComments.Count == 0
+        ? formattedWithoutComments
+        : string.Join(lineEnding, leadingComments) + lineEnding + formattedWithoutComments;
 }
 
 static (IReadOnlyList<string> LeadingComments, string SourceWithoutLeadingComments) ExtractLeadingComments(string source, string lineEnding)
@@ -1708,18 +1733,7 @@ static async Task RestoreRegistryDependenciesAsync(
     // --offline: never touch the network. Trust the committed lock and only verify its packages are cached.
     if (offline)
     {
-        var existing = Ashes.Cli.Package.LockFile.Read(projectDirectory)
-            ?? throw new CliUserException("Cannot restore --offline: no ashes.lock. Run 'ashes restore' online first.");
-        foreach (var p in existing.Package)
-        {
-            if (!cache.Has(p.Namespace, p.Version, p.Hash))
-            {
-                throw new CliUserException($"ASH033: '{p.Namespace}@{p.Version}' is not in the cache (--offline).");
-            }
-
-            VerifyCacheHash(cache.PathFor(p.Namespace, p.Version, p.Hash), p.Hash, p.Namespace, p.Version);
-        }
-
+        VerifyOfflineRegistryCache(projectDirectory, cache);
         return;
     }
 
@@ -1728,14 +1742,7 @@ static async Task RestoreRegistryDependenciesAsync(
     var resolved = await new Ashes.Cli.Package.DependencyResolver(new Ashes.Cli.Package.RegistryPackageIndex(client, baseUrl))
         .ResolveAsync(roots, ct).ConfigureAwait(false);
 
-    // Resolve version metadata (hashes/deps) before downloading, so --frozen can compare cheaply.
-    var pinned = new List<(string Namespace, Ashes.Cli.Registry.VersionDto Version)>();
-    foreach (var package in resolved)
-    {
-        var meta = await client.GetPackageAsync(baseUrl, package.Namespace, ct).ConfigureAwait(false)
-            ?? throw new CliUserException($"Package '{package.Namespace}' not found on {baseUrl}.");
-        pinned.Add((package.Namespace, meta.Versions.First(v => string.Equals(v.Version, package.Version.ToString(), StringComparison.Ordinal))));
-    }
+    var pinned = await PinResolvedVersionsAsync(client, baseUrl, resolved, ct).ConfigureAwait(false);
 
     var locked = pinned
         .Select(p => new Ashes.Cli.Package.LockedPackage(
@@ -1753,6 +1760,49 @@ static async Task RestoreRegistryDependenciesAsync(
         }
     }
 
+    await DownloadAndVerifyRegistryPackagesAsync(cache, client, baseUrl, pinned, ct).ConfigureAwait(false);
+
+    if (!frozen)
+    {
+        new Ashes.Cli.Package.LockFile { Package = locked }.Write(projectDirectory);
+    }
+
+    AnsiConsole.MarkupLine($"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")}{(frozen ? " (frozen)" : " into ashes.lock")}.");
+}
+
+static void VerifyOfflineRegistryCache(string projectDirectory, Ashes.Cli.Package.PackageCache cache)
+{
+    var existing = Ashes.Cli.Package.LockFile.Read(projectDirectory)
+        ?? throw new CliUserException("Cannot restore --offline: no ashes.lock. Run 'ashes restore' online first.");
+    foreach (var p in existing.Package)
+    {
+        if (!cache.Has(p.Namespace, p.Version, p.Hash))
+        {
+            throw new CliUserException($"ASH033: '{p.Namespace}@{p.Version}' is not in the cache (--offline).");
+        }
+
+        VerifyCacheHash(cache.PathFor(p.Namespace, p.Version, p.Hash), p.Hash, p.Namespace, p.Version);
+    }
+}
+
+static async Task<List<(string Namespace, Ashes.Cli.Registry.VersionDto Version)>> PinResolvedVersionsAsync(
+    Ashes.Cli.Registry.RegistryClient client, string baseUrl, IReadOnlyList<Ashes.Cli.Package.ResolvedPackage> resolved, CancellationToken ct)
+{
+    // Resolve version metadata (hashes/deps) before downloading, so --frozen can compare cheaply.
+    var pinned = new List<(string Namespace, Ashes.Cli.Registry.VersionDto Version)>();
+    foreach (var package in resolved)
+    {
+        var meta = await client.GetPackageAsync(baseUrl, package.Namespace, ct).ConfigureAwait(false)
+            ?? throw new CliUserException($"Package '{package.Namespace}' not found on {baseUrl}.");
+        pinned.Add((package.Namespace, meta.Versions.First(v => string.Equals(v.Version, package.Version.ToString(), StringComparison.Ordinal))));
+    }
+
+    return pinned;
+}
+
+static async Task DownloadAndVerifyRegistryPackagesAsync(
+    Ashes.Cli.Package.PackageCache cache, Ashes.Cli.Registry.RegistryClient client, string baseUrl, List<(string Namespace, Ashes.Cli.Registry.VersionDto Version)> pinned, CancellationToken ct)
+{
     foreach (var (ns, version) in pinned)
     {
         if (!cache.Has(ns, version.Version, version.Hash))
@@ -1765,13 +1815,6 @@ static async Task RestoreRegistryDependenciesAsync(
         // or a lying mirror before the compiler ever reads it.
         VerifyCacheHash(cache.PathFor(ns, version.Version, version.Hash), version.Hash, ns, version.Version);
     }
-
-    if (!frozen)
-    {
-        new Ashes.Cli.Package.LockFile { Package = locked }.Write(projectDirectory);
-    }
-
-    AnsiConsole.MarkupLine($"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")}{(frozen ? " (frozen)" : " into ashes.lock")}.");
 }
 
 static void VerifyCacheHash(string cacheDir, string expectedHash, string ns, string version)
@@ -1903,3 +1946,15 @@ static int RunVersion()
 
 sealed class CliUsageException(string message) : Exception(message);
 sealed class CliUserException(string message) : Exception(message);
+
+sealed record CompileCommandArguments(
+    string? Target,
+    BackendOptimizationLevel OptimizationLevel,
+    bool DebugMode,
+    string? OutPath,
+    string? Expr,
+    string? InputFile,
+    string? ProjectPath,
+    string? TargetCpu,
+    long? ParallelStackBytes,
+    long? ParallelWorkers);

@@ -100,105 +100,114 @@ public static class Runner
 
         foreach (var file in files)
         {
-            var rawSource = File.ReadAllText(file);
-            var effectiveProject = ResolveProjectForTestFile(file, project);
-            var directives = ParseTestDirectives(rawSource);
-            var expected = directives.Expected;
-            var hasExpected = directives.HasExpected;
-            var expectedExitCode = directives.ExpectedExitCode;
-            var isCompileError = directives.IsCompileError;
-            var stdin = directives.Stdin;
-            if (!hasExpected)
-            {
-                results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
-                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP[/]");
-                continue;
-            }
-
-            if (directives.SkipOnTargets.Any(t => string.Equals(t, targetId, StringComparison.OrdinalIgnoreCase)))
-            {
-                results.Add(new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false));
-                console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP ({Markup.Escape(targetId)})[/]");
-                continue;
-            }
-
-            var sw = Stopwatch.StartNew();
-            int exit;
-            string actual;
-            string stderr = "";
-            LoopbackServerInstance? loopbackServer = null;
-            try
-            {
-                string? sourceOverride = null;
-                IReadOnlyDictionary<string, string>? environmentVariables = null;
-                if (directives.TcpServer.Enabled)
-                {
-                    loopbackServer = TcpServerInstance.Start(directives.TcpServer);
-                    sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
-                }
-                else if (directives.TlsServer.Enabled)
-                {
-                    loopbackServer = TlsServerInstance.Start(directives.TlsServer);
-                    sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
-                    environmentVariables = loopbackServer.GetEnvironmentVariables();
-                }
-
-                var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
-                loopbackServer?.StartAccepting();
-                var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, stdin, directives.FileFixtures, environmentVariables);
-                exit = runExit;
-                actual = (stdout ?? "").TrimEnd();
-                stderr = runStderr ?? "";
-                if (loopbackServer is not null)
-                {
-                    var fixtureError = loopbackServer.Complete();
-                    if (!string.IsNullOrWhiteSpace(fixtureError))
-                    {
-                        exit = 1;
-                        actual = fixtureError;
-                    }
-                }
-            }
-            catch (CompileDiagnosticException ex)
-            {
-                exit = 1;
-                var isUnexpectedFailure = expectedExitCode != 1;
-                actual = (isUnexpectedFailure || isCompileError)
-                    ? DiagnosticTextRenderer.RenderCompilerDiagnostics(ex, source: null, displayPath: file).TrimEnd()
-                    : "";
-            }
-            catch (InvalidOperationException ex)
-            {
-                exit = 1;
-                var isUnexpectedFailure = expectedExitCode != 1;
-                actual = (isUnexpectedFailure || isCompileError)
-                    ? DiagnosticTextRenderer.RenderFailure("compile error", ex.Message ?? string.Empty, file).TrimEnd()
-                    : "";
-            }
-            finally
-            {
-                loopbackServer?.Dispose();
-            }
-            sw.Stop();
-
-            var exp = expected.TrimEnd();
-            var passed = exit == expectedExitCode && (isCompileError
-                ? actual.Contains(exp, StringComparison.Ordinal)
-                : string.Equals(actual, exp, StringComparison.Ordinal));
-
-            // If stderr present, append for diagnostics in 'Actual' when the test fails
-            if (!string.IsNullOrWhiteSpace(stderr) && !passed)
-            {
-                actual = actual + "\n[stderr]\n" + stderr.TrimEnd();
-            }
-
-            results.Add(new TestResult(file, passed, exp, actual, exit, expectedExitCode, ElapsedMs: sw.ElapsedMilliseconds));
-            console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")} [grey]{FormatElapsed(sw.ElapsedMilliseconds)}[/]");
+            results.Add(RunSingleTestFile(file, targetId, backendOptions, project, console));
         }
 
         RenderResults(results, console);
 
         return results.Any(r => !r.Passed && r.HasExpected) ? 1 : 0;
+    }
+
+    private static TestResult RunSingleTestFile(string file, string targetId, BackendCompileOptions backendOptions, AshesProject? project, IAnsiConsole console)
+    {
+        var rawSource = File.ReadAllText(file);
+        var effectiveProject = ResolveProjectForTestFile(file, project);
+        var directives = ParseTestDirectives(rawSource);
+        var expected = directives.Expected;
+        var hasExpected = directives.HasExpected;
+        var expectedExitCode = directives.ExpectedExitCode;
+        var isCompileError = directives.IsCompileError;
+        if (!hasExpected)
+        {
+            console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP[/]");
+            return new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false);
+        }
+
+        if (directives.SkipOnTargets.Any(t => string.Equals(t, targetId, StringComparison.OrdinalIgnoreCase)))
+        {
+            console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] [grey]SKIP ({Markup.Escape(targetId)})[/]");
+            return new TestResult(file, Passed: true, Expected: "", Actual: "", ExitCode: 0, ExpectedExitCode: 0, HasExpected: false);
+        }
+
+        var sw = Stopwatch.StartNew();
+        var (exit, actual, stderr) = ExecuteTestRun(file, targetId, backendOptions, effectiveProject, directives, rawSource);
+        sw.Stop();
+
+        var exp = expected.TrimEnd();
+        var passed = exit == expectedExitCode && (isCompileError
+            ? actual.Contains(exp, StringComparison.Ordinal)
+            : string.Equals(actual, exp, StringComparison.Ordinal));
+
+        // If stderr present, append for diagnostics in 'Actual' when the test fails
+        if (!string.IsNullOrWhiteSpace(stderr) && !passed)
+        {
+            actual = actual + "\n[stderr]\n" + stderr.TrimEnd();
+        }
+
+        console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")} [grey]{FormatElapsed(sw.ElapsedMilliseconds)}[/]");
+        return new TestResult(file, passed, exp, actual, exit, expectedExitCode, ElapsedMs: sw.ElapsedMilliseconds);
+    }
+
+    private static (int Exit, string Actual, string Stderr) ExecuteTestRun(string file, string targetId, BackendCompileOptions backendOptions, AshesProject? effectiveProject, TestDirectives directives, string rawSource)
+    {
+        int exit;
+        string actual;
+        string stderr = "";
+        LoopbackServerInstance? loopbackServer = null;
+        try
+        {
+            string? sourceOverride = null;
+            IReadOnlyDictionary<string, string>? environmentVariables = null;
+            if (directives.TcpServer.Enabled)
+            {
+                loopbackServer = TcpServerInstance.Start(directives.TcpServer);
+                sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
+            }
+            else if (directives.TlsServer.Enabled)
+            {
+                loopbackServer = TlsServerInstance.Start(directives.TlsServer);
+                sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
+                environmentVariables = loopbackServer.GetEnvironmentVariables();
+            }
+
+            var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
+            loopbackServer?.StartAccepting();
+            var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, directives.Stdin, directives.FileFixtures, environmentVariables);
+            exit = runExit;
+            actual = (stdout ?? "").TrimEnd();
+            stderr = runStderr ?? "";
+            if (loopbackServer is not null)
+            {
+                var fixtureError = loopbackServer.Complete();
+                if (!string.IsNullOrWhiteSpace(fixtureError))
+                {
+                    exit = 1;
+                    actual = fixtureError;
+                }
+            }
+        }
+        catch (CompileDiagnosticException ex)
+        {
+            exit = 1;
+            var isUnexpectedFailure = directives.ExpectedExitCode != 1;
+            actual = (isUnexpectedFailure || directives.IsCompileError)
+                ? DiagnosticTextRenderer.RenderCompilerDiagnostics(ex, source: null, displayPath: file).TrimEnd()
+                : "";
+        }
+        catch (InvalidOperationException ex)
+        {
+            exit = 1;
+            var isUnexpectedFailure = directives.ExpectedExitCode != 1;
+            actual = (isUnexpectedFailure || directives.IsCompileError)
+                ? DiagnosticTextRenderer.RenderFailure("compile error", ex.Message ?? string.Empty, file).TrimEnd()
+                : "";
+        }
+        finally
+        {
+            loopbackServer?.Dispose();
+        }
+
+        return (exit, actual, stderr);
     }
 
     private static AshesProject? ResolveProjectForTestFile(string filePath, AshesProject? project)
@@ -334,22 +343,7 @@ public static class Runner
 
     public static TestDirectives ParseTestDirectives(string source)
     {
-        string expected = "";
-        var hasExpected = false;
-        var expectedExitCode = 0;
-        var isCompileError = false;
-        string? stdin = null;
-        var fileFixtures = new List<TestFileFixture>();
-        var tcpServerEnabled = false;
-        string? tcpExpectedText = null;
-        string? tcpSendText = null;
-        var tlsServerEnabled = false;
-        string? tlsExpectedText = null;
-        string? tlsSendText = null;
-        var tlsTrustMode = TlsFixtureTrustMode.Trusted;
-        var tlsHandshakeMode = TlsFixtureHandshakeMode.Success;
-        var tlsCertificateHost = "localhost";
-        var skipOnTargets = new List<string>();
+        var acc = new DirectiveAccumulator();
 
         using var sr = new StringReader(source);
         string? line;
@@ -371,153 +365,186 @@ public static class Runner
                 ? line[(commentPrefixIndex + 2)..].TrimStart()
                 : trimmed[2..].TrimStart();
 
-            if (commentText.StartsWith("expect:", StringComparison.OrdinalIgnoreCase))
-            {
-                expected = commentText.Substring("expect:".Length).Trim();
-                hasExpected = true;
-                isCompileError = false;
-                continue;
-            }
-
-            if (commentText.StartsWith("expect-compile-error:", StringComparison.OrdinalIgnoreCase))
-            {
-                expected = commentText.Substring("expect-compile-error:".Length).Trim();
-                hasExpected = true;
-                expectedExitCode = 1;
-                isCompileError = true;
-                continue;
-            }
-
-            if (commentText.StartsWith("exit:", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(commentText.Substring("exit:".Length).Trim(), System.Globalization.CultureInfo.InvariantCulture, out var parsedExitCode))
-            {
-                expectedExitCode = parsedExitCode;
-                continue;
-            }
-
-            if (commentText.StartsWith("stdin:", StringComparison.OrdinalIgnoreCase))
-            {
-                stdin = DecodeTestInput(commentText.Substring("stdin:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-            {
-                fileFixtures.Add(ParseFileFixture(commentText.Substring("file:".Length), parseBytes: false));
-                continue;
-            }
-
-            if (commentText.StartsWith("file-bytes:", StringComparison.OrdinalIgnoreCase))
-            {
-                fileFixtures.Add(ParseFileFixture(commentText.Substring("file-bytes:".Length), parseBytes: true));
-                continue;
-            }
-
-            if (commentText.StartsWith("tcp-server:", StringComparison.OrdinalIgnoreCase))
-            {
-                var mode = commentText.Substring("tcp-server:".Length).Trim();
-                if (!string.Equals(mode, "accept", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException($"Unsupported tcp-server mode '{mode}'. Expected 'accept'.");
-                }
-
-                tcpServerEnabled = true;
-                continue;
-            }
-
-            if (commentText.StartsWith("tcp-expect:", StringComparison.OrdinalIgnoreCase))
-            {
-                tcpServerEnabled = true;
-                tcpExpectedText = DecodeTestInput(commentText.Substring("tcp-expect:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tcp-send:", StringComparison.OrdinalIgnoreCase))
-            {
-                tcpServerEnabled = true;
-                tcpSendText = DecodeTestInput(commentText.Substring("tcp-send:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-server:", StringComparison.OrdinalIgnoreCase))
-            {
-                var mode = commentText.Substring("tls-server:".Length).Trim();
-                if (!string.Equals(mode, "accept", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException($"Unsupported tls-server mode '{mode}'. Expected 'accept'.");
-                }
-
-                tlsServerEnabled = true;
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-expect:", StringComparison.OrdinalIgnoreCase))
-            {
-                tlsServerEnabled = true;
-                tlsExpectedText = DecodeTestInput(commentText.Substring("tls-expect:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-send:", StringComparison.OrdinalIgnoreCase))
-            {
-                tlsServerEnabled = true;
-                tlsSendText = DecodeTestInput(commentText.Substring("tls-send:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-trust:", StringComparison.OrdinalIgnoreCase))
-            {
-                tlsServerEnabled = true;
-                tlsTrustMode = ParseTlsFixtureTrustMode(commentText.Substring("tls-trust:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-handshake:", StringComparison.OrdinalIgnoreCase))
-            {
-                tlsServerEnabled = true;
-                tlsHandshakeMode = ParseTlsFixtureHandshakeMode(commentText.Substring("tls-handshake:".Length).Trim());
-                continue;
-            }
-
-            if (commentText.StartsWith("tls-cert-host:", StringComparison.OrdinalIgnoreCase))
-            {
-                tlsServerEnabled = true;
-                tlsCertificateHost = commentText.Substring("tls-cert-host:".Length).Trim();
-                if (string.IsNullOrWhiteSpace(tlsCertificateHost))
-                {
-                    throw new InvalidOperationException("TLS fixture certificate host cannot be empty.");
-                }
-            }
-
-            if (commentText.StartsWith("skip-on:", StringComparison.OrdinalIgnoreCase))
-            {
-                var list = commentText.Substring("skip-on:".Length);
-                foreach (var raw in list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                {
-                    if (raw.Length > 0)
-                    {
-                        skipOnTargets.Add(raw);
-                    }
-                }
-                continue;
-            }
+            ApplyExpectationDirective(commentText, acc);
+            ApplyFixtureDirective(commentText, acc);
+            ApplyTlsDirective(commentText, acc);
+            ApplyCertHostAndSkipDirective(commentText, acc);
         }
 
-        if (tcpServerEnabled && tlsServerEnabled)
+        if (acc.TcpServerEnabled && acc.TlsServerEnabled)
         {
             throw new InvalidOperationException("A test cannot declare both tcp-server and tls-server fixtures.");
         }
 
         return new TestDirectives(
-            expected,
-            hasExpected,
-            expectedExitCode,
-            isCompileError,
-            stdin,
-            fileFixtures,
-            new TcpServerFixture(tcpServerEnabled, tcpExpectedText, tcpSendText),
-            new TlsServerFixture(tlsServerEnabled, tlsExpectedText, tlsSendText, tlsTrustMode, tlsHandshakeMode, tlsCertificateHost),
-            skipOnTargets);
+            acc.Expected,
+            acc.HasExpected,
+            acc.ExpectedExitCode,
+            acc.IsCompileError,
+            acc.Stdin,
+            acc.FileFixtures,
+            new TcpServerFixture(acc.TcpServerEnabled, acc.TcpExpectedText, acc.TcpSendText),
+            new TlsServerFixture(acc.TlsServerEnabled, acc.TlsExpectedText, acc.TlsSendText, acc.TlsTrustMode, acc.TlsHandshakeMode, acc.TlsCertificateHost),
+            acc.SkipOnTargets);
+    }
+
+    private sealed class DirectiveAccumulator
+    {
+        public string Expected = "";
+        public bool HasExpected;
+        public int ExpectedExitCode;
+        public bool IsCompileError;
+        public string? Stdin;
+        public List<TestFileFixture> FileFixtures = new();
+        public bool TcpServerEnabled;
+        public string? TcpExpectedText;
+        public string? TcpSendText;
+        public bool TlsServerEnabled;
+        public string? TlsExpectedText;
+        public string? TlsSendText;
+        public TlsFixtureTrustMode TlsTrustMode = TlsFixtureTrustMode.Trusted;
+        public TlsFixtureHandshakeMode TlsHandshakeMode = TlsFixtureHandshakeMode.Success;
+        public string TlsCertificateHost = "localhost";
+        public List<string> SkipOnTargets = new();
+    }
+
+    private static void ApplyExpectationDirective(string commentText, DirectiveAccumulator acc)
+    {
+        if (commentText.StartsWith("expect:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.Expected = commentText.Substring("expect:".Length).Trim();
+            acc.HasExpected = true;
+            acc.IsCompileError = false;
+            return;
+        }
+
+        if (commentText.StartsWith("expect-compile-error:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.Expected = commentText.Substring("expect-compile-error:".Length).Trim();
+            acc.HasExpected = true;
+            acc.ExpectedExitCode = 1;
+            acc.IsCompileError = true;
+            return;
+        }
+
+        if (commentText.StartsWith("exit:", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(commentText.Substring("exit:".Length).Trim(), System.Globalization.CultureInfo.InvariantCulture, out var parsedExitCode))
+        {
+            acc.ExpectedExitCode = parsedExitCode;
+            return;
+        }
+
+        if (commentText.StartsWith("stdin:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.Stdin = DecodeTestInput(commentText.Substring("stdin:".Length).Trim());
+        }
+    }
+
+    private static void ApplyFixtureDirective(string commentText, DirectiveAccumulator acc)
+    {
+        if (commentText.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.FileFixtures.Add(ParseFileFixture(commentText.Substring("file:".Length), parseBytes: false));
+            return;
+        }
+
+        if (commentText.StartsWith("file-bytes:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.FileFixtures.Add(ParseFileFixture(commentText.Substring("file-bytes:".Length), parseBytes: true));
+            return;
+        }
+
+        if (commentText.StartsWith("tcp-server:", StringComparison.OrdinalIgnoreCase))
+        {
+            var mode = commentText.Substring("tcp-server:".Length).Trim();
+            if (!string.Equals(mode, "accept", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Unsupported tcp-server mode '{mode}'. Expected 'accept'.");
+            }
+
+            acc.TcpServerEnabled = true;
+            return;
+        }
+
+        if (commentText.StartsWith("tcp-expect:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TcpServerEnabled = true;
+            acc.TcpExpectedText = DecodeTestInput(commentText.Substring("tcp-expect:".Length).Trim());
+            return;
+        }
+
+        if (commentText.StartsWith("tcp-send:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TcpServerEnabled = true;
+            acc.TcpSendText = DecodeTestInput(commentText.Substring("tcp-send:".Length).Trim());
+        }
+    }
+
+    private static void ApplyTlsDirective(string commentText, DirectiveAccumulator acc)
+    {
+        if (commentText.StartsWith("tls-server:", StringComparison.OrdinalIgnoreCase))
+        {
+            var mode = commentText.Substring("tls-server:".Length).Trim();
+            if (!string.Equals(mode, "accept", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Unsupported tls-server mode '{mode}'. Expected 'accept'.");
+            }
+
+            acc.TlsServerEnabled = true;
+            return;
+        }
+
+        if (commentText.StartsWith("tls-expect:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TlsServerEnabled = true;
+            acc.TlsExpectedText = DecodeTestInput(commentText.Substring("tls-expect:".Length).Trim());
+            return;
+        }
+
+        if (commentText.StartsWith("tls-send:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TlsServerEnabled = true;
+            acc.TlsSendText = DecodeTestInput(commentText.Substring("tls-send:".Length).Trim());
+            return;
+        }
+
+        if (commentText.StartsWith("tls-trust:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TlsServerEnabled = true;
+            acc.TlsTrustMode = ParseTlsFixtureTrustMode(commentText.Substring("tls-trust:".Length).Trim());
+            return;
+        }
+
+        if (commentText.StartsWith("tls-handshake:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TlsServerEnabled = true;
+            acc.TlsHandshakeMode = ParseTlsFixtureHandshakeMode(commentText.Substring("tls-handshake:".Length).Trim());
+        }
+    }
+
+    private static void ApplyCertHostAndSkipDirective(string commentText, DirectiveAccumulator acc)
+    {
+        if (commentText.StartsWith("tls-cert-host:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.TlsServerEnabled = true;
+            acc.TlsCertificateHost = commentText.Substring("tls-cert-host:".Length).Trim();
+            if (string.IsNullOrWhiteSpace(acc.TlsCertificateHost))
+            {
+                throw new InvalidOperationException("TLS fixture certificate host cannot be empty.");
+            }
+        }
+
+        if (commentText.StartsWith("skip-on:", StringComparison.OrdinalIgnoreCase))
+        {
+            var list = commentText.Substring("skip-on:".Length);
+            foreach (var raw in list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (raw.Length > 0)
+                {
+                    acc.SkipOnTargets.Add(raw);
+                }
+            }
+        }
     }
 
     private static TlsFixtureTrustMode ParseTlsFixtureTrustMode(string value)
@@ -692,71 +719,12 @@ public static class Runner
 
         if (project is not null)
         {
-            var testProject = new AshesProject(
-                ProjectFilePath: project.ProjectFilePath,
-                ProjectDirectory: project.ProjectDirectory,
-                EntryPath: Path.GetFullPath(filePath),
-                EntryModuleName: Path.GetFileNameWithoutExtension(filePath),
-                Name: project.Name,
-                SourceRoots: project.SourceRoots,
-                Include: project.Include,
-                OutDir: project.OutDir,
-                Target: project.Target);
-
-            var plan = ProjectSupport.BuildCompilationPlan(testProject);
-            if (sourceOverride is null)
-            {
-                var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
-            }
-
-            var parsed = ProjectSupport.ParseImportHeader(source, filePath);
-            var layout = ProjectSupport.BuildCompilationLayout(plan, parsed.SourceWithoutImports);
-            var importedStdModules = plan.ImportedStdModules
-                .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
-                .ToHashSet(StringComparer.Ordinal);
-            var mergedAliases = new Dictionary<string, string>(plan.MergedAliases, StringComparer.Ordinal);
-            foreach (var (alias, moduleName) in parsed.ImportAliases)
-            {
-                if (mergedAliases.TryGetValue(alias, out var existing) && !string.Equals(existing, moduleName, StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException(
-                        $"Conflicting alias '{alias}': maps to '{moduleName}', but already mapped to '{existing}'.");
-                }
-
-                mergedAliases.TryAdd(alias, moduleName);
-            }
-            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases);
+            return CompileProjectTestImage(filePath, targetId, backendOptions, project, source, sourceOverride);
         }
 
         if (HasImports(source))
         {
-            if (sourceOverride is null)
-            {
-                var fileDir = Path.GetDirectoryName(Path.GetFullPath(filePath))
-                    ?? throw new InvalidOperationException($"Cannot determine directory for: {filePath}");
-                var standaloneProject = new AshesProject(
-                    ProjectFilePath: filePath,
-                    ProjectDirectory: fileDir,
-                    EntryPath: filePath,
-                    EntryModuleName: Path.GetFileNameWithoutExtension(filePath),
-                    Name: null,
-                    SourceRoots: [fileDir],
-                    Include: [],
-                    OutDir: Path.GetTempPath(),
-                    Target: targetId
-                );
-                var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
-                var compilationSource = ProjectSupport.BuildCompilationSource(plan);
-                return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
-            }
-
-            var parsed = ProjectSupport.ParseImportHeader(source, filePath);
-            var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
-            var importedStdModules = parsed.ImportNames
-                .Where(ProjectSupport.IsStdModule)
-                .ToHashSet(StringComparer.Ordinal);
-            return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+            return CompileImportsTestImage(filePath, targetId, backendOptions, source, sourceOverride);
         }
 
         // A file with inline `module` blocks but no imports still needs the stitching layout so the
@@ -769,6 +737,75 @@ public static class Runner
         }
 
         return CompileToImage(source, targetId, backendOptions);
+    }
+
+    private static byte[] CompileProjectTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, AshesProject project, string source, string? sourceOverride)
+    {
+        var testProject = new AshesProject(
+            ProjectFilePath: project.ProjectFilePath,
+            ProjectDirectory: project.ProjectDirectory,
+            EntryPath: Path.GetFullPath(filePath),
+            EntryModuleName: Path.GetFileNameWithoutExtension(filePath),
+            Name: project.Name,
+            SourceRoots: project.SourceRoots,
+            Include: project.Include,
+            OutDir: project.OutDir,
+            Target: project.Target);
+
+        var plan = ProjectSupport.BuildCompilationPlan(testProject);
+        if (sourceOverride is null)
+        {
+            var compilationSource = ProjectSupport.BuildCompilationSource(plan);
+            return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
+        }
+
+        var parsed = ProjectSupport.ParseImportHeader(source, filePath);
+        var layout = ProjectSupport.BuildCompilationLayout(plan, parsed.SourceWithoutImports);
+        var importedStdModules = plan.ImportedStdModules
+            .Concat(parsed.ImportNames.Where(ProjectSupport.IsStdModule))
+            .ToHashSet(StringComparer.Ordinal);
+        var mergedAliases = new Dictionary<string, string>(plan.MergedAliases, StringComparer.Ordinal);
+        foreach (var (alias, moduleName) in parsed.ImportAliases)
+        {
+            if (mergedAliases.TryGetValue(alias, out var existing) && !string.Equals(existing, moduleName, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Conflicting alias '{alias}': maps to '{moduleName}', but already mapped to '{existing}'.");
+            }
+
+            mergedAliases.TryAdd(alias, moduleName);
+        }
+        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases);
+    }
+
+    private static byte[] CompileImportsTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, string source, string? sourceOverride)
+    {
+        if (sourceOverride is null)
+        {
+            var fileDir = Path.GetDirectoryName(Path.GetFullPath(filePath))
+                ?? throw new InvalidOperationException($"Cannot determine directory for: {filePath}");
+            var standaloneProject = new AshesProject(
+                ProjectFilePath: filePath,
+                ProjectDirectory: fileDir,
+                EntryPath: filePath,
+                EntryModuleName: Path.GetFileNameWithoutExtension(filePath),
+                Name: null,
+                SourceRoots: [fileDir],
+                Include: [],
+                OutDir: Path.GetTempPath(),
+                Target: targetId
+            );
+            var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
+            var compilationSource = ProjectSupport.BuildCompilationSource(plan);
+            return CompileToImage(compilationSource, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
+        }
+
+        var parsed = ProjectSupport.ParseImportHeader(source, filePath);
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var importedStdModules = parsed.ImportNames
+            .Where(ProjectSupport.IsStdModule)
+            .ToHashSet(StringComparer.Ordinal);
+        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
     }
 
     private static byte[] CompileToImage(string source, string targetId, BackendCompileOptions backendOptions, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
@@ -852,105 +889,8 @@ public static class Runner
                 }
             }
 
-            // UTF-8 without a BOM. The default StreamReader/Writer encoding falls
-            // back to Console.OutputEncoding, which is the OEM/ANSI code page on
-            // Windows (and under Wine) and mangles the non-ASCII bytes Ashes
-            // programs emit as UTF-8. The BOM-less encoder is essential for stdin:
-            // the shared Encoding.UTF8 emits a preamble, which would prepend a stray
-            // BOM to the bytes fed to the child (corrupting readExact/readLine).
-            var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-            var psi = new ProcessStartInfo(exePath)
-            {
-                UseShellExecute = false,
-                RedirectStandardInput = stdin is not null,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = utf8NoBom,
-                StandardErrorEncoding = utf8NoBom,
-                WorkingDirectory = workDir
-            };
-            if (stdin is not null)
-            {
-                psi.StandardInputEncoding = utf8NoBom;
-            }
-
-            // Win-x64 PE images run via Wine (binfmt_misc) on Linux. Ashes binaries are standalone
-            // native PE — they never load the .NET (mscoree) or Gecko (mshtml) runtimes — so suppress
-            // Wine's first-run installer dialogs, which would otherwise block the run on a GUI popup.
-            if (string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
-            {
-                psi.Environment["WINEDEBUG"] = "-all";
-                psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
-            }
-
-            if (environmentVariables is not null)
-            {
-                foreach (var (key, value) in environmentVariables)
-                {
-                    psi.Environment[key] = value;
-                }
-            }
-
-            using var p = StartProcessWithRetry(psi);
-            if (stdin is not null)
-            {
-                p.StandardInput.Write(stdin);
-                p.StandardInput.Close();
-            }
-
-            var stdoutTask = p.StandardOutput.ReadToEndAsync();
-            var stderrTask = p.StandardError.ReadToEndAsync();
-            var timeout = TestProcessTimeout;
-            var timedOut = false;
-            if (timeout > TimeSpan.Zero && !p.WaitForExit((int)timeout.TotalMilliseconds))
-            {
-                timedOut = true;
-                try
-                {
-                    p.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                }
-                try
-                {
-                    p.WaitForExit(5000);
-                }
-                catch
-                {
-                }
-            }
-
-            // When the process exits on its own its stdout/stderr handles are closed, so the
-            // read tasks are guaranteed to complete; wait for them unconditionally so a saturated
-            // thread pool under heavy parallel test load cannot truncate captured output (which
-            // previously surfaced as spurious "(empty)" fixture failures). Only when we had to
-            // kill the process do we bound the wait, because a leaked child may still hold the
-            // pipe open and block the read tasks from ever completing.
-            try
-            {
-                if (timedOut)
-                {
-                    Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
-                }
-                else
-                {
-                    Task.WaitAll(stdoutTask, stderrTask);
-                }
-            }
-            catch
-            {
-            }
-            p.WaitForExit();
-            var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
-            var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
-            if (timedOut)
-            {
-                var notice = $"test process timed out after {(long)timeout.TotalMilliseconds} ms and was killed";
-                stderr = string.IsNullOrEmpty(stderr) ? notice : stderr.TrimEnd() + "\n" + notice;
-                return (1, stdout, stderr);
-            }
-            return (p.ExitCode, stdout, stderr);
+            var psi = BuildRunProcessStartInfo(exePath, workDir, targetId, stdin, environmentVariables);
+            return RunProcessCaptureOutput(psi, stdin);
         }
         finally
         {
@@ -965,6 +905,111 @@ public static class Runner
             {
             }
         }
+    }
+
+    private static ProcessStartInfo BuildRunProcessStartInfo(string exePath, string workDir, string targetId, string? stdin, IReadOnlyDictionary<string, string>? environmentVariables)
+    {
+        // UTF-8 without a BOM. The default StreamReader/Writer encoding falls
+        // back to Console.OutputEncoding, which is the OEM/ANSI code page on
+        // Windows (and under Wine) and mangles the non-ASCII bytes Ashes
+        // programs emit as UTF-8. The BOM-less encoder is essential for stdin:
+        // the shared Encoding.UTF8 emits a preamble, which would prepend a stray
+        // BOM to the bytes fed to the child (corrupting readExact/readLine).
+        var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        var psi = new ProcessStartInfo(exePath)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = stdin is not null,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = utf8NoBom,
+            StandardErrorEncoding = utf8NoBom,
+            WorkingDirectory = workDir
+        };
+        if (stdin is not null)
+        {
+            psi.StandardInputEncoding = utf8NoBom;
+        }
+
+        // Win-x64 PE images run via Wine (binfmt_misc) on Linux. Ashes binaries are standalone
+        // native PE — they never load the .NET (mscoree) or Gecko (mshtml) runtimes — so suppress
+        // Wine's first-run installer dialogs, which would otherwise block the run on a GUI popup.
+        if (string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
+        {
+            psi.Environment["WINEDEBUG"] = "-all";
+            psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
+        }
+
+        if (environmentVariables is not null)
+        {
+            foreach (var (key, value) in environmentVariables)
+            {
+                psi.Environment[key] = value;
+            }
+        }
+
+        return psi;
+    }
+
+    private static (int ExitCode, string Stdout, string Stderr) RunProcessCaptureOutput(ProcessStartInfo psi, string? stdin)
+    {
+        using var p = StartProcessWithRetry(psi);
+        if (stdin is not null)
+        {
+            p.StandardInput.Write(stdin);
+            p.StandardInput.Close();
+        }
+
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        var timeout = TestProcessTimeout;
+        var timedOut = false;
+        if (timeout > TimeSpan.Zero && !p.WaitForExit((int)timeout.TotalMilliseconds))
+        {
+            timedOut = true;
+            try
+            {
+                p.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+            }
+            try
+            {
+                p.WaitForExit(5000);
+            }
+            catch
+            {
+            }
+        }
+
+        // Exited-on-its-own closes the pipes, so the read tasks complete; wait unconditionally to
+        // avoid truncating output under a saturated thread pool. Bound the wait only after a kill,
+        // where a leaked child may hold the pipe open and block the reads forever.
+        try
+        {
+            if (timedOut)
+            {
+                Task.WaitAll(new[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                Task.WaitAll(stdoutTask, stderrTask);
+            }
+        }
+        catch
+        {
+        }
+        p.WaitForExit();
+        var stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+        var stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+        if (timedOut)
+        {
+            var notice = $"test process timed out after {(long)timeout.TotalMilliseconds} ms and was killed";
+            stderr = string.IsNullOrEmpty(stderr) ? notice : stderr.TrimEnd() + "\n" + notice;
+            return (1, stdout, stderr);
+        }
+        return (p.ExitCode, stdout, stderr);
     }
 
     private static void RenderResults(List<TestResult> results, IAnsiConsole console)
@@ -1185,78 +1230,91 @@ public static class Runner
 
         public override void StartAccepting()
         {
-            _serverTask ??= Task.Run(async () =>
+            _serverTask ??= Task.Run(RunTlsFixtureServerAsync);
+        }
+
+        private async Task<string?> RunTlsFixtureServerAsync()
+        {
+            try
             {
+                using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
+                using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
+                client.ReceiveTimeout = 5000;
+                client.SendTimeout = 5000;
+                using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
                 try
                 {
-                    using var acceptCts = new CancellationTokenSource(TcpFixtureAcceptTimeout);
-                    using var client = await _listener.AcceptTcpClientAsync(acceptCts.Token).ConfigureAwait(false);
-                    client.ReceiveTimeout = 5000;
-                    client.SendTimeout = 5000;
-                    using var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
-                    try
-                    {
-                        await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false).ConfigureAwait(false);
-                    }
-                    catch (AuthenticationException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
-                    {
-                        return null;
-                    }
-                    catch (IOException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
-                    {
-                        return null;
-                    }
-
-                    if (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
-                    {
-                        return "tls fixture expected the client handshake to fail, but it succeeded";
-                    }
-
-                    if (_fixture.ExpectedText is not null)
-                    {
-                        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText);
-                        var receivedBytes = new byte[expectedBytes.Length];
-                        var read = 0;
-                        while (read < expectedBytes.Length)
-                        {
-                            var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read)).ConfigureAwait(false);
-                            if (n == 0)
-                            {
-                                return $"tls fixture expected '{_fixture.ExpectedText}' but connection closed early";
-                            }
-
-                            read += n;
-                        }
-
-                        if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
-                        {
-                            return $"tls fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
-                        }
-                    }
-
-                    if (_fixture.SendText is not null)
-                    {
-                        var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
-                        await stream.WriteAsync(sendBytes).ConfigureAwait(false);
-                        await stream.FlushAsync().ConfigureAwait(false);
-                        await stream.ShutdownAsync().ConfigureAwait(false);
-                    }
-
+                    await stream.AuthenticateAsServerAsync(_host.ServerCertificate, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13, checkCertificateRevocation: false).ConfigureAwait(false);
+                }
+                catch (AuthenticationException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
+                {
                     return null;
                 }
-                catch (OperationCanceledException)
+                catch (IOException) when (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                 {
-                    return $"tls fixture timed out waiting for connection after {FormatElapsed((long)TcpFixtureAcceptTimeout.TotalMilliseconds)}";
+                    return null;
                 }
-                catch (Exception ex)
+
+                if (_fixture.HandshakeMode == TlsFixtureHandshakeMode.Failure)
                 {
-                    return $"tls fixture failed: {ex.Message}";
+                    return "tls fixture expected the client handshake to fail, but it succeeded";
                 }
-                finally
+
+                if (_fixture.ExpectedText is not null)
                 {
-                    _listener.Stop();
+                    var mismatch = await ReadAndVerifyTlsExpectedTextAsync(stream).ConfigureAwait(false);
+                    if (mismatch is not null)
+                    {
+                        return mismatch;
+                    }
                 }
-            });
+
+                if (_fixture.SendText is not null)
+                {
+                    var sendBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.SendText);
+                    await stream.WriteAsync(sendBytes).ConfigureAwait(false);
+                    await stream.FlushAsync().ConfigureAwait(false);
+                    await stream.ShutdownAsync().ConfigureAwait(false);
+                }
+
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                return $"tls fixture timed out waiting for connection after {FormatElapsed((long)TcpFixtureAcceptTimeout.TotalMilliseconds)}";
+            }
+            catch (Exception ex)
+            {
+                return $"tls fixture failed: {ex.Message}";
+            }
+            finally
+            {
+                _listener.Stop();
+            }
+        }
+
+        private async Task<string?> ReadAndVerifyTlsExpectedTextAsync(SslStream stream)
+        {
+            var expectedBytes = System.Text.Encoding.UTF8.GetBytes(_fixture.ExpectedText!);
+            var receivedBytes = new byte[expectedBytes.Length];
+            var read = 0;
+            while (read < expectedBytes.Length)
+            {
+                var n = await stream.ReadAsync(receivedBytes.AsMemory(read, expectedBytes.Length - read)).ConfigureAwait(false);
+                if (n == 0)
+                {
+                    return $"tls fixture expected '{_fixture.ExpectedText}' but connection closed early";
+                }
+
+                read += n;
+            }
+
+            if (!receivedBytes.AsSpan().SequenceEqual(expectedBytes))
+            {
+                return $"tls fixture expected '{_fixture.ExpectedText}' but received '{System.Text.Encoding.UTF8.GetString(receivedBytes)}'";
+            }
+
+            return null;
         }
 
         public override IReadOnlyDictionary<string, string>? GetEnvironmentVariables()

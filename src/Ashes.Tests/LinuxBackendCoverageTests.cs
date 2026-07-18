@@ -891,14 +891,7 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             WriteSelfSignedServerPems(tmpDir);
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             foreach (var payload in new[] { "tls-one", "tls-two" })
             {
@@ -908,12 +901,7 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
 
@@ -973,24 +961,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            let route req =
-                async(match Ashes.Http.Server.path(req) with
-                    | "/health" -> Ashes.Http.Server.text(200)("ok")
-                    | "/echo" -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req))
-                    | "/ua" ->
-                        match Ashes.Http.Server.header(req)("user-agent") with
-                            | Some(ua) -> Ashes.Http.Server.text(200)(ua)
-                            | None -> Ashes.Http.Server.text(200)("no-ua")
-                    | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
-                    | _p -> Ashes.Http.Server.text(404)("not found"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = HttpRoutingServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -998,73 +969,89 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
-            var health = await HttpGetRawWithRetryAsync(port, "/health").ConfigureAwait(false);
-            health.ShouldContain("HTTP/1.1 200 OK");
-            health.ShouldContain("Content-Length: 2");
-            health.ShouldEndWith("ok");
-
-            var missing = await HttpGetRawWithRetryAsync(port, "/nope").ConfigureAwait(false);
-            missing.ShouldContain("HTTP/1.1 404 Not Found");
-            missing.ShouldEndWith("not found");
-
-            // Request body is available to the handler.
-            var echoed = await HttpRequestRawWithRetryAsync(port,
-                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9\r\nConnection: close\r\n\r\nhi-there!").ConfigureAwait(false);
-            echoed.ShouldEndWith("body=hi-there!");
-
-            // Request headers are read case-insensitively (handler asks "user-agent"; client sends "User-Agent").
-            var ua = await HttpRequestRawWithRetryAsync(port,
-                "GET /ua HTTP/1.1\r\nHost: localhost\r\nUser-Agent: probe/2.0\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
-            ua.ShouldEndWith("probe/2.0");
-
-            // json() sets an application/json Content-Type.
-            var data = await HttpGetRawWithRetryAsync(port, "/data").ConfigureAwait(false);
-            data.ShouldContain("Content-Type: application/json");
-            data.ShouldEndWith("{\"ok\":true}");
-
-            // A body larger than one read is buffered across receives (cross-read buffering).
-            var bigBody = new string('A', 100_000);
-            var bigEcho = await HttpRequestRawWithRetryAsync(port,
-                $"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: {bigBody.Length}\r\nConnection: close\r\n\r\n{bigBody}").ConfigureAwait(false);
-            bigEcho.ShouldEndWith("body=" + bigBody);
-
-            // Keep-alive: two requests on a single TCP connection, second response still correct.
-            var (first, second) = await HttpTwoRequestsOneConnectionAsync(port,
-                "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n",
-                "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
-            first.ShouldContain("HTTP/1.1 200 OK");
-            first.ShouldContain("Connection: keep-alive");
-            first.ShouldEndWith("ok");
-            second.ShouldContain("Content-Type: application/json");
-            second.ShouldEndWith("{\"ok\":true}");
-
-            // Pipelining across a split body: the tail of a POST body arrives in the same read as
-            // the NEXT request. The incremental body path must hand the handler exactly
-            // Content-Length bytes and carry the overshoot over as the next request's buffer.
-            var combined = await HttpTwoSegmentsOneConnectionAsync(port,
-                "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhello-",
-                "tail" + "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
-            combined.ShouldContain("body=hello-tail");
-            combined.ShouldContain("{\"ok\":true}");
+            await AssertHttpRoutingResponsesAsync(port).ConfigureAwait(false);
+            await AssertHttpBufferingAndPipeliningAsync(port).ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
+    }
+
+    private static string HttpRoutingServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Http.Server
+        import Ashes.Async
+        let route req =
+            async(match Ashes.Http.Server.path(req) with
+                | "/health" -> Ashes.Http.Server.text(200)("ok")
+                | "/echo" -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req))
+                | "/ua" ->
+                    match Ashes.Http.Server.header(req)("user-agent") with
+                        | Some(ua) -> Ashes.Http.Server.text(200)(ua)
+                        | None -> Ashes.Http.Server.text(200)("no-ua")
+                | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
+                | _p -> Ashes.Http.Server.text(404)("not found"))
+        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
+
+    private static async Task AssertHttpRoutingResponsesAsync(int port)
+    {
+        var health = await HttpGetRawWithRetryAsync(port, "/health").ConfigureAwait(false);
+        health.ShouldContain("HTTP/1.1 200 OK");
+        health.ShouldContain("Content-Length: 2");
+        health.ShouldEndWith("ok");
+
+        var missing = await HttpGetRawWithRetryAsync(port, "/nope").ConfigureAwait(false);
+        missing.ShouldContain("HTTP/1.1 404 Not Found");
+        missing.ShouldEndWith("not found");
+
+        // Request body is available to the handler.
+        var echoed = await HttpRequestRawWithRetryAsync(port,
+            "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9\r\nConnection: close\r\n\r\nhi-there!").ConfigureAwait(false);
+        echoed.ShouldEndWith("body=hi-there!");
+
+        // Request headers are read case-insensitively (handler asks "user-agent"; client sends "User-Agent").
+        var ua = await HttpRequestRawWithRetryAsync(port,
+            "GET /ua HTTP/1.1\r\nHost: localhost\r\nUser-Agent: probe/2.0\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
+        ua.ShouldEndWith("probe/2.0");
+
+        // json() sets an application/json Content-Type.
+        var data = await HttpGetRawWithRetryAsync(port, "/data").ConfigureAwait(false);
+        data.ShouldContain("Content-Type: application/json");
+        data.ShouldEndWith("{\"ok\":true}");
+    }
+
+    private static async Task AssertHttpBufferingAndPipeliningAsync(int port)
+    {
+        // A body larger than one read is buffered across receives (cross-read buffering).
+        var bigBody = new string('A', 100_000);
+        var bigEcho = await HttpRequestRawWithRetryAsync(port,
+            $"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: {bigBody.Length}\r\nConnection: close\r\n\r\n{bigBody}").ConfigureAwait(false);
+        bigEcho.ShouldEndWith("body=" + bigBody);
+
+        // Keep-alive: two requests on a single TCP connection, second response still correct.
+        var (first, second) = await HttpTwoRequestsOneConnectionAsync(port,
+            "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
+        first.ShouldContain("HTTP/1.1 200 OK");
+        first.ShouldContain("Connection: keep-alive");
+        first.ShouldEndWith("ok");
+        second.ShouldContain("Content-Type: application/json");
+        second.ShouldEndWith("{\"ok\":true}");
+
+        // Pipelining across a split body: the tail of a POST body arrives in the same read as
+        // the NEXT request. The incremental body path must hand the handler exactly
+        // Content-Length bytes and carry the overshoot over as the next request's buffer.
+        var combined = await HttpTwoSegmentsOneConnectionAsync(port,
+            "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhello-",
+            "tail" + "GET /data HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ConfigureAwait(false);
+        combined.ShouldContain("body=hello-tail");
+        combined.ShouldContain("{\"ok\":true}");
     }
 
     [Test]
@@ -1081,22 +1068,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            import Ashes.Text
-            let recursive repeat s n =
-                if n == 0
-                then s
-                else repeat(s + s)(n - 1)
-            let big = repeat("x")(14)
-            let route req =
-                async(Ashes.Http.Server.text(200)(big))
-            in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(1)(route)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = HttpKeepAliveMemoryServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -1104,14 +1076,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
             warm.ShouldContain("HTTP/1.1 200 OK");
@@ -1133,14 +1098,26 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string HttpKeepAliveMemoryServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Http.Server
+        import Ashes.Async
+        import Ashes.Text
+        let recursive repeat s n =
+            if n == 0
+            then s
+            else repeat(s + s)(n - 1)
+        let big = repeat("x")(14)
+        let route req =
+            async(Ashes.Http.Server.text(200)(big))
+        in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(1)(route)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     // Sends `count` identical keep-alive requests on one connection, fully reading each response
     // (headers + the fixed 16384-byte body) before sending the next.
@@ -1274,19 +1251,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(m) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped-clean")
-                | Error(e) -> Ashes.IO.print("err: " + e)
-            """;
+        var source = SigtermShutdownServerSource(port);
 
         // Single reactor keeps the signal/exit deterministic (no worker/pdeathsig race in the test).
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -1295,14 +1260,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // Wait until it accepts, then send SIGTERM and assert a clean stop.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1320,26 +1278,29 @@ public sealed class LinuxBackendCoverageTests
                 }
             }
 
-            using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
-            {
-                await kill.WaitForExitAsync().ConfigureAwait(false);
-            }
+            await SendSigtermAsync(proc.Id).ConfigureAwait(false);
 
-            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
-            exited.ShouldBeTrue();
-            proc.ExitCode.ShouldBe(0);
-            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-clean");
+            await AssertExitsCleanlyAsync(proc, "stopped-clean").ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string SigtermShutdownServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(m) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped-clean")
+            | Error(e) -> Ashes.IO.print("err: " + e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_stop_capability_should_stop_the_server()
@@ -1354,24 +1315,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Net.Tcp.send(client)("bye: " + msg) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_n) ->
-                                let _s = Stop.stop(Unit)
-                                in await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped-by-request")
-                | Error(e) -> Ashes.IO.print("err: " + e)
-            """;
+        var source = StopCapabilityServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1379,34 +1323,38 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // One client connects and sends; the handler replies, then requests stop.
             var reply = await ConnectSendReceiveWithRetryAsync(port, "now").ConfigureAwait(false);
             reply.ShouldBe("bye: now");
 
-            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
-            exited.ShouldBeTrue();
-            proc.ExitCode.ShouldBe(0);
-            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-by-request");
+            await AssertExitsCleanlyAsync(proc, "stopped-by-request").ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string StopCapabilityServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(msg) ->
+                    match await Ashes.Net.Tcp.send(client)("bye: " + msg) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(_n) ->
+                            let _s = Stop.stop(Unit)
+                            in await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped-by-request")
+            | Error(e) -> Ashes.IO.print("err: " + e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_shutdown_should_drain_inflight_handlers()
@@ -1420,25 +1368,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Async.sleep(700) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_t) ->
-                                match await Ashes.Net.Tcp.send(client)("done: " + msg) with
-                                    | Error(e3) -> Error(e3)
-                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped-clean")
-                | Error(e) -> Ashes.IO.print("err: " + e)
-            """;
+        var source = DrainShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1446,14 +1376,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // Open a connection and send; the handler sleeps 700 ms before replying.
             using var client = new TcpClient();
@@ -1474,10 +1397,7 @@ public sealed class LinuxBackendCoverageTests
             await stream.WriteAsync(Encoding.UTF8.GetBytes("drain-me")).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
             // Give the server a moment to accept and spawn the handler, then SIGTERM mid-sleep.
             await Task.Delay(200).ConfigureAwait(false);
-            using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
-            {
-                await kill.WaitForExitAsync().ConfigureAwait(false);
-            }
+            await SendSigtermAsync(proc.Id).ConfigureAwait(false);
 
             // The in-flight handler must still complete and the reply must arrive.
             var buf = new byte[256];
@@ -1485,21 +1405,33 @@ public sealed class LinuxBackendCoverageTests
             Encoding.UTF8.GetString(buf, 0, n).ShouldBe("done: drain-me");
 
             // And the server must then exit cleanly, well before the 10 s drain bound.
-            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
-            exited.ShouldBeTrue();
-            proc.ExitCode.ShouldBe(0);
-            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-clean");
+            await AssertExitsCleanlyAsync(proc, "stopped-clean").ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string DrainShutdownServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(msg) ->
+                    match await Ashes.Async.sleep(700) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(_t) ->
+                            match await Ashes.Net.Tcp.send(client)("done: " + msg) with
+                                | Error(e3) -> Error(e3)
+                                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped-clean")
+            | Error(e) -> Ashes.IO.print("err: " + e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_shutdown_should_forward_to_workers_and_reap_them()
@@ -1513,19 +1445,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(m) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped-clean")
-                | Error(e) -> Ashes.IO.print("err: " + e)
-            """;
+        var source = WorkerForwardShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -1533,14 +1453,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // Wait for a worker to accept, then SIGTERM the parent only.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1557,39 +1470,47 @@ public sealed class LinuxBackendCoverageTests
                     await Task.Delay(50).ConfigureAwait(false);
                 }
             }
-            using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
-            {
-                await kill.WaitForExitAsync().ConfigureAwait(false);
-            }
+            await SendSigtermAsync(proc.Id).ConfigureAwait(false);
 
-            var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
-            exited.ShouldBeTrue();
-            proc.ExitCode.ShouldBe(0);
-            (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain("stopped-clean");
+            await AssertExitsCleanlyAsync(proc, "stopped-clean").ConfigureAwait(false);
 
             // All workers must be gone with the parent: the port must refuse new connections.
-            await Task.Delay(200).ConfigureAwait(false);
-            var refused = false;
-            try
-            {
-                using var probe = new TcpClient();
-                await probe.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                refused = true;
-            }
-            refused.ShouldBeTrue("workers should have drained and exited with the parent");
+            await AssertPortRefusesConnectionsAsync(port).ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
+    }
+
+    private static string WorkerForwardShutdownServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(m) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped-clean")
+            | Error(e) -> Ashes.IO.print("err: " + e)
+        """;
+
+    private static async Task AssertPortRefusesConnectionsAsync(int port)
+    {
+        await Task.Delay(200).ConfigureAwait(false);
+        var refused = false;
+        try
+        {
+            using var probe = new TcpClient();
+            await probe.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            refused = true;
+        }
+        refused.ShouldBeTrue("workers should have drained and exited with the parent");
     }
 
     [Test]
@@ -1603,22 +1524,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Async.sleep(60000) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_t) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped-clean")
-                | Error(e) -> Ashes.IO.print("err: " + e)
-            """;
+        var source = ForceExitShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1626,14 +1532,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             using var client = new TcpClient();
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1654,15 +1553,9 @@ public sealed class LinuxBackendCoverageTests
             await Task.Delay(200).ConfigureAwait(false);
 
             // First signal starts the drain (60 s handler keeps it alive), second forces exit(0).
-            using (var kill1 = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
-            {
-                await kill1.WaitForExitAsync().ConfigureAwait(false);
-            }
+            await SendSigtermAsync(proc.Id).ConfigureAwait(false);
             await Task.Delay(300).ConfigureAwait(false);
-            using (var kill2 = Process.Start(new ProcessStartInfo("kill", $"-TERM {proc.Id}") { UseShellExecute = false })!)
-            {
-                await kill2.WaitForExitAsync().ConfigureAwait(false);
-            }
+            await SendSigtermAsync(proc.Id).ConfigureAwait(false);
 
             var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
             exited.ShouldBeTrue();
@@ -1670,14 +1563,26 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ForceExitShutdownServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(msg) ->
+                    match await Ashes.Async.sleep(60000) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(_t) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped-clean")
+            | Error(e) -> Ashes.IO.print("err: " + e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_parse_query_and_reject_oversized()
@@ -1690,18 +1595,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            let onReq req =
-                async(match Ashes.Http.Server.queryParam(req)("name") with
-                    | Some(v) -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " n=" + v)
-                    | None -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " none"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = QueryParsingServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1709,14 +1603,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1739,14 +1626,22 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string QueryParsingServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Http.Server
+        import Ashes.Async
+        let onReq req =
+            async(match Ashes.Http.Server.queryParam(req)("name") with
+                | Some(v) -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " n=" + v)
+                | None -> Ashes.Http.Server.text(200)("p=" + Ashes.Http.Server.path(req) + " none"))
+        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_stream_a_chunked_response()
@@ -1760,24 +1655,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Text
-            import Ashes.Http.Server
-            import Ashes.Async
-            let step acc =
-                async(match Ashes.Text.parseInt(acc) with
-                    | Error(_e) -> StreamDone
-                    | Ok(i) ->
-                        if i >= 3
-                        then StreamDone
-                        else StreamChunk("part" + Ashes.Text.fromInt(i) + "-")(Ashes.Text.fromInt(i + 1)))
-            let route _req =
-                async(Ashes.Http.Server.streamed(200)("Content-Type: text/plain\r\n")("0")(step))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ChunkedResponseServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1785,14 +1663,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var raw = await HttpGetRawWithRetryAsync(port, "/stream").ConfigureAwait(false);
             raw.ShouldContain("Transfer-Encoding: chunked");
@@ -1807,14 +1678,28 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ChunkedResponseServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Text
+        import Ashes.Http.Server
+        import Ashes.Async
+        let step acc =
+            async(match Ashes.Text.parseInt(acc) with
+                | Error(_e) -> StreamDone
+                | Ok(i) ->
+                    if i >= 3
+                    then StreamDone
+                    else StreamChunk("part" + Ashes.Text.fromInt(i) + "-")(Ashes.Text.fromInt(i + 1)))
+        let route _req =
+            async(Ashes.Http.Server.streamed(200)("Content-Type: text/plain\r\n")("0")(step))
+        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_decode_a_chunked_request_body()
@@ -1827,15 +1712,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            let onReq req = async(Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ChunkedRequestServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -1843,14 +1720,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1881,14 +1751,19 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ChunkedRequestServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Http.Server
+        import Ashes.Async
+        let onReq req = async(Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
+        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_decode_chunked_frames_across_many_writes()
@@ -1904,19 +1779,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Text
-            import Ashes.Http.Server
-            import Ashes.Async
-            let onReq req =
-                async(match Ashes.Http.Server.path(req) with
-                    | "/len" -> Ashes.Http.Server.text(200)("len=" + Ashes.Text.fromInt(Ashes.Text.byteLength(Ashes.Http.Server.body(req))))
-                    | _p -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ChunkedFramesServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1924,64 +1787,71 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
-            var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
-            while (true)
-            {
-                try
-                {
-                    using var client = new TcpClient();
-                    await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-                    var stream = client.GetStream();
-                    await using (stream.ConfigureAwait(false))
-                    {
-                        // 30 frames of 100 bytes; the full wire text is cut into 37-byte writes so
-                        // frame boundaries never align with write boundaries.
-                        var piece = new string('x', 100);
-                        var wire = new StringBuilder("POST /body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
-                        for (int i = 0; i < 30; i++)
-                        {
-                            wire.Append("64\r\n").Append(piece).Append("\r\n");
-                        }
-                        wire.Append("0\r\n\r\n");
-                        // Pipelined second request in the same final write as the terminator.
-                        wire.Append("GET /len HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                        var wireBytes = Encoding.ASCII.GetBytes(wire.ToString());
-                        for (int off = 0; off < wireBytes.Length; off += 37)
-                        {
-                            int n = Math.Min(37, wireBytes.Length - off);
-                            await stream.WriteAsync(wireBytes.AsMemory(off, n)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-                            await Task.Delay(2).ConfigureAwait(false);
-                        }
-                        using var reader = new StreamReader(stream, Encoding.UTF8);
-                        var replies = (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
-                        replies.ShouldContain("body=" + string.Concat(Enumerable.Repeat(piece, 30)));
-                        replies.ShouldEndWith("len=0");
-                        break;
-                    }
-                }
-                catch (Exception) when (DateTime.UtcNow < deadline)
-                {
-                    await Task.Delay(50).ConfigureAwait(false);
-                }
-            }
+            await AssertChunkedFramesDecodedAcrossManyWritesAsync(port).ConfigureAwait(false);
         }
         finally
         {
-            if (proc is not null)
+            CleanUpServerProcess(proc, exePath, tmpDir);
+        }
+    }
+
+    private static string ChunkedFramesServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Text
+        import Ashes.Http.Server
+        import Ashes.Async
+        let onReq req =
+            async(match Ashes.Http.Server.path(req) with
+                | "/len" -> Ashes.Http.Server.text(200)("len=" + Ashes.Text.fromInt(Ashes.Text.byteLength(Ashes.Http.Server.body(req))))
+                | _p -> Ashes.Http.Server.text(200)("body=" + Ashes.Http.Server.body(req)))
+        in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(onReq)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
+
+    private static async Task AssertChunkedFramesDecodedAcrossManyWritesAsync(int port)
+    {
+        var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
+        while (true)
+        {
+            try
             {
-                TryKillProcess(proc);
+                using var client = new TcpClient();
+                await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                var stream = client.GetStream();
+                await using (stream.ConfigureAwait(false))
+                {
+                    // 30 frames of 100 bytes; the full wire text is cut into 37-byte writes so
+                    // frame boundaries never align with write boundaries.
+                    var piece = new string('x', 100);
+                    var wire = new StringBuilder("POST /body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+                    for (int i = 0; i < 30; i++)
+                    {
+                        wire.Append("64\r\n").Append(piece).Append("\r\n");
+                    }
+                    wire.Append("0\r\n\r\n");
+                    // Pipelined second request in the same final write as the terminator.
+                    wire.Append("GET /len HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    var wireBytes = Encoding.ASCII.GetBytes(wire.ToString());
+                    for (int off = 0; off < wireBytes.Length; off += 37)
+                    {
+                        int n = Math.Min(37, wireBytes.Length - off);
+                        await stream.WriteAsync(wireBytes.AsMemory(off, n)).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                        await Task.Delay(2).ConfigureAwait(false);
+                    }
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    var replies = (await reader.ReadToEndAsync().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false)).Trim();
+                    replies.ShouldContain("body=" + string.Concat(Enumerable.Repeat(piece, 30)));
+                    replies.ShouldEndWith("len=0");
+                    break;
+                }
             }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            catch (Exception) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50).ConfigureAwait(false);
+            }
         }
     }
 
@@ -1998,16 +1868,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            let route req =
-                async(Ashes.Http.Server.text(200)("ok"))
-            in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(3)(route)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ConcurrentHttpServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -2015,14 +1876,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // Readiness.
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
@@ -2054,14 +1908,20 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ConcurrentHttpServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Http.Server
+        import Ashes.Async
+        let route req =
+            async(Ashes.Http.Server.text(200)("ok"))
+        in match Ashes.Async.run(Ashes.Http.Server.serveParallel({{port}})(3)(route)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_serve_parallel_should_serve_across_workers()
@@ -2075,22 +1935,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onConn client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Net.Tcp.send(client)("echo:" + msg) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ServeParallelEchoServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -2098,14 +1943,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             int served = 0;
@@ -2136,14 +1974,26 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ServeParallelEchoServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onConn client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(msg) ->
+                    match await Ashes.Net.Tcp.send(client)("echo:" + msg) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serveParallel({{port}})(3)(onConn)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_read_across_a_parking_receive()
@@ -2158,28 +2008,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            import Ashes.String
-            let onClient client =
-                async(let recursive loop buffered =
-                    if Ashes.String.length(buffered) >= 11
-                    then
-                        match await Ashes.Net.Tcp.send(client)("got:" + buffered) with
-                            | Error(e) -> Error(e)
-                            | Ok(_n) -> await Ashes.Net.Tcp.close(client)
-                    else
-                        match await Ashes.Net.Tcp.receive(client)(65536) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(chunk) -> loop(buffered + chunk)
-                in loop(""))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ParkingReceiveServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -2187,14 +2016,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -2223,14 +2045,32 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ParkingReceiveServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        import Ashes.String
+        let onClient client =
+            async(let recursive loop buffered =
+                if Ashes.String.length(buffered) >= 11
+                then
+                    match await Ashes.Net.Tcp.send(client)("got:" + buffered) with
+                        | Error(e) -> Error(e)
+                        | Ok(_n) -> await Ashes.Net.Tcp.close(client)
+                else
+                    match await Ashes.Net.Tcp.receive(client)(65536) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(chunk) -> loop(buffered + chunk)
+            in loop(""))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_serve_connections_concurrently()
@@ -2244,25 +2084,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onClient client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Async.sleep(300) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_t) ->
-                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
-                                    | Error(e3) -> Error(e3)
-                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = ConcurrentConnectionsServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
         var tmpDir = CreateTempDirectory();
@@ -2270,14 +2092,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             // Wait for the listener, then fire four clients at once.
             _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
@@ -2299,14 +2114,29 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
     }
+
+    private static string ConcurrentConnectionsServerSource(int port) => $$"""
+        import Ashes.IO
+        import Ashes.Net.Tcp
+        import Ashes.Net.Tcp.Server
+        import Ashes.Async
+        let onClient client =
+            async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                | Error(e) -> Error(e)
+                | Ok(msg) ->
+                    match await Ashes.Async.sleep(300) with
+                        | Error(e2) -> Error(e2)
+                        | Ok(_t) ->
+                            match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                                | Error(e3) -> Error(e3)
+                                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+        in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            | Ok(_u) -> Ashes.IO.print("stopped")
+            | Error(e) -> Ashes.IO.print(e)
+        """;
 
     [Test]
     public async Task Linux_backend_llvm_should_run_a_tcp_echo_server_via_serve()
@@ -2343,14 +2173,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            TestProcessHelper.WriteExecutable(exePath, elfBytes);
-            proc = Process.Start(new ProcessStartInfo(exePath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tmpDir,
-            })!;
+            proc = StartServerProcess(exePath, tmpDir, elfBytes);
 
             foreach (var payload in new[] { "linux-one", "linux-two", "linux-three" })
             {
@@ -2360,13 +2183,48 @@ public sealed class LinuxBackendCoverageTests
         }
         finally
         {
-            if (proc is not null)
-            {
-                TryKillProcess(proc);
-            }
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            CleanUpServerProcess(proc, exePath, tmpDir);
         }
+    }
+
+    // Writes the compiled ELF image to exePath and starts it with redirected stdio.
+    private static Process StartServerProcess(string exePath, string tmpDir, byte[] elfBytes)
+    {
+        TestProcessHelper.WriteExecutable(exePath, elfBytes);
+        return Process.Start(new ProcessStartInfo(exePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = tmpDir,
+        })!;
+    }
+
+    private static void CleanUpServerProcess(Process? proc, string exePath, string tmpDir)
+    {
+        if (proc is not null)
+        {
+            TryKillProcess(proc);
+        }
+        DeleteFileIfExists(exePath);
+        DeleteDirectoryIfExists(tmpDir);
+    }
+
+    private static async Task SendSigtermAsync(int pid)
+    {
+        using (var kill = Process.Start(new ProcessStartInfo("kill", $"-TERM {pid}") { UseShellExecute = false })!)
+        {
+            await kill.WaitForExitAsync().ConfigureAwait(false);
+        }
+    }
+
+    // Waits for the server process to exit on its own, then asserts a clean stop message.
+    private static async Task AssertExitsCleanlyAsync(Process proc, string expectedOutput)
+    {
+        var exited = await Task.Run(() => proc.WaitForExit(5000)).ConfigureAwait(false);
+        exited.ShouldBeTrue();
+        proc.ExitCode.ShouldBe(0);
+        (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain(expectedOutput);
     }
 
     private static IrProgram LowerProgramWithImports(string source)

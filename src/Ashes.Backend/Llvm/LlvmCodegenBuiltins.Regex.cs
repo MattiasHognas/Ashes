@@ -281,6 +281,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, matched, matchedBlock, contBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, matchedBlock);
+        EmitRegexCapturesBuildList(state, rc, ovector, subjBytes, resultSlot, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        LlvmApi.BuildStore(builder, saved, cursorGlobal); // reclaim scratch
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "rx_cap_result_val");
+    }
+
+    private static void EmitRegexCapturesBuildList(
+        LlvmCodegenState state, LlvmValueHandle rc, LlvmValueHandle ovector, LlvmValueHandle subjBytes,
+        LlvmValueHandle resultSlot, LlvmBasicBlockHandle contBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle count = LlvmApi.BuildSExt(builder, rc, state.I64, "rx_cap_count");
         LlvmValueHandle listSlot = LlvmApi.BuildAlloca(builder, state.I64, "rx_cap_list");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), listSlot); // Nil
@@ -310,18 +322,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle isUnset = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, groupStart, LlvmApi.ConstInt(state.I64, 0xFFFFFFFFFFFFFFFFUL, 0), "rx_cap_unset_cmp");
         LlvmApi.BuildCondBr(builder, isUnset, unsetBlock, setBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, unsetBlock);
-        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0), elemSlot); // None
-        LlvmApi.BuildBr(builder, elemCont);
-
-        LlvmApi.PositionBuilderAtEnd(builder, setBlock);
-        LlvmValueHandle groupLen = LlvmApi.BuildSub(builder, groupEnd, groupStart, "rx_cap_glen");
-        LlvmValueHandle groupPtr = LlvmApi.BuildGEP2(builder, state.I8, subjBytes, [groupStart], "rx_cap_gptr");
-        LlvmValueHandle view = EmitStringView(state, groupPtr, groupLen, "rx_cap_view");
-        LlvmValueHandle someElem = EmitAllocAdt(state, 1, 1);
-        StoreMemory(state, someElem, 8, view, "rx_cap_some");
-        LlvmApi.BuildStore(builder, someElem, elemSlot);
-        LlvmApi.BuildBr(builder, elemCont);
+        EmitRegexCapturesElement(state, subjBytes, groupStart, groupEnd, elemSlot, unsetBlock, setBlock, elemCont);
 
         LlvmApi.PositionBuilderAtEnd(builder, elemCont);
         LlvmValueHandle cons = EmitAlloc(state, 16);
@@ -335,10 +336,26 @@ internal static partial class LlvmCodegen
         StoreMemory(state, someList, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "rx_cap_final_list"), "rx_cap_some_list");
         LlvmApi.BuildStore(builder, someList, resultSlot);
         LlvmApi.BuildBr(builder, contBlock);
+    }
 
-        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
-        LlvmApi.BuildStore(builder, saved, cursorGlobal); // reclaim scratch
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "rx_cap_result_val");
+    private static void EmitRegexCapturesElement(
+        LlvmCodegenState state, LlvmValueHandle subjBytes, LlvmValueHandle groupStart, LlvmValueHandle groupEnd,
+        LlvmValueHandle elemSlot, LlvmBasicBlockHandle unsetBlock, LlvmBasicBlockHandle setBlock, LlvmBasicBlockHandle elemCont)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmApi.PositionBuilderAtEnd(builder, unsetBlock);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0), elemSlot); // None
+        LlvmApi.BuildBr(builder, elemCont);
+
+        LlvmApi.PositionBuilderAtEnd(builder, setBlock);
+        LlvmValueHandle groupLen = LlvmApi.BuildSub(builder, groupEnd, groupStart, "rx_cap_glen");
+        LlvmValueHandle groupPtr = LlvmApi.BuildGEP2(builder, state.I8, subjBytes, [groupStart], "rx_cap_gptr");
+        LlvmValueHandle view = EmitStringView(state, groupPtr, groupLen, "rx_cap_view");
+        LlvmValueHandle someElem = EmitAllocAdt(state, 1, 1);
+        StoreMemory(state, someElem, 8, view, "rx_cap_some");
+        LlvmApi.BuildStore(builder, someElem, elemSlot);
+        LlvmApi.BuildBr(builder, elemCont);
     }
 
     // substitute(code, subject, replacement) -> Str : global replace, $1 group refs.
@@ -384,6 +401,24 @@ internal static partial class LlvmCodegen
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rx_sub_done");
         LlvmApi.BuildCondBr(builder, overflow, retryBlock, doneBlock);
 
+        EmitRegexSubstituteRetry(state, subFnType, subFn, options, code, subjBytes, subjLen, replBytes, replLen,
+            outlenSlot, bufSlot, retryBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmValueHandle outlen = LlvmApi.BuildLoad2(builder, state.I64, outlenSlot, "rx_sub_outlen_val");
+        LlvmValueHandle buf = LlvmApi.BuildLoad2(builder, state.I64, bufSlot, "rx_sub_buf_val");
+        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, LlvmApi.BuildIntToPtr(builder, buf, state.I8Ptr, "rx_sub_buf_ptr"), outlen, "rx_sub_result");
+        LlvmApi.BuildStore(builder, saved, cursorGlobal); // reclaim scratch
+        return result;
+    }
+
+    private static void EmitRegexSubstituteRetry(
+        LlvmCodegenState state, LlvmTypeHandle subFnType, LlvmValueHandle subFn, ulong options,
+        LlvmValueHandle code, LlvmValueHandle subjBytes, LlvmValueHandle subjLen, LlvmValueHandle replBytes, LlvmValueHandle replLen,
+        LlvmValueHandle outlenSlot, LlvmValueHandle bufSlot, LlvmBasicBlockHandle retryBlock, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         // Retry once with exactly the required length (outlen holds it after an OVERFLOW_LENGTH probe).
         LlvmApi.PositionBuilderAtEnd(builder, retryBlock);
         LlvmValueHandle need = LlvmApi.BuildLoad2(builder, state.I64, outlenSlot, "rx_sub_need");
@@ -399,12 +434,5 @@ internal static partial class LlvmCodegen
             ],
             "rx_sub_rc1");
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        LlvmValueHandle outlen = LlvmApi.BuildLoad2(builder, state.I64, outlenSlot, "rx_sub_outlen_val");
-        LlvmValueHandle buf = LlvmApi.BuildLoad2(builder, state.I64, bufSlot, "rx_sub_buf_val");
-        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, LlvmApi.BuildIntToPtr(builder, buf, state.I8Ptr, "rx_sub_buf_ptr"), outlen, "rx_sub_result");
-        LlvmApi.BuildStore(builder, saved, cursorGlobal); // reclaim scratch
-        return result;
     }
 }

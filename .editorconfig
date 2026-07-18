@@ -20,10 +20,9 @@ insert_final_newline = true
 # File-name-must-match-type: repo intentionally uses topic partial-class files
 # (e.g. LlvmCodegenBuiltins.Async.cs holding `partial class LlvmCodegen`).
 dotnet_diagnostic.MA0048.severity = none
-# Method length owned by MA0051 at its default threshold; enforced as `warning`
-# in a follow-up once the over-long methods are split — `suggestion` for now.
-dotnet_diagnostic.MA0051.severity = suggestion
-# Defer to Meziantou on the method-length overlap (S138 is Sonar's version).
+# Method length: enforce MA0051 (60 lines / 40 statements) as a build-breaking warning.
+dotnet_diagnostic.MA0051.severity = warning
+# Defer to Meziantou MA0051 on the method-length overlap (S138 is Sonar's version).
 dotnet_diagnostic.S138.severity = none
 
 # ── Rules disabled as inappropriate for a performance-sensitive compiler ──────
@@ -75,6 +74,10 @@ dotnet_diagnostic.S1994.severity = suggestion   # for-loop condition
 dotnet_diagnostic.S3881.severity = suggestion   # IDisposable pattern
 dotnet_diagnostic.S6608.severity = suggestion   # indexing over First/Last (test code)
 dotnet_diagnostic.MA0084.severity = suggestion  # local hides outer symbol
+
+# Generated EF Core migrations are machine-written; exempt from method-length limits.
+[src/Ashes.Registry/Storage/Migrations/*.cs]
+dotnet_diagnostic.MA0051.severity = none
 
 [*.txt]
 insert_final_newline = false

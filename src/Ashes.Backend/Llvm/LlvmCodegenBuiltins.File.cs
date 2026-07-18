@@ -46,6 +46,27 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, openBlock);
 
+        (LlvmValueHandle fd, LlvmValueHandle len) = EmitLinuxFileMmapProbe(state, pathCstr, fdSlot, openBlock, seekBlock, emptyBlock, emptyOkBlock, mapBlock, closeErrBlock, errBlock);
+        EmitLinuxFileMmapFinish(state, fd, len, fdSlot, resultSlot, emptyOkBlock, mapBlock, okBlock, closeErrBlock, errBlock, contBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_mmap_result_value");
+    }
+
+    private static (LlvmValueHandle Fd, LlvmValueHandle Len) EmitLinuxFileMmapProbe(
+        LlvmCodegenState state,
+        LlvmValueHandle pathCstr,
+        LlvmValueHandle fdSlot,
+        LlvmBasicBlockHandle openBlock,
+        LlvmBasicBlockHandle seekBlock,
+        LlvmBasicBlockHandle emptyBlock,
+        LlvmBasicBlockHandle emptyOkBlock,
+        LlvmBasicBlockHandle mapBlock,
+        LlvmBasicBlockHandle closeErrBlock,
+        LlvmBasicBlockHandle errBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         // open(path, O_RDONLY, 0)
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
         LlvmValueHandle fd = EmitLinuxSyscall(state, SyscallOpen,
@@ -64,6 +85,24 @@ internal static partial class LlvmCodegen
         // An empty file can't be mmap'd (length 0) — return an empty owned Bytes.
         LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_is_empty"), emptyOkBlock, mapBlock);
+
+        return (fd, len);
+    }
+
+    private static void EmitLinuxFileMmapFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle fd,
+        LlvmValueHandle len,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle emptyOkBlock,
+        LlvmBasicBlockHandle mapBlock,
+        LlvmBasicBlockHandle okBlock,
+        LlvmBasicBlockHandle closeErrBlock,
+        LlvmBasicBlockHandle errBlock,
+        LlvmBasicBlockHandle contBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, emptyOkBlock);
         EmitLinuxSyscall(state, SyscallClose, fd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "fs_mmap_empty_close");
@@ -98,9 +137,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, errBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileReadFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, contBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, contBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_mmap_result_value");
     }
 
     private static LlvmValueHandle EmitFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
@@ -147,6 +183,29 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, openBlock);
 
+        LlvmValueHandle fileLength = EmitLinuxFileReadTextOpenAndMeasure(state, pathCstr, fdSlot, openBlock, seekEndBlock, seekStartBlock, allocBlock, maybeCloseErrorBlock, returnErrorBlock);
+        EmitLinuxFileReadTextAllocate(state, rawBytes, fileLength, stringSlot, remainingSlot, cursorSlot, allocBlock, readCheckBlock, utf8CheckBlock, maybeCloseErrorBlock);
+        EmitLinuxFileReadTextReadLoop(state, fdSlot, remainingSlot, cursorSlot, readCheckBlock, readBodyBlock, readDoneBlock, utf8CheckBlock, maybeCloseErrorBlock);
+        EmitLinuxFileReadTextValidateAndClose(state, rawBytes, fdSlot, stringSlot, resultSlot, utf8CheckBlock, closeOkBlock, closeInvalidBlock, continueBlock);
+        EmitLinuxFileReadTextErrorPaths(state, fdSlot, resultSlot, maybeCloseErrorBlock, closeHandleBlock, returnErrorBlock, closeErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_read_result_value");
+    }
+
+    private static LlvmValueHandle EmitLinuxFileReadTextOpenAndMeasure(
+        LlvmCodegenState state,
+        LlvmValueHandle pathCstr,
+        LlvmValueHandle fdSlot,
+        LlvmBasicBlockHandle openBlock,
+        LlvmBasicBlockHandle seekEndBlock,
+        LlvmBasicBlockHandle seekStartBlock,
+        LlvmBasicBlockHandle allocBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
         LlvmValueHandle fd = EmitLinuxSyscall(
             state,
@@ -181,6 +240,23 @@ internal static partial class LlvmCodegen
         LlvmValueHandle seekStartFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, seekStart, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_seek_start_failed");
         LlvmApi.BuildCondBr(builder, seekStartFailed, maybeCloseErrorBlock, allocBlock);
 
+        return fileLength;
+    }
+
+    private static void EmitLinuxFileReadTextAllocate(
+        LlvmCodegenState state,
+        bool rawBytes,
+        LlvmValueHandle fileLength,
+        LlvmValueHandle stringSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmBasicBlockHandle allocBlock,
+        LlvmBasicBlockHandle readCheckBlock,
+        LlvmBasicBlockHandle utf8CheckBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, allocBlock);
         var withinLimitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_read_within_limit");
         if (rawBytes)
@@ -209,6 +285,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, GetStringBytesAddress(state, stringRef, "fs_read_cursor_start"), cursorSlot);
         LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fileLength, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_empty");
         LlvmApi.BuildCondBr(builder, isEmpty, utf8CheckBlock, readCheckBlock);
+    }
+
+    private static void EmitLinuxFileReadTextReadLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmBasicBlockHandle readCheckBlock,
+        LlvmBasicBlockHandle readBodyBlock,
+        LlvmBasicBlockHandle readDoneBlock,
+        LlvmBasicBlockHandle utf8CheckBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, readCheckBlock);
         LlvmValueHandle remaining = LlvmApi.BuildLoad2(builder, state.I64, remainingSlot, "fs_read_remaining_value");
@@ -231,6 +321,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, remaining, readBytes, "fs_read_remaining_next"), remainingSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cursorAddress, readBytes, "fs_read_cursor_next"), cursorSlot);
         LlvmApi.BuildBr(builder, readCheckBlock);
+    }
+
+    private static void EmitLinuxFileReadTextValidateAndClose(
+        LlvmCodegenState state,
+        bool rawBytes,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle stringSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle utf8CheckBlock,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeInvalidBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, utf8CheckBlock);
         if (rawBytes)
@@ -270,6 +374,19 @@ internal static partial class LlvmCodegen
             "fs_read_close_invalid_call");
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileReadInvalidUtf8Message)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
+    }
+
+    private static void EmitLinuxFileReadTextErrorPaths(
+        LlvmCodegenState state,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle closeHandleBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, maybeCloseErrorBlock);
         LlvmValueHandle fdValue = LlvmApi.BuildLoad2(builder, state.I64, fdSlot, "fs_read_error_fd");
@@ -292,9 +409,6 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, closeErrorBlock);
         LlvmApi.BuildBr(builder, returnErrorBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_read_result_value");
     }
 
     private static LlvmValueHandle EmitLinuxFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
@@ -319,6 +433,30 @@ internal static partial class LlvmCodegen
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_write_continue");
 
         LlvmApi.BuildBr(builder, openBlock);
+
+        EmitLinuxFileWriteTextLoop(state, pathCstr, textRef, fdSlot, remainingSlot, cursorSlot, openBlock, loopCheckBlock, loopBodyBlock, advanceBlock, closeOkBlock, maybeCloseErrorBlock, returnErrorBlock);
+        EmitLinuxFileWriteTextFinish(state, fdSlot, resultSlot, closeOkBlock, maybeCloseErrorBlock, closeErrorBlock, returnErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_result_value");
+    }
+
+    private static void EmitLinuxFileWriteTextLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle pathCstr,
+        LlvmValueHandle textRef,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmBasicBlockHandle openBlock,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle loopBodyBlock,
+        LlvmBasicBlockHandle advanceBlock,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
         LlvmValueHandle fd = EmitLinuxSyscall(
@@ -355,6 +493,19 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, remaining, bytesWritten, "fs_write_remaining_next"), remainingSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cursorAddress, bytesWritten, "fs_write_cursor_next"), cursorSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitLinuxFileWriteTextFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitLinuxSyscall(
@@ -385,9 +536,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, returnErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_result_value");
     }
 
     private static LlvmValueHandle EmitLinuxFileWriteBytes(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle bytesAddress, LlvmValueHandle byteCount)
@@ -412,6 +560,31 @@ internal static partial class LlvmCodegen
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fs_write_bytes_continue");
 
         LlvmApi.BuildBr(builder, openBlock);
+
+        EmitLinuxFileWriteBytesLoop(state, pathCstr, bytesAddress, byteCount, fdSlot, remainingSlot, cursorSlot, openBlock, loopCheckBlock, loopBodyBlock, advanceBlock, closeOkBlock, maybeCloseErrorBlock, returnErrorBlock);
+        EmitLinuxFileWriteBytesFinish(state, fdSlot, resultSlot, closeOkBlock, maybeCloseErrorBlock, closeErrorBlock, returnErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_bytes_result_value");
+    }
+
+    private static void EmitLinuxFileWriteBytesLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle pathCstr,
+        LlvmValueHandle bytesAddress,
+        LlvmValueHandle byteCount,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmBasicBlockHandle openBlock,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle loopBodyBlock,
+        LlvmBasicBlockHandle advanceBlock,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, openBlock);
         LlvmValueHandle fd = EmitLinuxSyscall(
@@ -448,6 +621,19 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, remaining, bytesWritten, "fs_write_bytes_remaining_next"), remainingSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cursorAddress, bytesWritten, "fs_write_bytes_cursor_next"), cursorSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitLinuxFileWriteBytesFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle fdSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle maybeCloseErrorBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitLinuxSyscall(
@@ -478,9 +664,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, returnErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_bytes_result_value");
     }
 
     private static LlvmValueHandle EmitLinuxFileExists(LlvmCodegenState state, LlvmValueHandle pathRef)
@@ -558,6 +741,23 @@ internal static partial class LlvmCodegen
         LlvmValueHandle openFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, handle, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), "fs_read_handle_invalid");
         LlvmApi.BuildCondBr(builder, openFailed, returnErrorBlock, readBlock);
 
+        LlvmValueHandle stringRef = EmitWindowsFileReadTextRead(state, handleSlot, bytesReadSlot, readBlock, utf8Block, closeErrorBlock);
+        EmitWindowsFileReadTextFinish(state, rawBytes, stringRef, handleSlot, resultSlot, utf8Block, closeOkBlock, closeInvalidBlock, closeErrorBlock, returnErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_read_win_result_value");
+    }
+
+    private static LlvmValueHandle EmitWindowsFileReadTextRead(
+        LlvmCodegenState state,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle bytesReadSlot,
+        LlvmBasicBlockHandle readBlock,
+        LlvmBasicBlockHandle utf8Block,
+        LlvmBasicBlockHandle closeErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
         LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.ConstInt(state.I64, MaxFileReadBytes + 8, 0));
         StoreMemory(state, stringRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_win_len_init");
@@ -570,6 +770,24 @@ internal static partial class LlvmCodegen
             "fs_read_win_read_call");
         LlvmApi.BuildStore(builder, LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, bytesReadSlot, "fs_read_bytes_read_value"), state.I64, "fs_read_bytes_i64"), GetMemoryPointer(state, stringRef, 0, "fs_read_win_len_ptr"));
         LlvmApi.BuildCondBr(builder, readSucceeded, utf8Block, closeErrorBlock);
+
+        return stringRef;
+    }
+
+    private static void EmitWindowsFileReadTextFinish(
+        LlvmCodegenState state,
+        bool rawBytes,
+        LlvmValueHandle stringRef,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle utf8Block,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeInvalidBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, utf8Block);
         if (rawBytes)
@@ -606,9 +824,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, returnErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileReadFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_read_win_result_value");
     }
 
     private static LlvmValueHandle EmitWindowsFileWriteText(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle textRef)
@@ -648,6 +863,27 @@ internal static partial class LlvmCodegen
         LlvmValueHandle openFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, handle, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), "fs_write_handle_invalid");
         LlvmApi.BuildCondBr(builder, openFailed, returnErrorBlock, loopCheckBlock);
 
+        EmitWindowsFileWriteTextLoop(state, handleSlot, remainingSlot, cursorSlot, bytesWrittenSlot, loopCheckBlock, loopBodyBlock, advanceBlock, closeOkBlock, closeErrorBlock);
+        EmitWindowsFileWriteTextFinish(state, handleSlot, resultSlot, closeOkBlock, closeErrorBlock, returnErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_win_result_value");
+    }
+
+    private static void EmitWindowsFileWriteTextLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmValueHandle bytesWrittenSlot,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle loopBodyBlock,
+        LlvmBasicBlockHandle advanceBlock,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle remaining = LlvmApi.BuildLoad2(builder, state.I64, remainingSlot, "fs_write_win_remaining_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, remaining, LlvmApi.ConstInt(state.I64, 0, 0), "fs_write_win_done");
@@ -683,6 +919,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, remaining, bytesWritten, "fs_write_remaining_next"), remainingSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cursorValue, bytesWritten, "fs_write_cursor_next"), cursorSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitWindowsFileWriteTextFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitWindowsCloseHandle(state, LlvmApi.BuildLoad2(builder, state.I64, handleSlot, "fs_write_close_handle"), "fs_write_close_ok");
@@ -696,9 +944,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, returnErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_win_result_value");
     }
 
     private static LlvmValueHandle EmitWindowsFileWriteBytes(LlvmCodegenState state, LlvmValueHandle pathRef, LlvmValueHandle bytesAddress, LlvmValueHandle byteCount)
@@ -738,6 +983,27 @@ internal static partial class LlvmCodegen
         LlvmValueHandle openFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, handle, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), "fs_write_bytes_handle_invalid");
         LlvmApi.BuildCondBr(builder, openFailed, returnErrorBlock, loopCheckBlock);
 
+        EmitWindowsFileWriteBytesLoop(state, handleSlot, remainingSlot, cursorSlot, bytesWrittenSlot, loopCheckBlock, loopBodyBlock, advanceBlock, closeOkBlock, closeErrorBlock);
+        EmitWindowsFileWriteBytesFinish(state, handleSlot, resultSlot, closeOkBlock, closeErrorBlock, returnErrorBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_bytes_win_result_value");
+    }
+
+    private static void EmitWindowsFileWriteBytesLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle remainingSlot,
+        LlvmValueHandle cursorSlot,
+        LlvmValueHandle bytesWrittenSlot,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle loopBodyBlock,
+        LlvmBasicBlockHandle advanceBlock,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeErrorBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle remaining = LlvmApi.BuildLoad2(builder, state.I64, remainingSlot, "fs_write_bytes_win_remaining_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, remaining, LlvmApi.ConstInt(state.I64, 0, 0), "fs_write_bytes_win_done");
@@ -773,6 +1039,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, remaining, bytesWritten, "fs_write_bytes_remaining_next"), remainingSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cursorValue, bytesWritten, "fs_write_bytes_cursor_next"), cursorSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitWindowsFileWriteBytesFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle handleSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle closeOkBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle returnErrorBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, closeOkBlock);
         EmitWindowsCloseHandle(state, LlvmApi.BuildLoad2(builder, state.I64, handleSlot, "fs_write_bytes_close_handle"), "fs_write_bytes_close_ok");
@@ -786,9 +1064,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, returnErrorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileWriteFailedMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_write_bytes_win_result_value");
     }
 
     private static LlvmValueHandle EmitWindowsFileExists(LlvmCodegenState state, LlvmValueHandle pathRef)
@@ -948,18 +1223,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle flenSlot = ReadLineScratchGlobal(state, "__ashes_file_rlen", state.I64);
         LlvmValueHandle ffdSlot = ReadLineScratchGlobal(state, "__ashes_file_rfd", state.I64);
 
-        // fd guard: if the buffer currently holds a different handle, discard it and start fresh.
-        LlvmValueHandle bufferedFd = LlvmApi.BuildLoad2(builder, state.I64, ffdSlot, "fline_buffered_fd");
-        LlvmValueHandle sameFd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bufferedFd, handleVal, "fline_same_fd");
-        var resetFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_reset_fd");
-        var afterFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_after_fd");
-        LlvmApi.BuildCondBr(builder, sameFd, afterFdBlock, resetFdBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, resetFdBlock);
-        LlvmApi.BuildStore(builder, handleVal, ffdSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fposSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flenSlot);
-        LlvmApi.BuildBr(builder, afterFdBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, afterFdBlock);
+        EmitFileReadLineFdGuard(state, handleVal, ffdSlot, fposSlot, flenSlot);
 
         LlvmValueHandle bytesReadSlot = default;
         if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
@@ -981,6 +1245,50 @@ internal static partial class LlvmCodegen
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_continue");
 
         LlvmApi.BuildBr(builder, loopBlock);
+
+        EmitFileReadLineFill(state, handleVal, fbufPtr, fposSlot, flenSlot, bytesReadSlot, loopBlock, refillBlock, haveByteBlock, eofBlock);
+        EmitFileReadLineScan(state, fbufPtr, lineBufPtr, byteSlot, lenSlot, fposSlot, loopBlock, haveByteBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, finishSomeBlock, overflowBlock);
+        EmitFileReadLineFinish(state, lineBufPtr, lenSlot, resultSlot, eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fline_result_value");
+    }
+
+    // fd guard: if the buffer currently holds a different handle, discard it and start fresh.
+    private static void EmitFileReadLineFdGuard(
+        LlvmCodegenState state,
+        LlvmValueHandle handleVal,
+        LlvmValueHandle ffdSlot,
+        LlvmValueHandle fposSlot,
+        LlvmValueHandle flenSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle bufferedFd = LlvmApi.BuildLoad2(builder, state.I64, ffdSlot, "fline_buffered_fd");
+        LlvmValueHandle sameFd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bufferedFd, handleVal, "fline_same_fd");
+        var resetFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_reset_fd");
+        var afterFdBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fline_after_fd");
+        LlvmApi.BuildCondBr(builder, sameFd, afterFdBlock, resetFdBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, resetFdBlock);
+        LlvmApi.BuildStore(builder, handleVal, ffdSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fposSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flenSlot);
+        LlvmApi.BuildBr(builder, afterFdBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, afterFdBlock);
+    }
+
+    private static void EmitFileReadLineFill(
+        LlvmCodegenState state,
+        LlvmValueHandle handleVal,
+        LlvmValueHandle fbufPtr,
+        LlvmValueHandle fposSlot,
+        LlvmValueHandle flenSlot,
+        LlvmValueHandle bytesReadSlot,
+        LlvmBasicBlockHandle loopBlock,
+        LlvmBasicBlockHandle refillBlock,
+        LlvmBasicBlockHandle haveByteBlock,
+        LlvmBasicBlockHandle eofBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle curPos = LlvmApi.BuildLoad2(builder, state.I64, fposSlot, "fline_rpos");
@@ -1012,6 +1320,25 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), fposSlot);
         LlvmValueHandle refilledEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, refilled, LlvmApi.ConstInt(state.I64, 0, 0), "fline_refill_empty");
         LlvmApi.BuildCondBr(builder, refilledEmpty, eofBlock, haveByteBlock);
+    }
+
+    private static void EmitFileReadLineScan(
+        LlvmCodegenState state,
+        LlvmValueHandle fbufPtr,
+        LlvmValueHandle lineBufPtr,
+        LlvmValueHandle byteSlot,
+        LlvmValueHandle lenSlot,
+        LlvmValueHandle fposSlot,
+        LlvmBasicBlockHandle loopBlock,
+        LlvmBasicBlockHandle haveByteBlock,
+        LlvmBasicBlockHandle inspectBlock,
+        LlvmBasicBlockHandle skipCrBlock,
+        LlvmBasicBlockHandle storeByteBlock,
+        LlvmBasicBlockHandle appendByteBlock,
+        LlvmBasicBlockHandle finishSomeBlock,
+        LlvmBasicBlockHandle overflowBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, haveByteBlock);
         LlvmValueHandle takePos = LlvmApi.BuildLoad2(builder, state.I64, fposSlot, "fline_take_pos");
@@ -1040,6 +1367,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, currentByte, destPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), "fline_len_next"), lenSlot);
         LlvmApi.BuildBr(builder, loopBlock);
+    }
+
+    private static void EmitFileReadLineFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle lineBufPtr,
+        LlvmValueHandle lenSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle eofBlock,
+        LlvmBasicBlockHandle finishSomeBlock,
+        LlvmBasicBlockHandle returnNoneBlock,
+        LlvmBasicBlockHandle overflowBlock,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, eofBlock);
         LlvmValueHandle lenAtEof = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "fline_len_at_eof");
@@ -1062,9 +1403,6 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
         EmitPanic(state, EmitStackStringObject(state, "Ashes.File.readLine input line too long"));
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fline_result_value");
     }
 
     private static LlvmValueHandle EmitFileClose(LlvmCodegenState state, LlvmValueHandle handleVal)

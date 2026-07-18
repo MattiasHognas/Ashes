@@ -212,19 +212,7 @@ public static class ProjectSupport
         var root = doc.RootElement;
         var projectDirectory = Path.GetDirectoryName(fullProjectPath)!;
 
-        var entryValue = ReadString(root, "entry")
-            ?? throw new InvalidOperationException("Project file is missing required string field 'entry'.");
-
-        var entryPath = ResolvePath(projectDirectory, entryValue);
-        if (!entryPath.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"Project entry must be a .ash file: {entryValue}");
-        }
-
-        if (!File.Exists(entryPath))
-        {
-            throw new InvalidOperationException($"Project entry file not found: {entryPath}");
-        }
+        var entryPath = ResolveEntryPath(root, projectDirectory);
 
         var sourceRoots = ReadStringArray(root, "sourceRoots");
         if (sourceRoots.Count == 0)
@@ -257,6 +245,25 @@ public static class ProjectSupport
         {
             Dependencies = dependencies,
         };
+    }
+
+    private static string ResolveEntryPath(JsonElement root, string projectDirectory)
+    {
+        var entryValue = ReadString(root, "entry")
+            ?? throw new InvalidOperationException("Project file is missing required string field 'entry'.");
+
+        var entryPath = ResolvePath(projectDirectory, entryValue);
+        if (!entryPath.EndsWith(".ash", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Project entry must be a .ash file: {entryValue}");
+        }
+
+        if (!File.Exists(entryPath))
+        {
+            throw new InvalidOperationException($"Project entry file not found: {entryPath}");
+        }
+
+        return entryPath;
     }
 
     /// <summary>
@@ -515,60 +522,7 @@ public static class ProjectSupport
             var match = ImportLine.Match(line);
             if (inHeader && match.Success)
             {
-                var modulePath = match.Groups[1].Value;
-                var hasSelectorGroup = match.Groups[2].Success;
-                var aliasGroup = match.Groups[3].Success ? match.Groups[3].Value : null;
-
-                // A lowercase trailing segment (`import M.name`) is unambiguously a binding selector;
-                // the module-path group only matches uppercase segments, so the parser leaves it here.
-                // An uppercase trailing segment is consumed into the module path and is split into a
-                // type selector later, against the known built-in/user module set (longest-path-wins).
-                var selector = hasSelectorGroup
-                    ? new ImportSelector(modulePath, match.Groups[2].Value, aliasGroup ?? match.Groups[2].Value)
-                    : TrySplitBuiltinTypeSelector(modulePath, aliasGroup);
-
-                if (selector is { } sel)
-                {
-                    var local = sel.LocalName;
-                    if (ReservedKeywords.Contains(local))
-                    {
-                        throw new InvalidOperationException(
-                            $"Invalid alias '{local}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
-                    }
-
-                    if (selectorLocalNames.TryGetValue(local, out var existing)
-                        && (!string.Equals(existing.ModuleName, sel.ModuleName, StringComparison.Ordinal)
-                            || !string.Equals(existing.ExportName, sel.ExportName, StringComparison.Ordinal)))
-                    {
-                        throw new InvalidOperationException(ConflictingSelectorMessage(local));
-                    }
-
-                    selectorLocalNames[local] = sel;
-                    selectors.Add(sel);
-                    imports.Add(sel.ModuleName);
-                    sourceLines.Add(string.Empty);
-                    continue;
-                }
-
-                imports.Add(modulePath);
-                if (aliasGroup is not null)
-                {
-                    var alias = aliasGroup;
-                    if (ReservedKeywords.Contains(alias))
-                    {
-                        throw new InvalidOperationException(
-                            $"Invalid alias '{alias}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
-                    }
-
-                    if (aliases.ContainsKey(alias))
-                    {
-                        throw new InvalidOperationException(
-                            $"Duplicate alias '{alias}' in {displayPath}:{lineIndex}. The alias '{alias}' is already mapped to '{aliases[alias]}'.");
-                    }
-
-                    aliases[alias] = modulePath;
-                }
-
+                ProcessImportLine(match, displayPath, lineIndex, imports, aliases, selectors, selectorLocalNames);
                 sourceLines.Add(string.Empty);
                 continue;
             }
@@ -600,6 +554,78 @@ public static class ProjectSupport
         // original file.
         var sourceWithoutImports = ApplySelectorRenames(string.Join('\n', sourceLines), selectors);
         return new ParsedImportHeader(imports, sourceWithoutImports, aliases, selectors);
+    }
+
+    private static void ProcessImportLine(
+        Match match,
+        string displayPath,
+        int lineIndex,
+        List<string> imports,
+        Dictionary<string, string> aliases,
+        List<ImportSelector> selectors,
+        Dictionary<string, ImportSelector> selectorLocalNames)
+    {
+        var modulePath = match.Groups[1].Value;
+        var hasSelectorGroup = match.Groups[2].Success;
+        var aliasGroup = match.Groups[3].Success ? match.Groups[3].Value : null;
+
+        // A lowercase trailing segment (`import M.name`) is unambiguously a binding selector;
+        // the module-path group only matches uppercase segments, so the parser leaves it here.
+        // An uppercase trailing segment is consumed into the module path and is split into a
+        // type selector later, against the known built-in/user module set (longest-path-wins).
+        var selector = hasSelectorGroup
+            ? new ImportSelector(modulePath, match.Groups[2].Value, aliasGroup ?? match.Groups[2].Value)
+            : TrySplitBuiltinTypeSelector(modulePath, aliasGroup);
+
+        if (selector is { } sel)
+        {
+            var local = sel.LocalName;
+            if (ReservedKeywords.Contains(local))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid alias '{local}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
+            }
+
+            if (selectorLocalNames.TryGetValue(local, out var existing)
+                && (!string.Equals(existing.ModuleName, sel.ModuleName, StringComparison.Ordinal)
+                    || !string.Equals(existing.ExportName, sel.ExportName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(ConflictingSelectorMessage(local));
+            }
+
+            selectorLocalNames[local] = sel;
+            selectors.Add(sel);
+            imports.Add(sel.ModuleName);
+            return;
+        }
+
+        imports.Add(modulePath);
+        if (aliasGroup is not null)
+        {
+            AddWholeModuleAlias(aliasGroup, modulePath, displayPath, lineIndex, aliases);
+        }
+    }
+
+    private static void AddWholeModuleAlias(
+        string alias,
+        string modulePath,
+        string displayPath,
+        int lineIndex,
+        Dictionary<string, string> aliases)
+    {
+        if (ReservedKeywords.Contains(alias))
+        {
+            throw new InvalidOperationException(
+                $"Invalid alias '{alias}' in {displayPath}:{lineIndex}. Reserved keywords cannot be used as import aliases.");
+        }
+
+        if (aliases.ContainsKey(alias))
+        {
+            throw new InvalidOperationException(
+                $"Duplicate alias '{alias}' in {displayPath}:{lineIndex}. The alias '{alias}' is already mapped to '{aliases[alias]}'.");
+        }
+
+        aliases[alias] = modulePath;
     }
 
     /// <summary>
@@ -648,8 +674,12 @@ public static class ProjectSupport
         // Inline submodules lifted from each file, keyed by the file's full path, ordered before the file.
         var inlineChildrenByPath = new Dictionary<string, List<ProjectModule>>(StringComparer.OrdinalIgnoreCase);
 
-        var entryModule = LoadModule(project.EntryModuleName, project.EntryPath);
-        Visit(entryModule);
+        var entryModule = LoadProjectModule(
+            project.EntryModuleName, project.EntryPath, project, searchRoots,
+            resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+        VisitModuleForPlan(
+            entryModule, project, searchRoots, resolvedByModuleName, resolvedByPath,
+            states, traversal, ordered, importedStdModules, inlineChildrenByPath);
 
         var mergedAliases = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var module in ordered)
@@ -667,216 +697,320 @@ public static class ProjectSupport
         }
 
         return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules, mergedAliases);
+    }
 
-        void Visit(ProjectModule module)
+    private static void VisitModuleForPlan(
+        ProjectModule module,
+        AshesProject project,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName,
+        Dictionary<string, ProjectModule> resolvedByPath,
+        Dictionary<string, int> states,
+        Stack<ProjectModule> traversal,
+        List<ProjectModule> ordered,
+        HashSet<string> importedStdModules,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        if (IsModuleAlreadyPlanned(module, states, traversal))
         {
-            if (states.TryGetValue(module.FilePath, out var state))
-            {
-                if (state == 2)
-                {
-                    return;
-                }
+            return;
+        }
 
-                if (state == 1)
-                {
-                    var chain = traversal.Reverse()
-                        .SkipWhile(x => !string.Equals(x.FilePath, module.FilePath, StringComparison.OrdinalIgnoreCase))
-                        .Select(x => x.ModuleName)
-                        .Concat(new[] { module.ModuleName });
-                    throw new InvalidOperationException($"Import cycle detected: {string.Join(" -> ", chain)}");
-                }
+        states[module.FilePath] = 1;
+        traversal.Push(module);
+        foreach (var import in module.Imports)
+        {
+            VisitPlanImport(
+                import, project, searchRoots, resolvedByModuleName, resolvedByPath,
+                states, traversal, ordered, importedStdModules, inlineChildrenByPath);
+        }
+
+        traversal.Pop();
+        states[module.FilePath] = 2;
+        AppendPlannedModule(module, states, ordered, inlineChildrenByPath);
+    }
+
+    private static bool IsModuleAlreadyPlanned(
+        ProjectModule module, Dictionary<string, int> states, Stack<ProjectModule> traversal)
+    {
+        if (states.TryGetValue(module.FilePath, out var state))
+        {
+            if (state == 2)
+            {
+                return true;
             }
 
-            states[module.FilePath] = 1;
-            traversal.Push(module);
-            foreach (var import in module.Imports)
+            if (state == 1)
             {
-                if (string.Equals(import, "Ashes", StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException(
-                        "Module name 'Ashes' is reserved for the standard library.");
-                }
+                var chain = traversal.Reverse()
+                    .SkipWhile(x => !string.Equals(x.FilePath, module.FilePath, StringComparison.OrdinalIgnoreCase))
+                    .Select(x => x.ModuleName)
+                    .Concat(new[] { module.ModuleName });
+                throw new InvalidOperationException($"Import cycle detected: {string.Join(" -> ", chain)}");
+            }
+        }
 
-                if (IsStdModule(import))
-                {
-                    importedStdModules.Add(import);
-                    if (TryLoadStandardLibraryModule(import, out var stdModule))
-                    {
-                        Visit(stdModule);
-                    }
+        return false;
+    }
 
+    private static void VisitPlanImport(
+        string import,
+        AshesProject project,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName,
+        Dictionary<string, ProjectModule> resolvedByPath,
+        Dictionary<string, int> states,
+        Stack<ProjectModule> traversal,
+        List<ProjectModule> ordered,
+        HashSet<string> importedStdModules,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        if (string.Equals(import, "Ashes", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Module name 'Ashes' is reserved for the standard library.");
+        }
+
+        if (IsStdModule(import))
+        {
+            importedStdModules.Add(import);
+            if (TryLoadStandardLibraryModule(import, out var stdModule))
+            {
+                VisitModuleForPlan(
+                    stdModule, project, searchRoots, resolvedByModuleName, resolvedByPath,
+                    states, traversal, ordered, importedStdModules, inlineChildrenByPath);
+            }
+
+            return;
+        }
+
+        if (import.StartsWith("Ashes.", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Unknown standard library module '{import}'. Known modules: {string.Join(", ", KnownStdModules)}.");
+        }
+
+        var dependency = ResolveImportForPlan(
+            import, project, searchRoots, resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+        VisitModuleForPlan(
+            dependency, project, searchRoots, resolvedByModuleName, resolvedByPath,
+            states, traversal, ordered, importedStdModules, inlineChildrenByPath);
+    }
+
+    private static void AppendPlannedModule(
+        ProjectModule module,
+        Dictionary<string, int> states,
+        List<ProjectModule> ordered,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        // Lifted inline submodules are declared before their file so the file's qualified
+        // references to them resolve in the combined source.
+        if (inlineChildrenByPath.TryGetValue(module.FilePath, out var inlineChildren))
+        {
+            foreach (var child in inlineChildren)
+            {
+                if (states.TryGetValue(child.FilePath, out var childState) && childState == 2)
+                {
                     continue;
                 }
 
-                if (import.StartsWith("Ashes.", StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException(
-                        $"Unknown standard library module '{import}'. Known modules: {string.Join(", ", KnownStdModules)}.");
-                }
-
-                var dependency = ResolveImport(import);
-                Visit(dependency);
+                states[child.FilePath] = 2;
+                ordered.Add(child);
             }
-
-            traversal.Pop();
-            states[module.FilePath] = 2;
-            // Lifted inline submodules are declared before their file so the file's qualified
-            // references to them resolve in the combined source.
-            if (inlineChildrenByPath.TryGetValue(module.FilePath, out var inlineChildren))
-            {
-                foreach (var child in inlineChildren)
-                {
-                    if (states.TryGetValue(child.FilePath, out var childState) && childState == 2)
-                    {
-                        continue;
-                    }
-
-                    states[child.FilePath] = 2;
-                    ordered.Add(child);
-                }
-            }
-
-            ordered.Add(module);
         }
 
-        ProjectModule ResolveImport(string moduleName)
+        ordered.Add(module);
+    }
+
+    private static ProjectModule ResolveImportForPlan(
+        string moduleName,
+        AshesProject project,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName,
+        Dictionary<string, ProjectModule> resolvedByPath,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        if (BuiltinRegistry.IsReservedModuleNamespace(moduleName))
         {
-            if (BuiltinRegistry.IsReservedModuleNamespace(moduleName))
-            {
-                throw new InvalidOperationException(
-                    "Module name 'Ashes' is reserved for the standard library.");
-            }
-
-            if (resolvedByModuleName.TryGetValue(moduleName, out var existing))
-            {
-                return existing;
-            }
-
-            var moduleRelativePath = GetModuleRelativePath(moduleName);
-            var projectMatches = GetExistingModuleCandidates(searchRoots, moduleRelativePath);
-            if (projectMatches.Count > 1)
-            {
-                throw new InvalidOperationException(
-                    $"Ambiguous module resolution for '{moduleName}'. Found multiple project modules: {string.Join(", ", projectMatches)}");
-            }
-
-            if (projectMatches.Count == 1)
-            {
-                var module = LoadModule(moduleName, projectMatches[0]);
-                resolvedByModuleName[moduleName] = module;
-                return module;
-            }
-
-            var shippedLibraryPath = GetShippedLibraryModulePath(moduleRelativePath);
-            if (shippedLibraryPath is not null)
-            {
-                var module = LoadModule(moduleName, shippedLibraryPath);
-                resolvedByModuleName[moduleName] = module;
-                return module;
-            }
-
-            // The path may name an inline submodule of an enclosing file (`import Geom.Vec` where
-            // `Vec` is `module Vec` inside `Geom.ash`). Load the nearest enclosing file, which lifts
-            // and registers its inline submodules, then retry.
-            for (var dot = moduleName.LastIndexOf('.'); dot > 0; dot = moduleName.LastIndexOf('.', dot - 1))
-            {
-                var enclosing = moduleName[..dot];
-                var enclosingMatches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
-                if (enclosingMatches.Count == 1)
-                {
-                    LoadModule(enclosing, enclosingMatches[0]);
-                    if (resolvedByModuleName.TryGetValue(moduleName, out var inlineResolved))
-                    {
-                        return inlineResolved;
-                    }
-                }
-            }
-
-            throw new InvalidOperationException(BuildMissingModuleMessage(moduleName, searchRoots, moduleRelativePath));
+            throw new InvalidOperationException(
+                "Module name 'Ashes' is reserved for the standard library.");
         }
 
-        ProjectModule LoadModule(string moduleName, string filePath)
+        if (resolvedByModuleName.TryGetValue(moduleName, out var existing))
         {
-            var fullPath = Path.GetFullPath(filePath);
-            if (resolvedByPath.TryGetValue(fullPath, out var existing))
-            {
-                return existing;
-            }
+            return existing;
+        }
 
-            var (imports, source, aliases, selectors) = ParseImports(fullPath);
+        var moduleRelativePath = GetModuleRelativePath(moduleName);
+        var projectMatches = GetExistingModuleCandidates(searchRoots, moduleRelativePath);
+        if (projectMatches.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"Ambiguous module resolution for '{moduleName}'. Found multiple project modules: {string.Join(", ", projectMatches)}");
+        }
 
-            // Lift inline `module Name = ...` blocks. The entry file's inline modules keep bare names
-            // (nothing imports the entry across files); every other file prefixes them with its own
-            // module name so `File.Inner` is cross-file addressable and promotion is transparent.
-            var inlineScope = string.Equals(moduleName, project.EntryModuleName, StringComparison.Ordinal) ? "" : moduleName;
-            var (outerSource, inlineModules) = ExpandInlineModules(source, inlineScope, fullPath);
-            source = outerSource;
-            var children = new List<ProjectModule>();
-            foreach (var inline in inlineModules)
-            {
-                if (BuiltinRegistry.IsReservedModuleNamespace(inline.ModuleName)
-                    || inline.ModuleName.StartsWith("Ashes.", StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException(
-                        $"[ASH023] Inline module '{inline.ModuleName}' shadows a reserved 'Ashes.*' path ({fullPath}).");
-                }
-
-                var candidates = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(inline.ModuleName));
-                if (candidates.Count > 0)
-                {
-                    throw new InvalidOperationException(
-                        $"[ASH022] Module path '{inline.ModuleName}' is defined by both an inline module and a file ({candidates[0]}).");
-                }
-
-                var childModule = new ProjectModule(
-                    inline.ModuleName,
-                    $"{fullPath}#{inline.ModuleName}",
-                    inline.Source,
-                    [],
-                    new Dictionary<string, string>(StringComparer.Ordinal),
-                    []);
-                children.Add(childModule);
-                resolvedByModuleName[inline.ModuleName] = childModule;
-            }
-
-            var aliasMap = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
-            (imports, selectors) = NormalizeTypeSelectors(imports, selectors, aliasMap, IsResolvableModule);
-            source = ApplySelectorRenames(source, selectors);
-            var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
-            resolvedByPath[fullPath] = module;
-            inlineChildrenByPath[fullPath] = children;
-            if (!resolvedByModuleName.ContainsKey(moduleName))
-            {
-                resolvedByModuleName[moduleName] = module;
-            }
-
+        if (projectMatches.Count == 1)
+        {
+            var module = LoadProjectModule(
+                moduleName, projectMatches[0], project, searchRoots,
+                resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+            resolvedByModuleName[moduleName] = module;
             return module;
         }
 
-        bool IsResolvableModule(string name)
+        var shippedLibraryPath = GetShippedLibraryModulePath(moduleRelativePath);
+        if (shippedLibraryPath is not null)
         {
-            if (IsStdModule(name) || BuiltinRegistry.IsBuiltinModule(name))
-            {
-                return true;
-            }
-
-            if (BuiltinRegistry.IsReservedModuleNamespace(name))
-            {
-                return false;
-            }
-
-            var relativePath = GetModuleRelativePath(name);
-            if (GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
-                || GetShippedLibraryModulePath(relativePath) is not null)
-            {
-                return true;
-            }
-
-            // A dotted path may name an inline submodule of an enclosing file. Already-registered
-            // inline modules resolve directly; otherwise scan the nearest enclosing file's inline
-            // blocks so `import Geom.Vec` reads as a whole-module import rather than a type selector.
-            return resolvedByModuleName.ContainsKey(name) || IsInlineSubmodulePath(name, searchRoots);
+            var module = LoadProjectModule(
+                moduleName, shippedLibraryPath, project, searchRoots,
+                resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+            resolvedByModuleName[moduleName] = module;
+            return module;
         }
+
+        // The path may name an inline submodule of an enclosing file (`import Geom.Vec` where
+        // `Vec` is `module Vec` inside `Geom.ash`). Load the nearest enclosing file, which lifts
+        // and registers its inline submodules, then retry.
+        if (TryResolveInlineSubmodule(
+                moduleName, project, searchRoots, resolvedByModuleName, resolvedByPath, inlineChildrenByPath) is { } inlineResolved)
+        {
+            return inlineResolved;
+        }
+
+        throw new InvalidOperationException(BuildMissingModuleMessage(moduleName, searchRoots, moduleRelativePath));
+    }
+
+    private static ProjectModule? TryResolveInlineSubmodule(
+        string moduleName,
+        AshesProject project,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName,
+        Dictionary<string, ProjectModule> resolvedByPath,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        for (var dot = moduleName.LastIndexOf('.'); dot > 0; dot = moduleName.LastIndexOf('.', dot - 1))
+        {
+            var enclosing = moduleName[..dot];
+            var enclosingMatches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
+            if (enclosingMatches.Count == 1)
+            {
+                LoadProjectModule(
+                    enclosing, enclosingMatches[0], project, searchRoots,
+                    resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+                if (resolvedByModuleName.TryGetValue(moduleName, out var inlineResolved))
+                {
+                    return inlineResolved;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static ProjectModule LoadProjectModule(
+        string moduleName,
+        string filePath,
+        AshesProject project,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName,
+        Dictionary<string, ProjectModule> resolvedByPath,
+        Dictionary<string, List<ProjectModule>> inlineChildrenByPath)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        if (resolvedByPath.TryGetValue(fullPath, out var existing))
+        {
+            return existing;
+        }
+
+        var (imports, source, aliases, selectors) = ParseImports(fullPath);
+
+        // Lift inline `module Name = ...` blocks. The entry file's inline modules keep bare names
+        // (nothing imports the entry across files); every other file prefixes them with its own
+        // module name so `File.Inner` is cross-file addressable and promotion is transparent.
+        var inlineScope = string.Equals(moduleName, project.EntryModuleName, StringComparison.Ordinal) ? "" : moduleName;
+        var (outerSource, inlineModules) = ExpandInlineModules(source, inlineScope, fullPath);
+        source = outerSource;
+        var children = LiftInlineModules(inlineModules, fullPath, searchRoots, resolvedByModuleName);
+
+        var aliasMap = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
+        (imports, selectors) = NormalizeTypeSelectors(
+            imports, selectors, aliasMap,
+            name => IsResolvableProjectModule(name, searchRoots, resolvedByModuleName));
+        source = ApplySelectorRenames(source, selectors);
+        var module = new ProjectModule(moduleName, fullPath, source, imports, aliasMap, selectors);
+        resolvedByPath[fullPath] = module;
+        inlineChildrenByPath[fullPath] = children;
+        if (!resolvedByModuleName.ContainsKey(moduleName))
+        {
+            resolvedByModuleName[moduleName] = module;
+        }
+
+        return module;
+    }
+
+    private static List<ProjectModule> LiftInlineModules(
+        IReadOnlyList<InlineModuleInfo> inlineModules,
+        string fullPath,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName)
+    {
+        var children = new List<ProjectModule>();
+        foreach (var inline in inlineModules)
+        {
+            if (BuiltinRegistry.IsReservedModuleNamespace(inline.ModuleName)
+                || inline.ModuleName.StartsWith("Ashes.", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"[ASH023] Inline module '{inline.ModuleName}' shadows a reserved 'Ashes.*' path ({fullPath}).");
+            }
+
+            var candidates = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(inline.ModuleName));
+            if (candidates.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"[ASH022] Module path '{inline.ModuleName}' is defined by both an inline module and a file ({candidates[0]}).");
+            }
+
+            var childModule = new ProjectModule(
+                inline.ModuleName,
+                $"{fullPath}#{inline.ModuleName}",
+                inline.Source,
+                [],
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                []);
+            children.Add(childModule);
+            resolvedByModuleName[inline.ModuleName] = childModule;
+        }
+
+        return children;
+    }
+
+    private static bool IsResolvableProjectModule(
+        string name,
+        string[] searchRoots,
+        Dictionary<string, ProjectModule> resolvedByModuleName)
+    {
+        if (IsStdModule(name) || BuiltinRegistry.IsBuiltinModule(name))
+        {
+            return true;
+        }
+
+        if (BuiltinRegistry.IsReservedModuleNamespace(name))
+        {
+            return false;
+        }
+
+        var relativePath = GetModuleRelativePath(name);
+        if (GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
+            || GetShippedLibraryModulePath(relativePath) is not null)
+        {
+            return true;
+        }
+
+        // A dotted path may name an inline submodule of an enclosing file. Already-registered
+        // inline modules resolve directly; otherwise scan the nearest enclosing file's inline
+        // blocks so `import Geom.Vec` reads as a whole-module import rather than a type selector.
+        return resolvedByModuleName.ContainsKey(name) || IsInlineSubmodulePath(name, searchRoots);
     }
 
     /// <summary>
@@ -1088,13 +1222,29 @@ public static class ProjectSupport
             entrySelectors);
         orderedModules.Add(entryModule);
 
+        ResolveStandaloneImports(importNames, inlineModuleNames, states, traversal, seenModules, orderedModules);
+
+        // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
+        // realized by in-place renaming) rather than the raw imports-stripped source, so single-file
+        // selector imports take effect in the entry expression just as they do in project mode.
+        return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
+    }
+
+    private static void ResolveStandaloneImports(
+        IReadOnlyList<string> importNames,
+        HashSet<string> inlineModuleNames,
+        Dictionary<string, int> states,
+        Stack<ProjectModule> traversal,
+        HashSet<string> seenModules,
+        List<ProjectModule> orderedModules)
+    {
         foreach (var importName in importNames)
         {
             if (IsStdModule(importName))
             {
                 if (TryLoadStandardLibraryModule(importName, out var stdModule))
                 {
-                    Visit(stdModule);
+                    VisitStandaloneModule(stdModule, states, traversal, seenModules, orderedModules);
                 }
 
                 continue;
@@ -1116,53 +1266,41 @@ public static class ProjectSupport
             throw new InvalidOperationException(
                 $"Could not resolve module '{importName}'. User-defined module imports require project mode via ashes.json.");
         }
+    }
 
-        // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
-        // realized by in-place renaming) rather than the raw imports-stripped source, so single-file
-        // selector imports take effect in the entry expression just as they do in project mode.
-        return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
-
-        void Visit(ProjectModule module)
+    private static void VisitStandaloneModule(
+        ProjectModule module,
+        Dictionary<string, int> states,
+        Stack<ProjectModule> traversal,
+        HashSet<string> seenModules,
+        List<ProjectModule> orderedModules)
+    {
+        if (IsModuleAlreadyPlanned(module, states, traversal))
         {
-            if (states.TryGetValue(module.FilePath, out var state))
-            {
-                if (state == 2)
-                {
-                    return;
-                }
+            return;
+        }
 
-                if (state == 1)
-                {
-                    var chain = traversal.Reverse()
-                        .SkipWhile(x => !string.Equals(x.FilePath, module.FilePath, StringComparison.OrdinalIgnoreCase))
-                        .Select(x => x.ModuleName)
-                        .Concat(new[] { module.ModuleName });
-                    throw new InvalidOperationException($"Import cycle detected: {string.Join(" -> ", chain)}");
-                }
+        states[module.FilePath] = 1;
+        traversal.Push(module);
+        foreach (var import in module.Imports)
+        {
+            if (!IsStdModule(import))
+            {
+                throw new InvalidOperationException(
+                    $"Could not resolve module '{import}'. User-defined module imports require project mode via ashes.json.");
             }
 
-            states[module.FilePath] = 1;
-            traversal.Push(module);
-            foreach (var import in module.Imports)
+            if (TryLoadStandardLibraryModule(import, out var dependency))
             {
-                if (!IsStdModule(import))
-                {
-                    throw new InvalidOperationException(
-                        $"Could not resolve module '{import}'. User-defined module imports require project mode via ashes.json.");
-                }
-
-                if (TryLoadStandardLibraryModule(import, out var dependency))
-                {
-                    Visit(dependency);
-                }
+                VisitStandaloneModule(dependency, states, traversal, seenModules, orderedModules);
             }
+        }
 
-            traversal.Pop();
-            states[module.FilePath] = 2;
-            if (seenModules.Add(module.ModuleName))
-            {
-                orderedModules.Insert(orderedModules.Count - 1, module);
-            }
+        traversal.Pop();
+        states[module.FilePath] = 2;
+        if (seenModules.Add(module.ModuleName))
+        {
+            orderedModules.Insert(orderedModules.Count - 1, module);
         }
     }
 
@@ -1209,32 +1347,12 @@ public static class ProjectSupport
                 continue;
             }
 
-            if (layout.EntryTypeDeclFragments is { } fragments && start < layout.BodyStart)
+            if (layout.EntryTypeDeclFragments is { } fragments && start < layout.BodyStart
+                && TryMapTypeDeclFragmentDiagnostic(
+                    entry, start, length, fragments, entryStrippedSource, entryOriginalSource,
+                    originalLineStarts, entryFilePath, results))
             {
-                var mapped = false;
-                foreach (var (fragmentStart, originalStart, fragmentLength) in fragments)
-                {
-                    if (start >= fragmentStart && start < fragmentStart + fragmentLength)
-                    {
-                        // Fragment offsets are relative to the imports-stripped source, which shares
-                        // the original file's line structure but not its byte offsets — hop via
-                        // line/column.
-                        var strippedOffset = Math.Min(originalStart + (start - fragmentStart), entryStrippedSource.Length);
-                        var (line, column) = OffsetToLineColumn(entryStrippedSource, 0, strippedOffset);
-                        var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
-                        results.Add(new MappedDiagnostic(
-                            entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
-                            entryFilePath,
-                            HasPosition: true));
-                        mapped = true;
-                        break;
-                    }
-                }
-
-                if (mapped)
-                {
-                    continue;
-                }
+                continue;
             }
 
             var filePath = entryFilePath;
@@ -1251,6 +1369,38 @@ public static class ProjectSupport
         }
 
         return results;
+    }
+
+    private static bool TryMapTypeDeclFragmentDiagnostic(
+        DiagnosticEntry entry,
+        int start,
+        int length,
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)> fragments,
+        string entryStrippedSource,
+        string entryOriginalSource,
+        int[] originalLineStarts,
+        string entryFilePath,
+        List<MappedDiagnostic> results)
+    {
+        foreach (var (fragmentStart, originalStart, fragmentLength) in fragments)
+        {
+            if (start >= fragmentStart && start < fragmentStart + fragmentLength)
+            {
+                // Fragment offsets are relative to the imports-stripped source, which shares
+                // the original file's line structure but not its byte offsets — hop via
+                // line/column.
+                var strippedOffset = Math.Min(originalStart + (start - fragmentStart), entryStrippedSource.Length);
+                var (line, column) = OffsetToLineColumn(entryStrippedSource, 0, strippedOffset);
+                var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                results.Add(new MappedDiagnostic(
+                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
+                    entryFilePath,
+                    HasPosition: true));
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int[] BuildLineStarts(string text)
@@ -1351,6 +1501,35 @@ public static class ProjectSupport
         // Track module offset regions as content is appended
         var moduleOffsets = new List<(string FilePath, int StartOffset, int EndOffset)>();
 
+        AppendHoistedTypeDeclarations(prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
+
+        var legacyBindingEmitted = AppendModuleBindingPrefixes(prefix, moduleOffsets, nonEntryModules, shapes, exportedNames);
+
+        // A hoisted flat declaration (a flat `let` value, or a `provide` whose implementation is an
+        // expression) ends with a newline, not an `in`. Without a following legacy nested-let binding
+        // to open the trailing body, the parenthesized entry expression would be absorbed as an
+        // application argument of that last value (e.g. `given (y) -> x - y` swallowing `(entry)` as
+        // `y(entry)`), so introduce a boundary binding whose `in` makes the entry a proper let body.
+        // The `let` boundary is safe because flat-value/provider parsing suppresses `let` as an
+        // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
+        bool moduleContentPrecedesEntry = prefix.Length > entryShape.TypeDeclarationsSource.Length;
+        if (moduleContentPrecedesEntry && !legacyBindingEmitted)
+        {
+            prefix.Append("let __ashes_module_boundary = 0 in ");
+        }
+
+        var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
+        return ComposeEntryLayout(entryModule, entryShape, entryExpression, prefix, moduleOffsets);
+    }
+
+    private static void AppendHoistedTypeDeclarations(
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        ProjectModule entryModule,
+        ModuleSourceShape entryShape,
+        IReadOnlyList<ProjectModule> nonEntryModules,
+        Dictionary<string, ModuleSourceShape> shapes)
+    {
         // Entry module type declarations
         if (entryShape.TypeDeclarationsSource.Length > 0)
         {
@@ -1370,7 +1549,15 @@ public static class ProjectSupport
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
             }
         }
+    }
 
+    private static bool AppendModuleBindingPrefixes(
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        IReadOnlyList<ProjectModule> nonEntryModules,
+        Dictionary<string, ModuleSourceShape> shapes,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
+    {
         var usedBindingNames = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // Flat modules contribute genuine top-level declarations, which must precede the legacy
@@ -1397,20 +1584,16 @@ public static class ProjectSupport
             }
         }
 
-        // A hoisted flat declaration (a flat `let` value, or a `provide` whose implementation is an
-        // expression) ends with a newline, not an `in`. Without a following legacy nested-let binding
-        // to open the trailing body, the parenthesized entry expression would be absorbed as an
-        // application argument of that last value (e.g. `given (y) -> x - y` swallowing `(entry)` as
-        // `y(entry)`), so introduce a boundary binding whose `in` makes the entry a proper let body.
-        // The `let` boundary is safe because flat-value/provider parsing suppresses `let` as an
-        // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
-        bool moduleContentPrecedesEntry = prefix.Length > entryShape.TypeDeclarationsSource.Length;
-        if (moduleContentPrecedesEntry && !legacyBindingEmitted)
-        {
-            prefix.Append("let __ashes_module_boundary = 0 in ");
-        }
+        return legacyBindingEmitted;
+    }
 
-        var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
+    private static CombinedCompilationLayout ComposeEntryLayout(
+        ProjectModule entryModule,
+        ModuleSourceShape entryShape,
+        string entryExpression,
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets)
+    {
         var hasPrefixBeforeBody = prefix.Length > entryShape.TypeDeclarationsSource.Length;
         if (hasPrefixBeforeBody)
         {
@@ -1718,81 +1901,9 @@ public static class ProjectSupport
 
         foreach (var group in shape.TopLevelBindings)
         {
-            foreach (var binding in group.Bindings)
-            {
-                var generatedBindingName = $"{moduleBindingName}_{binding.Name}";
-                if (usedBindingNames.TryGetValue(generatedBindingName, out existingModuleName))
-                {
-                    throw new InvalidOperationException(
-                        $"Generated export binding collision for '{generatedBindingName}': '{existingModuleName}' and '{module.ModuleName}'.");
-                }
-
-                usedBindingNames[generatedBindingName] = module.ModuleName;
-            }
-
-            // Within a `let rec ... and ...` group every member is visible to the others, so each
-            // member value resolves sibling references to the group's generated names.
-            var recursiveBindings = group.IsRecursiveGroup
-                ? group.Bindings.Select(binding => binding.Name).ToArray()
-                : [];
-
-            prefix.Append("let ");
-            if (group.IsRecursiveGroup)
-            {
-                prefix.Append("recursive ");
-            }
-
-            for (var i = 0; i < group.Bindings.Count; i++)
-            {
-                var binding = group.Bindings[i];
-                var referencedNames = CollectReferencedNames(binding.ValueSource);
-                var aliases = BuildVisibleAliases(
-                    module,
-                    availableLocalBindings,
-                    recursiveBindings,
-                    referencedNames,
-                    exportedNames);
-
-                if (i > 0)
-                {
-                    prefix.Append(" and ");
-                }
-
-                // A flat `let rec ... and ...` group is stitched as a genuine top-level declaration, so
-                // each member value must stay a bare function literal; its aliases are resolved by
-                // renaming identifiers in place rather than wrapping them in `let ... in` (which would
-                // make the value a non-function expression and force eager sibling evaluation). The
-                // legacy nested form keeps the original wrapping path so its codegen is unchanged — in
-                // particular wrapping is what resolves synthetic cross-module/qualified alias names that
-                // never appear as bare identifier tokens.
-                var renderedValue = flat && group.IsRecursiveGroup
-                    ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
-                    : ApplyAliases(binding.ValueSource, aliases);
-
-                prefix.Append($"{moduleBindingName}_{binding.Name}");
-                // Keep a `needs {Cap(a)}` annotation on the stitched binding: it is what marks a generic
-                // dictionary-passing function, so dropping it would leave an exported generic capability
-                // function unresolved. Capability and type-variable names in the row are program-global,
-                // so they need no alias rewriting.
-                if (binding.Annotation is { Length: > 0 } annotation)
-                {
-                    prefix.Append(" : ").Append(annotation);
-                }
-
-                prefix.Append(" = (")
-                    .Append(renderedValue)
-                    .Append(')');
-            }
-
-            // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
-            // ...` group cannot be expressed in the nested expression pyramid the legacy form uses, and
-            // top-level declarations keep mutual recursion intact while staying visible to the body.
-            prefix.Append(flat ? "\n" : " in ");
-
-            foreach (var binding in group.Bindings)
-            {
-                availableLocalBindings.Add(binding.Name);
-            }
+            AppendModuleBindingGroup(
+                prefix, module, group, moduleBindingName, flat,
+                exportedNames, usedBindingNames, availableLocalBindings);
         }
 
         // Flat modules drop their trailing expression and bind no whole-module value, so the
@@ -1817,6 +1928,109 @@ public static class ProjectSupport
         return prefix.ToString();
     }
 
+    private static void AppendModuleBindingGroup(
+        StringBuilder prefix,
+        ProjectModule module,
+        ModuleBindingGroup group,
+        string moduleBindingName,
+        bool flat,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IDictionary<string, string> usedBindingNames,
+        List<string> availableLocalBindings)
+    {
+        foreach (var binding in group.Bindings)
+        {
+            var generatedBindingName = $"{moduleBindingName}_{binding.Name}";
+            if (usedBindingNames.TryGetValue(generatedBindingName, out var existingModuleName))
+            {
+                throw new InvalidOperationException(
+                    $"Generated export binding collision for '{generatedBindingName}': '{existingModuleName}' and '{module.ModuleName}'.");
+            }
+
+            usedBindingNames[generatedBindingName] = module.ModuleName;
+        }
+
+        // Within a `let rec ... and ...` group every member is visible to the others, so each
+        // member value resolves sibling references to the group's generated names.
+        var recursiveBindings = group.IsRecursiveGroup
+            ? group.Bindings.Select(binding => binding.Name).ToArray()
+            : [];
+
+        prefix.Append("let ");
+        if (group.IsRecursiveGroup)
+        {
+            prefix.Append("recursive ");
+        }
+
+        for (var i = 0; i < group.Bindings.Count; i++)
+        {
+            AppendModuleGroupBinding(
+                prefix, module, group.Bindings[i], moduleBindingName, flat, group.IsRecursiveGroup,
+                recursiveBindings, availableLocalBindings, exportedNames, appendSeparator: i > 0);
+        }
+
+        // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
+        // ...` group cannot be expressed in the nested expression pyramid the legacy form uses, and
+        // top-level declarations keep mutual recursion intact while staying visible to the body.
+        prefix.Append(flat ? "\n" : " in ");
+
+        foreach (var binding in group.Bindings)
+        {
+            availableLocalBindings.Add(binding.Name);
+        }
+    }
+
+    private static void AppendModuleGroupBinding(
+        StringBuilder prefix,
+        ProjectModule module,
+        ModuleBindingFragment binding,
+        string moduleBindingName,
+        bool flat,
+        bool isRecursiveGroup,
+        IReadOnlyList<string> recursiveBindings,
+        IReadOnlyList<string> availableLocalBindings,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        bool appendSeparator)
+    {
+        var referencedNames = CollectReferencedNames(binding.ValueSource);
+        var aliases = BuildVisibleAliases(
+            module,
+            availableLocalBindings,
+            recursiveBindings,
+            referencedNames,
+            exportedNames);
+
+        if (appendSeparator)
+        {
+            prefix.Append(" and ");
+        }
+
+        // A flat `let rec ... and ...` group is stitched as a genuine top-level declaration, so
+        // each member value must stay a bare function literal; its aliases are resolved by
+        // renaming identifiers in place rather than wrapping them in `let ... in` (which would
+        // make the value a non-function expression and force eager sibling evaluation). The
+        // legacy nested form keeps the original wrapping path so its codegen is unchanged — in
+        // particular wrapping is what resolves synthetic cross-module/qualified alias names that
+        // never appear as bare identifier tokens.
+        var renderedValue = flat && isRecursiveGroup
+            ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
+            : ApplyAliases(binding.ValueSource, aliases);
+
+        prefix.Append($"{moduleBindingName}_{binding.Name}");
+        // Keep a `needs {Cap(a)}` annotation on the stitched binding: it is what marks a generic
+        // dictionary-passing function, so dropping it would leave an exported generic capability
+        // function unresolved. Capability and type-variable names in the row are program-global,
+        // so they need no alias rewriting.
+        if (binding.Annotation is { Length: > 0 } annotation)
+        {
+            prefix.Append(" : ").Append(annotation);
+        }
+
+        prefix.Append(" = (")
+            .Append(renderedValue)
+            .Append(')');
+    }
+
     private static List<KeyValuePair<string, string>> BuildVisibleAliases(
         ProjectModule module,
         IReadOnlyList<string> availableLocalBindings,
@@ -1829,6 +2043,21 @@ public static class ProjectSupport
         var referencedVariables = referencedNames.Variables;
         var referencedQualifiedReferences = referencedNames.QualifiedReferences;
 
+        AddLocalBindingAliases(module, availableLocalBindings, currentRecursiveBindings, referencedVariables, localNames, aliases);
+        AddSelectorAliases(module, referencedVariables, localNames, aliases);
+        AddImportedExportAliases(module, referencedVariables, referencedQualifiedReferences, exportedNames, localNames, aliases);
+
+        return aliases;
+    }
+
+    private static void AddLocalBindingAliases(
+        ProjectModule module,
+        IReadOnlyList<string> availableLocalBindings,
+        IReadOnlyList<string> currentRecursiveBindings,
+        IReadOnlySet<string> referencedVariables,
+        HashSet<string> localNames,
+        List<KeyValuePair<string, string>> aliases)
+    {
         foreach (var recursiveBinding in currentRecursiveBindings)
         {
             if (referencedVariables.Contains(recursiveBinding) && localNames.Add(recursiveBinding))
@@ -1850,7 +2079,14 @@ public static class ProjectSupport
                 bindingName,
                 $"{SanitizeModuleBindingName(module.ModuleName)}_{bindingName}"));
         }
+    }
 
+    private static void AddSelectorAliases(
+        ProjectModule module,
+        IReadOnlySet<string> referencedVariables,
+        HashSet<string> localNames,
+        List<KeyValuePair<string, string>> aliases)
+    {
         // Binding selectors (`import M.name [as x]`) introduce the selected value export unqualified.
         // They are resolved before whole-module imports so an explicitly selected name wins over the
         // same name being brought in by a whole-module import. The alias target is the qualified
@@ -1872,7 +2108,16 @@ public static class ProjectSupport
                 selector.LocalName,
                 $"{selector.ModuleName}.{selector.ExportName}"));
         }
+    }
 
+    private static void AddImportedExportAliases(
+        ProjectModule module,
+        IReadOnlySet<string> referencedVariables,
+        IReadOnlySet<QualifiedReference> referencedQualifiedReferences,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        HashSet<string> localNames,
+        List<KeyValuePair<string, string>> aliases)
+    {
         var importedOwners = new Dictionary<string, string>(StringComparer.Ordinal);
         var shortQualifierOwners = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var import in module.Imports.Reverse())
@@ -1899,41 +2144,55 @@ public static class ProjectSupport
 
             foreach (var exportName in exportNames)
             {
-                if (!referencedVariables.Contains(exportName) || localNames.Contains(exportName))
-                {
-                    if (hasReferencedShortQualifier
-                        && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
-                    {
-                        aliases.Add(new KeyValuePair<string, string>(
-                            $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
-                            $"{SanitizeModuleBindingName(import)}_{exportName}"));
-                    }
-
-                    continue;
-                }
-
-                if (importedOwners.TryGetValue(exportName, out var existingModule))
-                {
-                    throw new InvalidOperationException(
-                        $"Import name collision for imported binding '{exportName}': '{existingModule}' and '{import}'.");
-                }
-
-                importedOwners[exportName] = import;
-                aliases.Add(new KeyValuePair<string, string>(
-                    exportName,
-                    $"{SanitizeModuleBindingName(import)}_{exportName}"));
-
-                if (hasReferencedShortQualifier
-                    && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
-                {
-                    aliases.Add(new KeyValuePair<string, string>(
-                        $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
-                        $"{SanitizeModuleBindingName(import)}_{exportName}"));
-                }
+                AddImportExportAlias(
+                    import, exportName, shortQualifier, hasReferencedShortQualifier,
+                    referencedVariables, referencedQualifiedReferences, localNames, importedOwners, aliases);
             }
         }
+    }
 
-        return aliases;
+    private static void AddImportExportAlias(
+        string import,
+        string exportName,
+        string shortQualifier,
+        bool hasReferencedShortQualifier,
+        IReadOnlySet<string> referencedVariables,
+        IReadOnlySet<QualifiedReference> referencedQualifiedReferences,
+        HashSet<string> localNames,
+        Dictionary<string, string> importedOwners,
+        List<KeyValuePair<string, string>> aliases)
+    {
+        if (!referencedVariables.Contains(exportName) || localNames.Contains(exportName))
+        {
+            if (hasReferencedShortQualifier
+                && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
+            {
+                aliases.Add(new KeyValuePair<string, string>(
+                    $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
+                    $"{SanitizeModuleBindingName(import)}_{exportName}"));
+            }
+
+            return;
+        }
+
+        if (importedOwners.TryGetValue(exportName, out var existingModule))
+        {
+            throw new InvalidOperationException(
+                $"Import name collision for imported binding '{exportName}': '{existingModule}' and '{import}'.");
+        }
+
+        importedOwners[exportName] = import;
+        aliases.Add(new KeyValuePair<string, string>(
+            exportName,
+            $"{SanitizeModuleBindingName(import)}_{exportName}"));
+
+        if (hasReferencedShortQualifier
+            && referencedQualifiedReferences.Contains(new QualifiedReference(shortQualifier, exportName)))
+        {
+            aliases.Add(new KeyValuePair<string, string>(
+                $"{SanitizeModuleBindingName(shortQualifier)}_{exportName}",
+                $"{SanitizeModuleBindingName(import)}_{exportName}"));
+        }
     }
 
     private static string GetLeafModuleQualifier(string moduleName)
@@ -2089,113 +2348,11 @@ public static class ProjectSupport
 
         foreach (var item in program.Items)
         {
-            switch (item)
+            if (!TryShapeFlatItem(
+                    source, item, typeDeclarations, typeDeclFragments, groups, hoistedSpans,
+                    ref hasFlatBinding, ref hoistedCapabilityOrProvide, ref cursor))
             {
-                case TopLevelItem.Type typeItem:
-                    {
-                        var span = AstSpans.GetOrDefault(typeItem.Decl);
-                        if (span.End <= span.Start || span.End > source.Length)
-                        {
-                            return false;
-                        }
-
-                        // Each declaration carries a trailing newline so concatenated type sources (and the
-                        // bindings that follow them in the combined source) stay lexically separated.
-                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
-                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
-                        hoistedSpans.Add((span.Start, span.End));
-                        cursor = span.End;
-                        break;
-                    }
-
-                case TopLevelItem.Capability capabilityItem:
-                    {
-                        // Capability declarations hoist exactly like type declarations: they are
-                        // program-wide (operations resolve as qualified Capability.op from any module)
-                        // and carry no value binding.
-                        var span = AstSpans.GetOrDefault(capabilityItem.Decl);
-                        if (span.End <= span.Start || span.End > source.Length)
-                        {
-                            return false;
-                        }
-
-                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
-                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
-                        hoistedSpans.Add((span.Start, span.End));
-                        hoistedCapabilityOrProvide = true;
-                        cursor = span.End;
-                        break;
-                    }
-
-                case TopLevelItem.Provide provideItem:
-                    {
-                        // Providers are program-wide static evidence, hoisted like capabilities.
-                        var span = AstSpans.GetOrDefault(provideItem.Decl);
-                        if (span.End <= span.Start || span.End > source.Length)
-                        {
-                            return false;
-                        }
-
-                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
-                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
-                        hoistedSpans.Add((span.Start, span.End));
-                        hoistedCapabilityOrProvide = true;
-                        cursor = span.End;
-                        break;
-                    }
-
-                case TopLevelItem.External externalItem:
-                    {
-                        // `external` is never exported, but it is program-wide and must be visible to
-                        // lowering so direct FFI calls bind. Hoist it with the other global declarations
-                        // while still removing it from the entry expression.
-                        var span = AstSpans.GetOrDefault(externalItem.Decl);
-                        if (span.End <= span.Start || span.End > source.Length)
-                        {
-                            return false;
-                        }
-
-                        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
-                        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
-                        hoistedSpans.Add((span.Start, span.End));
-                        cursor = span.End;
-                        break;
-                    }
-
-                case TopLevelItem.LetDecl letDecl:
-                    {
-                        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource, out var annotation))
-                        {
-                            return false;
-                        }
-
-                        groups.Add(new ModuleBindingGroup(
-                            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive, annotation)],
-                            letDecl.IsRecursive));
-                        hasFlatBinding = true;
-                        break;
-                    }
-
-                case TopLevelItem.RecursiveGroup recursiveGroup:
-                    {
-                        var members = new List<ModuleBindingFragment>();
-                        foreach (var (name, value) in recursiveGroup.Bindings)
-                        {
-                            if (!TryExtractFlatBindingValue(source, value, ref cursor, out var valueSource))
-                            {
-                                return false;
-                            }
-
-                            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true));
-                        }
-
-                        groups.Add(new ModuleBindingGroup(members, IsRecursiveGroup: true));
-                        hasFlatBinding = true;
-                        break;
-                    }
-
-                default:
-                    return false;
+                return false;
             }
         }
 
@@ -2211,19 +2368,157 @@ public static class ProjectSupport
             return false;
         }
 
+        shape = BuildFlatModuleShape(source, typeDeclarations, typeDeclFragments, groups, hoistedSpans, program.Body is not null);
+        return true;
+    }
+
+    private static ModuleSourceShape BuildFlatModuleShape(
+        string source,
+        StringBuilder typeDeclarations,
+        List<(int FragmentStart, int OriginalStart, int Length)> typeDeclFragments,
+        List<ModuleBindingGroup> groups,
+        List<(int Start, int End)> hoistedSpans,
+        bool hasTrailingExpression)
+    {
         // For an imported (non-entry) module the trailing expression is dropped and the stitcher uses
         // the binding groups, so RawExpressionSource is unused. For an entry module it is the program
         // body, so preserve the flat `let` declarations and trailing expression here (with the hoisted
         // type/external declarations removed, since those are emitted up front) rather than discarding it.
-        shape = new ModuleSourceShape(
+        return new ModuleSourceShape(
             TypeDeclarationsSource: typeDeclarations.ToString(),
             RawExpressionSource: BlankSpans(source, hoistedSpans).TrimEnd(),
             ExpressionBodySource: string.Empty,
             TopLevelBindings: groups,
             LegacyExportName: null,
             IsFlat: true,
-            HasTrailingExpression: program.Body is not null,
+            HasTrailingExpression: hasTrailingExpression,
             TypeDeclFragments: typeDeclFragments);
+    }
+
+    private static bool TryShapeFlatItem(
+        string source,
+        TopLevelItem item,
+        StringBuilder typeDeclarations,
+        List<(int FragmentStart, int OriginalStart, int Length)> typeDeclFragments,
+        List<ModuleBindingGroup> groups,
+        List<(int Start, int End)> hoistedSpans,
+        ref bool hasFlatBinding,
+        ref bool hoistedCapabilityOrProvide,
+        ref int cursor)
+    {
+        switch (item)
+        {
+            case TopLevelItem.Type typeItem:
+                return TryHoistDeclarationSpan(
+                    source, AstSpans.GetOrDefault(typeItem.Decl),
+                    typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
+
+            case TopLevelItem.Capability capabilityItem:
+                // Capability declarations hoist exactly like type declarations: they are
+                // program-wide (operations resolve as qualified Capability.op from any module)
+                // and carry no value binding.
+                if (!TryHoistDeclarationSpan(
+                        source, AstSpans.GetOrDefault(capabilityItem.Decl),
+                        typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor))
+                {
+                    return false;
+                }
+
+                hoistedCapabilityOrProvide = true;
+                return true;
+
+            case TopLevelItem.Provide provideItem:
+                // Providers are program-wide static evidence, hoisted like capabilities.
+                if (!TryHoistDeclarationSpan(
+                        source, AstSpans.GetOrDefault(provideItem.Decl),
+                        typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor))
+                {
+                    return false;
+                }
+
+                hoistedCapabilityOrProvide = true;
+                return true;
+
+            case TopLevelItem.External externalItem:
+                // `external` is never exported, but it is program-wide and must be visible to
+                // lowering so direct FFI calls bind. Hoist it with the other global declarations
+                // while still removing it from the entry expression.
+                return TryHoistDeclarationSpan(
+                    source, AstSpans.GetOrDefault(externalItem.Decl),
+                    typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
+
+            case TopLevelItem.LetDecl letDecl:
+                return TryShapeFlatLetDecl(source, letDecl, groups, ref hasFlatBinding, ref cursor);
+
+            case TopLevelItem.RecursiveGroup recursiveGroup:
+                return TryShapeFlatRecursiveGroup(source, recursiveGroup, groups, ref hasFlatBinding, ref cursor);
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryHoistDeclarationSpan(
+        string source,
+        TextSpan span,
+        StringBuilder typeDeclarations,
+        List<(int FragmentStart, int OriginalStart, int Length)> typeDeclFragments,
+        List<(int Start, int End)> hoistedSpans,
+        ref int cursor)
+    {
+        if (span.End <= span.Start || span.End > source.Length)
+        {
+            return false;
+        }
+
+        // Each declaration carries a trailing newline so concatenated type sources (and the
+        // bindings that follow them in the combined source) stay lexically separated.
+        typeDeclFragments.Add((typeDeclarations.Length, span.Start, span.End - span.Start));
+        typeDeclarations.Append(source[span.Start..span.End]).Append('\n');
+        hoistedSpans.Add((span.Start, span.End));
+        cursor = span.End;
+        return true;
+    }
+
+    private static bool TryShapeFlatLetDecl(
+        string source,
+        TopLevelItem.LetDecl letDecl,
+        List<ModuleBindingGroup> groups,
+        ref bool hasFlatBinding,
+        ref int cursor)
+    {
+        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource, out var annotation))
+        {
+            return false;
+        }
+
+        groups.Add(new ModuleBindingGroup(
+            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive, annotation)],
+            letDecl.IsRecursive));
+        hasFlatBinding = true;
+        return true;
+    }
+
+    private static bool TryShapeFlatRecursiveGroup(
+        string source,
+        TopLevelItem.RecursiveGroup recursiveGroup,
+        List<ModuleBindingGroup> groups,
+        ref bool hasFlatBinding,
+        ref int cursor)
+    {
+        var members = new List<ModuleBindingFragment>();
+        foreach (var (name, value) in recursiveGroup.Bindings)
+        {
+            if (!TryExtractFlatBindingValue(source, value, ref cursor, out var valueSource))
+            {
+                return false;
+            }
+
+            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true));
+        }
+
+        groups.Add(new ModuleBindingGroup(members, IsRecursiveGroup: true));
+        hasFlatBinding = true;
         return true;
     }
 
@@ -2400,80 +2695,13 @@ public static class ProjectSupport
 
         if (token.Kind == TokenKind.Colon)
         {
-            // Annotated binding: skip the type expression up to the value-introducing `=`, capturing
-            // the annotation source so a stitched module binding can keep it (a `needs {Cap(a)}` row is
-            // what marks a generic dictionary-passing function).
-            var annotationStart = from + token.Position + token.Text.Length;
-            var depth = 0;
-            while (token.Kind != TokenKind.EOF)
-            {
-                token = lexer.Next();
-                switch (token.Kind)
-                {
-                    case TokenKind.LParen:
-                    case TokenKind.LBracket:
-                        depth++;
-                        break;
-                    case TokenKind.RParen:
-                    case TokenKind.RBracket:
-                        depth--;
-                        break;
-                    case TokenKind.Equals when depth == 0:
-                        annotation = source[annotationStart..(from + token.Position)].Trim();
-                        valueStart = from + token.Position + token.Text.Length;
-                        return true;
-                }
-            }
-
-            return false;
+            return TryScanAnnotatedLetHeader(source, from, lexer, token, out valueStart, out annotation);
         }
 
         var collected = new List<string>();
-        while (token.Kind is TokenKind.Ident or TokenKind.LParen)
+        if (!TryScanLetParameters(source, from, lexer, ref token, collected))
         {
-            if (token.Kind == TokenKind.LParen)
-            {
-                // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
-                // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
-                token = lexer.Next();
-                if (token.Kind != TokenKind.Ident)
-                {
-                    return false;
-                }
-
-                var innerStart = from + token.Position;
-                token = lexer.Next();
-                if (token.Kind != TokenKind.Colon)
-                {
-                    return false;
-                }
-
-                var parenDepth = 1;
-                while (parenDepth > 0)
-                {
-                    token = lexer.Next();
-                    if (token.Kind == TokenKind.EOF)
-                    {
-                        return false;
-                    }
-
-                    if (token.Kind is TokenKind.LParen or TokenKind.LBracket)
-                    {
-                        parenDepth++;
-                    }
-                    else if (token.Kind is TokenKind.RParen or TokenKind.RBracket)
-                    {
-                        parenDepth--;
-                    }
-                }
-
-                collected.Add(source[innerStart..(from + token.Position)].Trim());
-                token = lexer.Next();
-                continue;
-            }
-
-            collected.Add(token.Text);
-            token = lexer.Next();
+            return false;
         }
 
         if (token.Kind != TokenKind.Equals)
@@ -2483,6 +2711,103 @@ public static class ProjectSupport
 
         parameters = collected;
         valueStart = from + token.Position + token.Text.Length;
+        return true;
+    }
+
+    private static bool TryScanLetParameters(string source, int from, Lexer lexer, ref Token token, List<string> collected)
+    {
+        while (token.Kind is TokenKind.Ident or TokenKind.LParen)
+        {
+            if (token.Kind == TokenKind.LParen)
+            {
+                if (!TryScanParenthesizedParameter(source, from, lexer, ref token, collected))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            collected.Add(token.Text);
+            token = lexer.Next();
+        }
+
+        return true;
+    }
+
+    private static bool TryScanAnnotatedLetHeader(
+        string source, int from, Lexer lexer, Token token, out int valueStart, out string? annotation)
+    {
+        valueStart = from;
+        annotation = null;
+
+        // Annotated binding: skip the type expression up to the value-introducing `=`, capturing
+        // the annotation source so a stitched module binding can keep it (a `needs {Cap(a)}` row is
+        // what marks a generic dictionary-passing function).
+        var annotationStart = from + token.Position + token.Text.Length;
+        var depth = 0;
+        while (token.Kind != TokenKind.EOF)
+        {
+            token = lexer.Next();
+            switch (token.Kind)
+            {
+                case TokenKind.LParen:
+                case TokenKind.LBracket:
+                    depth++;
+                    break;
+                case TokenKind.RParen:
+                case TokenKind.RBracket:
+                    depth--;
+                    break;
+                case TokenKind.Equals when depth == 0:
+                    annotation = source[annotationStart..(from + token.Position)].Trim();
+                    valueStart = from + token.Position + token.Text.Length;
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryScanParenthesizedParameter(
+        string source, int from, Lexer lexer, ref Token token, List<string> collected)
+    {
+        // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
+        // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
+        token = lexer.Next();
+        if (token.Kind != TokenKind.Ident)
+        {
+            return false;
+        }
+
+        var innerStart = from + token.Position;
+        token = lexer.Next();
+        if (token.Kind != TokenKind.Colon)
+        {
+            return false;
+        }
+
+        var parenDepth = 1;
+        while (parenDepth > 0)
+        {
+            token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                return false;
+            }
+
+            if (token.Kind is TokenKind.LParen or TokenKind.LBracket)
+            {
+                parenDepth++;
+            }
+            else if (token.Kind is TokenKind.RParen or TokenKind.RBracket)
+            {
+                parenDepth--;
+            }
+        }
+
+        collected.Add(source[innerStart..(from + token.Position)].Trim());
+        token = lexer.Next();
         return true;
     }
 
@@ -2545,6 +2870,22 @@ public static class ProjectSupport
         // only the body and drop the parameters (binding `f` to an open expression referencing the
         // undefined parameter names).
         var sugarParams = new List<string>();
+        if (!TryScanSugarParams(source, lexer, ref equals, sugarParams))
+        {
+            return false;
+        }
+
+        if (equals.Kind != TokenKind.Equals)
+        {
+            return false;
+        }
+
+        var valueStart = equals.Position + equals.Text.Length;
+        return TrySplitBindingValue(source, lexer, valueStart, name, isRecursive, sugarParams, out binding, out remaining);
+    }
+
+    private static bool TryScanSugarParams(string source, Lexer lexer, ref Token equals, List<string> sugarParams)
+    {
         if (equals.Kind is TokenKind.Ident or TokenKind.LParen)
         {
             while (equals.Kind is TokenKind.Ident or TokenKind.LParen)
@@ -2553,40 +2894,11 @@ public static class ProjectSupport
                 {
                     // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
                     // verbatim so the `given ({param}) ->` re-wrap keeps the annotation.
-                    equals = lexer.Next();
-                    if (equals.Kind != TokenKind.Ident)
+                    if (!TryScanParenthesizedParameter(source, 0, lexer, ref equals, sugarParams))
                     {
                         return false;
                     }
 
-                    var innerStart = equals.Position;
-                    equals = lexer.Next();
-                    if (equals.Kind != TokenKind.Colon)
-                    {
-                        return false;
-                    }
-
-                    var parenDepth = 1;
-                    while (parenDepth > 0)
-                    {
-                        equals = lexer.Next();
-                        if (equals.Kind == TokenKind.EOF)
-                        {
-                            return false;
-                        }
-
-                        if (equals.Kind is TokenKind.LParen or TokenKind.LBracket)
-                        {
-                            parenDepth++;
-                        }
-                        else if (equals.Kind is TokenKind.RParen or TokenKind.RBracket)
-                        {
-                            parenDepth--;
-                        }
-                    }
-
-                    sugarParams.Add(source[innerStart..equals.Position].Trim());
-                    equals = lexer.Next();
                     continue;
                 }
 
@@ -2602,12 +2914,21 @@ public static class ProjectSupport
             }
         }
 
-        if (equals.Kind != TokenKind.Equals)
-        {
-            return false;
-        }
+        return true;
+    }
 
-        var valueStart = equals.Position + equals.Text.Length;
+    private static bool TrySplitBindingValue(
+        string source,
+        Lexer lexer,
+        int valueStart,
+        string name,
+        bool isRecursive,
+        List<string> sugarParams,
+        out ModuleBindingFragment binding,
+        out string remaining)
+    {
+        binding = null!;
+        remaining = source;
         var nestedLetDepth = 0;
 
         while (true)
@@ -2826,12 +3147,12 @@ public static class ProjectSupport
             switch (item)
             {
                 case TopLevelItem.LetDecl letDecl:
-                    Visit(letDecl.Value);
+                    VisitReferencedNames(letDecl.Value, names, qualifiedReferences);
                     break;
                 case TopLevelItem.RecursiveGroup recursiveGroup:
                     foreach (var binding in recursiveGroup.Bindings)
                     {
-                        Visit(binding.Value);
+                        VisitReferencedNames(binding.Value, names, qualifiedReferences);
                     }
 
                     break;
@@ -2842,177 +3163,217 @@ public static class ProjectSupport
 
         if (program.Body is not null)
         {
-            Visit(program.Body);
+            VisitReferencedNames(program.Body, names, qualifiedReferences);
         }
 
         return new ReferencedNames(names, qualifiedReferences);
+    }
 
-        void Visit(Expr expr)
+    private static void VisitReferencedNames(Expr expr, HashSet<string> names, HashSet<QualifiedReference> qualifiedReferences)
+    {
+        switch (expr)
         {
-            switch (expr)
-            {
-                case Expr.Var varExpr:
-                    names.Add(varExpr.Name);
-                    break;
-                case Expr.QualifiedVar qualifiedVar:
-                    qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
-                    break;
-                case Expr.IntLit:
-                case Expr.UIntLit:
-                case Expr.BigIntLit:
-                case Expr.FloatLit:
-                case Expr.StrLit:
-                case Expr.BoolLit:
-                    break;
-                case Expr.Add add:
-                    Visit(add.Left);
-                    Visit(add.Right);
-                    break;
-                case Expr.Subtract sub:
-                    Visit(sub.Left);
-                    Visit(sub.Right);
-                    break;
-                case Expr.Multiply mul:
-                    Visit(mul.Left);
-                    Visit(mul.Right);
-                    break;
-                case Expr.Modulo modExpr:
-                    Visit(modExpr.Left);
-                    Visit(modExpr.Right);
-                    break;
-                case Expr.Divide div:
-                    Visit(div.Left);
-                    Visit(div.Right);
-                    break;
-                case Expr.BitwiseAnd bitAnd:
-                    Visit(bitAnd.Left);
-                    Visit(bitAnd.Right);
-                    break;
-                case Expr.BitwiseOr bitOr:
-                    Visit(bitOr.Left);
-                    Visit(bitOr.Right);
-                    break;
-                case Expr.BitwiseXor bitXor:
-                    Visit(bitXor.Left);
-                    Visit(bitXor.Right);
-                    break;
-                case Expr.ShiftLeft shiftLeft:
-                    Visit(shiftLeft.Left);
-                    Visit(shiftLeft.Right);
-                    break;
-                case Expr.ShiftRight shiftRight:
-                    Visit(shiftRight.Left);
-                    Visit(shiftRight.Right);
-                    break;
-                case Expr.BitwiseNot bitwiseNot:
-                    Visit(bitwiseNot.Operand);
-                    break;
-                case Expr.GreaterThan gt:
-                    Visit(gt.Left);
-                    Visit(gt.Right);
-                    break;
-                case Expr.GreaterOrEqual ge:
-                    Visit(ge.Left);
-                    Visit(ge.Right);
-                    break;
-                case Expr.LessThan lt:
-                    Visit(lt.Left);
-                    Visit(lt.Right);
-                    break;
-                case Expr.LessOrEqual le:
-                    Visit(le.Left);
-                    Visit(le.Right);
-                    break;
-                case Expr.Equal eq:
-                    Visit(eq.Left);
-                    Visit(eq.Right);
-                    break;
-                case Expr.NotEqual ne:
-                    Visit(ne.Left);
-                    Visit(ne.Right);
-                    break;
-                case Expr.ResultPipe pipe:
-                    Visit(pipe.Left);
-                    Visit(pipe.Right);
-                    break;
-                case Expr.ResultMapErrorPipe pipe:
-                    Visit(pipe.Left);
-                    Visit(pipe.Right);
-                    break;
-                case Expr.Let letExpr:
-                    Visit(letExpr.Value);
-                    Visit(letExpr.Body);
-                    break;
-                case Expr.LetResult letResultExpr:
-                    Visit(letResultExpr.Value);
-                    Visit(letResultExpr.Body);
-                    break;
-                case Expr.LetRecursive letRecursiveExpr:
-                    Visit(letRecursiveExpr.Value);
-                    Visit(letRecursiveExpr.Body);
-                    break;
-                case Expr.If ifExpr:
-                    Visit(ifExpr.Cond);
-                    Visit(ifExpr.Then);
-                    Visit(ifExpr.Else);
-                    break;
-                case Expr.Lambda lambda:
-                    Visit(lambda.Body);
-                    break;
-                case Expr.Call call:
-                    Visit(call.Func);
-                    Visit(call.Arg);
-                    break;
-                case Expr.TupleLit tuple:
-                    foreach (var element in tuple.Elements)
+            case Expr.Var varExpr:
+                names.Add(varExpr.Name);
+                break;
+            case Expr.QualifiedVar qualifiedVar:
+                qualifiedReferences.Add(new QualifiedReference(qualifiedVar.Module, qualifiedVar.Name));
+                break;
+            case Expr.IntLit:
+            case Expr.UIntLit:
+            case Expr.BigIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                break;
+            default:
+                VisitReferencedNamesOperators(expr, names, qualifiedReferences);
+                break;
+        }
+    }
+
+    private static void VisitReferencedNamesOperators(Expr expr, HashSet<string> names, HashSet<QualifiedReference> qualifiedReferences)
+    {
+        switch (expr)
+        {
+            case Expr.Add add:
+                VisitReferencedNames(add.Left, names, qualifiedReferences);
+                VisitReferencedNames(add.Right, names, qualifiedReferences);
+                break;
+            case Expr.Subtract sub:
+                VisitReferencedNames(sub.Left, names, qualifiedReferences);
+                VisitReferencedNames(sub.Right, names, qualifiedReferences);
+                break;
+            case Expr.Multiply mul:
+                VisitReferencedNames(mul.Left, names, qualifiedReferences);
+                VisitReferencedNames(mul.Right, names, qualifiedReferences);
+                break;
+            case Expr.Modulo modExpr:
+                VisitReferencedNames(modExpr.Left, names, qualifiedReferences);
+                VisitReferencedNames(modExpr.Right, names, qualifiedReferences);
+                break;
+            case Expr.Divide div:
+                VisitReferencedNames(div.Left, names, qualifiedReferences);
+                VisitReferencedNames(div.Right, names, qualifiedReferences);
+                break;
+            case Expr.BitwiseAnd bitAnd:
+                VisitReferencedNames(bitAnd.Left, names, qualifiedReferences);
+                VisitReferencedNames(bitAnd.Right, names, qualifiedReferences);
+                break;
+            case Expr.BitwiseOr bitOr:
+                VisitReferencedNames(bitOr.Left, names, qualifiedReferences);
+                VisitReferencedNames(bitOr.Right, names, qualifiedReferences);
+                break;
+            case Expr.BitwiseXor bitXor:
+                VisitReferencedNames(bitXor.Left, names, qualifiedReferences);
+                VisitReferencedNames(bitXor.Right, names, qualifiedReferences);
+                break;
+            case Expr.ShiftLeft shiftLeft:
+                VisitReferencedNames(shiftLeft.Left, names, qualifiedReferences);
+                VisitReferencedNames(shiftLeft.Right, names, qualifiedReferences);
+                break;
+            case Expr.ShiftRight shiftRight:
+                VisitReferencedNames(shiftRight.Left, names, qualifiedReferences);
+                VisitReferencedNames(shiftRight.Right, names, qualifiedReferences);
+                break;
+            case Expr.BitwiseNot bitwiseNot:
+                VisitReferencedNames(bitwiseNot.Operand, names, qualifiedReferences);
+                break;
+            default:
+                VisitReferencedNamesComparisons(expr, names, qualifiedReferences);
+                break;
+        }
+    }
+
+    private static void VisitReferencedNamesComparisons(Expr expr, HashSet<string> names, HashSet<QualifiedReference> qualifiedReferences)
+    {
+        switch (expr)
+        {
+            case Expr.GreaterThan gt:
+                VisitReferencedNames(gt.Left, names, qualifiedReferences);
+                VisitReferencedNames(gt.Right, names, qualifiedReferences);
+                break;
+            case Expr.GreaterOrEqual ge:
+                VisitReferencedNames(ge.Left, names, qualifiedReferences);
+                VisitReferencedNames(ge.Right, names, qualifiedReferences);
+                break;
+            case Expr.LessThan lt:
+                VisitReferencedNames(lt.Left, names, qualifiedReferences);
+                VisitReferencedNames(lt.Right, names, qualifiedReferences);
+                break;
+            case Expr.LessOrEqual le:
+                VisitReferencedNames(le.Left, names, qualifiedReferences);
+                VisitReferencedNames(le.Right, names, qualifiedReferences);
+                break;
+            case Expr.Equal eq:
+                VisitReferencedNames(eq.Left, names, qualifiedReferences);
+                VisitReferencedNames(eq.Right, names, qualifiedReferences);
+                break;
+            case Expr.NotEqual ne:
+                VisitReferencedNames(ne.Left, names, qualifiedReferences);
+                VisitReferencedNames(ne.Right, names, qualifiedReferences);
+                break;
+            case Expr.ResultPipe pipe:
+                VisitReferencedNames(pipe.Left, names, qualifiedReferences);
+                VisitReferencedNames(pipe.Right, names, qualifiedReferences);
+                break;
+            case Expr.ResultMapErrorPipe pipe:
+                VisitReferencedNames(pipe.Left, names, qualifiedReferences);
+                VisitReferencedNames(pipe.Right, names, qualifiedReferences);
+                break;
+            default:
+                VisitReferencedNamesBindings(expr, names, qualifiedReferences);
+                break;
+        }
+    }
+
+    private static void VisitReferencedNamesBindings(Expr expr, HashSet<string> names, HashSet<QualifiedReference> qualifiedReferences)
+    {
+        switch (expr)
+        {
+            case Expr.Let letExpr:
+                VisitReferencedNames(letExpr.Value, names, qualifiedReferences);
+                VisitReferencedNames(letExpr.Body, names, qualifiedReferences);
+                break;
+            case Expr.LetResult letResultExpr:
+                VisitReferencedNames(letResultExpr.Value, names, qualifiedReferences);
+                VisitReferencedNames(letResultExpr.Body, names, qualifiedReferences);
+                break;
+            case Expr.LetRecursive letRecursiveExpr:
+                VisitReferencedNames(letRecursiveExpr.Value, names, qualifiedReferences);
+                VisitReferencedNames(letRecursiveExpr.Body, names, qualifiedReferences);
+                break;
+            case Expr.If ifExpr:
+                VisitReferencedNames(ifExpr.Cond, names, qualifiedReferences);
+                VisitReferencedNames(ifExpr.Then, names, qualifiedReferences);
+                VisitReferencedNames(ifExpr.Else, names, qualifiedReferences);
+                break;
+            case Expr.Lambda lambda:
+                VisitReferencedNames(lambda.Body, names, qualifiedReferences);
+                break;
+            case Expr.Call call:
+                VisitReferencedNames(call.Func, names, qualifiedReferences);
+                VisitReferencedNames(call.Arg, names, qualifiedReferences);
+                break;
+            case Expr.TupleLit tuple:
+                foreach (var element in tuple.Elements)
+                {
+                    VisitReferencedNames(element, names, qualifiedReferences);
+                }
+                break;
+            case Expr.ListLit list:
+                foreach (var element in list.Elements)
+                {
+                    VisitReferencedNames(element, names, qualifiedReferences);
+                }
+                break;
+            case Expr.Cons cons:
+                VisitReferencedNames(cons.Head, names, qualifiedReferences);
+                VisitReferencedNames(cons.Tail, names, qualifiedReferences);
+                break;
+            default:
+                VisitReferencedNamesAggregates(expr, names, qualifiedReferences);
+                break;
+        }
+    }
+
+    private static void VisitReferencedNamesAggregates(Expr expr, HashSet<string> names, HashSet<QualifiedReference> qualifiedReferences)
+    {
+        switch (expr)
+        {
+            case Expr.Match match:
+                VisitReferencedNames(match.Value, names, qualifiedReferences);
+                foreach (var matchCase in match.Cases)
+                {
+                    if (matchCase.Guard is not null)
                     {
-                        Visit(element);
+                        VisitReferencedNames(matchCase.Guard, names, qualifiedReferences);
                     }
-                    break;
-                case Expr.ListLit list:
-                    foreach (var element in list.Elements)
-                    {
-                        Visit(element);
-                    }
-                    break;
-                case Expr.Cons cons:
-                    Visit(cons.Head);
-                    Visit(cons.Tail);
-                    break;
-                case Expr.Match match:
-                    Visit(match.Value);
-                    foreach (var matchCase in match.Cases)
-                    {
-                        if (matchCase.Guard is not null)
-                        {
-                            Visit(matchCase.Guard);
-                        }
-                        Visit(matchCase.Body);
-                    }
-                    break;
-                case Expr.Await awaitExpr:
-                    Visit(awaitExpr.Task);
-                    break;
-                case Expr.RecordLit rl:
-                    foreach (var field in rl.Fields)
-                        Visit(field.Value);
-                    break;
-                case Expr.RecordUpdate ru:
-                    Visit(ru.Target);
-                    foreach (var update in ru.Updates)
-                        Visit(update.Value);
-                    break;
-                case Expr.Perform perform:
-                    Visit(perform.Operation);
-                    break;
-                case Expr.Handle handleExpr:
-                    Visit(handleExpr.Body);
-                    foreach (var arm in handleExpr.Arms)
-                        Visit(arm.Body);
-                    break;
-                default:
-                    throw new NotSupportedException(expr.GetType().Name);
-            }
+                    VisitReferencedNames(matchCase.Body, names, qualifiedReferences);
+                }
+                break;
+            case Expr.Await awaitExpr:
+                VisitReferencedNames(awaitExpr.Task, names, qualifiedReferences);
+                break;
+            case Expr.RecordLit rl:
+                foreach (var field in rl.Fields)
+                    VisitReferencedNames(field.Value, names, qualifiedReferences);
+                break;
+            case Expr.RecordUpdate ru:
+                VisitReferencedNames(ru.Target, names, qualifiedReferences);
+                foreach (var update in ru.Updates)
+                    VisitReferencedNames(update.Value, names, qualifiedReferences);
+                break;
+            case Expr.Perform perform:
+                VisitReferencedNames(perform.Operation, names, qualifiedReferences);
+                break;
+            case Expr.Handle handleExpr:
+                VisitReferencedNames(handleExpr.Body, names, qualifiedReferences);
+                foreach (var arm in handleExpr.Arms)
+                    VisitReferencedNames(arm.Body, names, qualifiedReferences);
+                break;
+            default:
+                throw new NotSupportedException(expr.GetType().Name);
         }
     }
 
@@ -3059,44 +3420,7 @@ public static class ProjectSupport
                 continue;
             }
 
-            var headerIndent = header.Groups["indent"].Value.Length;
-            var name = header.Groups["name"].Value;
-            if (!seenNames.Add(name))
-            {
-                throw new InvalidOperationException(
-                    $"[ASH024] Duplicate inline module '{name}' in this scope ({displayPath}).");
-            }
-
-            if (string.Equals(name, "Ashes", StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"[ASH023] Inline module may not be named 'Ashes' (reserved for the standard library) ({displayPath}).");
-            }
-
-            // Body: subsequent lines that are blank or indented past the header column.
-            var body = new List<string>();
-            var j = i + 1;
-            while (j < lines.Length)
-            {
-                var line = lines[j];
-                if (line.Trim().Length == 0)
-                {
-                    body.Add(line);
-                    j++;
-                    continue;
-                }
-
-                if (LeadingWhitespaceWidth(line) <= headerIndent)
-                {
-                    break;
-                }
-
-                body.Add(line);
-                j++;
-            }
-
-            directChildren.Add((name, body));
-            i = j;
+            i = CollectInlineModuleBlock(lines, i, header, displayPath, seenNames, directChildren);
         }
 
         if (directChildren.Count == 0)
@@ -3122,6 +3446,54 @@ public static class ProjectSupport
         }
 
         return Rewrite(string.Join('\n', outer));
+    }
+
+    private static int CollectInlineModuleBlock(
+        string[] lines,
+        int i,
+        Match header,
+        string displayPath,
+        HashSet<string> seenNames,
+        List<(string Name, List<string> Body)> directChildren)
+    {
+        var headerIndent = header.Groups["indent"].Value.Length;
+        var name = header.Groups["name"].Value;
+        if (!seenNames.Add(name))
+        {
+            throw new InvalidOperationException(
+                $"[ASH024] Duplicate inline module '{name}' in this scope ({displayPath}).");
+        }
+
+        if (string.Equals(name, "Ashes", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"[ASH023] Inline module may not be named 'Ashes' (reserved for the standard library) ({displayPath}).");
+        }
+
+        // Body: subsequent lines that are blank or indented past the header column.
+        var body = new List<string>();
+        var j = i + 1;
+        while (j < lines.Length)
+        {
+            var line = lines[j];
+            if (line.Trim().Length == 0)
+            {
+                body.Add(line);
+                j++;
+                continue;
+            }
+
+            if (LeadingWhitespaceWidth(line) <= headerIndent)
+            {
+                break;
+            }
+
+            body.Add(line);
+            j++;
+        }
+
+        directChildren.Add((name, body));
+        return j;
     }
 
     private static int LeadingWhitespaceWidth(string line)

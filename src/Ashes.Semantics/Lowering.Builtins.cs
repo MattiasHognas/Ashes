@@ -892,6 +892,38 @@ public sealed partial class Lowering
     {
         _usesAsync = true;
 
+        int envPtrTemp = LowerCapturedStringTaskEmitEnvironment(captureTemps);
+
+        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
+
+        var saved = LowerCapturedStringTaskSaveAndResetState();
+
+        int stateStructSlot = NewLocal();
+        int dummyArgSlot = NewLocal();
+        Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
+
+        _scopes.Clear();
+        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+        _ownershipScopes.Clear();
+        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+        _arenaWatermarks.Clear();
+        _arenaWatermarks.Push((-1, -1));
+
+        int stateStructSize = LowerCapturedStringTaskBuildCoroutine(captureTemps, emitBody, coroutineLabel);
+
+        LowerCapturedStringTaskRestoreState(saved);
+
+        var taskType = CreateStringTaskType(successType);
+        _usesClosures = true;
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captureTemps.Count * 8));
+        int taskTemp = NewTemp();
+        Emit(new IrInst.CreateTask(taskTemp, closureTemp, stateStructSize, captureTemps.Count) { LoopResetEligible = loopResetEligible });
+        return (taskTemp, taskType);
+    }
+
+    private int LowerCapturedStringTaskEmitEnvironment(IReadOnlyList<int> captureTemps)
+    {
         var envPtrTemp = NewTemp();
         if (captureTemps.Count == 0)
         {
@@ -906,8 +938,27 @@ public sealed partial class Lowering
             }
         }
 
-        string coroutineLabel = $"coroutine_{_nextLambdaId++}";
+        return envPtrTemp;
+    }
 
+    // The lowering state saved across a coroutine body's out-of-line emission (see
+    // LowerCapturedStringTaskSaveAndResetState / LowerCapturedStringTaskRestoreState).
+    private sealed record CapturedStringTaskSavedState(
+        List<IrInst> Instructions,
+        int NextTempSlot,
+        int NextLocalSlot,
+        Dictionary<string, Binding>[] Scopes,
+        Dictionary<string, OwnershipInfo>[] OwnershipScopes,
+        (int CursorSlot, int EndSlot)[] ArenaWatermarks,
+        TcoContext? TcoCtx,
+        Dictionary<int, string> LocalNames,
+        Dictionary<int, TypeRef> LocalTypes,
+        Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> ReuseTokenFieldBindings,
+        Dictionary<int, int> ReuseBindingSeenBySlot,
+        Dictionary<int, string> ReuseTrackedSlotNames);
+
+    private CapturedStringTaskSavedState LowerCapturedStringTaskSaveAndResetState()
+    {
         var savedInst = new List<IrInst>(_inst);
         var savedTemp = _nextTempSlot;
         var savedLocal = _nextLocalSlot;
@@ -931,17 +982,26 @@ public sealed partial class Lowering
         _localNames.Clear();
         _localTypes.Clear();
 
-        int stateStructSlot = NewLocal();
-        int dummyArgSlot = NewLocal();
-        Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
+        return new CapturedStringTaskSavedState(
+            savedInst,
+            savedTemp,
+            savedLocal,
+            savedScopes,
+            savedOwnershipScopes,
+            savedArenaWatermarks,
+            savedTcoCtx,
+            savedLocalNames,
+            savedLocalTypes,
+            savedReuseTokenFieldBindings,
+            savedReuseBindingSeen,
+            savedReuseTrackedSlotNames);
+    }
 
-        _scopes.Clear();
-        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
-        _ownershipScopes.Clear();
-        _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
-        _arenaWatermarks.Clear();
-        _arenaWatermarks.Push((-1, -1));
-
+    private int LowerCapturedStringTaskBuildCoroutine(
+        IReadOnlyList<int> captureTemps,
+        Func<IReadOnlyList<int>, int> emitBody,
+        string coroutineLabel)
+    {
         var coroutineCaptureTemps = new int[captureTemps.Count];
         for (int i = 0; i < captureTemps.Count; i++)
         {
@@ -968,45 +1028,41 @@ public sealed partial class Lowering
             LocalTypes: SnapshotLocalTypes()
         );
         _funcs.Add(coroutineFunc);
+        return transformResult.StateStructSize;
+    }
 
+    private void LowerCapturedStringTaskRestoreState(CapturedStringTaskSavedState saved)
+    {
         _inst.Clear();
-        _inst.AddRange(savedInst);
-        _nextTempSlot = savedTemp;
+        _inst.AddRange(saved.Instructions);
+        _nextTempSlot = saved.NextTempSlot;
         _reuseTokenFieldBindings.Clear();
-        foreach (var kv in savedReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;
+        foreach (var kv in saved.ReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;
         _reuseBindingSeenBySlot.Clear();
-        foreach (var kv in savedReuseBindingSeen) _reuseBindingSeenBySlot[kv.Key] = kv.Value;
+        foreach (var kv in saved.ReuseBindingSeenBySlot) _reuseBindingSeenBySlot[kv.Key] = kv.Value;
         _reuseTrackedSlotNames.Clear();
-        foreach (var kv in savedReuseTrackedSlotNames) _reuseTrackedSlotNames[kv.Key] = kv.Value;
-        _nextLocalSlot = savedLocal;
+        foreach (var kv in saved.ReuseTrackedSlotNames) _reuseTrackedSlotNames[kv.Key] = kv.Value;
+        _nextLocalSlot = saved.NextLocalSlot;
         _localNames.Clear();
         _localTypes.Clear();
-        foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
-        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
+        foreach (var kv in saved.LocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in saved.LocalTypes) _localTypes[kv.Key] = kv.Value;
         _scopes.Clear();
-        foreach (var scope in savedScopes.Reverse())
+        foreach (var scope in saved.Scopes.Reverse())
         {
             _scopes.Push(new Dictionary<string, Binding>(scope, StringComparer.Ordinal));
         }
         _ownershipScopes.Clear();
-        foreach (var scope in savedOwnershipScopes.Reverse())
+        foreach (var scope in saved.OwnershipScopes.Reverse())
         {
             _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(scope, StringComparer.Ordinal));
         }
         _arenaWatermarks.Clear();
-        foreach (var watermark in savedArenaWatermarks.Reverse())
+        foreach (var watermark in saved.ArenaWatermarks.Reverse())
         {
             _arenaWatermarks.Push(watermark);
         }
-        _tcoCtx = savedTcoCtx;
-
-        var taskType = CreateStringTaskType(successType);
-        _usesClosures = true;
-        int closureTemp = NewTemp();
-        Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captureTemps.Count * 8));
-        int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, closureTemp, transformResult.StateStructSize, captureTemps.Count) { LoopResetEligible = loopResetEligible });
-        return (taskTemp, taskType);
+        _tcoCtx = saved.TcoCtx;
     }
 
     private static bool IsAsyncOnlyNetworkingBuiltin(BuiltinRegistry.BuiltinValueKind kind)
@@ -1757,34 +1813,46 @@ public sealed partial class Lowering
 
         var successType = NewTypeVar();
 
-        int EmitCoroutineBody(IReadOnlyList<int> coroutineCaptureTemps)
+        return LowerCapturedStringTask(
+            captureTemps,
+            successType,
+            valueArg,
+            coroutineCaptureTemps => LowerAsyncTaskCoroutineEmitBody(
+                coroutineCaptureTemps, valueArg, successType, okConstructor, globalBindings, captureNames, captureTypes));
+    }
+
+    private int LowerAsyncTaskCoroutineEmitBody(
+        IReadOnlyList<int> coroutineCaptureTemps,
+        Expr valueArg,
+        TypeRef successType,
+        ConstructorSymbol okConstructor,
+        Dictionary<string, Binding> globalBindings,
+        List<string> captureNames,
+        List<TypeRef> captureTypes)
+    {
+        bool savedInCoroutine = _inCoroutineBody;
+        _inCoroutineBody = true;
+
+        var scope = _scopes.Peek();
+        foreach (var (bindingName, binding) in globalBindings)
         {
-            bool savedInCoroutine = _inCoroutineBody;
-            _inCoroutineBody = true;
-
-            var scope = _scopes.Peek();
-            foreach (var (bindingName, binding) in globalBindings)
-            {
-                scope[bindingName] = binding;
-            }
-
-            for (int i = 0; i < captureNames.Count; i++)
-            {
-                int slot = NewLocal();
-                Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
-                RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-                scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
-            }
-
-            var (valueTemp, valueType) = LowerExpr(valueArg);
-            Unify(valueType, successType);
-            int okTemp = LowerSingleFieldConstructorValue(okConstructor, valueTemp);
-
-            _inCoroutineBody = savedInCoroutine;
-            return okTemp;
+            scope[bindingName] = binding;
         }
 
-        return LowerCapturedStringTask(captureTemps, successType, valueArg, EmitCoroutineBody);
+        for (int i = 0; i < captureNames.Count; i++)
+        {
+            int slot = NewLocal();
+            Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
+            RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
+            scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+        }
+
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        Unify(valueType, successType);
+        int okTemp = LowerSingleFieldConstructorValue(okConstructor, valueTemp);
+
+        _inCoroutineBody = savedInCoroutine;
+        return okTemp;
     }
 
     /// <summary>
@@ -1822,6 +1890,16 @@ public sealed partial class Lowering
             case Expr.NotEqual x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
             case Expr.ResultPipe x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
             case Expr.ResultMapErrorPipe x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            default:
+                return ContainsAsyncSpawnStructural(expr);
+        }
+    }
+
+    // The structural (non-leaf, non-binary-operator) cases of ContainsAsyncSpawn.
+    private bool ContainsAsyncSpawnStructural(Expr expr)
+    {
+        switch (expr)
+        {
             case Expr.Cons x: return ContainsAsyncSpawn(x.Head) || ContainsAsyncSpawn(x.Tail);
             case Expr.BitwiseNot x: return ContainsAsyncSpawn(x.Operand);
             case Expr.Await x: return ContainsAsyncSpawn(x.Task);
@@ -1909,75 +1987,112 @@ public sealed partial class Lowering
         // task's LoopResetOk flag at suspend time (see the scheduler's suspend path).
         bool loopResetEligible = !ContainsAsyncSpawn(body);
 
-        int EmitLoopBody(IReadOnlyList<int> coroutineCaptureTemps)
+        return LowerCapturedStringTask(
+            captureTemps,
+            successType,
+            body,
+            coroutineCaptureTemps => LowerHelperCoroutineTaskEmitLoopBody(
+                coroutineCaptureTemps, info, globalBindings, captureNames, captureTypes, successType, loopResetEligible),
+            loopResetEligible);
+    }
+
+    private int LowerHelperCoroutineTaskEmitLoopBody(
+        IReadOnlyList<int> coroutineCaptureTemps,
+        HelperCoroutineInfo info,
+        Dictionary<string, Binding> globalBindings,
+        List<string> captureNames,
+        List<TypeRef> captureTypes,
+        TypeRef successType,
+        bool loopResetEligible)
+    {
+        bool savedInCoroutine = _inCoroutineBody;
+        _inCoroutineBody = true;
+
+        var orderedParamSlots = LowerHelperCoroutineTaskBindLoopCaptures(
+            coroutineCaptureTemps, info, globalBindings, captureNames, captureTypes);
+
+        string restartLabel = $"__async_loop_{_nextAsyncLoopId++}";
+        Emit(new IrInst.Label(restartLabel));
+
+        var savedTco = _tcoCtx;
+        var loopTco = LowerHelperCoroutineTaskCreateLoopTco(info, orderedParamSlots, restartLabel, loopResetEligible);
+
+        _tcoCtx = loopTco;
+
+        var (valueTemp, valueType) = LowerExpr(info.Body);
+        Unify(valueType, successType);
+
+        _tcoCtx = savedTco;
+        _inCoroutineBody = savedInCoroutine;
+        return valueTemp; // raw body value — no Ok-wrap (transparent to the awaiting call site)
+    }
+
+    private List<int> LowerHelperCoroutineTaskBindLoopCaptures(
+        IReadOnlyList<int> coroutineCaptureTemps,
+        HelperCoroutineInfo info,
+        Dictionary<string, Binding> globalBindings,
+        List<string> captureNames,
+        List<TypeRef> captureTypes)
+    {
+        var scope = _scopes.Peek();
+        foreach (var (bindingName, binding) in globalBindings)
         {
-            bool savedInCoroutine = _inCoroutineBody;
-            _inCoroutineBody = true;
-
-            var scope = _scopes.Peek();
-            foreach (var (bindingName, binding) in globalBindings)
-            {
-                scope[bindingName] = binding;
-            }
-
-            var paramSlotByName = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (int i = 0; i < captureNames.Count; i++)
-            {
-                int slot = NewLocal();
-                Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
-                RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-                scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
-                if (info.ParamNames.Contains(captureNames[i]))
-                {
-                    paramSlotByName[captureNames[i]] = slot;
-                }
-            }
-
-            // A parameter the body never reads is not captured; the back-edge still stores its new
-            // value by arity, so give it a scratch slot.
-            var orderedParamSlots = new List<int>(info.ParamNames.Count);
-            foreach (var paramName in info.ParamNames)
-            {
-                orderedParamSlots.Add(paramSlotByName.TryGetValue(paramName, out int s) ? s : NewLocal());
-            }
-
-            string restartLabel = $"__async_loop_{_nextAsyncLoopId++}";
-            Emit(new IrInst.Label(restartLabel));
-
-            var savedTco = _tcoCtx;
-            var loopTco = new TcoContext
-            {
-                SelfName = info.Name,
-                ParamCount = info.ParamNames.Count,
-                ParamNames = new List<string>(info.ParamNames),
-                ParamSlots = orderedParamSlots,
-                BodyLabel = restartLabel,
-                InTailPosition = true,
-                DescendingChain = false
-            };
-            if (loopResetEligible)
-            {
-                // Per-iteration watermark, re-saved on every pass over the restart label. The slots
-                // are ordinary locals, so the loop-aware liveness in StateMachineTransform carries
-                // them across suspends. The back-edge emits the flagged restore/reclaim (gated by
-                // the backend); heap-typed loop-carried args go through the standard copy-out.
-                loopTco.ArenaCursorSlot = NewLocal();
-                loopTco.ArenaEndSlot = NewLocal();
-                loopTco.CoroutineLoopReset = true;
-                Emit(new IrInst.SaveArenaState(loopTco.ArenaCursorSlot, loopTco.ArenaEndSlot) { CoroutineLoop = true });
-            }
-
-            _tcoCtx = loopTco;
-
-            var (valueTemp, valueType) = LowerExpr(body);
-            Unify(valueType, successType);
-
-            _tcoCtx = savedTco;
-            _inCoroutineBody = savedInCoroutine;
-            return valueTemp; // raw body value — no Ok-wrap (transparent to the awaiting call site)
+            scope[bindingName] = binding;
         }
 
-        return LowerCapturedStringTask(captureTemps, successType, body, EmitLoopBody, loopResetEligible);
+        var paramSlotByName = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < captureNames.Count; i++)
+        {
+            int slot = NewLocal();
+            Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
+            RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
+            scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+            if (info.ParamNames.Contains(captureNames[i]))
+            {
+                paramSlotByName[captureNames[i]] = slot;
+            }
+        }
+
+        // A parameter the body never reads is not captured; the back-edge still stores its new
+        // value by arity, so give it a scratch slot.
+        var orderedParamSlots = new List<int>(info.ParamNames.Count);
+        foreach (var paramName in info.ParamNames)
+        {
+            orderedParamSlots.Add(paramSlotByName.TryGetValue(paramName, out int s) ? s : NewLocal());
+        }
+
+        return orderedParamSlots;
+    }
+
+    private TcoContext LowerHelperCoroutineTaskCreateLoopTco(
+        HelperCoroutineInfo info,
+        List<int> orderedParamSlots,
+        string restartLabel,
+        bool loopResetEligible)
+    {
+        var loopTco = new TcoContext
+        {
+            SelfName = info.Name,
+            ParamCount = info.ParamNames.Count,
+            ParamNames = new List<string>(info.ParamNames),
+            ParamSlots = orderedParamSlots,
+            BodyLabel = restartLabel,
+            InTailPosition = true,
+            DescendingChain = false
+        };
+        if (loopResetEligible)
+        {
+            // Per-iteration watermark, re-saved on every pass over the restart label. The slots
+            // are ordinary locals, so the loop-aware liveness in StateMachineTransform carries
+            // them across suspends. The back-edge emits the flagged restore/reclaim (gated by
+            // the backend); heap-typed loop-carried args go through the standard copy-out.
+            loopTco.ArenaCursorSlot = NewLocal();
+            loopTco.ArenaEndSlot = NewLocal();
+            loopTco.CoroutineLoopReset = true;
+            Emit(new IrInst.SaveArenaState(loopTco.ArenaCursorSlot, loopTco.ArenaEndSlot) { CoroutineLoop = true });
+        }
+
+        return loopTco;
     }
 
     /// <summary>

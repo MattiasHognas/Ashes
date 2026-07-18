@@ -681,13 +681,20 @@ public sealed class ArenaDeallocationTests
         var tcoFunc = FindTcoFunction(ir);
         var insts = tcoFunc.Instructions;
 
+        bool found = CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(insts);
+
+        found.ShouldBeTrue(
+            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
+    }
+
+    private static bool CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(List<IrInst> insts)
+    {
         static bool IsJumpBackToBodyLabel(object inst)
         {
             var text = inst.ToString() ?? string.Empty;
             return text.Contains("_body", StringComparison.Ordinal) && (text.Contains("Jump", StringComparison.Ordinal) || text.Contains("Branch", StringComparison.Ordinal) || text.Contains("Br", StringComparison.Ordinal));
         }
 
-        bool found = false;
         for (int i = 0; i < insts.Count; i++)
         {
             if (insts[i] is not IrInst.RestoreArenaState)
@@ -728,13 +735,11 @@ public sealed class ArenaDeallocationTests
                 && copyOutIndex < reclaimIndex
                 && copyOutIndex < jumpBackIndex)
             {
-                found = true;
-                break;
+                return true;
             }
         }
 
-        found.ShouldBeTrue(
-            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
+        return false;
     }
 
     [Test]

@@ -34,34 +34,87 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is
-        // the accumulator param the TCO back-edge armed (see _affineAppendCtx). Resolving to Str
-        // then grows the accumulator's reservation (ConcatStrTip) instead of copying.
-        int affineResvStart = -1;
-        int affineResvEnd = -1;
-        if (_affineAppendCtx is { } armedCtx)
-        {
-            var armedLeaf = add.Left;
-            while (armedLeaf is Expr.Add armedAdd)
-            {
-                armedLeaf = armedAdd.Left;
-            }
+        var (affineResvStart, affineResvEnd) = ResolveAffineAppendReservation(add);
 
-            if (armedLeaf is Expr.Var armedVar
-                && string.Equals(armedVar.Name, armedCtx.Name, StringComparison.Ordinal)
-                && Lookup(armedVar.Name) is Binding.Local armedLocal
-                && armedLocal.Slot == armedCtx.Slot)
-            {
-                affineResvStart = armedCtx.ResvStart;
-                affineResvEnd = armedCtx.ResvEnd;
-            }
+        if (TryLowerDeferredAdd(leftTemp, rightTemp, leftPruned, rightPruned, affineResvStart, affineResvEnd) is { } deferredAdd)
+        {
+            return deferredAdd;
         }
 
-        // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
-        // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
-        // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
-        // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
-        // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
+        (leftPruned, rightPruned) = ResolveAddOperandTypes(leftPruned, rightPruned);
+
+        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.AddInt(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TInt());
+        }
+
+        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
+        {
+            return LowerUIntAdd(add, leftTemp, rightTemp, luint, ruint);
+        }
+
+        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.AddFloat(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TFloat());
+        }
+
+        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
+        {
+            int target = NewTemp();
+            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, "add"));
+            return (target, new TypeRef.TBigInt());
+        }
+
+        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
+        {
+            return LowerStringAdd(leftTemp, rightTemp, affineResvStart, affineResvEnd);
+        }
+
+        var addTypes = PrettyPair(leftPruned, rightPruned);
+        ReportDiagnostic(GetSpan(add), $"'+' requires Int+Int, Float+Float, or Str+Str, got {addTypes.Left} and {addTypes.Right}.", DiagnosticCodes.TypeMismatch);
+        int errorTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(errorTemp, 0));
+        return (errorTemp, new TypeRef.TInt());
+    }
+
+    // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is
+    // the accumulator param the TCO back-edge armed (see _affineAppendCtx). Resolving to Str
+    // then grows the accumulator's reservation (ConcatStrTip) instead of copying.
+    private (int Start, int End) ResolveAffineAppendReservation(Expr.Add add)
+    {
+        if (_affineAppendCtx is not { } armedCtx)
+        {
+            return (-1, -1);
+        }
+
+        var armedLeaf = add.Left;
+        while (armedLeaf is Expr.Add armedAdd)
+        {
+            armedLeaf = armedAdd.Left;
+        }
+
+        if (armedLeaf is Expr.Var armedVar
+            && string.Equals(armedVar.Name, armedCtx.Name, StringComparison.Ordinal)
+            && Lookup(armedVar.Name) is Binding.Local armedLocal
+            && armedLocal.Slot == armedCtx.Slot)
+        {
+            return (armedCtx.ResvStart, armedCtx.ResvEnd);
+        }
+
+        return (-1, -1);
+    }
+
+    // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
+    // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
+    // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
+    // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
+    // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
+    private (int, TypeRef)? TryLowerDeferredAdd(int leftTemp, int rightTemp, TypeRef leftPruned, TypeRef rightPruned, int affineResvStart, int affineResvEnd)
+    {
         if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
         {
             Unify(leftPruned, rightPruned);
@@ -75,7 +128,12 @@ public sealed partial class Lowering
             }
         }
 
-        // Resolve type variables: prefer the other side's concrete type, defaulting to Int
+        return null;
+    }
+
+    // Resolve type variables: prefer the other side's concrete type, defaulting to Int
+    private (TypeRef Left, TypeRef Right) ResolveAddOperandTypes(TypeRef leftPruned, TypeRef rightPruned)
+    {
         if (leftPruned is TypeRef.TVar)
         {
             TypeRef resolved = rightPruned switch
@@ -103,67 +161,42 @@ public sealed partial class Lowering
             rightPruned = resolved;
         }
 
-        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+        return (leftPruned, rightPruned);
+    }
+
+    private (int, TypeRef) LowerUIntAdd(Expr.Add add, int leftTemp, int rightTemp, TypeRef.TUInt luint, TypeRef.TUInt ruint)
+    {
+        if (luint.Bits != ruint.Bits)
         {
-            int target = NewTemp();
-            Emit(new IrInst.AddInt(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TInt());
+            var addUintTypes = PrettyPair(luint, ruint);
+            ReportDiagnostic(GetSpan(add), $"'+' requires matching unsigned widths, got {addUintTypes.Left} and {addUintTypes.Right}.", DiagnosticCodes.TypeMismatch);
+            return CreateIntErrorFallback();
         }
+        int raw = NewTemp();
+        Emit(new IrInst.AddInt(raw, leftTemp, rightTemp));
+        int wrapped = EmitUIntMask(raw, luint.Bits);
+        return (wrapped, luint);
+    }
 
-        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
+    private (int, TypeRef) LowerStringAdd(int leftTemp, int rightTemp, int affineResvStart, int affineResvEnd)
+    {
+        _usesConcatStr = true;
+        int target = NewTemp();
+
+        // Affine accumulator append (armed by the TCO back-edge for the accumulator's own
+        // tail-call argument): the accumulator is uniquely owned above the loop-entry
+        // watermark, so the append can grow it in place at the arena tip — the runtime checks
+        // (and the plain-concat fallback) live in the ConcatStrTip emitter. Fires on every
+        // step of a left-nested chain (`acc + r1 + r2`): each step's left VALUE is the same
+        // uniquely-owned accumulator (extended in place, or a fresh tip copy after a fallback).
+        if (affineResvStart >= 0)
         {
-            if (luint.Bits != ruint.Bits)
-            {
-                var addUintTypes = PrettyPair(leftPruned, rightPruned);
-                ReportDiagnostic(GetSpan(add), $"'+' requires matching unsigned widths, got {addUintTypes.Left} and {addUintTypes.Right}.", DiagnosticCodes.TypeMismatch);
-                return CreateIntErrorFallback();
-            }
-            int raw = NewTemp();
-            Emit(new IrInst.AddInt(raw, leftTemp, rightTemp));
-            int wrapped = EmitUIntMask(raw, luint.Bits);
-            return (wrapped, luint);
-        }
-
-        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
-        {
-            int target = NewTemp();
-            Emit(new IrInst.AddFloat(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TFloat());
-        }
-
-        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
-        {
-            int target = NewTemp();
-            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, "add"));
-            return (target, new TypeRef.TBigInt());
-        }
-
-        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
-        {
-            _usesConcatStr = true;
-            int target = NewTemp();
-
-            // Affine accumulator append (armed by the TCO back-edge for the accumulator's own
-            // tail-call argument): the accumulator is uniquely owned above the loop-entry
-            // watermark, so the append can grow it in place at the arena tip — the runtime checks
-            // (and the plain-concat fallback) live in the ConcatStrTip emitter. Fires on every
-            // step of a left-nested chain (`acc + r1 + r2`): each step's left VALUE is the same
-            // uniquely-owned accumulator (extended in place, or a fresh tip copy after a fallback).
-            if (affineResvStart >= 0)
-            {
-                Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineResvStart, affineResvEnd));
-                return (target, new TypeRef.TStr());
-            }
-
-            Emit(new IrInst.ConcatStr(target, leftTemp, rightTemp));
+            Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineResvStart, affineResvEnd));
             return (target, new TypeRef.TStr());
         }
 
-        var addTypes = PrettyPair(leftPruned, rightPruned);
-        ReportDiagnostic(GetSpan(add), $"'+' requires Int+Int, Float+Float, or Str+Str, got {addTypes.Left} and {addTypes.Right}.", DiagnosticCodes.TypeMismatch);
-        int errorTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(errorTemp, 0));
-        return (errorTemp, new TypeRef.TInt());
+        Emit(new IrInst.ConcatStr(target, leftTemp, rightTemp));
+        return (target, new TypeRef.TStr());
     }
 
     private (int, TypeRef) LowerSubtract(Expr.Subtract sub)
@@ -446,6 +479,11 @@ public sealed partial class Lowering
             ? new TypeRef.TNamedType(resultSymbol, [Prune(prunedErrorType), Prune(nestedSuccessType)])
             : new TypeRef.TNamedType(resultSymbol, [Prune(prunedErrorType), prunedReturnType]);
 
+        return EmitResultPipeBranches(leftTemp, funcTemp, okConstructor, isFlatMap, resultType);
+    }
+
+    private (int, TypeRef) EmitResultPipeBranches(int leftTemp, int funcTemp, ConstructorSymbol okConstructor, bool isFlatMap, TypeRef resultType)
+    {
         var resultSlot = NewLocal();
         var errorLabel = NewLabel("result_error");
         var endLabel = NewLabel("result_end");
@@ -550,12 +588,63 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
-        // (kept out of generalization via _eqConstrainedVars) so a later use resolves it — e.g.
-        // `assertEqual expected actual = expected == actual` called with two Strs. Emit a
-        // provisional CmpIntEq/CmpIntNe, patched to CmpStrEq/CmpFloatEq (or their Ne counterparts)
-        // in ResolveDeferredEqs once the operand type is known. If it never resolves (an unused
-        // generic '=='), it defaults to Int there, matching the old result. Mirrors LowerAdd.
+        if (TryLowerDeferredEq(leftTemp, rightTemp, leftPruned, rightPruned, negate) is { } deferredEq)
+        {
+            return deferredEq;
+        }
+
+        (leftPruned, rightPruned) = ResolveEqualityOperandTypes(leftPruned, rightPruned);
+
+        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+        {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        // Booleans are represented as i64 0/1, so they compare with the integer equality ops.
+        if (leftPruned is TypeRef.TBool && rightPruned is TypeRef.TBool)
+        {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
+        {
+            return LowerBigIntEquality(leftTemp, rightTemp, negate);
+        }
+
+        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
+        {
+            return LowerUIntEquality(left, right, leftTemp, rightTemp, luint, ruint, negate);
+        }
+
+        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
+        {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpFloatNe(target, leftTemp, rightTemp) : new IrInst.CmpFloatEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
+        {
+            int target = NewTemp();
+            Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
+            return (target, new TypeRef.TBool());
+        }
+
+        return ReportEqualityTypeMismatch(leftPruned, rightPruned, negate);
+    }
+
+    // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
+    // (kept out of generalization via _eqConstrainedVars) so a later use resolves it — e.g.
+    // `assertEqual expected actual = expected == actual` called with two Strs. Emit a
+    // provisional CmpIntEq/CmpIntNe, patched to CmpStrEq/CmpFloatEq (or their Ne counterparts)
+    // in ResolveDeferredEqs once the operand type is known. If it never resolves (an unused
+    // generic '=='), it defaults to Int there, matching the old result. Mirrors LowerAdd.
+    private (int, TypeRef)? TryLowerDeferredEq(int leftTemp, int rightTemp, TypeRef leftPruned, TypeRef rightPruned, bool negate)
+    {
         if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
         {
             Unify(leftPruned, rightPruned);
@@ -571,7 +660,12 @@ public sealed partial class Lowering
             }
         }
 
-        // Resolve type variables: prefer the other side's concrete type, defaulting to Int
+        return null;
+    }
+
+    // Resolve type variables: prefer the other side's concrete type, defaulting to Int
+    private (TypeRef Left, TypeRef Right) ResolveEqualityOperandTypes(TypeRef leftPruned, TypeRef rightPruned)
+    {
         if (leftPruned is TypeRef.TVar)
         {
             TypeRef resolved = rightPruned switch
@@ -601,62 +695,38 @@ public sealed partial class Lowering
             rightPruned = resolved;
         }
 
-        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
-        {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
-        }
+        return (leftPruned, rightPruned);
+    }
 
-        // Booleans are represented as i64 0/1, so they compare with the integer equality ops.
-        if (leftPruned is TypeRef.TBool && rightPruned is TypeRef.TBool)
-        {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
-        }
+    private (int, TypeRef) LowerBigIntEquality(int leftTemp, int rightTemp, bool negate)
+    {
+        int cmpTemp = NewTemp();
+        Emit(new IrInst.BigIntCompare(cmpTemp, leftTemp, rightTemp));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int target = NewTemp();
+        Emit(negate ? new IrInst.CmpIntNe(target, cmpTemp, zeroTemp) : new IrInst.CmpIntEq(target, cmpTemp, zeroTemp));
+        return (target, new TypeRef.TBool());
+    }
 
-        if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
+    private (int, TypeRef) LowerUIntEquality(Expr left, Expr right, int leftTemp, int rightTemp, TypeRef.TUInt luint, TypeRef.TUInt ruint, bool negate)
+    {
+        if (luint.Bits != ruint.Bits)
         {
-            int cmpTemp = NewTemp();
-            Emit(new IrInst.BigIntCompare(cmpTemp, leftTemp, rightTemp));
-            int zeroTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpIntNe(target, cmpTemp, zeroTemp) : new IrInst.CmpIntEq(target, cmpTemp, zeroTemp));
-            return (target, new TypeRef.TBool());
+            var uintWidthTypes = PrettyPair(luint, ruint);
+            var eqOp = negate ? "!=" : "==";
+            ReportDiagnostic(CombineSpans(left, right), $"'{eqOp}' requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
+            int boolFallback = NewTemp();
+            Emit(new IrInst.LoadConstBool(boolFallback, false));
+            return (boolFallback, new TypeRef.TBool());
         }
+        int target = NewTemp();
+        Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
+        return (target, new TypeRef.TBool());
+    }
 
-        if (leftPruned is TypeRef.TUInt luint && rightPruned is TypeRef.TUInt ruint)
-        {
-            if (luint.Bits != ruint.Bits)
-            {
-                var uintWidthTypes = PrettyPair(leftPruned, rightPruned);
-                var eqOp = negate ? "!=" : "==";
-                ReportDiagnostic(CombineSpans(left, right), $"'{eqOp}' requires matching unsigned widths, got {uintWidthTypes.Left} and {uintWidthTypes.Right}.", DiagnosticCodes.TypeMismatch);
-                int boolFallback = NewTemp();
-                Emit(new IrInst.LoadConstBool(boolFallback, false));
-                return (boolFallback, new TypeRef.TBool());
-            }
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
-        }
-
-        if (leftPruned is TypeRef.TFloat && rightPruned is TypeRef.TFloat)
-        {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpFloatNe(target, leftTemp, rightTemp) : new IrInst.CmpFloatEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
-        }
-
-        if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
-        {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
-        }
-
+    private (int, TypeRef) ReportEqualityTypeMismatch(TypeRef leftPruned, TypeRef rightPruned, bool negate)
+    {
         var op = negate ? "!=" : "==";
         var equalityTypes = PrettyPair(leftPruned, rightPruned);
         ReportDiagnostic(0, $"'{op}' requires Int{op}Int, Float{op}Float, or Str{op}Str, got {equalityTypes.Left} and {equalityTypes.Right}.", DiagnosticCodes.TypeMismatch);

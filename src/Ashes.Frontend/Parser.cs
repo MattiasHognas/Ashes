@@ -94,46 +94,11 @@ public sealed class Parser
                 break;
             }
 
-            var header = ParseLetHeaderAndValue(topLevel: true);
-            if (_current.Kind == TokenKind.In)
+            body = ParseTopLevelLetOrBody(items);
+            if (body is not null)
             {
-                // `let ... in ...` — a nested-let expression, which is the trailing body.
-                body = FinishLetExpression(header);
                 break;
             }
-
-            if (_current.Kind == TokenKind.And)
-            {
-                items.Add(ParseRecursiveGroup(header));
-                continue;
-            }
-
-            if (header.ValueLeadsWithLet && _current.Kind == TokenKind.EOF)
-            {
-                // `let x = let y = ... in ...` (a bare `let`-introduced value) at EOF is genuinely
-                // ambiguous with the nested `let ... in ...` pyramid, which needs an outer `in`: the
-                // value's `let..in` is byte-for-byte identical whether the author meant a complete
-                // flat declaration or the start of a pyramid still awaiting its outer `in`. The REPL
-                // resolves the ambiguity toward "keep reading": its `Repl_should_support_multiline_
-                // nested_let_input` feeds `let x =` / `let y = 2 in y` / `in x + 1` line by line, so
-                // the intermediate `let x = let y = 2 in y`<EOF> MUST surface a need-more-input
-                // diagnostic rather than commit to a flat decl (treating it as a complete decl here
-                // makes the REPL stop early and that test fail — verified empirically). Finishing the
-                // expression emits the expected-`in` diagnostic that `IsLikelyNeedMoreInput` keys on.
-                // This carve-out is ONLY for EOF: a bare `let..in` value followed by the next
-                // top-level declaration or a trailing expression is unambiguous and falls through to
-                // a flat `LetDecl` below. A flat declaration whose `let..in` value must end the file
-                // is written with parentheses, which escapes the pyramid: `let x = (let y = 2 in y)`.
-                body = FinishLetExpression(header);
-                break;
-            }
-
-            // A flat top-level binding, terminated by EOF or the next declaration.
-            items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
-            {
-                SugarParams = header.SugarParams,
-                TypeAnnotation = header.TypeAnnotation
-            });
         }
 
         // The trailing expression is optional once the file has declarations: a file may end after
@@ -147,6 +112,54 @@ public sealed class Parser
 
         EnsureEndOfInput();
         return new Program(items, body);
+    }
+
+    /// <summary>
+    /// Parses one top-level <c>let</c> construct. A flat declaration or a recursive group is added
+    /// to <paramref name="items"/> and <c>null</c> is returned; a nested <c>let ... in ...</c>
+    /// expression ends the declaration section and is returned as the trailing body.
+    /// </summary>
+    private Expr? ParseTopLevelLetOrBody(List<TopLevelItem> items)
+    {
+        var header = ParseLetHeaderAndValue(topLevel: true);
+        if (_current.Kind == TokenKind.In)
+        {
+            // `let ... in ...` — a nested-let expression, which is the trailing body.
+            return FinishLetExpression(header);
+        }
+
+        if (_current.Kind == TokenKind.And)
+        {
+            items.Add(ParseRecursiveGroup(header));
+            return null;
+        }
+
+        if (header.ValueLeadsWithLet && _current.Kind == TokenKind.EOF)
+        {
+            // `let x = let y = ... in ...` (a bare `let`-introduced value) at EOF is genuinely
+            // ambiguous with the nested `let ... in ...` pyramid, which needs an outer `in`: the
+            // value's `let..in` is byte-for-byte identical whether the author meant a complete
+            // flat declaration or the start of a pyramid still awaiting its outer `in`. The REPL
+            // resolves the ambiguity toward "keep reading": its `Repl_should_support_multiline_
+            // nested_let_input` feeds `let x =` / `let y = 2 in y` / `in x + 1` line by line, so
+            // the intermediate `let x = let y = 2 in y`<EOF> MUST surface a need-more-input
+            // diagnostic rather than commit to a flat decl (treating it as a complete decl here
+            // makes the REPL stop early and that test fail — verified empirically). Finishing the
+            // expression emits the expected-`in` diagnostic that `IsLikelyNeedMoreInput` keys on.
+            // This carve-out is ONLY for EOF: a bare `let..in` value followed by the next
+            // top-level declaration or a trailing expression is unambiguous and falls through to
+            // a flat `LetDecl` below. A flat declaration whose `let..in` value must end the file
+            // is written with parentheses, which escapes the pyramid: `let x = (let y = 2 in y)`.
+            return FinishLetExpression(header);
+        }
+
+        // A flat top-level binding, terminated by EOF or the next declaration.
+        items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
+        {
+            SugarParams = header.SugarParams,
+            TypeAnnotation = header.TypeAnnotation
+        });
+        return null;
     }
 
     /// <summary>
@@ -240,6 +253,44 @@ public sealed class Parser
         var start = _current.Position;
         Consume(TokenKind.Type);
         var name = Consume(TokenKind.Ident).Text;
+        var typeParameters = ParseTypeParameters();
+        Consume(TokenKind.Equals);
+
+        // Records are declared with brace-free field alternatives (`type Point = | x: Int | y: Int`);
+        // a `{` here is the brace record form used by other ML languages, caught to guide the author.
+        if (_current.Kind == TokenKind.LBrace)
+        {
+            _diag.Error(CurrentErrorSpan(), "Records are declared with '| field: Type', not braces.");
+            SkipBalancedBraces();
+            return RegisterTypeDecl(new TypeDecl(name, typeParameters, []), start, LastConsumedEnd);
+        }
+
+        var branches = ParseTypeDeclBranches();
+        if (branches.SawField && branches.SawConstructor)
+        {
+            _diag.Error(CurrentErrorSpan(), "Record field alternatives cannot be mixed with constructor alternatives.");
+        }
+
+        if (branches.SawField)
+        {
+            var recordCtor = RegisterTypeConstructor(
+                new TypeConstructor(name, branches.FieldTypeExprs) { FieldNames = branches.FieldNames },
+                start, LastConsumedEnd);
+            return RegisterTypeDecl(
+                new TypeDecl(name, typeParameters, [recordCtor]) { IsRecord = true },
+                start, LastConsumedEnd);
+        }
+
+        if (branches.Constructors.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Type '{name}' must have at least one constructor.");
+        }
+
+        return RegisterTypeDecl(new TypeDecl(name, typeParameters, branches.Constructors), start, LastConsumedEnd);
+    }
+
+    private List<TypeParameter> ParseTypeParameters()
+    {
         var typeParameters = new List<TypeParameter>();
         if (_current.Kind == TokenKind.LParen)
         {
@@ -256,20 +307,15 @@ public sealed class Parser
 
             Consume(TokenKind.RParen);
         }
-        Consume(TokenKind.Equals);
 
-        // Records are declared with brace-free field alternatives (`type Point = | x: Int | y: Int`);
-        // a `{` here is the brace record form used by other ML languages, caught to guide the author.
-        if (_current.Kind == TokenKind.LBrace)
-        {
-            _diag.Error(CurrentErrorSpan(), "Records are declared with '| field: Type', not braces.");
-            SkipBalancedBraces();
-            return RegisterTypeDecl(new TypeDecl(name, typeParameters, []), start, LastConsumedEnd);
-        }
+        return typeParameters;
+    }
 
-        // A `type ... = | ...` declaration is either a record (all `| field: Type` branches) or an
-        // ordinary ADT (all `| Constructor(...)` branches). A branch is a record field when its name
-        // is immediately followed by `:`; otherwise it is a constructor.
+    // A `type ... = | ...` declaration is either a record (all `| field: Type` branches) or an
+    // ordinary ADT (all `| Constructor(...)` branches). A branch is a record field when its name
+    // is immediately followed by `:`; otherwise it is a constructor.
+    private TypeDeclBranches ParseTypeDeclBranches()
+    {
         var constructors = new List<TypeConstructor>();
         var fieldNames = new List<string>();
         var fieldTypeExprs = new List<TypeExpr>();
@@ -314,28 +360,15 @@ public sealed class Parser
             constructors.Add(RegisterTypeConstructor(new TypeConstructor(branchName, parameters), branchStart, LastConsumedEnd));
         }
 
-        if (sawField && sawConstructor)
-        {
-            _diag.Error(CurrentErrorSpan(), "Record field alternatives cannot be mixed with constructor alternatives.");
-        }
-
-        if (sawField)
-        {
-            var recordCtor = RegisterTypeConstructor(
-                new TypeConstructor(name, fieldTypeExprs) { FieldNames = fieldNames },
-                start, LastConsumedEnd);
-            return RegisterTypeDecl(
-                new TypeDecl(name, typeParameters, [recordCtor]) { IsRecord = true },
-                start, LastConsumedEnd);
-        }
-
-        if (constructors.Count == 0)
-        {
-            _diag.Error(CurrentErrorSpan(), $"Type '{name}' must have at least one constructor.");
-        }
-
-        return RegisterTypeDecl(new TypeDecl(name, typeParameters, constructors), start, LastConsumedEnd);
+        return new TypeDeclBranches(constructors, fieldNames, fieldTypeExprs, sawField, sawConstructor);
     }
+
+    private readonly record struct TypeDeclBranches(
+        List<TypeConstructor> Constructors,
+        List<string> FieldNames,
+        List<TypeExpr> FieldTypeExprs,
+        bool SawField,
+        bool SawConstructor);
 
     /// <summary>
     /// Best-effort recovery when a brace block appears where a record is expected: consumes a
@@ -888,37 +921,11 @@ public sealed class Parser
             typeAnnotation = ParseTypeExpr();
         }
 
-        // ML-style function sugar: let f x y = body => let f = given (x) -> given (y) -> body
-        // (Only collected when no annotation is present, since annotated let uses `let f : T -> T = given x -> ...`)
-        // A parenthesized parameter carries an inline type annotation: let f (b: Body) = body.
-        // The parentheses are required exactly when an annotation is present, so a bare ident and
-        // `(ident:` are the only two shapes here.
-        var sugarParams = new List<string>();
-        var sugarParamTokens = new List<Token>();
-        var sugarParamAnnotations = new List<TypeExpr?>();
-        if (typeAnnotation is null)
-        {
-            while (_current.Kind is TokenKind.Ident or TokenKind.LParen)
-            {
-                if (_current.Kind == TokenKind.LParen)
-                {
-                    Consume(TokenKind.LParen);
-                    var annotatedToken = Consume(TokenKind.Ident);
-                    Consume(TokenKind.Colon);
-                    var annotation = ParseTypeExpr();
-                    Consume(TokenKind.RParen);
-                    sugarParams.Add(annotatedToken.Text);
-                    sugarParamTokens.Add(annotatedToken);
-                    sugarParamAnnotations.Add(annotation);
-                    continue;
-                }
-
-                var paramToken = Consume(TokenKind.Ident);
-                sugarParams.Add(paramToken.Text);
-                sugarParamTokens.Add(paramToken);
-                sugarParamAnnotations.Add(null);
-            }
-        }
+        // ML-style function sugar is only collected when no annotation is present, since annotated
+        // let uses `let f : T -> T = given x -> ...`.
+        var (sugarParams, sugarParamTokens, sugarParamAnnotations) = typeAnnotation is null
+            ? ParseSugarParameters()
+            : ([], [], []);
 
         Consume(TokenKind.Equals);
 
@@ -955,6 +962,41 @@ public sealed class Parser
         }
 
         return (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet);
+    }
+
+    /// <summary>
+    /// Collects ML-style sugar parameters: <c>let f x y = body</c> desugars to
+    /// <c>let f = given (x) -> given (y) -> body</c>. A parenthesized parameter carries an inline
+    /// type annotation (<c>let f (b: Body) = body</c>); the parentheses are required exactly when
+    /// an annotation is present, so a bare ident and <c>(ident:</c> are the only two shapes here.
+    /// </summary>
+    private (List<string> Names, List<Token> Tokens, List<TypeExpr?> Annotations) ParseSugarParameters()
+    {
+        var names = new List<string>();
+        var tokens = new List<Token>();
+        var annotations = new List<TypeExpr?>();
+        while (_current.Kind is TokenKind.Ident or TokenKind.LParen)
+        {
+            if (_current.Kind == TokenKind.LParen)
+            {
+                Consume(TokenKind.LParen);
+                var annotatedToken = Consume(TokenKind.Ident);
+                Consume(TokenKind.Colon);
+                var annotation = ParseTypeExpr();
+                Consume(TokenKind.RParen);
+                names.Add(annotatedToken.Text);
+                tokens.Add(annotatedToken);
+                annotations.Add(annotation);
+                continue;
+            }
+
+            var paramToken = Consume(TokenKind.Ident);
+            names.Add(paramToken.Text);
+            tokens.Add(paramToken);
+            annotations.Add(null);
+        }
+
+        return (names, tokens, annotations);
     }
 
     /// <summary>Completes a nested <c>let ... in body</c> expression from an already-parsed header.</summary>

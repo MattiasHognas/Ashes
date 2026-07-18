@@ -95,16 +95,7 @@ public static partial class DocumentService
         while (pos < source.Length)
         {
             int lineStart = pos;
-            int nlIdx = source.IndexOf('\n', pos);
-            int lineEnd = nlIdx < 0 ? source.Length : nlIdx;
-            int nextPos = nlIdx < 0 ? source.Length : nlIdx + 1;
-
-            // Line content without the newline (and without trailing \r)
-            var lineContent = source[lineStart..lineEnd];
-            if (lineContent.EndsWith('\r'))
-            {
-                lineContent = lineContent[..^1];
-            }
+            var (lineContent, nextPos) = ReadHeaderLine(source, pos);
 
             var trimmed = lineContent.TrimStart();
 
@@ -147,6 +138,26 @@ public static partial class DocumentService
         }
 
         return new ImportHeaderInfo(source[pos..], pos, headerLines, imports, diagnostics);
+    }
+
+    /// <summary>
+    /// Reads the header line starting at <paramref name="pos"/>, returning its content and the
+    /// position where the next line begins.
+    /// </summary>
+    private static (string LineContent, int NextPos) ReadHeaderLine(string source, int pos)
+    {
+        int nlIdx = source.IndexOf('\n', pos);
+        int lineEnd = nlIdx < 0 ? source.Length : nlIdx;
+        int nextPos = nlIdx < 0 ? source.Length : nlIdx + 1;
+
+        // Line content without the newline (and without trailing \r)
+        var lineContent = source[pos..lineEnd];
+        if (lineContent.EndsWith('\r'))
+        {
+            lineContent = lineContent[..^1];
+        }
+
+        return (lineContent, nextPos);
     }
 
     private static string FormatImportLine(string moduleName, string? selector, string? alias)
@@ -286,38 +297,50 @@ public static partial class DocumentService
             return new AnalysisContext(header.StrippedSource, header.StrippedSource, header.HeaderOffset, 0, 0, null, null, header.Diagnostics);
         }
 
-        if (filePath is not null)
+        if (filePath is not null && TryPrepareProjectAnalysisContext(filePath, header) is { } projectContext)
         {
-            try
-            {
-                var combined = TryBuildCombinedProjectSource(filePath, header.StrippedSource);
-                if (combined is not null)
-                {
-                    return new AnalysisContext(
-                        header.StrippedSource,
-                        combined.Value.CombinedSource,
-                        header.HeaderOffset,
-                        combined.Value.EntryOffset,
-                        combined.Value.BodyStart,
-                        combined.Value.ImportedStdModules,
-                        null,
-                        []);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidOperationException)
+            return projectContext;
+        }
+
+        return PrepareStandaloneAnalysisContext(header);
+    }
+
+    private static AnalysisContext? TryPrepareProjectAnalysisContext(string filePath, ImportHeaderInfo header)
+    {
+        try
+        {
+            var combined = TryBuildCombinedProjectSource(filePath, header.StrippedSource);
+            if (combined is not null)
             {
                 return new AnalysisContext(
                     header.StrippedSource,
-                    header.StrippedSource,
+                    combined.Value.CombinedSource,
                     header.HeaderOffset,
-                    0,
-                    0,
+                    combined.Value.EntryOffset,
+                    combined.Value.BodyStart,
+                    combined.Value.ImportedStdModules,
                     null,
-                    null,
-                    [CreateProjectDiagnostic(ex, header.Imports)]);
+                    []);
             }
         }
+        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return new AnalysisContext(
+                header.StrippedSource,
+                header.StrippedSource,
+                header.HeaderOffset,
+                0,
+                0,
+                null,
+                null,
+                [CreateProjectDiagnostic(ex, header.Imports)]);
+        }
 
+        return null;
+    }
+
+    private static AnalysisContext PrepareStandaloneAnalysisContext(ImportHeaderInfo header)
+    {
         var standaloneImportDiagnostics = ValidateStandaloneImports(header.Imports);
         if (standaloneImportDiagnostics.Count == 0 && DetectSelectorConflict(header.Imports) is { } selectorConflict)
         {
@@ -506,9 +529,6 @@ public static partial class DocumentService
             return Array.Empty<SemanticTokenItem>();
         }
 
-        var strippedSource = context.StrippedSource;
-        var headerOffset = context.HeaderOffset;
-
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
         var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
@@ -522,6 +542,17 @@ public static partial class DocumentService
                 .Concat(d.Constructors.SelectMany(c => c.Parameters).SelectMany(fieldType => fieldType.MentionedNames())))
             .ToHashSet(StringComparer.Ordinal);
 
+        return ScanSemanticTokens(source, context.StrippedSource, context.HeaderOffset, typeNames, ctorNames, typeParamNames);
+    }
+
+    private static List<SemanticTokenItem> ScanSemanticTokens(
+        string source,
+        string strippedSource,
+        int headerOffset,
+        HashSet<string> typeNames,
+        HashSet<string> ctorNames,
+        HashSet<string> typeParamNames)
+    {
         // Scan the stripped source (user's code without import header) for tokens.
         // Positions are adjusted by headerOffset to match original file positions.
         var originalLineStarts = LspTextUtils.GetLineStarts(source);
@@ -718,6 +749,11 @@ public static partial class DocumentService
             return Array.Empty<string>();
         }
 
+        if (GetBinaryOperands(expr) is { } operands)
+        {
+            return CollectVisibleBindingsInBinary(operands.Left, operands.Right, position, scope);
+        }
+
         switch (expr)
         {
             case Expr.IntLit:
@@ -730,96 +766,29 @@ public static partial class DocumentService
             case Expr.QualifiedVar:
                 return scope.Keys.ToArray();
 
-            case Expr.Add add:
-                return CollectVisibleBindingsInBinary(add.Left, add.Right, position, scope);
-
-            case Expr.Subtract sub:
-                return CollectVisibleBindingsInBinary(sub.Left, sub.Right, position, scope);
-
-            case Expr.Multiply mul:
-                return CollectVisibleBindingsInBinary(mul.Left, mul.Right, position, scope);
-
-            case Expr.Divide div:
-                return CollectVisibleBindingsInBinary(div.Left, div.Right, position, scope);
-
-            case Expr.Modulo modExpr:
-                return CollectVisibleBindingsInBinary(modExpr.Left, modExpr.Right, position, scope);
-
-            case Expr.BitwiseAnd bitAnd:
-                return CollectVisibleBindingsInBinary(bitAnd.Left, bitAnd.Right, position, scope);
-
-            case Expr.BitwiseOr bitOr:
-                return CollectVisibleBindingsInBinary(bitOr.Left, bitOr.Right, position, scope);
-
-            case Expr.BitwiseXor bitXor:
-                return CollectVisibleBindingsInBinary(bitXor.Left, bitXor.Right, position, scope);
-
-            case Expr.ShiftLeft shiftLeft:
-                return CollectVisibleBindingsInBinary(shiftLeft.Left, shiftLeft.Right, position, scope);
-
-            case Expr.ShiftRight shiftRight:
-                return CollectVisibleBindingsInBinary(shiftRight.Left, shiftRight.Right, position, scope);
-
             case Expr.BitwiseNot bitwiseNot:
                 return CollectVisibleBindingsInExpr(bitwiseNot.Operand, position, scope);
 
-            case Expr.GreaterOrEqual ge:
-                return CollectVisibleBindingsInBinary(ge.Left, ge.Right, position, scope);
+            default:
+                return CollectVisibleBindingsInNestedExpr(expr, position, scope);
+        }
+    }
 
-            case Expr.LessOrEqual le:
-                return CollectVisibleBindingsInBinary(le.Left, le.Right, position, scope);
-
-            case Expr.Equal eq:
-                return CollectVisibleBindingsInBinary(eq.Left, eq.Right, position, scope);
-
-            case Expr.NotEqual ne:
-                return CollectVisibleBindingsInBinary(ne.Left, ne.Right, position, scope);
-
-            case Expr.ResultPipe pipe:
-                return CollectVisibleBindingsInBinary(pipe.Left, pipe.Right, position, scope);
-
-            case Expr.ResultMapErrorPipe pipe:
-                return CollectVisibleBindingsInBinary(pipe.Left, pipe.Right, position, scope);
-
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInNestedExpr(
+        Expr expr,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        switch (expr)
+        {
             case Expr.Let letExpr:
-                {
-                    var inValue = CollectVisibleBindingsInExpr(letExpr.Value, position, scope);
-                    if (inValue.Count > 0)
-                    {
-                        return inValue;
-                    }
-
-                    var bodyScope = CloneCompletionScope(scope);
-                    bodyScope[letExpr.Name] = 0;
-                    return CollectVisibleBindingsInExpr(letExpr.Body, position, bodyScope);
-                }
+                return CollectVisibleBindingsInLetBinding(letExpr.Name, letExpr.Value, letExpr.Body, position, scope);
 
             case Expr.LetResult letResultExpr:
-                {
-                    var inValue = CollectVisibleBindingsInExpr(letResultExpr.Value, position, scope);
-                    if (inValue.Count > 0)
-                    {
-                        return inValue;
-                    }
-
-                    var bodyScope = CloneCompletionScope(scope);
-                    bodyScope[letResultExpr.Name] = 0;
-                    return CollectVisibleBindingsInExpr(letResultExpr.Body, position, bodyScope);
-                }
+                return CollectVisibleBindingsInLetBinding(letResultExpr.Name, letResultExpr.Value, letResultExpr.Body, position, scope);
 
             case Expr.LetRecursive letRecursiveExpr:
-                {
-                    var recursiveScope = CloneCompletionScope(scope);
-                    recursiveScope[letRecursiveExpr.Name] = 0;
-
-                    var inValue = CollectVisibleBindingsInExpr(letRecursiveExpr.Value, position, recursiveScope);
-                    if (inValue.Count > 0)
-                    {
-                        return inValue;
-                    }
-
-                    return CollectVisibleBindingsInExpr(letRecursiveExpr.Body, position, recursiveScope);
-                }
+                return CollectVisibleBindingsInLetRecursive(letRecursiveExpr, position, scope);
 
             case Expr.If ifExpr:
                 return CollectVisibleBindingsInExpr(ifExpr.Cond, position, scope)
@@ -829,11 +798,7 @@ public static partial class DocumentService
                     .ToArray();
 
             case Expr.Lambda lambda:
-                {
-                    var lambdaScope = CloneCompletionScope(scope);
-                    lambdaScope[lambda.ParamName] = 0;
-                    return CollectVisibleBindingsInExpr(lambda.Body, position, lambdaScope);
-                }
+                return CollectVisibleBindingsInLambda(lambda, position, scope);
 
             case Expr.Call call:
                 return CollectVisibleBindingsInExpr(call.Func, position, scope)
@@ -860,43 +825,94 @@ public static partial class DocumentService
                     .ToArray();
 
             case Expr.Match match:
-                {
-                    var inValue = CollectVisibleBindingsInExpr(match.Value, position, scope);
-                    if (inValue.Count > 0)
-                    {
-                        return inValue;
-                    }
-
-                    foreach (var matchCase in match.Cases)
-                    {
-                        var caseScope = CloneCompletionScope(scope);
-                        foreach (var binding in CollectPatternBindings(matchCase.Pattern, currentFilePath: null))
-                        {
-                            caseScope[binding.Key] = 0;
-                        }
-
-                        if (matchCase.Guard is not null)
-                        {
-                            var inGuard = CollectVisibleBindingsInExpr(matchCase.Guard, position, caseScope);
-                            if (inGuard.Count > 0)
-                            {
-                                return inGuard;
-                            }
-                        }
-
-                        var inBody = CollectVisibleBindingsInExpr(matchCase.Body, position, caseScope);
-                        if (inBody.Count > 0)
-                        {
-                            return inBody;
-                        }
-                    }
-
-                    return Array.Empty<string>();
-                }
+                return CollectVisibleBindingsInMatch(match, position, scope);
 
             default:
                 return Array.Empty<string>();
         }
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInLetBinding(
+        string name,
+        Expr value,
+        Expr body,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        var inValue = CollectVisibleBindingsInExpr(value, position, scope);
+        if (inValue.Count > 0)
+        {
+            return inValue;
+        }
+
+        var bodyScope = CloneCompletionScope(scope);
+        bodyScope[name] = 0;
+        return CollectVisibleBindingsInExpr(body, position, bodyScope);
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInLetRecursive(
+        Expr.LetRecursive letRecursiveExpr,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        var recursiveScope = CloneCompletionScope(scope);
+        recursiveScope[letRecursiveExpr.Name] = 0;
+
+        var inValue = CollectVisibleBindingsInExpr(letRecursiveExpr.Value, position, recursiveScope);
+        if (inValue.Count > 0)
+        {
+            return inValue;
+        }
+
+        return CollectVisibleBindingsInExpr(letRecursiveExpr.Body, position, recursiveScope);
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInLambda(
+        Expr.Lambda lambda,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        var lambdaScope = CloneCompletionScope(scope);
+        lambdaScope[lambda.ParamName] = 0;
+        return CollectVisibleBindingsInExpr(lambda.Body, position, lambdaScope);
+    }
+
+    private static IReadOnlyCollection<string> CollectVisibleBindingsInMatch(
+        Expr.Match match,
+        int position,
+        IReadOnlyDictionary<string, byte> scope)
+    {
+        var inValue = CollectVisibleBindingsInExpr(match.Value, position, scope);
+        if (inValue.Count > 0)
+        {
+            return inValue;
+        }
+
+        foreach (var matchCase in match.Cases)
+        {
+            var caseScope = CloneCompletionScope(scope);
+            foreach (var binding in CollectPatternBindings(matchCase.Pattern, currentFilePath: null))
+            {
+                caseScope[binding.Key] = 0;
+            }
+
+            if (matchCase.Guard is not null)
+            {
+                var inGuard = CollectVisibleBindingsInExpr(matchCase.Guard, position, caseScope);
+                if (inGuard.Count > 0)
+                {
+                    return inGuard;
+                }
+            }
+
+            var inBody = CollectVisibleBindingsInExpr(matchCase.Body, position, caseScope);
+            if (inBody.Count > 0)
+            {
+                return inBody;
+            }
+        }
+
+        return Array.Empty<string>();
     }
 
     private static IReadOnlyCollection<string> CollectVisibleBindingsInBinary(
@@ -909,6 +925,34 @@ public static partial class DocumentService
             .Concat(CollectVisibleBindingsInExpr(right, position, scope))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Extracts the operands of a two-operand operator expression (arithmetic, bitwise, comparison,
+    /// and pipe forms); returns null for every other expression shape.
+    /// </summary>
+    private static (Expr Left, Expr Right)? GetBinaryOperands(Expr expr)
+    {
+        return expr switch
+        {
+            Expr.Add add => (add.Left, add.Right),
+            Expr.Subtract sub => (sub.Left, sub.Right),
+            Expr.Multiply mul => (mul.Left, mul.Right),
+            Expr.Divide div => (div.Left, div.Right),
+            Expr.Modulo modExpr => (modExpr.Left, modExpr.Right),
+            Expr.BitwiseAnd bitAnd => (bitAnd.Left, bitAnd.Right),
+            Expr.BitwiseOr bitOr => (bitOr.Left, bitOr.Right),
+            Expr.BitwiseXor bitXor => (bitXor.Left, bitXor.Right),
+            Expr.ShiftLeft shiftLeft => (shiftLeft.Left, shiftLeft.Right),
+            Expr.ShiftRight shiftRight => (shiftRight.Left, shiftRight.Right),
+            Expr.GreaterOrEqual ge => (ge.Left, ge.Right),
+            Expr.LessOrEqual le => (le.Left, le.Right),
+            Expr.Equal eq => (eq.Left, eq.Right),
+            Expr.NotEqual ne => (ne.Left, ne.Right),
+            Expr.ResultPipe pipe => (pipe.Left, pipe.Right),
+            Expr.ResultMapErrorPipe pipe => (pipe.Left, pipe.Right),
+            _ => null,
+        };
     }
 
     private static Dictionary<string, byte> CloneCompletionScope(IReadOnlyDictionary<string, byte> scope)
@@ -1231,6 +1275,11 @@ public static partial class DocumentService
         IReadOnlyList<ImportItem> imports,
         IReadOnlyDictionary<string, DefinitionLocation> scope)
     {
+        if (GetBinaryOperands(expr) is { } operands)
+        {
+            return ResolveDefinitionInBinary(operands.Left, operands.Right, position, currentFilePath, imports, scope);
+        }
+
         switch (expr)
         {
             case Expr.IntLit:
@@ -1259,114 +1308,31 @@ public static partial class DocumentService
                     ? ResolveQualifiedDefinition(qualifiedVar.Module, qualifiedVar.Name, currentFilePath, imports)
                     : null;
 
-            case Expr.Add add:
-                return ResolveDefinitionInBinary(add.Left, add.Right, position, currentFilePath, imports, scope);
-
-            case Expr.Subtract sub:
-                return ResolveDefinitionInBinary(sub.Left, sub.Right, position, currentFilePath, imports, scope);
-
-            case Expr.Multiply mul:
-                return ResolveDefinitionInBinary(mul.Left, mul.Right, position, currentFilePath, imports, scope);
-
-            case Expr.Divide div:
-                return ResolveDefinitionInBinary(div.Left, div.Right, position, currentFilePath, imports, scope);
-
-            case Expr.Modulo modExpr:
-                return ResolveDefinitionInBinary(modExpr.Left, modExpr.Right, position, currentFilePath, imports, scope);
-
-            case Expr.BitwiseAnd bitAnd:
-                return ResolveDefinitionInBinary(bitAnd.Left, bitAnd.Right, position, currentFilePath, imports, scope);
-
-            case Expr.BitwiseOr bitOr:
-                return ResolveDefinitionInBinary(bitOr.Left, bitOr.Right, position, currentFilePath, imports, scope);
-
-            case Expr.BitwiseXor bitXor:
-                return ResolveDefinitionInBinary(bitXor.Left, bitXor.Right, position, currentFilePath, imports, scope);
-
-            case Expr.ShiftLeft shiftLeft:
-                return ResolveDefinitionInBinary(shiftLeft.Left, shiftLeft.Right, position, currentFilePath, imports, scope);
-
-            case Expr.ShiftRight shiftRight:
-                return ResolveDefinitionInBinary(shiftRight.Left, shiftRight.Right, position, currentFilePath, imports, scope);
-
             case Expr.BitwiseNot bitwiseNot:
                 return ResolveDefinitionInExpr(bitwiseNot.Operand, position, currentFilePath, imports, scope);
 
-            case Expr.GreaterOrEqual ge:
-                return ResolveDefinitionInBinary(ge.Left, ge.Right, position, currentFilePath, imports, scope);
+            default:
+                return ResolveDefinitionInNestedExpr(expr, position, currentFilePath, imports, scope);
+        }
+    }
 
-            case Expr.LessOrEqual le:
-                return ResolveDefinitionInBinary(le.Left, le.Right, position, currentFilePath, imports, scope);
-
-            case Expr.Equal eq:
-                return ResolveDefinitionInBinary(eq.Left, eq.Right, position, currentFilePath, imports, scope);
-
-            case Expr.NotEqual ne:
-                return ResolveDefinitionInBinary(ne.Left, ne.Right, position, currentFilePath, imports, scope);
-
-            case Expr.ResultPipe pipe:
-                return ResolveDefinitionInBinary(pipe.Left, pipe.Right, position, currentFilePath, imports, scope);
-
-            case Expr.ResultMapErrorPipe pipe:
-                return ResolveDefinitionInBinary(pipe.Left, pipe.Right, position, currentFilePath, imports, scope);
-
+    private static DefinitionLocation? ResolveDefinitionInNestedExpr(
+        Expr expr,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        switch (expr)
+        {
             case Expr.Let letExpr:
-                {
-                    var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetNameOrDefault(letExpr));
-                    if (ContainsPosition(bindingDefinition.Span, position))
-                    {
-                        return bindingDefinition;
-                    }
-
-                    var inValue = ResolveDefinitionInExpr(letExpr.Value, position, currentFilePath, imports, scope);
-                    if (inValue is not null)
-                    {
-                        return inValue;
-                    }
-
-                    var bodyScope = CloneScope(scope);
-                    bodyScope[letExpr.Name] = bindingDefinition;
-                    return ResolveDefinitionInExpr(letExpr.Body, position, currentFilePath, imports, bodyScope);
-                }
+                return ResolveDefinitionInLet(letExpr, position, currentFilePath, imports, scope);
 
             case Expr.LetResult letResultExpr:
-                {
-                    var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetResultNameOrDefault(letResultExpr));
-                    if (ContainsPosition(bindingDefinition.Span, position))
-                    {
-                        return bindingDefinition;
-                    }
-
-                    var inValue = ResolveDefinitionInExpr(letResultExpr.Value, position, currentFilePath, imports, scope);
-                    if (inValue is not null)
-                    {
-                        return inValue;
-                    }
-
-                    var bodyScope = CloneScope(scope);
-                    bodyScope[letResultExpr.Name] = bindingDefinition;
-                    return ResolveDefinitionInExpr(letResultExpr.Body, position, currentFilePath, imports, bodyScope);
-                }
+                return ResolveDefinitionInLetResult(letResultExpr, position, currentFilePath, imports, scope);
 
             case Expr.LetRecursive letRecursiveExpr:
-                {
-                    var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetRecursiveNameOrDefault(letRecursiveExpr));
-                    if (ContainsPosition(bindingDefinition.Span, position))
-                    {
-                        return bindingDefinition;
-                    }
-
-                    var recursiveScope = CloneScope(scope);
-                    recursiveScope[letRecursiveExpr.Name] = bindingDefinition;
-
-                    var inValue = ResolveDefinitionInExpr(letRecursiveExpr.Value, position, currentFilePath, imports, recursiveScope);
-                    if (inValue is not null)
-                    {
-                        return inValue;
-                    }
-
-                    return ResolveDefinitionInExpr(letRecursiveExpr.Body, position, currentFilePath, imports, recursiveScope);
-                }
+                return ResolveDefinitionInLetRecursive(letRecursiveExpr, position, currentFilePath, imports, scope);
 
             case Expr.If ifExpr:
                 return ResolveDefinitionInExpr(ifExpr.Cond, position, currentFilePath, imports, scope)
@@ -1374,17 +1340,7 @@ public static partial class DocumentService
                     ?? ResolveDefinitionInExpr(ifExpr.Else, position, currentFilePath, imports, scope);
 
             case Expr.Lambda lambda:
-                {
-                    var parameterDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLambdaParameterOrDefault(lambda));
-                    if (ContainsPosition(parameterDefinition.Span, position))
-                    {
-                        return parameterDefinition;
-                    }
-
-                    var lambdaScope = CloneScope(scope);
-                    lambdaScope[lambda.ParamName] = parameterDefinition;
-                    return ResolveDefinitionInExpr(lambda.Body, position, currentFilePath, imports, lambdaScope);
-                }
+                return ResolveDefinitionInLambda(lambda, position, currentFilePath, imports, scope);
 
             case Expr.Call call:
                 return ResolveDefinitionInExpr(call.Func, position, currentFilePath, imports, scope)
@@ -1405,49 +1361,148 @@ public static partial class DocumentService
                     ?? ResolveDefinitionInExpr(cons.Tail, position, currentFilePath, imports, scope);
 
             case Expr.Match match:
-                {
-                    var inValue = ResolveDefinitionInExpr(match.Value, position, currentFilePath, imports, scope);
-                    if (inValue is not null)
-                    {
-                        return inValue;
-                    }
-
-                    foreach (var matchCase in match.Cases)
-                    {
-                        var inPattern = ResolveDefinitionInPattern(matchCase.Pattern, position, currentFilePath);
-                        if (inPattern is not null)
-                        {
-                            return inPattern;
-                        }
-
-                        var caseScope = CloneScope(scope);
-                        foreach (var binding in CollectPatternBindings(matchCase.Pattern, currentFilePath))
-                        {
-                            caseScope[binding.Key] = binding.Value;
-                        }
-
-                        if (matchCase.Guard is not null)
-                        {
-                            var inGuard = ResolveDefinitionInExpr(matchCase.Guard, position, currentFilePath, imports, caseScope);
-                            if (inGuard is not null)
-                            {
-                                return inGuard;
-                            }
-                        }
-
-                        var inBody = ResolveDefinitionInExpr(matchCase.Body, position, currentFilePath, imports, caseScope);
-                        if (inBody is not null)
-                        {
-                            return inBody;
-                        }
-                    }
-
-                    return null;
-                }
+                return ResolveDefinitionInMatch(match, position, currentFilePath, imports, scope);
 
             default:
                 return null;
         }
+    }
+
+    private static DefinitionLocation? ResolveDefinitionInLet(
+        Expr.Let letExpr,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetNameOrDefault(letExpr));
+        if (ContainsPosition(bindingDefinition.Span, position))
+        {
+            return bindingDefinition;
+        }
+
+        var inValue = ResolveDefinitionInExpr(letExpr.Value, position, currentFilePath, imports, scope);
+        if (inValue is not null)
+        {
+            return inValue;
+        }
+
+        var bodyScope = CloneScope(scope);
+        bodyScope[letExpr.Name] = bindingDefinition;
+        return ResolveDefinitionInExpr(letExpr.Body, position, currentFilePath, imports, bodyScope);
+    }
+
+    private static DefinitionLocation? ResolveDefinitionInLetResult(
+        Expr.LetResult letResultExpr,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetResultNameOrDefault(letResultExpr));
+        if (ContainsPosition(bindingDefinition.Span, position))
+        {
+            return bindingDefinition;
+        }
+
+        var inValue = ResolveDefinitionInExpr(letResultExpr.Value, position, currentFilePath, imports, scope);
+        if (inValue is not null)
+        {
+            return inValue;
+        }
+
+        var bodyScope = CloneScope(scope);
+        bodyScope[letResultExpr.Name] = bindingDefinition;
+        return ResolveDefinitionInExpr(letResultExpr.Body, position, currentFilePath, imports, bodyScope);
+    }
+
+    private static DefinitionLocation? ResolveDefinitionInLetRecursive(
+        Expr.LetRecursive letRecursiveExpr,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        var bindingDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLetRecursiveNameOrDefault(letRecursiveExpr));
+        if (ContainsPosition(bindingDefinition.Span, position))
+        {
+            return bindingDefinition;
+        }
+
+        var recursiveScope = CloneScope(scope);
+        recursiveScope[letRecursiveExpr.Name] = bindingDefinition;
+
+        var inValue = ResolveDefinitionInExpr(letRecursiveExpr.Value, position, currentFilePath, imports, recursiveScope);
+        if (inValue is not null)
+        {
+            return inValue;
+        }
+
+        return ResolveDefinitionInExpr(letRecursiveExpr.Body, position, currentFilePath, imports, recursiveScope);
+    }
+
+    private static DefinitionLocation? ResolveDefinitionInLambda(
+        Expr.Lambda lambda,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        var parameterDefinition = new DefinitionLocation(currentFilePath, AstSpans.GetLambdaParameterOrDefault(lambda));
+        if (ContainsPosition(parameterDefinition.Span, position))
+        {
+            return parameterDefinition;
+        }
+
+        var lambdaScope = CloneScope(scope);
+        lambdaScope[lambda.ParamName] = parameterDefinition;
+        return ResolveDefinitionInExpr(lambda.Body, position, currentFilePath, imports, lambdaScope);
+    }
+
+    private static DefinitionLocation? ResolveDefinitionInMatch(
+        Expr.Match match,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports,
+        IReadOnlyDictionary<string, DefinitionLocation> scope)
+    {
+        var inValue = ResolveDefinitionInExpr(match.Value, position, currentFilePath, imports, scope);
+        if (inValue is not null)
+        {
+            return inValue;
+        }
+
+        foreach (var matchCase in match.Cases)
+        {
+            var inPattern = ResolveDefinitionInPattern(matchCase.Pattern, position, currentFilePath);
+            if (inPattern is not null)
+            {
+                return inPattern;
+            }
+
+            var caseScope = CloneScope(scope);
+            foreach (var binding in CollectPatternBindings(matchCase.Pattern, currentFilePath))
+            {
+                caseScope[binding.Key] = binding.Value;
+            }
+
+            if (matchCase.Guard is not null)
+            {
+                var inGuard = ResolveDefinitionInExpr(matchCase.Guard, position, currentFilePath, imports, caseScope);
+                if (inGuard is not null)
+                {
+                    return inGuard;
+                }
+            }
+
+            var inBody = ResolveDefinitionInExpr(matchCase.Body, position, currentFilePath, imports, caseScope);
+            if (inBody is not null)
+            {
+                return inBody;
+            }
+        }
+
+        return null;
     }
 
     private static DefinitionLocation? ResolveDefinitionInBinary(
@@ -1743,6 +1798,54 @@ public static partial class DocumentService
     {
         switch (expr)
         {
+            case Expr.Let or Expr.LetResult or Expr.LetRecursive:
+                return TryFindLetBindingDefinition(expr, name, filePath, out definition);
+
+            case Expr.Lambda lambda:
+                if (string.Equals(lambda.ParamName, name, StringComparison.Ordinal))
+                {
+                    definition = new DefinitionLocation(filePath, AstSpans.GetLambdaParameterOrDefault(lambda));
+                    return true;
+                }
+
+                if (TryFindBindingDefinition(lambda.Body, name, filePath, out definition))
+                {
+                    return true;
+                }
+
+                break;
+
+            case Expr.If ifExpr:
+                if (TryFindBindingDefinition(ifExpr.Cond, name, filePath, out definition)
+                    || TryFindBindingDefinition(ifExpr.Then, name, filePath, out definition)
+                    || TryFindBindingDefinition(ifExpr.Else, name, filePath, out definition))
+                {
+                    return true;
+                }
+
+                break;
+
+            case Expr.Call call:
+                if (TryFindBindingDefinition(call.Func, name, filePath, out definition)
+                    || TryFindBindingDefinition(call.Arg, name, filePath, out definition))
+                {
+                    return true;
+                }
+
+                break;
+
+            case Expr.Match match:
+                return TryFindMatchBindingDefinition(match, name, filePath, out definition);
+        }
+
+        definition = default;
+        return false;
+    }
+
+    private static bool TryFindLetBindingDefinition(Expr expr, string name, string? filePath, out DefinitionLocation definition)
+    {
+        switch (expr)
+        {
             case Expr.Let letExpr:
                 if (string.Equals(letExpr.Name, name, StringComparison.Ordinal))
                 {
@@ -1787,57 +1890,27 @@ public static partial class DocumentService
                 }
 
                 break;
+        }
 
-            case Expr.Lambda lambda:
-                if (string.Equals(lambda.ParamName, name, StringComparison.Ordinal))
-                {
-                    definition = new DefinitionLocation(filePath, AstSpans.GetLambdaParameterOrDefault(lambda));
-                    return true;
-                }
+        definition = default;
+        return false;
+    }
 
-                if (TryFindBindingDefinition(lambda.Body, name, filePath, out definition))
-                {
-                    return true;
-                }
+    private static bool TryFindMatchBindingDefinition(Expr.Match match, string name, string? filePath, out DefinitionLocation definition)
+    {
+        if (TryFindBindingDefinition(match.Value, name, filePath, out definition))
+        {
+            return true;
+        }
 
-                break;
-
-            case Expr.If ifExpr:
-                if (TryFindBindingDefinition(ifExpr.Cond, name, filePath, out definition)
-                    || TryFindBindingDefinition(ifExpr.Then, name, filePath, out definition)
-                    || TryFindBindingDefinition(ifExpr.Else, name, filePath, out definition))
-                {
-                    return true;
-                }
-
-                break;
-
-            case Expr.Call call:
-                if (TryFindBindingDefinition(call.Func, name, filePath, out definition)
-                    || TryFindBindingDefinition(call.Arg, name, filePath, out definition))
-                {
-                    return true;
-                }
-
-                break;
-
-            case Expr.Match match:
-                if (TryFindBindingDefinition(match.Value, name, filePath, out definition))
-                {
-                    return true;
-                }
-
-                foreach (var matchCase in match.Cases)
-                {
-                    if (TryFindPatternBindingDefinition(matchCase.Pattern, name, filePath, out definition)
-                        || (matchCase.Guard is not null && TryFindBindingDefinition(matchCase.Guard, name, filePath, out definition))
-                        || TryFindBindingDefinition(matchCase.Body, name, filePath, out definition))
-                    {
-                        return true;
-                    }
-                }
-
-                break;
+        foreach (var matchCase in match.Cases)
+        {
+            if (TryFindPatternBindingDefinition(matchCase.Pattern, name, filePath, out definition)
+                || (matchCase.Guard is not null && TryFindBindingDefinition(matchCase.Guard, name, filePath, out definition))
+                || TryFindBindingDefinition(matchCase.Body, name, filePath, out definition))
+            {
+                return true;
+            }
         }
 
         definition = default;

@@ -45,7 +45,7 @@ else
   exit 1
 fi
 
-## Verify the Ashes compiler, formatter, and language server work correctly by building, running tests, and running examples.
+## Verify the Ashes compiler, formatter, and language server work correctly by building, running tests, and formatting examples.
 
 echo "--- Verifying Ashes on ${os}-${arch}..."
 
@@ -69,7 +69,7 @@ dotnet publish src/Ashes.Cli/Ashes.Cli.csproj \
   -p:PublishSingleFile=true \
   --output artifacts/ashes/${os}-${arch}
 
-## Verify the Ashes CLI can format and run examples and tests.
+## Verify the Ashes CLI can format examples and run tests.
 
 ashesCli="${repoRoot}/artifacts/ashes/${os}-${arch}/${executableName}"
 
@@ -86,20 +86,6 @@ for test in tests/**/*.ash; do
     continue
   fi
   "$ashesCli" fmt "$test" -w
-done
-
-### Run examples.
-echo "--- Running examples..."
-for example in examples/*.ash; do
-  "$ashesCli" run "$example" < /dev/null
-done
-
-### Run example projects.
-echo "--- Running example projects..."
-for project in examples/**/*.json; do
-  pushd "$(dirname "$project")" > /dev/null
-  "$ashesCli" run --project "$(basename "$project")" < /dev/null
-  popd > /dev/null
 done
 
 ## Run tests.

@@ -54,14 +54,7 @@ public static class StateMachineTransform
         AssertParallelForkJoinWithinSegment(instructions);
 
         // Find all AwaitTask instructions and their positions
-        var awaitPositions = new List<int>();
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            if (instructions[i] is IrInst.AwaitTask)
-            {
-                awaitPositions.Add(i);
-            }
-        }
+        var awaitPositions = FindAwaitPositions(instructions);
 
         int stateCount = awaitPositions.Count + 1;
 
@@ -76,6 +69,69 @@ public static class StateMachineTransform
         // instruction lies inside the loop and re-executes ahead of any back-edge reachable use.
         var liveLocalsAcross = ComputeLiveLocalsAcrossAwaits(instructions, awaitPositions, HasBackwardJump(instructions));
 
+        int stateStructSize = AssignStateStructSlots(
+            liveAcross, liveLocalsAcross, captureCount,
+            out var tempToSlotOffset, out var localToSlotOffset);
+
+        // Build the transformed instruction list
+        var result = new List<IrInst>();
+
+        // Track the highest temp used in original instructions
+        int maxTemp = ComputeMaxBodyTemp(instructions);
+
+        // Reserve temps that don't conflict with body temps
+        int stateStructTemp = maxTemp + 1;
+        int stateIdxTemp = maxTemp + 2;
+        int statusTemp = maxTemp + 3;
+        int awaitResultTemp = maxTemp + 4;
+        maxTemp = maxTemp + 4;
+
+        // Emit: load state struct pointer from local[0] into a dedicated temp
+        result.Add(new IrInst.LoadLocal(stateStructTemp, 0));
+
+        if (awaitPositions.Count == 0)
+        {
+            EmitSingleStateBody(instructions, result, stateStructTemp, statusTemp, captureCount, ref maxTemp);
+            return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+        }
+
+        // --- Multi-state coroutine ---
+        EmitMultiStateBody(
+            instructions, result, awaitPositions, liveAcross, liveLocalsAcross,
+            tempToSlotOffset, localToSlotOffset, stateCount,
+            stateStructTemp, stateIdxTemp, statusTemp, captureCount, ref maxTemp);
+
+        return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+    }
+
+    /// <summary>
+    /// Finds the positions of all AwaitTask instructions in the body.
+    /// </summary>
+    private static List<int> FindAwaitPositions(List<IrInst> instructions)
+    {
+        var awaitPositions = new List<int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.AwaitTask)
+            {
+                awaitPositions.Add(i);
+            }
+        }
+
+        return awaitPositions;
+    }
+
+    /// <summary>
+    /// Assigns state-struct slot offsets to every temp and local slot that is live across any
+    /// await point, and returns the resulting total state struct size in bytes.
+    /// </summary>
+    private static int AssignStateStructSlots(
+        List<HashSet<int>> liveAcross,
+        List<HashSet<int>> liveLocalsAcross,
+        int captureCount,
+        out Dictionary<int, int> tempToSlotOffset,
+        out Dictionary<int, int> localToSlotOffset)
+    {
         // Build the union of all live temps (each gets a unique slot in the state struct)
         var allLiveTemps = new SortedSet<int>();
         foreach (var set in liveAcross)
@@ -92,7 +148,7 @@ public static class StateMachineTransform
 
         // Assign state struct offsets for live temps
         int liveVarBaseOffset = TaskStructLayout.HeaderSize + captureCount * 8;
-        var tempToSlotOffset = new Dictionary<int, int>();
+        tempToSlotOffset = new Dictionary<int, int>();
         int slotIndex = 0;
         foreach (int temp in allLiveTemps)
         {
@@ -102,7 +158,7 @@ public static class StateMachineTransform
 
         // Assign state struct offsets for live locals (after temps)
         int localSaveBaseOffset = liveVarBaseOffset + allLiveTemps.Count * 8;
-        var localToSlotOffset = new Dictionary<int, int>();
+        localToSlotOffset = new Dictionary<int, int>();
         int localSlotIndex = 0;
         foreach (int local in allLiveLocals)
         {
@@ -110,13 +166,15 @@ public static class StateMachineTransform
             localSlotIndex++;
         }
 
-        int stateStructSize = localSaveBaseOffset + allLiveLocals.Count * 8;
+        return localSaveBaseOffset + allLiveLocals.Count * 8;
+    }
 
-        // Build the transformed instruction list
-        var result = new List<IrInst>();
+    /// <summary>
+    /// Returns the highest temp index referenced by the original body instructions.
+    /// </summary>
+    private static int ComputeMaxBodyTemp(List<IrInst> instructions)
+    {
         int maxTemp = 0;
-
-        // Track the highest temp used in original instructions
         foreach (var inst in instructions)
         {
             foreach (int t in GetAllTemps(inst))
@@ -125,52 +183,58 @@ public static class StateMachineTransform
             }
         }
 
-        // Reserve temps that don't conflict with body temps
-        int stateStructTemp = maxTemp + 1;
-        int stateIdxTemp = maxTemp + 2;
-        int statusTemp = maxTemp + 3;
-        int awaitResultTemp = maxTemp + 4;
-        maxTemp = maxTemp + 4;
+        return maxTemp;
+    }
 
-        // Emit: load state struct pointer from local[0] into a dedicated temp
-        result.Add(new IrInst.LoadLocal(stateStructTemp, 0));
+    /// <summary>
+    /// Emits the body of a coroutine that has no await points: the original instructions run
+    /// unchanged except the final Return, which becomes the store-result-and-COMPLETED epilogue.
+    /// </summary>
+    private static void EmitSingleStateBody(
+        List<IrInst> instructions, List<IrInst> result,
+        int stateStructTemp, int statusTemp, int captureCount, ref int maxTemp)
+    {
+        // No await points — just run the body and store the result.
+        // Load env captures into the appropriate env-loading pattern.
+        // The body instructions use LoadEnv to access captures via local[0],
+        // which is the state struct pointer. Captures are at HeaderSize + i*8.
+        // We need to adjust LoadEnv offsets to account for the header.
 
-        if (awaitPositions.Count == 0)
+        // Emit all original instructions except the final Return.
+        // Replace the Return with storing the result in the state struct.
+        for (int i = 0; i < instructions.Count; i++)
         {
-            // No await points — just run the body and store the result.
-            // Load env captures into the appropriate env-loading pattern.
-            // The body instructions use LoadEnv to access captures via local[0],
-            // which is the state struct pointer. Captures are at HeaderSize + i*8.
-            // We need to adjust LoadEnv offsets to account for the header.
-
-            // Emit all original instructions except the final Return.
-            // Replace the Return with storing the result in the state struct.
-            for (int i = 0; i < instructions.Count; i++)
+            var inst = instructions[i];
+            if (inst is IrInst.Return ret)
             {
-                var inst = instructions[i];
-                if (inst is IrInst.Return ret)
-                {
-                    // Store result in state struct result slot
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.ResultSlot, ret.Source));
-                    // Set state_index = -1 (COMPLETED)
-                    int completedConst = ++maxTemp;
-                    result.Add(new IrInst.LoadConstInt(completedConst, -1));
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, completedConst));
-                    // Return 1 (COMPLETED status)
-                    result.Add(new IrInst.LoadConstInt(statusTemp, 1));
-                    result.Add(new IrInst.Return(statusTemp));
-                }
-                else
-                {
-                    result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
-                }
+                // Store result in state struct result slot
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.ResultSlot, ret.Source));
+                // Set state_index = -1 (COMPLETED)
+                int completedConst = ++maxTemp;
+                result.Add(new IrInst.LoadConstInt(completedConst, -1));
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, completedConst));
+                // Return 1 (COMPLETED status)
+                result.Add(new IrInst.LoadConstInt(statusTemp, 1));
+                result.Add(new IrInst.Return(statusTemp));
             }
-
-            return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+            else
+            {
+                result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
+            }
         }
+    }
 
-        // --- Multi-state coroutine ---
-
+    /// <summary>
+    /// Emits the multi-state coroutine body: the state dispatch header followed by each state's
+    /// resume prologue and instruction segment.
+    /// </summary>
+    private static void EmitMultiStateBody(
+        List<IrInst> instructions, List<IrInst> result, List<int> awaitPositions,
+        List<HashSet<int>> liveAcross, List<HashSet<int>> liveLocalsAcross,
+        Dictionary<int, int> tempToSlotOffset, Dictionary<int, int> localToSlotOffset,
+        int stateCount, int stateStructTemp, int stateIdxTemp, int statusTemp,
+        int captureCount, ref int maxTemp)
+    {
         // Generate state dispatch header
         // Load state index from state struct
         result.Add(new IrInst.LoadMemOffset(stateIdxTemp, stateStructTemp, TaskStructLayout.StateIndex));
@@ -182,23 +246,7 @@ public static class StateMachineTransform
             stateLabels[i] = $"__state_{i}";
         }
 
-        // Dispatch: check state index against each state and jump
-        // We use a chain of comparisons since IR doesn't have a switch instruction.
-        for (int i = 1; i < stateCount; i++)
-        {
-            int cmpTemp = ++maxTemp;
-            int constTemp = ++maxTemp;
-            result.Add(new IrInst.LoadConstInt(constTemp, i));
-            result.Add(new IrInst.CmpIntEq(cmpTemp, stateIdxTemp, constTemp));
-            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateCount ? $"__dispatch_{i + 1}" : stateLabels[0]));
-            result.Add(new IrInst.Jump(stateLabels[i]));
-            if (i + 1 < stateCount)
-            {
-                result.Add(new IrInst.Label($"__dispatch_{i + 1}"));
-            }
-        }
-        // Default: state 0
-        result.Add(new IrInst.Jump(stateLabels[0]));
+        EmitStateDispatch(result, stateLabels, stateIdxTemp, ref maxTemp);
 
         // Split original instructions into segments at await points
         var segments = SplitAtAwaits(instructions, awaitPositions);
@@ -210,101 +258,169 @@ public static class StateMachineTransform
 
             if (stateIdx > 0)
             {
-                // Resume: restore live temps from state struct
-                var liveTempsAtThisPoint = liveAcross[stateIdx - 1];
-                var restoreVars = new List<(int SlotOffset, int TargetTemp)>();
-                foreach (int temp in liveTempsAtThisPoint)
-                {
-                    if (tempToSlotOffset.TryGetValue(temp, out int offset))
-                    {
-                        result.Add(new IrInst.LoadMemOffset(temp, stateStructTemp, offset));
-                        restoreVars.Add((offset, temp));
-                    }
-                }
-
-                // Resume: restore live locals from state struct
-                var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx - 1];
-                foreach (int local in liveLocalsAtThisPoint)
-                {
-                    if (localToSlotOffset.TryGetValue(local, out int offset))
-                    {
-                        int loadTemp = ++maxTemp;
-                        result.Add(new IrInst.LoadMemOffset(loadTemp, stateStructTemp, offset));
-                        result.Add(new IrInst.StoreLocal(local, loadTemp));
-                    }
-                }
-
-                // Load the result from the awaited sub-task into the AwaitTask's target temp
-                var awaitInst = (IrInst.AwaitTask)instructions[awaitPositions[stateIdx - 1]];
-                result.Add(new IrInst.LoadMemOffset(awaitInst.Target, stateStructTemp, TaskStructLayout.ResultSlot));
-
-                result.Add(new IrInst.Resume(stateStructTemp, awaitInst.Target, restoreVars));
+                EmitResumePrologue(
+                    instructions, result, awaitPositions, liveAcross, liveLocalsAcross,
+                    tempToSlotOffset, localToSlotOffset, stateStructTemp, stateIdx, ref maxTemp);
             }
 
-            // Emit the segment's instructions
-            var segment = segments[stateIdx];
-            for (int i = 0; i < segment.Count; i++)
+            EmitStateSegment(
+                segments[stateIdx], result, stateIdx, liveAcross, liveLocalsAcross,
+                tempToSlotOffset, localToSlotOffset, stateStructTemp, statusTemp,
+                captureCount, ref maxTemp);
+        }
+    }
+
+    /// <summary>
+    /// Emits the dispatch chain that routes the loaded state index to its state label.
+    /// </summary>
+    private static void EmitStateDispatch(List<IrInst> result, string[] stateLabels, int stateIdxTemp, ref int maxTemp)
+    {
+        // Dispatch: check state index against each state and jump
+        // We use a chain of comparisons since IR doesn't have a switch instruction.
+        for (int i = 1; i < stateLabels.Length; i++)
+        {
+            int cmpTemp = ++maxTemp;
+            int constTemp = ++maxTemp;
+            result.Add(new IrInst.LoadConstInt(constTemp, i));
+            result.Add(new IrInst.CmpIntEq(cmpTemp, stateIdxTemp, constTemp));
+            result.Add(new IrInst.JumpIfFalse(cmpTemp, i + 1 < stateLabels.Length ? $"__dispatch_{i + 1}" : stateLabels[0]));
+            result.Add(new IrInst.Jump(stateLabels[i]));
+            if (i + 1 < stateLabels.Length)
             {
-                var inst = segment[i];
+                result.Add(new IrInst.Label($"__dispatch_{i + 1}"));
+            }
+        }
+        // Default: state 0
+        result.Add(new IrInst.Jump(stateLabels[0]));
+    }
 
-                if (inst is IrInst.AwaitTask awaitTask)
-                {
-                    // Suspend: save live temps to state struct
-                    var liveTempsAtThisPoint = liveAcross[stateIdx];
-                    var saveVars = new List<(int SlotOffset, int SourceTemp)>();
-                    foreach (int temp in liveTempsAtThisPoint)
-                    {
-                        if (tempToSlotOffset.TryGetValue(temp, out int offset))
-                        {
-                            result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, temp));
-                            saveVars.Add((offset, temp));
-                        }
-                    }
-
-                    // Suspend: save live locals to state struct
-                    var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx];
-                    foreach (int local in liveLocalsAtThisPoint)
-                    {
-                        if (localToSlotOffset.TryGetValue(local, out int offset))
-                        {
-                            int loadTemp = ++maxTemp;
-                            result.Add(new IrInst.LoadLocal(loadTemp, local));
-                            result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, loadTemp));
-                        }
-                    }
-
-                    // Store the awaited sub-task pointer
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.AwaitedTask, awaitTask.TaskTemp));
-
-                    // Set next state index
-                    int nextStateConst = ++maxTemp;
-                    result.Add(new IrInst.LoadConstInt(nextStateConst, stateIdx + 1));
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, nextStateConst));
-
-                    result.Add(new IrInst.Suspend(stateStructTemp, stateIdx + 1, awaitTask.TaskTemp, saveVars));
-
-                    // Return 0 (SUSPENDED status)
-                    result.Add(new IrInst.LoadConstInt(statusTemp, 0));
-                    result.Add(new IrInst.Return(statusTemp));
-                }
-                else if (inst is IrInst.Return ret)
-                {
-                    // Final state: store result and return COMPLETED
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.ResultSlot, ret.Source));
-                    int completedConst = ++maxTemp;
-                    result.Add(new IrInst.LoadConstInt(completedConst, -1));
-                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, completedConst));
-                    result.Add(new IrInst.LoadConstInt(statusTemp, 1));
-                    result.Add(new IrInst.Return(statusTemp));
-                }
-                else
-                {
-                    result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
-                }
+    /// <summary>
+    /// Emits the resume prologue for a state: restores live temps and locals from the state
+    /// struct and loads the awaited sub-task's result into the AwaitTask's target temp.
+    /// </summary>
+    private static void EmitResumePrologue(
+        List<IrInst> instructions, List<IrInst> result, List<int> awaitPositions,
+        List<HashSet<int>> liveAcross, List<HashSet<int>> liveLocalsAcross,
+        Dictionary<int, int> tempToSlotOffset, Dictionary<int, int> localToSlotOffset,
+        int stateStructTemp, int stateIdx, ref int maxTemp)
+    {
+        // Resume: restore live temps from state struct
+        var liveTempsAtThisPoint = liveAcross[stateIdx - 1];
+        var restoreVars = new List<(int SlotOffset, int TargetTemp)>();
+        foreach (int temp in liveTempsAtThisPoint)
+        {
+            if (tempToSlotOffset.TryGetValue(temp, out int offset))
+            {
+                result.Add(new IrInst.LoadMemOffset(temp, stateStructTemp, offset));
+                restoreVars.Add((offset, temp));
             }
         }
 
-        return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+        // Resume: restore live locals from state struct
+        var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx - 1];
+        foreach (int local in liveLocalsAtThisPoint)
+        {
+            if (localToSlotOffset.TryGetValue(local, out int offset))
+            {
+                int loadTemp = ++maxTemp;
+                result.Add(new IrInst.LoadMemOffset(loadTemp, stateStructTemp, offset));
+                result.Add(new IrInst.StoreLocal(local, loadTemp));
+            }
+        }
+
+        // Load the result from the awaited sub-task into the AwaitTask's target temp
+        var awaitInst = (IrInst.AwaitTask)instructions[awaitPositions[stateIdx - 1]];
+        result.Add(new IrInst.LoadMemOffset(awaitInst.Target, stateStructTemp, TaskStructLayout.ResultSlot));
+
+        result.Add(new IrInst.Resume(stateStructTemp, awaitInst.Target, restoreVars));
+    }
+
+    /// <summary>
+    /// Emits one state's instruction segment: a trailing AwaitTask becomes the suspend sequence
+    /// and a final Return becomes the store-result-and-COMPLETED epilogue.
+    /// </summary>
+    private static void EmitStateSegment(
+        List<IrInst> segment, List<IrInst> result, int stateIdx,
+        List<HashSet<int>> liveAcross, List<HashSet<int>> liveLocalsAcross,
+        Dictionary<int, int> tempToSlotOffset, Dictionary<int, int> localToSlotOffset,
+        int stateStructTemp, int statusTemp, int captureCount, ref int maxTemp)
+    {
+        // Emit the segment's instructions
+        for (int i = 0; i < segment.Count; i++)
+        {
+            var inst = segment[i];
+
+            if (inst is IrInst.AwaitTask awaitTask)
+            {
+                EmitSuspendAtAwait(
+                    awaitTask, result, stateIdx, liveAcross, liveLocalsAcross,
+                    tempToSlotOffset, localToSlotOffset, stateStructTemp, statusTemp, ref maxTemp);
+            }
+            else if (inst is IrInst.Return ret)
+            {
+                // Final state: store result and return COMPLETED
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.ResultSlot, ret.Source));
+                int completedConst = ++maxTemp;
+                result.Add(new IrInst.LoadConstInt(completedConst, -1));
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, completedConst));
+                result.Add(new IrInst.LoadConstInt(statusTemp, 1));
+                result.Add(new IrInst.Return(statusTemp));
+            }
+            else
+            {
+                result.Add(AdjustLoadEnvForStateStruct(inst, stateStructTemp, captureCount));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Emits the suspend sequence at an await point: saves live temps and locals to the state
+    /// struct, stores the awaited sub-task pointer, advances the state index, and returns the
+    /// SUSPENDED status.
+    /// </summary>
+    private static void EmitSuspendAtAwait(
+        IrInst.AwaitTask awaitTask, List<IrInst> result, int stateIdx,
+        List<HashSet<int>> liveAcross, List<HashSet<int>> liveLocalsAcross,
+        Dictionary<int, int> tempToSlotOffset, Dictionary<int, int> localToSlotOffset,
+        int stateStructTemp, int statusTemp, ref int maxTemp)
+    {
+        // Suspend: save live temps to state struct
+        var liveTempsAtThisPoint = liveAcross[stateIdx];
+        var saveVars = new List<(int SlotOffset, int SourceTemp)>();
+        foreach (int temp in liveTempsAtThisPoint)
+        {
+            if (tempToSlotOffset.TryGetValue(temp, out int offset))
+            {
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, temp));
+                saveVars.Add((offset, temp));
+            }
+        }
+
+        // Suspend: save live locals to state struct
+        var liveLocalsAtThisPoint = liveLocalsAcross[stateIdx];
+        foreach (int local in liveLocalsAtThisPoint)
+        {
+            if (localToSlotOffset.TryGetValue(local, out int offset))
+            {
+                int loadTemp = ++maxTemp;
+                result.Add(new IrInst.LoadLocal(loadTemp, local));
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, loadTemp));
+            }
+        }
+
+        // Store the awaited sub-task pointer
+        result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.AwaitedTask, awaitTask.TaskTemp));
+
+        // Set next state index
+        int nextStateConst = ++maxTemp;
+        result.Add(new IrInst.LoadConstInt(nextStateConst, stateIdx + 1));
+        result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, nextStateConst));
+
+        result.Add(new IrInst.Suspend(stateStructTemp, stateIdx + 1, awaitTask.TaskTemp, saveVars));
+
+        // Return 0 (SUSPENDED status)
+        result.Add(new IrInst.LoadConstInt(statusTemp, 0));
+        result.Add(new IrInst.Return(statusTemp));
     }
 
     /// <summary>
@@ -573,8 +689,9 @@ public static class StateMachineTransform
     }
     /// <summary>
     /// Returns all temps defined (written to) by an instruction.
-    /// IMPORTANT: When adding new IrInst types, you MUST add a case here
-    /// and in GetUsedTemps to ensure correct liveness analysis across await points.
+    /// IMPORTANT: When adding new IrInst types, you MUST add a case here (or in one of the
+    /// continuation helpers chained via the default arm) and in GetUsedTemps to ensure
+    /// correct liveness analysis across await points.
     /// </summary>
     internal static IEnumerable<int> GetDefinedTemps(IrInst inst)
     {
@@ -629,6 +746,18 @@ public static class StateMachineTransform
             IrInst.CallKnown i => [i.Target],
             IrInst.ToCString i => [i.Target],
             IrInst.CallExternal i => [i.Target],
+            _ => GetDefinedTempsAllocFileText(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetDefinedTemps"/> for allocation, ADT, file, text, and
+    /// big-integer instructions.
+    /// </summary>
+    private static IEnumerable<int> GetDefinedTempsAllocFileText(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.Alloc i => [i.Target],
             IrInst.AllocStack i => [i.Target],
             IrInst.AllocAdt i => [i.Target],
@@ -658,6 +787,18 @@ public static class StateMachineTransform
             IrInst.BigIntCompare i => [i.Target],
             IrInst.TextToHex i => [i.Target],
             IrInst.TextAsciiCase i => [i.Target],
+            _ => GetDefinedTempsNetAndBytes(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetDefinedTemps"/> for HTTP, TCP, bytes, and byte-file
+    /// instructions.
+    /// </summary>
+    private static IEnumerable<int> GetDefinedTempsNetAndBytes(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.HttpGet i => [i.Target],
             IrInst.HttpPost i => [i.Target],
             IrInst.NetTcpConnect i => [i.Target],
@@ -686,6 +827,18 @@ public static class StateMachineTransform
             IrInst.BytesGetU32Le i => [i.Target],
             IrInst.BytesGetU64Le i => [i.Target],
             IrInst.FileWriteBytes i => [i.Target],
+            _ => GetDefinedTempsTaskAndParallel(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetDefinedTemps"/> for borrow, task, and structured-parallelism
+    /// instructions; the default arm here is the final "defines no temps" fallback.
+    /// </summary>
+    private static IEnumerable<int> GetDefinedTempsTaskAndParallel(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.Borrow i => [i.Target],
             IrInst.CreateTask i => [i.Target],
             IrInst.CreateCompletedTask i => [i.Target],
@@ -723,8 +876,9 @@ public static class StateMachineTransform
 
     /// <summary>
     /// Returns all temps used (read) by an instruction.
-    /// IMPORTANT: When adding new IrInst types, you MUST add a case here
-    /// and in GetDefinedTemps to ensure correct liveness analysis across await points.
+    /// IMPORTANT: When adding new IrInst types, you MUST add a case here (or in one of the
+    /// continuation helpers chained via the default arm) and in GetDefinedTemps to ensure
+    /// correct liveness analysis across await points.
     /// </summary>
     private static IEnumerable<int> GetUsedTemps(IrInst inst)
     {
@@ -774,6 +928,18 @@ public static class StateMachineTransform
             IrInst.CallKnown ck => [ck.EnvTemp, ck.ArgTemp],
             IrInst.ToCString c => [c.StrTemp],
             IrInst.CallExternal c => c.ArgTemps,
+            _ => GetUsedTempsAdtFileText(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetUsedTemps"/> for ADT, print, file, text, and big-integer
+    /// instructions.
+    /// </summary>
+    private static IEnumerable<int> GetUsedTempsAdtFileText(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.SetAdtField sf => [sf.Ptr, sf.Source],
             IrInst.GetAdtTag gt => [gt.Ptr],
             IrInst.GetAdtField gf => [gf.Ptr],
@@ -802,6 +968,18 @@ public static class StateMachineTransform
             IrInst.BigIntCompare t => [t.Left, t.Right],
             IrInst.TextToHex t => [t.ValueTemp],
             IrInst.TextAsciiCase t => [t.SourceTemp],
+            _ => GetUsedTempsNetAndBytes(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetUsedTemps"/> for HTTP, TCP, bytes, and byte-file
+    /// instructions.
+    /// </summary>
+    private static IEnumerable<int> GetUsedTempsNetAndBytes(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.HttpGet h => [h.UrlTemp],
             IrInst.HttpPost h => [h.UrlTemp, h.BodyTemp],
             IrInst.NetTcpConnect n => [n.HostTemp, n.PortTemp],
@@ -830,6 +1008,18 @@ public static class StateMachineTransform
             IrInst.BytesGetU32Le i => [i.BytesTemp, i.OffsetTemp],
             IrInst.BytesGetU64Le i => [i.BytesTemp, i.OffsetTemp],
             IrInst.FileWriteBytes i => [i.PathTemp, i.BytesTemp],
+            _ => GetUsedTempsTaskAndParallel(inst)
+        };
+    }
+
+    /// <summary>
+    /// Continues <see cref="GetUsedTemps"/> for drop/borrow, task, structured-parallelism, and
+    /// control-flow instructions; the default arm here is the final "uses no temps" fallback.
+    /// </summary>
+    private static IEnumerable<int> GetUsedTempsTaskAndParallel(IrInst inst)
+    {
+        return inst switch
+        {
             IrInst.Drop d => [d.SourceTemp],
             IrInst.Borrow b => [b.SourceTemp],
             IrInst.CreateTask ct => [ct.ClosureTemp],

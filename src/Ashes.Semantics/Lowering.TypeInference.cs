@@ -276,6 +276,16 @@ public sealed partial class Lowering
             return;
         }
 
+        UnifyComposite(a, b);
+    }
+
+    /// <summary>
+    /// Unifies the composite (non-variable, non-arrow) type forms: rows,
+    /// pointers, lists, tuples, and named types. Anything else is a base
+    /// mismatch.
+    /// </summary>
+    private void UnifyComposite(TypeRef a, TypeRef b)
+    {
         if (a is TypeRef.TRow || b is TypeRef.TRow)
         {
             if (a is TypeRef.TRow && b is TypeRef.TRow)
@@ -317,31 +327,39 @@ public sealed partial class Lowering
 
         if (a is TypeRef.TNamedType na && b is TypeRef.TNamedType nb)
         {
-            if (!string.Equals(na.Symbol.Name, nb.Symbol.Name, StringComparison.Ordinal))
-            {
-                var namedTypeMismatch = PrettyPair(a, b);
-                ReportDiagnostic(0, $"Type mismatch: {namedTypeMismatch.Left} vs {namedTypeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
-                return;
-            }
-
-            if (na.TypeArgs.Count != nb.TypeArgs.Count)
-            {
-                var namedTypeArityMismatch = PrettyPair(a, b);
-                ReportDiagnostic(0, $"Type mismatch: {namedTypeArityMismatch.Left} vs {namedTypeArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
-                return;
-            }
-
-            for (int i = 0; i < na.TypeArgs.Count; i++)
-            {
-                Unify(na.TypeArgs[i], nb.TypeArgs[i]);
-            }
-
+            UnifyNamedTypes(a, b, na, nb);
             return;
         }
 
         // base mismatch
         var typeMismatch = PrettyPair(a, b);
         ReportDiagnostic(0, $"Type mismatch: {typeMismatch.Left} vs {typeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+    }
+
+    /// <summary>
+    /// Unifies two named types: the names and arities must match, and the
+    /// type arguments unify pointwise.
+    /// </summary>
+    private void UnifyNamedTypes(TypeRef a, TypeRef b, TypeRef.TNamedType na, TypeRef.TNamedType nb)
+    {
+        if (!string.Equals(na.Symbol.Name, nb.Symbol.Name, StringComparison.Ordinal))
+        {
+            var namedTypeMismatch = PrettyPair(a, b);
+            ReportDiagnostic(0, $"Type mismatch: {namedTypeMismatch.Left} vs {namedTypeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+            return;
+        }
+
+        if (na.TypeArgs.Count != nb.TypeArgs.Count)
+        {
+            var namedTypeArityMismatch = PrettyPair(a, b);
+            ReportDiagnostic(0, $"Type mismatch: {namedTypeArityMismatch.Left} vs {namedTypeArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+            return;
+        }
+
+        for (int i = 0; i < na.TypeArgs.Count; i++)
+        {
+            Unify(na.TypeArgs[i], nb.TypeArgs[i]);
+        }
     }
 
     private bool Occurs(int id, TypeRef t)

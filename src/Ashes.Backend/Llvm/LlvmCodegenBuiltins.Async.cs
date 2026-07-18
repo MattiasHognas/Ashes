@@ -181,51 +181,7 @@ internal static partial class LlvmCodegen
     private static void EmitInstallShutdownHandlers(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmTypeHandle voidTy = LlvmApi.VoidTypeInContext(state.Target.Context);
-
-        LlvmValueHandle handlerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_handler");
-        LlvmValueHandle restorerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_restorer");
-        if (handlerFn.Ptr == 0)
-        {
-            LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
-
-            handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_handler", LlvmApi.FunctionType(voidTy, [state.I32]));
-            LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
-            LlvmBasicBlockHandle he = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
-            // First signal starts the drain (sets the flag; the accept step turns it into the
-            // sentinel after draining). A second signal during the drain forces an immediate,
-            // still-clean exit(0) right here in the handler.
-            LlvmBasicBlockHandle forceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "force_exit");
-            LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "first_signal");
-            LlvmApi.PositionBuilderAtEnd(builder, he);
-            LlvmValueHandle alreadyRequested = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "sig_already");
-            LlvmApi.BuildCondBr(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, alreadyRequested, LlvmApi.ConstInt(state.I64, 0, 0), "sig_is_second"),
-                forceBlock, firstBlock);
-            LlvmApi.PositionBuilderAtEnd(builder, forceBlock);
-            _ = EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sig_force_exit");
-            LlvmApi.BuildUnreachable(builder);
-            LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
-            LlvmApi.BuildRetVoid(builder);
-
-            // Naked restorer: on return from the handler the kernel jumps here, which must invoke
-            // rt_sigreturn to restore the interrupted context. No prologue may run first.
-            restorerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_restorer", LlvmApi.FunctionType(voidTy, []));
-            LlvmApi.SetLinkage(restorerFn, LlvmLinkage.Internal);
-            uint nakedKind = LlvmApi.GetEnumAttributeKindForName("naked");
-            LlvmApi.AddAttributeAtIndex(restorerFn, LlvmApi.AttributeIndexFunction, LlvmApi.CreateEnumAttribute(state.Target.Context, nakedKind, 0));
-            LlvmBasicBlockHandle re = LlvmApi.AppendBasicBlockInContext(state.Target.Context, restorerFn, "entry");
-            LlvmApi.PositionBuilderAtEnd(builder, re);
-            string restoreAsm = state.Flavor == LlvmCodegenFlavor.LinuxArm64
-                ? "mov x8, #139\n\tsvc #0"
-                : "movq $$15, %rax\n\tsyscall";
-            LlvmValueHandle asm = LlvmApi.GetInlineAsm(LlvmApi.FunctionType(voidTy, []), restoreAsm, "~{memory}", true, false);
-            LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(voidTy, []), asm, [], "");
-            LlvmApi.BuildUnreachable(builder);
-
-            LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
-        }
+        (LlvmValueHandle handlerFn, LlvmValueHandle restorerFn) = EmitEnsureShutdownSignalFns(state);
 
         // struct kernel_sigaction { handler@0; flags@8; restorer@16; mask@24 } (32 bytes).
         // flags = SA_RESTORER(0x04000000); NOT SA_RESTART, so syscalls return EINTR.
@@ -240,6 +196,60 @@ internal static partial class LlvmCodegen
         // rt_sigaction(signum, &act, NULL, sigsetsize=8) for SIGINT(2) and SIGTERM(15).
         _ = EmitLinuxSyscall4(state, SyscallRtSigaction, LlvmApi.ConstInt(state.I64, 2, 0), saAddr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 8, 0), "shutdown_sigint");
         _ = EmitLinuxSyscall4(state, SyscallRtSigaction, LlvmApi.ConstInt(state.I64, 15, 0), saAddr, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 8, 0), "shutdown_sigterm");
+    }
+
+    // Defines the internal __ashes_sig_handler and __ashes_sig_restorer functions once and returns
+    // both handles. Later calls find them already present and just return the existing handles.
+    private static (LlvmValueHandle Handler, LlvmValueHandle Restorer) EmitEnsureShutdownSignalFns(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle voidTy = LlvmApi.VoidTypeInContext(state.Target.Context);
+        LlvmValueHandle handlerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_handler");
+        LlvmValueHandle restorerFn = LlvmApi.GetNamedFunction(state.Target.Module, "__ashes_sig_restorer");
+        if (handlerFn.Ptr != 0)
+        {
+            return (handlerFn, restorerFn);
+        }
+
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+
+        handlerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_handler", LlvmApi.FunctionType(voidTy, [state.I32]));
+        LlvmApi.SetLinkage(handlerFn, LlvmLinkage.Internal);
+        LlvmBasicBlockHandle he = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "entry");
+        // First signal starts the drain (sets the flag; the accept step turns it into the
+        // sentinel after draining). A second signal during the drain forces an immediate,
+        // still-clean exit(0) right here in the handler.
+        LlvmBasicBlockHandle forceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "force_exit");
+        LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, handlerFn, "first_signal");
+        LlvmApi.PositionBuilderAtEnd(builder, he);
+        LlvmValueHandle alreadyRequested = LlvmApi.BuildLoad2(builder, state.I64, ShutdownFlagGlobal(state), "sig_already");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, alreadyRequested, LlvmApi.ConstInt(state.I64, 0, 0), "sig_is_second"),
+            forceBlock, firstBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, forceBlock);
+        _ = EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "sig_force_exit");
+        LlvmApi.BuildUnreachable(builder);
+        LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
+        LlvmApi.BuildRetVoid(builder);
+
+        // Naked restorer: on return from the handler the kernel jumps here, which must invoke
+        // rt_sigreturn to restore the interrupted context. No prologue may run first.
+        restorerFn = LlvmApi.AddFunction(state.Target.Module, "__ashes_sig_restorer", LlvmApi.FunctionType(voidTy, []));
+        LlvmApi.SetLinkage(restorerFn, LlvmLinkage.Internal);
+        uint nakedKind = LlvmApi.GetEnumAttributeKindForName("naked");
+        LlvmApi.AddAttributeAtIndex(restorerFn, LlvmApi.AttributeIndexFunction, LlvmApi.CreateEnumAttribute(state.Target.Context, nakedKind, 0));
+        LlvmBasicBlockHandle re = LlvmApi.AppendBasicBlockInContext(state.Target.Context, restorerFn, "entry");
+        LlvmApi.PositionBuilderAtEnd(builder, re);
+        string restoreAsm = state.Flavor == LlvmCodegenFlavor.LinuxArm64
+            ? "mov x8, #139\n\tsvc #0"
+            : "movq $$15, %rax\n\tsyscall";
+        LlvmValueHandle asm = LlvmApi.GetInlineAsm(LlvmApi.FunctionType(voidTy, []), restoreAsm, "~{memory}", true, false);
+        LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(voidTy, []), asm, [], "");
+        LlvmApi.BuildUnreachable(builder);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return (handlerFn, restorerFn);
     }
 
     private static LlvmValueHandle EmitLeafTaskCompletedStatus(LlvmCodegenState state)
@@ -361,6 +371,18 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_done_block");
         LlvmApi.BuildCondBr(builder, socketKnown, reuseSocketBlock, setupSocketBlock);
 
+        EmitStepTcpConnectSetup(state, taskPtr, hostRef, port, socketSlot, addrSlot, setupSocketBlock, connectBlock, failBlock);
+        LlvmValueHandle sockaddrBytes = EmitStepTcpConnectSockaddr(state, addrSlot, port, reuseSocketBlock, connectBlock);
+        EmitStepTcpConnectDoConnect(state, taskPtr, socketSlot, statusSlot, sockaddrBytes, pendingBlock, failBlock, doneBlock);
+        EmitStepTcpConnectTail(state, taskPtr, socketSlot, statusSlot, pendingBlock, failBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_connect_status");
+    }
+
+    private static void EmitStepTcpConnectSetup(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle hostRef, LlvmValueHandle port, LlvmValueHandle socketSlot, LlvmValueHandle addrSlot, LlvmBasicBlockHandle setupSocketBlock, LlvmBasicBlockHandle connectBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, setupSocketBlock);
         LlvmValueHandle resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "step_tcp_connect_resolve");
         LlvmValueHandle resolveTag = LoadMemory(state, resolveResult, 0, "step_tcp_connect_resolve_tag");
@@ -401,7 +423,11 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData1, LoadMemory(state, resolveResult, 8, "step_tcp_connect_store_addr_value"), "step_tcp_connect_store_addr");
         EmitSetSocketNonBlocking(state, openedSocket, "step_tcp_connect_nonblocking");
         LlvmApi.BuildBr(builder, connectBlock);
+    }
 
+    private static LlvmValueHandle EmitStepTcpConnectSockaddr(LlvmCodegenState state, LlvmValueHandle addrSlot, LlvmValueHandle port, LlvmBasicBlockHandle reuseSocketBlock, LlvmBasicBlockHandle connectBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, reuseSocketBlock);
         LlvmApi.BuildBr(builder, connectBlock);
 
@@ -425,7 +451,12 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder,
             LlvmApi.BuildTrunc(builder, LlvmApi.BuildLoad2(builder, state.I64, addrSlot, "step_tcp_connect_addr_loaded"), state.I32, "step_tcp_connect_addr_i32"),
             LlvmApi.BuildBitCast(builder, addrPtr, state.I32Ptr, "step_tcp_connect_addr_ptr"));
+        return sockaddrBytes;
+    }
 
+    private static void EmitStepTcpConnectDoConnect(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socketSlot, LlvmValueHandle statusSlot, LlvmValueHandle sockaddrBytes, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle connectSucceeded;
         LlvmValueHandle connectPending;
         if (IsLinuxFlavor(state.Flavor))
@@ -474,7 +505,11 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "step_tcp_connect_socket_ok")), "step_tcp_connect_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, doneBlock);
+    }
 
+    private static void EmitStepTcpConnectTail(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socketSlot, LlvmValueHandle statusSlot, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
         LlvmApi.BuildStore(builder,
             EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketWrite, LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "step_tcp_connect_pending_socket"), "step_tcp_connect_pending_store"),
@@ -486,9 +521,6 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpConnectFailedMessage)), "step_tcp_connect_fail_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_connect_status");
     }
 
     private static LlvmValueHandle EmitStepTcpSendTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -505,12 +537,24 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle alreadyDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_already_done");
         LlvmBasicBlockHandle sendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_send");
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_finish");
+        LlvmBasicBlockHandle pendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_pending_check");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_fail");
         LlvmApi.BuildCondBr(builder, done, alreadyDoneBlock, sendBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, alreadyDoneBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, totalLen), "step_tcp_send_already_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        LlvmValueHandle sentRaw = EmitStepTcpSendPerform(state, taskPtr, socket, textRef, sentSoFar, remaining, totalLen, statusSlot, sendBlock, finishBlock, pendingCheckBlock, failBlock);
+        EmitStepTcpSendPendingCheck(state, taskPtr, socket, sentRaw, statusSlot, pendingCheckBlock, failBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_send_status");
+    }
+
+    private static LlvmValueHandle EmitStepTcpSendPerform(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socket, LlvmValueHandle textRef, LlvmValueHandle sentSoFar, LlvmValueHandle remaining, LlvmValueHandle totalLen, LlvmValueHandle statusSlot, LlvmBasicBlockHandle sendBlock, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle pendingCheckBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, sendBlock);
         LlvmValueHandle cursorPtr = LlvmApi.BuildIntToPtr(builder,
             LlvmApi.BuildAdd(builder, GetStringBytesAddress(state, textRef, "step_tcp_send_base"), sentSoFar, "step_tcp_send_cursor_addr"),
@@ -533,8 +577,6 @@ internal static partial class LlvmCodegen
                 "step_tcp_send_sent_raw");
         LlvmValueHandle sentPositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, sentRaw, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_sent_positive");
         LlvmBasicBlockHandle sentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_sent_block");
-        LlvmBasicBlockHandle pendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_pending_check");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_fail");
         LlvmApi.BuildCondBr(builder, sentPositive, sentBlock, pendingCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, sentBlock);
@@ -552,7 +594,12 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, sendPendingBlock);
         LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketWrite, socket, "step_tcp_send_more_pending"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+        return sentRaw;
+    }
 
+    private static void EmitStepTcpSendPendingCheck(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socket, LlvmValueHandle sentRaw, LlvmValueHandle statusSlot, LlvmBasicBlockHandle pendingCheckBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, pendingCheckBlock);
         LlvmValueHandle isPending;
         if (IsLinuxFlavor(state.Flavor))
@@ -574,9 +621,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpSendFailedMessage)), "step_tcp_send_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_send_status");
     }
 
     private static LlvmValueHandle EmitStepTcpReceiveTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -591,12 +635,25 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle failMaxBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_fail_max");
         LlvmBasicBlockHandle readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_read");
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_finish");
+        LlvmBasicBlockHandle handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_handle_read");
+        LlvmBasicBlockHandle pendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_pending_check");
         LlvmApi.BuildCondBr(builder, positiveMax, allocateBufferBlock, failMaxBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, failMaxBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidMaxBytesMessage)), "step_tcp_receive_invalid_max"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        (LlvmValueHandle activeBuffer, LlvmValueHandle readCount) = EmitStepTcpReceiveBuffer(state, taskPtr, socket, maxBytes, allocateBufferBlock, readBlock, handleReadBlock, pendingCheckBlock);
+        EmitStepTcpReceiveHandleRead(state, taskPtr, activeBuffer, readCount, statusSlot, handleReadBlock, finishBlock);
+        EmitStepTcpReceivePendingCheck(state, taskPtr, socket, readCount, statusSlot, pendingCheckBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_receive_status");
+    }
+
+    private static (LlvmValueHandle ActiveBuffer, LlvmValueHandle ReadCount) EmitStepTcpReceiveBuffer(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socket, LlvmValueHandle maxBytes, LlvmBasicBlockHandle allocateBufferBlock, LlvmBasicBlockHandle readBlock, LlvmBasicBlockHandle handleReadBlock, LlvmBasicBlockHandle pendingCheckBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, allocateBufferBlock);
         LlvmValueHandle bufferRef = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_buffer_ref");
         LlvmValueHandle hasBuffer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, bufferRef, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_has_buffer");
@@ -619,10 +676,13 @@ internal static partial class LlvmCodegen
             ? EmitLinuxSyscall(state, SyscallRead, socket, LlvmApi.BuildPtrToInt(builder, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_bytes"), state.I64, "step_tcp_receive_bytes_i64"), maxBytes, "step_tcp_receive_call")
             : LlvmApi.BuildSExt(builder, EmitWindowsRecv(state, socket, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_bytes"), LlvmApi.BuildTrunc(builder, maxBytes, state.I32, "step_tcp_receive_max_i32"), "step_tcp_receive_call"), state.I64, "step_tcp_receive_call_i64");
         LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_ok");
-        LlvmBasicBlockHandle handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_handle_read");
-        LlvmBasicBlockHandle pendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_pending_check");
         LlvmApi.BuildCondBr(builder, readOk, handleReadBlock, pendingCheckBlock);
+        return (activeBuffer, readCount);
+    }
 
+    private static void EmitStepTcpReceiveHandleRead(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle activeBuffer, LlvmValueHandle readCount, LlvmValueHandle statusSlot, LlvmBasicBlockHandle handleReadBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, handleReadBlock);
         StoreMemory(state, activeBuffer, 0, readCount, "step_tcp_receive_store_len");
         LlvmValueHandle emptyRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_empty");
@@ -643,7 +703,11 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, invalidUtf8Block);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidUtf8Message)), "step_tcp_receive_invalid_utf8_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+    }
 
+    private static void EmitStepTcpReceivePendingCheck(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle socket, LlvmValueHandle readCount, LlvmValueHandle statusSlot, LlvmBasicBlockHandle pendingCheckBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, pendingCheckBlock);
         LlvmValueHandle isPending;
         if (IsLinuxFlavor(state.Flavor))
@@ -666,9 +730,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpReceiveFailedMessage)), "step_tcp_receive_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_receive_status");
     }
 
     private static LlvmValueHandle EmitStepTcpCloseTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -720,6 +781,17 @@ internal static partial class LlvmCodegen
             LlvmApi.PositionBuilderAtEnd(builder, bindNormallyBlock);
         }
 
+        (LlvmValueHandle socketFd, LlvmValueHandle socketSlot) = EmitStepTcpListenOpenSocket(state, linux, afterSocketBlock, failBlock);
+        EmitStepTcpListenAfterSocket(state, linux, socketFd, port, afterSocketBlock, afterBindBlock, failBlock);
+        EmitStepTcpListenAfterBind(state, linux, taskPtr, socketFd, socketSlot, statusSlot, afterBindBlock, successBlock, failBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_listen_status");
+    }
+
+    private static (LlvmValueHandle SocketFd, LlvmValueHandle SocketSlot) EmitStepTcpListenOpenSocket(LlvmCodegenState state, bool linux, LlvmBasicBlockHandle afterSocketBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle socketFd;
         if (linux)
         {
@@ -745,8 +817,12 @@ internal static partial class LlvmCodegen
                 ? LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, socketFd, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_listen_socket_ok")
                 : LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, socketFd, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), "step_tcp_listen_socket_ok"),
             afterSocketBlock, failBlock);
+        return (socketFd, socketSlot);
+    }
 
-        LlvmApi.PositionBuilderAtEnd(builder, afterSocketBlock);
+    private static void EmitStepTcpListenReuseOpts(LlvmCodegenState state, bool linux, LlvmValueHandle socketFd)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         if (linux)
         {
             // SO_REUSEADDR (optname=2) and SO_REUSEPORT (optname=15), level SOL_SOCKET=1, optval=1 —
@@ -776,6 +852,13 @@ internal static partial class LlvmCodegen
                 LlvmApi.ConstInt(state.I64, 0, 0),
                 "step_tcp_listen_setsockopt_reuseport");
         }
+    }
+
+    private static void EmitStepTcpListenAfterSocket(LlvmCodegenState state, bool linux, LlvmValueHandle socketFd, LlvmValueHandle port, LlvmBasicBlockHandle afterSocketBlock, LlvmBasicBlockHandle afterBindBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, afterSocketBlock);
+        EmitStepTcpListenReuseOpts(state, linux, socketFd);
         // sockaddr_in { family=AF_INET(2), port=htons(port), addr=INADDR_ANY(0) }
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
         LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, "step_tcp_listen_sockaddr");
@@ -810,7 +893,11 @@ internal static partial class LlvmCodegen
             bindOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, bindResult, LlvmApi.ConstInt(state.I32, 0, 0), "step_tcp_listen_bind_ok");
         }
         LlvmApi.BuildCondBr(builder, bindOk, afterBindBlock, failBlock);
+    }
 
+    private static void EmitStepTcpListenAfterBind(LlvmCodegenState state, bool linux, LlvmValueHandle taskPtr, LlvmValueHandle socketFd, LlvmValueHandle socketSlot, LlvmValueHandle statusSlot, LlvmBasicBlockHandle afterBindBlock, LlvmBasicBlockHandle successBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, afterBindBlock);
         LlvmValueHandle listenOk;
         if (linux)
@@ -843,9 +930,6 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpListenFailedMessage)), "step_tcp_listen_fail_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_listen_status");
     }
 
     /// <summary>
@@ -875,83 +959,99 @@ internal static partial class LlvmCodegen
 
         if (IsLinuxFlavor(state.Flavor))
         {
-            // A count <= 0 means "auto": the shared effective worker cap, so serve honors the same
-            // --parallel-workers compile cap and withWorkers runtime override as Ashes.Parallel (one
-            // worker per online CPU by default, narrowed by either). The cap globals/fn are emitted
-            // for programs that use forkWorkers even without Ashes.Parallel.
-            LlvmValueHandle autoCount = EmitEffectiveWorkerCap(state, "step_fork_workers");
-            LlvmValueHandle count = LlvmApi.BuildSelect(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, requested, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_auto"),
-                autoCount, requested, "step_fork_workers_effective");
-
-            LlvmValueHandle iSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_fork_workers_i");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), iSlot);
-
-            LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_loop");
-            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_body");
-            LlvmBasicBlockHandle childBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_child");
-            LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_parent");
-            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_done");
-            LlvmApi.BuildBr(builder, loopBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
-            LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, iSlot, "step_fork_workers_i_val");
-            LlvmApi.BuildCondBr(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, i, count, "step_fork_workers_more"),
-                bodyBlock, doneBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-            // fork() on x86-64 / clone(SIGCHLD, 0, 0) on arm64 (flags=17 required on arm64, ignored on x64).
-            LlvmValueHandle pid = EmitLinuxSyscall(state, SyscallFork,
-                LlvmApi.ConstInt(state.I64, 17, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_fork");
-            LlvmApi.BuildCondBr(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_is_child"),
-                childBlock, parentBlock);
-
-            // Child: this process is worker `i`; stop forking and run its reactor. PR_SET_PDEATHSIG(1)
-            // = SIGTERM(15) so a worker dies with its parent instead of lingering as an orphan reactor
-            // when the main process exits or is killed.
-            LlvmApi.PositionBuilderAtEnd(builder, childBlock);
-            _ = EmitLinuxSyscall(state, SyscallPrctl,
-                LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 15, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pdeathsig");
-            // A child inherits the pids of earlier siblings recorded by the parent's copy of the
-            // count; it has no children of its own to forward to or reap, so zero it.
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), ChildCountGlobal(state));
-            LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
-            LlvmApi.BuildStore(builder, i, idxSlot);
-            LlvmApi.BuildBr(builder, doneBlock);
-
-            // Parent: record the child pid (for shutdown forwarding + reaping in the drain), move to
-            // the next worker on success; on fork failure (pid < 0) stop spawning.
-            LlvmBasicBlockHandle recordBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_record");
-            LlvmBasicBlockHandle recordedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_recorded");
-            LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
-            LlvmValueHandle childCountGlobal = ChildCountGlobal(state);
-            LlvmValueHandle curCount = LlvmApi.BuildLoad2(builder, state.I64, childCountGlobal, "step_fork_workers_child_count");
-            LlvmValueHandle canRecord = LlvmApi.BuildAnd(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pid_ok"),
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, curCount, LlvmApi.ConstInt(state.I64, MaxTrackedChildren, 0), "step_fork_workers_slot_ok"),
-                "step_fork_workers_can_record");
-            LlvmApi.BuildCondBr(builder, canRecord, recordBlock, recordedBlock);
-            LlvmApi.PositionBuilderAtEnd(builder, recordBlock);
-            LlvmTypeHandle pidArrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
-            LlvmValueHandle pidSlot = LlvmApi.BuildGEP2(builder, state.I64,
-                GetArrayElementPointer(state, pidArrType, ChildPidsGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pids_base"),
-                [curCount], "step_fork_workers_pid_slot");
-            LlvmApi.BuildStore(builder, pid, pidSlot);
-            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, curCount, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_child_count_inc"), childCountGlobal);
-            LlvmApi.BuildBr(builder, recordedBlock);
-            LlvmApi.PositionBuilderAtEnd(builder, recordedBlock);
-            LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_next"), iSlot);
-            LlvmApi.BuildCondBr(builder,
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_failed"),
-                doneBlock, loopBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+            EmitStepForkWorkersLoop(state, requested, idxSlot);
         }
 
         LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "step_fork_workers_idx_val");
         return EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, idx), "step_fork_workers_complete");
+    }
+
+    // Linux fork loop for forkWorkers: spawns workers 1..count-1, each child setting its worker index
+    // into idxSlot and PR_SET_PDEATHSIG; the parent records child pids for the shutdown drain.
+    private static void EmitStepForkWorkersLoop(LlvmCodegenState state, LlvmValueHandle requested, LlvmValueHandle idxSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // A count <= 0 means "auto": the shared effective worker cap, so serve honors the same
+        // --parallel-workers compile cap and withWorkers runtime override as Ashes.Parallel (one
+        // worker per online CPU by default, narrowed by either). The cap globals/fn are emitted
+        // for programs that use forkWorkers even without Ashes.Parallel.
+        LlvmValueHandle autoCount = EmitEffectiveWorkerCap(state, "step_fork_workers");
+        LlvmValueHandle count = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, requested, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_auto"),
+            autoCount, requested, "step_fork_workers_effective");
+
+        LlvmValueHandle iSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_fork_workers_i");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), iSlot);
+
+        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_loop");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_body");
+        LlvmBasicBlockHandle childBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_child");
+        LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_parent");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_done");
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, iSlot, "step_fork_workers_i_val");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, i, count, "step_fork_workers_more"),
+            bodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        // fork() on x86-64 / clone(SIGCHLD, 0, 0) on arm64 (flags=17 required on arm64, ignored on x64).
+        LlvmValueHandle pid = EmitLinuxSyscall(state, SyscallFork,
+            LlvmApi.ConstInt(state.I64, 17, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_fork");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_is_child"),
+            childBlock, parentBlock);
+
+        // Child: this process is worker `i`; stop forking and run its reactor. PR_SET_PDEATHSIG(1)
+        // = SIGTERM(15) so a worker dies with its parent instead of lingering as an orphan reactor
+        // when the main process exits or is killed.
+        LlvmApi.PositionBuilderAtEnd(builder, childBlock);
+        _ = EmitLinuxSyscall(state, SyscallPrctl,
+            LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 15, 0), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pdeathsig");
+        // A child inherits the pids of earlier siblings recorded by the parent's copy of the
+        // count; it has no children of its own to forward to or reap, so zero it.
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), ChildCountGlobal(state));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
+        LlvmApi.BuildStore(builder, i, idxSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        EmitStepForkWorkersParent(state, i, pid, iSlot, loopBlock, parentBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+    }
+
+    // Parent side of the fork loop: records the freshly forked child pid, advances the loop counter,
+    // and either loops for the next worker or stops on fork failure.
+    private static void EmitStepForkWorkersParent(LlvmCodegenState state, LlvmValueHandle i, LlvmValueHandle pid, LlvmValueHandle iSlot, LlvmBasicBlockHandle loopBlock, LlvmBasicBlockHandle parentBlock, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Parent: record the child pid (for shutdown forwarding + reaping in the drain), move to
+        // the next worker on success; on fork failure (pid < 0) stop spawning.
+        LlvmBasicBlockHandle recordBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_record");
+        LlvmBasicBlockHandle recordedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_fork_workers_recorded");
+        LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
+        LlvmValueHandle childCountGlobal = ChildCountGlobal(state);
+        LlvmValueHandle curCount = LlvmApi.BuildLoad2(builder, state.I64, childCountGlobal, "step_fork_workers_child_count");
+        LlvmValueHandle canRecord = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pid_ok"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, curCount, LlvmApi.ConstInt(state.I64, MaxTrackedChildren, 0), "step_fork_workers_slot_ok"),
+            "step_fork_workers_can_record");
+        LlvmApi.BuildCondBr(builder, canRecord, recordBlock, recordedBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, recordBlock);
+        LlvmTypeHandle pidArrType = LlvmApi.ArrayType2(state.I64, MaxTrackedChildren);
+        LlvmValueHandle pidSlot = LlvmApi.BuildGEP2(builder, state.I64,
+            GetArrayElementPointer(state, pidArrType, ChildPidsGlobal(state), LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_pids_base"),
+            [curCount], "step_fork_workers_pid_slot");
+        LlvmApi.BuildStore(builder, pid, pidSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, curCount, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_child_count_inc"), childCountGlobal);
+        LlvmApi.BuildBr(builder, recordedBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, recordedBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), "step_fork_workers_next"), iSlot);
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, pid, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_failed"),
+            doneBlock, loopBlock);
     }
 
     /// <summary>Stores the graceful-shutdown drain bound for this process; returns unit (0).</summary>
@@ -1047,11 +1147,62 @@ internal static partial class LlvmCodegen
         return handlerFn;
     }
 
+    // Bundles the kernel32 entry points and env-probe results the Windows forkWorkers path resolves
+    // once up front and threads through its parent-side phase helpers.
+    private readonly record struct StepForkWorkersWinFns(
+        LlvmValueHandle EnvLen,
+        LlvmValueHandle EnvBufPtr,
+        LlvmValueHandle EnvName,
+        LlvmValueHandle SetEnvFn,
+        LlvmValueHandle GetModFn,
+        LlvmValueHandle CreateProcFn,
+        LlvmValueHandle GetSysInfoFn,
+        LlvmValueHandle CreateJobFn,
+        LlvmValueHandle SetJobInfoFn,
+        LlvmValueHandle AssignJobFn);
+
     private static LlvmValueHandle EmitStepForkWorkersTaskWindows(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle port, LlvmValueHandle requested)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         const string p = "step_fork_workers_win";
 
+        StepForkWorkersWinFns fns = EmitStepForkWorkersWinResolveFns(state, p);
+
+        LlvmBasicBlockHandle workerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_worker");
+        LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_parent");
+        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_fail");
+        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_finish");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, p + "_result");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, fns.EnvLen, LlvmApi.ConstInt(state.I32, 0, 0), p + "_is_worker"),
+            workerBlock, parentBlock);
+
+        // Worker: adopt the inherited listener handle (parsed from the env var) and do not spawn.
+        LlvmApi.PositionBuilderAtEnd(builder, workerBlock);
+        LlvmValueHandle inherited = EmitCStringToI64(state, fns.EnvBufPtr, p + "_parse");
+        LlvmApi.BuildStore(builder, inherited, WorkerListenerGlobal(state));
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 1, 0)), p + "_worker_complete"), resultSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmValueHandle listener = EmitStepForkWorkersWinParentSetup(state, p, fns, port, parentBlock, failBlock);
+        (LlvmValueHandle exeBufPtr, LlvmValueHandle suPtr, LlvmValueHandle piPtr, LlvmValueHandle count) =
+            EmitStepForkWorkersWinParentPrepare(state, p, fns, listener, requested);
+        EmitStepForkWorkersWinParentSpawn(state, p, fns, taskPtr, resultSlot, exeBufPtr, suPtr, piPtr, count, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpListenFailedMessage)), p + "_fail_complete"), resultSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, p + "_status");
+    }
+
+    // Resolves the kernel32 entry points, installs the console-ctrl handler, and probes
+    // ASHES_WORKER_FD (a non-empty value marks a relaunched worker).
+    private static StepForkWorkersWinFns EmitStepForkWorkersWinResolveFns(LlvmCodegenState state, string p)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         // Resolve the kernel32 entry points we need dynamically (keeps this self-contained — no extra
         // import wiring beyond what socket/listen already pull in).
         LlvmValueHandle kernel32 = EmitWindowsLoadLibrary(state, EmitStringToCString(state, EmitHeapStringLiteral(state, "KERNEL32.DLL"), p + "_k32_name"), p + "_k32");
@@ -1081,25 +1232,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle envBufPtr = GetArrayElementPointer(state, envBufType, envBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_env_buf_ptr");
         LlvmTypeHandle getEnvType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]);
         LlvmValueHandle envLen = EmitCallFunctionAddress(state, getEnvFn, getEnvType, [envName, envBufPtr, LlvmApi.ConstInt(state.I32, 32, 0)], p + "_getenv_call");
+        return new StepForkWorkersWinFns(envLen, envBufPtr, envName, setEnvFn, getModFn, createProcFn, getSysInfoFn, createJobFn, setJobInfoFn, assignJobFn);
+    }
 
-        LlvmBasicBlockHandle workerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_worker");
-        LlvmBasicBlockHandle parentBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_parent");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_fail");
-        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_finish");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, p + "_result");
-        LlvmApi.BuildCondBr(builder,
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, envLen, LlvmApi.ConstInt(state.I32, 0, 0), p + "_is_worker"),
-            workerBlock, parentBlock);
-
-        // Worker: adopt the inherited listener handle (parsed from the env var) and do not spawn.
-        LlvmApi.PositionBuilderAtEnd(builder, workerBlock);
-        LlvmValueHandle inherited = EmitCStringToI64(state, envBufPtr, p + "_parse");
-        LlvmApi.BuildStore(builder, inherited, WorkerListenerGlobal(state));
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), IsWorkerGlobal(state));
-        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 1, 0)), p + "_worker_complete"), resultSlot);
-        LlvmApi.BuildBr(builder, finishBlock);
-
-        // Parent: create the shared listener, publish it, and relaunch (count - 1) workers.
+    // Parent: create the shared listener, publish it into the worker-listener global, and place this
+    // process in a kill-on-close Job Object so relaunched workers die with it. Returns the listener.
+    private static LlvmValueHandle EmitStepForkWorkersWinParentSetup(LlvmCodegenState state, string p, StepForkWorkersWinFns fns, LlvmValueHandle port, LlvmBasicBlockHandle parentBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle spawnBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, p + "_spawn");
         LlvmApi.PositionBuilderAtEnd(builder, parentBlock);
         LlvmValueHandle listener = EmitWindowsCreateListenerSocket(state, port, p + "_listener");
@@ -1114,7 +1254,7 @@ internal static partial class LlvmCodegen
         // below inherit the job, so they are terminated when this process exits — Windows has no
         // PR_SET_PDEATHSIG. The job handle is intentionally leaked: it must stay open for the life of
         // the process (closing it would trigger the kill).
-        LlvmValueHandle job = EmitCallFunctionAddress(state, createJobFn, LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I8Ptr]), [LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr)], p + "_create_job");
+        LlvmValueHandle job = EmitCallFunctionAddress(state, fns.CreateJobFn, LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I8Ptr]), [LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr)], p + "_create_job");
         LlvmTypeHandle eliType = LlvmApi.ArrayType2(state.I8, 112);
         LlvmValueHandle eli = LlvmApi.BuildAlloca(builder, eliType, p + "_eli");
         LlvmValueHandle eliPtr = GetArrayElementPointer(state, eliType, eli, LlvmApi.ConstInt(state.I64, 0, 0), p + "_eli_ptr");
@@ -1124,14 +1264,21 @@ internal static partial class LlvmCodegen
         }
 
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0x2000, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, eliPtr, [LlvmApi.ConstInt(state.I64, 16, 0)], p + "_limitflags_off"), state.I32Ptr, p + "_limitflags"));
-        EmitCallFunctionAddress(state, setJobInfoFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I8Ptr, state.I32]), [job, LlvmApi.ConstInt(state.I32, 9, 0), eliPtr, LlvmApi.ConstInt(state.I32, 112, 0)], p + "_set_job_info");
-        EmitCallFunctionAddress(state, assignJobFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I64]), [job, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 1)], p + "_assign_job");
+        EmitCallFunctionAddress(state, fns.SetJobInfoFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I32, state.I8Ptr, state.I32]), [job, LlvmApi.ConstInt(state.I32, 9, 0), eliPtr, LlvmApi.ConstInt(state.I32, 112, 0)], p + "_set_job_info");
+        EmitCallFunctionAddress(state, fns.AssignJobFn, LlvmApi.FunctionType(state.I32, [state.I64, state.I64]), [job, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 1)], p + "_assign_job");
+        return listener;
+    }
 
+    // Parent: compute the worker count, publish the listener handle into the child env, and lay out
+    // the exe path + STARTUPINFOA/PROCESS_INFORMATION buffers for the relaunch loop.
+    private static (LlvmValueHandle ExeBufPtr, LlvmValueHandle SuPtr, LlvmValueHandle PiPtr, LlvmValueHandle Count) EmitStepForkWorkersWinParentPrepare(LlvmCodegenState state, string p, StepForkWorkersWinFns fns, LlvmValueHandle listener, LlvmValueHandle requested)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         // count = requested > 0 ? requested : GetSystemInfo().dwNumberOfProcessors (offset 32), min 1.
         LlvmTypeHandle sysInfoType = LlvmApi.ArrayType2(state.I8, 64);
         LlvmValueHandle sysInfo = LlvmApi.BuildAlloca(builder, sysInfoType, p + "_sysinfo");
         LlvmValueHandle sysInfoPtr = GetArrayElementPointer(state, sysInfoType, sysInfo, LlvmApi.ConstInt(state.I64, 0, 0), p + "_sysinfo_ptr");
-        EmitCallFunctionAddress(state, getSysInfoFn, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [sysInfoPtr], "");
+        EmitCallFunctionAddress(state, fns.GetSysInfoFn, LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr]), [sysInfoPtr], "");
         LlvmValueHandle detected = LlvmApi.BuildAnd(builder, LoadMemory(state, sysInfoPtr, 32, p + "_nproc_packed"), LlvmApi.ConstInt(state.I64, 0xFFFFFFFFUL, 0), p + "_nproc");
         // Honor the --parallel-workers compile cap (same as Linux via EmitEffectiveWorkerCap): a fixed
         // cap overrides detection; otherwise one worker per online CPU. Floor at 1.
@@ -1146,13 +1293,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle handleStr = LlvmApi.BuildAlloca(builder, handleStrType, p + "_handle_str");
         LlvmValueHandle handleStrPtr = GetArrayElementPointer(state, handleStrType, handleStr, LlvmApi.ConstInt(state.I64, 0, 0), p + "_handle_str_ptr");
         EmitI64ToCString(state, listener, handleStrPtr, p + "_itoa");
-        EmitCallFunctionAddress(state, setEnvFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr]), [envName, handleStrPtr], p + "_setenv_call");
+        EmitCallFunctionAddress(state, fns.SetEnvFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr]), [fns.EnvName, handleStrPtr], p + "_setenv_call");
 
         // exe path for the relaunch command line.
         LlvmTypeHandle exeType = LlvmApi.ArrayType2(state.I8, 520);
         LlvmValueHandle exeBuf = LlvmApi.BuildAlloca(builder, exeType, p + "_exe");
         LlvmValueHandle exeBufPtr = GetArrayElementPointer(state, exeType, exeBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_exe_ptr");
-        EmitCallFunctionAddress(state, getModFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]), [LlvmApi.ConstNull(state.I8Ptr), exeBufPtr, LlvmApi.ConstInt(state.I32, 520, 0)], p + "_getmod_call");
+        EmitCallFunctionAddress(state, fns.GetModFn, LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I32]), [LlvmApi.ConstNull(state.I8Ptr), exeBufPtr, LlvmApi.ConstInt(state.I32, 520, 0)], p + "_getmod_call");
 
         // STARTUPINFOA (104 bytes, cb at 0) and PROCESS_INFORMATION (24 bytes), zeroed.
         LlvmTypeHandle suType = LlvmApi.ArrayType2(state.I8, 104);
@@ -1167,7 +1314,13 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle piType = LlvmApi.ArrayType2(state.I8, 24);
         LlvmValueHandle piBuf = LlvmApi.BuildAlloca(builder, piType, p + "_procinfo");
         LlvmValueHandle piPtr = GetArrayElementPointer(state, piType, piBuf, LlvmApi.ConstInt(state.I64, 0, 0), p + "_procinfo_ptr");
+        return (exeBufPtr, suPtr, piPtr, count);
+    }
 
+    // Parent: relaunch (count - 1) worker processes via CreateProcessA, then complete with Ok(0).
+    private static void EmitStepForkWorkersWinParentSpawn(LlvmCodegenState state, string p, StepForkWorkersWinFns fns, LlvmValueHandle taskPtr, LlvmValueHandle resultSlot, LlvmValueHandle exeBufPtr, LlvmValueHandle suPtr, LlvmValueHandle piPtr, LlvmValueHandle count, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         // CreateProcessA(NULL, exe, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi) for i in 1..count-1.
         LlvmTypeHandle cpType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I32, state.I32, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr]);
         LlvmValueHandle iSlot = LlvmApi.BuildAlloca(builder, state.I64, p + "_i");
@@ -1180,7 +1333,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle i = LlvmApi.BuildLoad2(builder, state.I64, iSlot, p + "_i_val");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, i, count, p + "_more"), spawnBody, spawnDone);
         LlvmApi.PositionBuilderAtEnd(builder, spawnBody);
-        EmitCallFunctionAddress(state, createProcFn, cpType,
+        EmitCallFunctionAddress(state, fns.CreateProcFn, cpType,
             [LlvmApi.ConstNull(state.I8Ptr), exeBufPtr, LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstInt(state.I32, 1, 0), LlvmApi.ConstInt(state.I32, 0, 0), LlvmApi.ConstNull(state.I8Ptr), LlvmApi.ConstNull(state.I8Ptr), suPtr, piPtr],
             p + "_cp_call");
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, i, LlvmApi.ConstInt(state.I64, 1, 0), p + "_i_inc"), iSlot);
@@ -1188,13 +1341,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, spawnDone);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), p + "_parent_complete"), resultSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, failBlock);
-        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpListenFailedMessage)), p + "_fail_complete"), resultSlot);
-        LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, p + "_status");
     }
 
     /// <summary>
@@ -1242,6 +1388,21 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, deadline0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_accept_drain_unarmed"),
             drainArmBlock, drainCheckBlock);
 
+        EmitStepTcpAcceptDrainArm(state, linux, nowMs, drainArmBlock, drainCheckBlock);
+        EmitStepTcpAcceptDrainCheck(state, linux, nowMs, drainCheckBlock, shutdownDoneBlock, drainWaitBlock);
+        EmitStepTcpAcceptShutdownComplete(state, taskPtr, statusSlot, drainWaitBlock, shutdownDoneBlock, finishBlock);
+        LlvmValueHandle clientFd = EmitStepTcpAcceptGo(state, linux, listener, taskPtr, statusSlot, acceptGoBlock, successBlock, pendingCheckBlock, finishBlock);
+        EmitStepTcpAcceptPending(state, linux, listener, taskPtr, statusSlot, clientFd, pendingCheckBlock, pendingBlock, failBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_accept_status");
+    }
+
+    // First observation of the shutdown flag: arm the drain deadline and, in the multi-reactor
+    // parent, forward the signal to every recorded worker so they begin their own drains.
+    private static void EmitStepTcpAcceptDrainArm(LlvmCodegenState state, bool linux, LlvmValueHandle nowMs, LlvmBasicBlockHandle drainArmBlock, LlvmBasicBlockHandle drainCheckBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         // First observation of the flag: arm the deadline = now + bound, and (multi-reactor parent
         // only) forward the signal to every recorded worker so they begin their own drains instead
         // of being cut by the death signal when the parent exits.
@@ -1270,7 +1431,13 @@ internal static partial class LlvmCodegen
             LlvmApi.PositionBuilderAtEnd(builder, fwdDone);
         }
         LlvmApi.BuildBr(builder, drainCheckBlock);
+    }
 
+    // Drain check: reap exited workers and complete the shutdown once every live spawned handler and
+    // worker has finished or the drain deadline passes; otherwise park briefly and re-check.
+    private static void EmitStepTcpAcceptDrainCheck(LlvmCodegenState state, bool linux, LlvmValueHandle nowMs, LlvmBasicBlockHandle drainCheckBlock, LlvmBasicBlockHandle shutdownDoneBlock, LlvmBasicBlockHandle drainWaitBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, drainCheckBlock);
         // Multi-reactor parent: reap exited workers (waitpid WNOHANG), compacting by swapping the
         // last slot down; the drain also requires the recorded child count to reach zero.
@@ -1323,7 +1490,12 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, nowMs, deadline, "step_tcp_accept_deadline_hit"),
             "step_tcp_accept_drained");
         LlvmApi.BuildCondBr(builder, drained, shutdownDoneBlock, drainWaitBlock);
+    }
 
+    // Emits the drain-wait park (short timer re-check) and the shutdown-done sentinel completion.
+    private static void EmitStepTcpAcceptShutdownComplete(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle statusSlot, LlvmBasicBlockHandle drainWaitBlock, LlvmBasicBlockHandle shutdownDoneBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         // Still draining: park as a short timer so the counter is re-checked promptly even with no
         // other wakeups; any handler I/O or timer wakeup re-steps this leaf sooner.
         LlvmApi.PositionBuilderAtEnd(builder, drainWaitBlock);
@@ -1337,8 +1509,14 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, ServerShutdownSentinel)), "step_tcp_accept_shutdown_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-        LlvmApi.PositionBuilderAtEnd(builder, acceptGoBlock);
+    }
 
+    // Accept path: accept one connection; on success complete with Ok(clientFd), else fall through to
+    // the pending/fail check. Returns the raw accept result for that check.
+    private static LlvmValueHandle EmitStepTcpAcceptGo(LlvmCodegenState state, bool linux, LlvmValueHandle listener, LlvmValueHandle taskPtr, LlvmValueHandle statusSlot, LlvmBasicBlockHandle acceptGoBlock, LlvmBasicBlockHandle successBlock, LlvmBasicBlockHandle pendingCheckBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, acceptGoBlock);
         LlvmValueHandle clientFd;
         LlvmValueHandle acceptOk;
         if (linux)
@@ -1371,7 +1549,14 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, clientFd), "step_tcp_accept_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+        return clientFd;
+    }
 
+    // Pending/fail check for accept: park on WaitSocketRead of the listener when the accept would
+    // block, otherwise complete with an error.
+    private static void EmitStepTcpAcceptPending(LlvmCodegenState state, bool linux, LlvmValueHandle listener, LlvmValueHandle taskPtr, LlvmValueHandle statusSlot, LlvmValueHandle clientFd, LlvmBasicBlockHandle pendingCheckBlock, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, pendingCheckBlock);
         LlvmValueHandle wouldBlock;
         if (linux)
@@ -1396,9 +1581,6 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpAcceptFailedMessage)), "step_tcp_accept_fail_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_accept_status");
     }
 
     private static LlvmValueHandle EmitStepTlsConnectTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -1435,7 +1617,38 @@ internal static partial class LlvmCodegen
     /// server connection. Everything after session creation — the write/read/process handshake loop,
     /// the WaitTlsWantRead/Write parking, and completion — is identical for both sides.
     /// </summary>
-    private static LlvmValueHandle EmitStepTlsHandshakeTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, bool serverSide = false)
+    // Slots and basic blocks shared across the TLS handshake step's phase helpers. Allocated once by
+    // the prologue and threaded through the phases so each keeps its verbatim block body.
+    private readonly record struct TlsHandshakeCtx(
+        LlvmValueHandle InitStatus,
+        LlvmValueHandle StatusSlot,
+        LlvmValueHandle ErrorCodeSlot,
+        LlvmValueHandle ErrorStageSlot,
+        LlvmValueHandle CreateStatusSlot,
+        LlvmValueHandle ConnectionHandleSlot,
+        LlvmBasicBlockHandle InitFailBlock,
+        LlvmBasicBlockHandle SessionCheckBlock,
+        LlvmBasicBlockHandle CreateBlock,
+        LlvmBasicBlockHandle StoreSessionBlock,
+        LlvmBasicBlockHandle CreateSocketFailBlock,
+        LlvmBasicBlockHandle WriteCheckBlock,
+        LlvmBasicBlockHandle WriteBlock,
+        LlvmBasicBlockHandle WriteRetryCheckBlock,
+        LlvmBasicBlockHandle ReadCheckBlock,
+        LlvmBasicBlockHandle ReadBlock,
+        LlvmBasicBlockHandle ReadRetryCheckBlock,
+        LlvmBasicBlockHandle ProcessBlock,
+        LlvmBasicBlockHandle EvaluateBlock,
+        LlvmBasicBlockHandle CompleteCheckBlock,
+        LlvmBasicBlockHandle IncompleteCheckBlock,
+        LlvmBasicBlockHandle ReadPendingCheckBlock,
+        LlvmBasicBlockHandle PendingReadBlock,
+        LlvmBasicBlockHandle PendingWriteBlock,
+        LlvmBasicBlockHandle FailBlock,
+        LlvmBasicBlockHandle SuccessBlock,
+        LlvmBasicBlockHandle FinishBlock);
+
+    private static TlsHandshakeCtx EmitStepTlsHandshakePrologue(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_handshake_status_slot");
@@ -1450,7 +1663,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorStageSlot);
 
         LlvmValueHandle initStatus = EmitNetworkingRuntimeCall(state, "ashes_tls_runtime_init", Array.Empty<LlvmValueHandle>(), "step_tls_handshake_init");
-        LlvmValueHandle initReady = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, initStatus, LlvmApi.ConstInt(state.I64, 1, 0), "step_tls_handshake_init_ready");
 
         LlvmBasicBlockHandle initFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_init_fail");
         LlvmBasicBlockHandle sessionCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_session_check");
@@ -1474,117 +1686,182 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_success");
         LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_finish");
 
-        LlvmApi.BuildCondBr(builder, initReady, sessionCheckBlock, initFailBlock);
+        return new TlsHandshakeCtx(initStatus, statusSlot, errorCodeSlot, errorStageSlot, createStatusSlot, connectionHandleSlot, initFailBlock, sessionCheckBlock, createBlock, storeSessionBlock, createSocketFailBlock, writeCheckBlock, writeBlock, writeRetryCheckBlock, readCheckBlock, readBlock, readRetryCheckBlock, processBlock, evaluateBlock, completeCheckBlock, incompleteCheckBlock, readPendingCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, successBlock, finishBlock);
+    }
 
+    private static LlvmValueHandle EmitStepTlsHandshakeTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, bool serverSide = false)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (initStatus, statusSlot, errorCodeSlot, errorStageSlot, createStatusSlot, connectionHandleSlot,
+            initFailBlock, sessionCheckBlock, createBlock, storeSessionBlock, createSocketFailBlock,
+            writeCheckBlock, writeBlock, writeRetryCheckBlock, readCheckBlock, readBlock, readRetryCheckBlock,
+            processBlock, evaluateBlock, completeCheckBlock, incompleteCheckBlock, readPendingCheckBlock,
+            pendingReadBlock, pendingWriteBlock, failBlock, successBlock, finishBlock) = EmitStepTlsHandshakePrologue(state);
+
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, initStatus, LlvmApi.ConstInt(state.I64, 1, 0), "step_tls_handshake_init_ready"),
+            sessionCheckBlock, initFailBlock);
+
+        EmitStepTlsHandshakeInitFail(state, taskPtr, initStatus, statusSlot, initFailBlock, finishBlock);
+        EmitStepTlsHandshakeSessionCheck(state, taskPtr, sessionCheckBlock, writeCheckBlock, createBlock);
+        EmitStepTlsHandshakeCreate(state, taskPtr, globals, serverSide, createStatusSlot, connectionHandleSlot, createBlock, storeSessionBlock, createSocketFailBlock);
+        EmitStepTlsHandshakeStoreSession(state, taskPtr, globals, connectionHandleSlot, storeSessionBlock, processBlock);
+        EmitStepTlsHandshakeCreateSocketFail(state, taskPtr, createStatusSlot, errorCodeSlot, errorStageSlot, createSocketFailBlock, failBlock);
+        EmitStepTlsHandshakeWriteCheck(state, taskPtr, writeCheckBlock, writeBlock, readCheckBlock);
+        EmitStepTlsHandshakeWrite(state, taskPtr, globals, errorCodeSlot, errorStageSlot, writeBlock, processBlock, writeRetryCheckBlock, pendingWriteBlock, failBlock);
+        EmitStepTlsHandshakeReadCheck(state, taskPtr, readCheckBlock, readBlock, evaluateBlock);
+        EmitStepTlsHandshakeRead(state, taskPtr, globals, errorCodeSlot, errorStageSlot, readBlock, processBlock, readRetryCheckBlock, pendingReadBlock, failBlock);
+        EmitStepTlsHandshakeProcess(state, taskPtr, errorCodeSlot, errorStageSlot, processBlock, evaluateBlock, failBlock);
+        EmitStepTlsHandshakeEvaluate(state, taskPtr, evaluateBlock, completeCheckBlock, incompleteCheckBlock, readPendingCheckBlock, pendingWriteBlock, pendingReadBlock, successBlock, failBlock);
+        EmitStepTlsHandshakePending(state, taskPtr, statusSlot, pendingReadBlock, pendingWriteBlock, finishBlock);
+        EmitStepTlsHandshakeFail(state, taskPtr, globals, statusSlot, errorCodeSlot, errorStageSlot, failBlock, finishBlock);
+        EmitStepTlsHandshakeSuccess(state, taskPtr, statusSlot, successBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_handshake_status");
+    }
+
+    private static void EmitStepTlsHandshakeInitFail(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle initStatus, LlvmValueHandle statusSlot, LlvmBasicBlockHandle initFailBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, initFailBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitTlsInitFailureResult(state, initStatus), "step_tls_handshake_init_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+    }
 
+    private static void EmitStepTlsHandshakeSessionCheck(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmBasicBlockHandle sessionCheckBlock, LlvmBasicBlockHandle writeCheckBlock, LlvmBasicBlockHandle createBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, sessionCheckBlock);
         LlvmValueHandle existingSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_existing_session");
         LlvmValueHandle hasSession = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, existingSession, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_has_session");
         LlvmApi.BuildCondBr(builder, hasSession, writeCheckBlock, createBlock);
+    }
 
-        LlvmApi.PositionBuilderAtEnd(builder, createBlock);
+    private static void EmitStepTlsHandshakeCreate(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, bool serverSide, LlvmValueHandle createStatusSlot, LlvmValueHandle connectionHandleSlot, LlvmBasicBlockHandle createBlock, LlvmBasicBlockHandle storeSessionBlock, LlvmBasicBlockHandle createSocketFailBlock)
+    {
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, createBlock);
         if (!serverSide)
         {
-            LlvmValueHandle host = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_host");
-            LlvmValueHandle ctxHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ContextGlobal, "step_tls_handshake_ctx_handle");
-            LlvmValueHandle connectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_connection_slot");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), connectionSlot);
-            LlvmValueHandle createStatus = EmitTlsClientConnectionNew(
-                state,
-                ctxHandle,
-                EmitStringToCString(state, host, "step_tls_handshake_host_cstr"),
-                connectionSlot,
-                "step_tls_handshake_connection_new");
-            LlvmApi.BuildStore(builder, createStatus, createStatusSlot);
-            LlvmValueHandle connectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, connectionSlot, "step_tls_handshake_connection_ptr"), state.I64, "step_tls_handshake_connection_handle");
-            LlvmApi.BuildStore(builder, connectionHandle, connectionHandleSlot);
-            LlvmValueHandle createOk = LlvmApi.BuildAnd(builder,
-                EmitTlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_connection"),
-                "step_tls_handshake_create_connection_ok");
-            LlvmApi.BuildCondBr(builder, createOk, storeSessionBlock, createSocketFailBlock);
+            EmitStepTlsHandshakeCreateClient(state, taskPtr, globals, createStatusSlot, connectionHandleSlot, storeSessionBlock, createSocketFailBlock);
         }
         else
         {
-            // Server session: get-or-build the process-wide server config from the PEM inputs
-            // (cert chain in IoArg1, private key in WaitData1), then create a server connection.
-            LlvmBasicBlockHandle buildConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_build_config");
-            LlvmBasicBlockHandle setKeysBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_set_keys");
-            LlvmBasicBlockHandle buildBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_builder_build");
-            LlvmBasicBlockHandle cacheConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_cache_config");
-            LlvmBasicBlockHandle connNewBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_server_conn_new");
-
-            LlvmValueHandle cachedConfig = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_cached_config");
-            LlvmValueHandle haveConfig = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, cachedConfig, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_config");
-            LlvmApi.BuildCondBr(builder, haveConfig, connNewBlock, buildConfigBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, buildConfigBlock);
-            LlvmValueHandle certStr = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_cert_pem");
-            LlvmValueHandle keyStr = LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tls_handshake_key_pem");
-            LlvmValueHandle certifiedKeySlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_certified_key_slot");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), certifiedKeySlot);
-            LlvmValueHandle keyBuildStatus = EmitTlsCertifiedKeyBuild(
-                state,
-                GetStringBytesPointer(state, certStr, "step_tls_handshake_cert_bytes"),
-                LoadStringLength(state, certStr, "step_tls_handshake_cert_len"),
-                GetStringBytesPointer(state, keyStr, "step_tls_handshake_key_bytes"),
-                LoadStringLength(state, keyStr, "step_tls_handshake_key_len"),
-                certifiedKeySlot,
-                "step_tls_handshake_certified_key_build");
-            LlvmApi.BuildStore(builder, keyBuildStatus, createStatusSlot);
-            LlvmApi.BuildCondBr(builder,
-                EmitTlsResultIsOk(state, keyBuildStatus, "step_tls_handshake_key_build_ok"),
-                setKeysBlock, createSocketFailBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, setKeysBlock);
-            LlvmValueHandle builderHandle = EmitTlsServerConfigBuilderNew(state, "step_tls_handshake_config_builder_new");
-            LlvmValueHandle setKeysStatus = EmitTlsServerConfigBuilderSetCertifiedKeys(
-                state,
-                builderHandle,
-                certifiedKeySlot,
-                LlvmApi.ConstInt(state.I64, 1, 0),
-                "step_tls_handshake_set_certified_keys");
-            LlvmApi.BuildStore(builder, setKeysStatus, createStatusSlot);
-            LlvmApi.BuildCondBr(builder,
-                EmitTlsResultIsOk(state, setKeysStatus, "step_tls_handshake_set_keys_ok"),
-                buildBlock, createSocketFailBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, buildBlock);
-            LlvmValueHandle configSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_config_slot");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), configSlot);
-            LlvmValueHandle buildStatus = EmitTlsServerConfigBuilderBuild(state, globals, builderHandle, configSlot, "step_tls_handshake_config_build");
-            LlvmApi.BuildStore(builder, buildStatus, createStatusSlot);
-            LlvmApi.BuildCondBr(builder,
-                EmitTlsResultIsOk(state, buildStatus, "step_tls_handshake_config_build_ok"),
-                cacheConfigBlock, createSocketFailBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, cacheConfigBlock);
-            // The certified key is intentionally NOT freed: it is built once per process and the
-            // server config (also cached for the process lifetime) borrows it, so freeing it here
-            // dangles the config and crashes the second connection. Leaking one key is negligible.
-            LlvmApi.BuildStore(builder,
-                LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, configSlot, "step_tls_handshake_config_ptr"), state.I64, "step_tls_handshake_config_handle"),
-                globals.ServerConfigGlobal);
-            LlvmApi.BuildBr(builder, connNewBlock);
-
-            LlvmApi.PositionBuilderAtEnd(builder, connNewBlock);
-            LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_config_for_conn");
-            LlvmValueHandle serverConnectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_server_connection_slot");
-            LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), serverConnectionSlot);
-            LlvmValueHandle connNewStatus = EmitTlsServerConnectionNew(state, configHandle, serverConnectionSlot, "step_tls_handshake_server_connection_new");
-            LlvmApi.BuildStore(builder, connNewStatus, createStatusSlot);
-            LlvmValueHandle serverConnectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, serverConnectionSlot, "step_tls_handshake_server_connection_ptr"), state.I64, "step_tls_handshake_server_connection_handle");
-            LlvmApi.BuildStore(builder, serverConnectionHandle, connectionHandleSlot);
-            LlvmValueHandle serverCreateOk = LlvmApi.BuildAnd(builder,
-                EmitTlsResultIsOk(state, connNewStatus, "step_tls_handshake_server_create_ok"),
-                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, serverConnectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_server_have_connection"),
-                "step_tls_handshake_server_create_connection_ok");
-            LlvmApi.BuildCondBr(builder, serverCreateOk, storeSessionBlock, createSocketFailBlock);
+            EmitStepTlsHandshakeCreateServer(state, taskPtr, globals, createStatusSlot, connectionHandleSlot, storeSessionBlock, createSocketFailBlock);
         }
+    }
 
+    private static void EmitStepTlsHandshakeCreateClient(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle createStatusSlot, LlvmValueHandle connectionHandleSlot, LlvmBasicBlockHandle storeSessionBlock, LlvmBasicBlockHandle createSocketFailBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle host = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_host");
+        LlvmValueHandle ctxHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ContextGlobal, "step_tls_handshake_ctx_handle");
+        LlvmValueHandle connectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_connection_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), connectionSlot);
+        LlvmValueHandle createStatus = EmitTlsClientConnectionNew(
+            state,
+            ctxHandle,
+            EmitStringToCString(state, host, "step_tls_handshake_host_cstr"),
+            connectionSlot,
+            "step_tls_handshake_connection_new");
+        LlvmApi.BuildStore(builder, createStatus, createStatusSlot);
+        LlvmValueHandle connectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, connectionSlot, "step_tls_handshake_connection_ptr"), state.I64, "step_tls_handshake_connection_handle");
+        LlvmApi.BuildStore(builder, connectionHandle, connectionHandleSlot);
+        LlvmValueHandle createOk = LlvmApi.BuildAnd(builder,
+            EmitTlsResultIsOk(state, createStatus, "step_tls_handshake_create_ok"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_connection"),
+            "step_tls_handshake_create_connection_ok");
+        LlvmApi.BuildCondBr(builder, createOk, storeSessionBlock, createSocketFailBlock);
+    }
+
+    private static void EmitStepTlsHandshakeCreateServer(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle createStatusSlot, LlvmValueHandle connectionHandleSlot, LlvmBasicBlockHandle storeSessionBlock, LlvmBasicBlockHandle createSocketFailBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Server session: get-or-build the process-wide server config from the PEM inputs
+        // (cert chain in IoArg1, private key in WaitData1), then create a server connection.
+        LlvmBasicBlockHandle buildConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_build_config");
+        LlvmBasicBlockHandle setKeysBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_set_keys");
+        LlvmBasicBlockHandle buildBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_builder_build");
+        LlvmBasicBlockHandle cacheConfigBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_cache_config");
+        LlvmBasicBlockHandle connNewBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_handshake_server_conn_new");
+
+        LlvmValueHandle cachedConfig = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_cached_config");
+        LlvmValueHandle haveConfig = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, cachedConfig, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_have_config");
+        LlvmApi.BuildCondBr(builder, haveConfig, connNewBlock, buildConfigBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildConfigBlock);
+        LlvmValueHandle certStr = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "step_tls_handshake_cert_pem");
+        LlvmValueHandle keyStr = LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tls_handshake_key_pem");
+        LlvmValueHandle certifiedKeySlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_certified_key_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), certifiedKeySlot);
+        LlvmValueHandle keyBuildStatus = EmitTlsCertifiedKeyBuild(
+            state,
+            GetStringBytesPointer(state, certStr, "step_tls_handshake_cert_bytes"),
+            LoadStringLength(state, certStr, "step_tls_handshake_cert_len"),
+            GetStringBytesPointer(state, keyStr, "step_tls_handshake_key_bytes"),
+            LoadStringLength(state, keyStr, "step_tls_handshake_key_len"),
+            certifiedKeySlot,
+            "step_tls_handshake_certified_key_build");
+        LlvmApi.BuildStore(builder, keyBuildStatus, createStatusSlot);
+        LlvmApi.BuildCondBr(builder,
+            EmitTlsResultIsOk(state, keyBuildStatus, "step_tls_handshake_key_build_ok"),
+            setKeysBlock, createSocketFailBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, setKeysBlock);
+        LlvmValueHandle builderHandle = EmitTlsServerConfigBuilderNew(state, "step_tls_handshake_config_builder_new");
+        LlvmValueHandle setKeysStatus = EmitTlsServerConfigBuilderSetCertifiedKeys(
+            state,
+            builderHandle,
+            certifiedKeySlot,
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            "step_tls_handshake_set_certified_keys");
+        LlvmApi.BuildStore(builder, setKeysStatus, createStatusSlot);
+        LlvmApi.BuildCondBr(builder,
+            EmitTlsResultIsOk(state, setKeysStatus, "step_tls_handshake_set_keys_ok"),
+            buildBlock, createSocketFailBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildBlock);
+        LlvmValueHandle configSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_config_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), configSlot);
+        LlvmValueHandle buildStatus = EmitTlsServerConfigBuilderBuild(state, globals, builderHandle, configSlot, "step_tls_handshake_config_build");
+        LlvmApi.BuildStore(builder, buildStatus, createStatusSlot);
+        LlvmApi.BuildCondBr(builder,
+            EmitTlsResultIsOk(state, buildStatus, "step_tls_handshake_config_build_ok"),
+            cacheConfigBlock, createSocketFailBlock);
+
+        EmitStepTlsHandshakeServerCacheAndConn(state, globals, createStatusSlot, connectionHandleSlot, configSlot, cacheConfigBlock, connNewBlock, storeSessionBlock, createSocketFailBlock);
+    }
+
+    private static void EmitStepTlsHandshakeServerCacheAndConn(LlvmCodegenState state, LinuxTlsGlobals globals, LlvmValueHandle createStatusSlot, LlvmValueHandle connectionHandleSlot, LlvmValueHandle configSlot, LlvmBasicBlockHandle cacheConfigBlock, LlvmBasicBlockHandle connNewBlock, LlvmBasicBlockHandle storeSessionBlock, LlvmBasicBlockHandle createSocketFailBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, cacheConfigBlock);
+        // The certified key is intentionally NOT freed: it is built once per process and the
+        // server config (also cached for the process lifetime) borrows it, so freeing it here
+        // dangles the config and crashes the second connection. Leaking one key is negligible.
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, configSlot, "step_tls_handshake_config_ptr"), state.I64, "step_tls_handshake_config_handle"),
+            globals.ServerConfigGlobal);
+        LlvmApi.BuildBr(builder, connNewBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, connNewBlock);
+        LlvmValueHandle configHandle = LlvmApi.BuildLoad2(builder, state.I64, globals.ServerConfigGlobal, "step_tls_handshake_config_for_conn");
+        LlvmValueHandle serverConnectionSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, "step_tls_handshake_server_connection_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstNull(state.I8Ptr), serverConnectionSlot);
+        LlvmValueHandle connNewStatus = EmitTlsServerConnectionNew(state, configHandle, serverConnectionSlot, "step_tls_handshake_server_connection_new");
+        LlvmApi.BuildStore(builder, connNewStatus, createStatusSlot);
+        LlvmValueHandle serverConnectionHandle = LlvmApi.BuildPtrToInt(builder, LlvmApi.BuildLoad2(builder, state.I8Ptr, serverConnectionSlot, "step_tls_handshake_server_connection_ptr"), state.I64, "step_tls_handshake_server_connection_handle");
+        LlvmApi.BuildStore(builder, serverConnectionHandle, connectionHandleSlot);
+        LlvmValueHandle serverCreateOk = LlvmApi.BuildAnd(builder,
+            EmitTlsResultIsOk(state, connNewStatus, "step_tls_handshake_server_create_ok"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, serverConnectionHandle, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_handshake_server_have_connection"),
+            "step_tls_handshake_server_create_connection_ok");
+        LlvmApi.BuildCondBr(builder, serverCreateOk, storeSessionBlock, createSocketFailBlock);
+    }
+
+    private static void EmitStepTlsHandshakeStoreSession(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle connectionHandleSlot, LlvmBasicBlockHandle storeSessionBlock, LlvmBasicBlockHandle processBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, storeSessionBlock);
         LlvmValueHandle storeSocket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_handshake_store_socket");
         LlvmValueHandle storeConnection = LlvmApi.BuildLoad2(builder, state.I64, connectionHandleSlot, "step_tls_handshake_store_connection");
@@ -1592,14 +1869,22 @@ internal static partial class LlvmCodegen
         LlvmValueHandle session = EmitCreateTlsSession(state, storeSocket, storeConnection, "step_tls_handshake_session");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, session, "step_tls_handshake_store_session");
         LlvmApi.BuildBr(builder, processBlock);
+    }
 
+    private static void EmitStepTlsHandshakeCreateSocketFail(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle createStatusSlot, LlvmValueHandle errorCodeSlot, LlvmValueHandle errorStageSlot, LlvmBasicBlockHandle createSocketFailBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, createSocketFailBlock);
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I32, createStatusSlot, "step_tls_handshake_create_status_value"), errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), errorStageSlot);
         LlvmValueHandle failSocket = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_handshake_fail_socket");
         _ = EmitTcpClose(state, failSocket);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsHandshakeWriteCheck(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmBasicBlockHandle writeCheckBlock, LlvmBasicBlockHandle writeBlock, LlvmBasicBlockHandle readCheckBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, writeCheckBlock);
         LlvmValueHandle writeCheckSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_write_check_session");
         LlvmValueHandle writeCheckConnection = EmitLoadTlsSessionSsl(state, writeCheckSession, "step_tls_handshake_write_check_connection");
@@ -1609,7 +1894,11 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_has_pending_write");
         LlvmApi.BuildCondBr(builder, wantsWrite, writeBlock, readCheckBlock);
+    }
 
+    private static void EmitStepTlsHandshakeWrite(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle errorCodeSlot, LlvmValueHandle errorStageSlot, LlvmBasicBlockHandle writeBlock, LlvmBasicBlockHandle processBlock, LlvmBasicBlockHandle writeRetryCheckBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, writeBlock);
         LlvmValueHandle writeSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_write_session");
         LlvmValueHandle writeSocket = EmitLoadTlsSessionSocket(state, writeSession, "step_tls_handshake_write_socket");
@@ -1629,7 +1918,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, writeStatus, errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 2, 0), errorStageSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsHandshakeReadCheck(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmBasicBlockHandle readCheckBlock, LlvmBasicBlockHandle readBlock, LlvmBasicBlockHandle evaluateBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, readCheckBlock);
         LlvmValueHandle readCheckSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_read_check_session");
         LlvmValueHandle readCheckConnection = EmitLoadTlsSessionSsl(state, readCheckSession, "step_tls_handshake_read_check_connection");
@@ -1639,7 +1932,11 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_has_pending_read");
         LlvmApi.BuildCondBr(builder, wantsRead, readBlock, evaluateBlock);
+    }
 
+    private static void EmitStepTlsHandshakeRead(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle errorCodeSlot, LlvmValueHandle errorStageSlot, LlvmBasicBlockHandle readBlock, LlvmBasicBlockHandle processBlock, LlvmBasicBlockHandle readRetryCheckBlock, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
         LlvmValueHandle readSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_read_session");
         LlvmValueHandle readSocket = EmitLoadTlsSessionSocket(state, readSession, "step_tls_handshake_read_socket");
@@ -1659,7 +1956,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, readStatus, errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 3, 0), errorStageSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsHandshakeProcess(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle errorCodeSlot, LlvmValueHandle errorStageSlot, LlvmBasicBlockHandle processBlock, LlvmBasicBlockHandle evaluateBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, processBlock);
         LlvmValueHandle processSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_process_session");
         LlvmValueHandle processConnection = EmitLoadTlsSessionSsl(state, processSession, "step_tls_handshake_process_connection");
@@ -1672,7 +1973,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, processStatus, errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), errorStageSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsHandshakeEvaluate(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmBasicBlockHandle evaluateBlock, LlvmBasicBlockHandle completeCheckBlock, LlvmBasicBlockHandle incompleteCheckBlock, LlvmBasicBlockHandle readPendingCheckBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle successBlock, LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, evaluateBlock);
         LlvmValueHandle evaluateSession = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_evaluate_session");
         LlvmValueHandle evaluateConnection = EmitLoadTlsSessionSsl(state, evaluateSession, "step_tls_handshake_evaluate_connection");
@@ -1706,7 +2011,11 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_handshake_incomplete_has_read");
         LlvmApi.BuildCondBr(builder, wantsReadAfter, pendingReadBlock, failBlock);
+    }
 
+    private static void EmitStepTlsHandshakePending(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle statusSlot, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, pendingReadBlock);
         LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitTlsWantRead, EmitLoadTlsSessionSocket(state, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_pending_read_session"), "step_tls_handshake_pending_read_socket"), "step_tls_handshake_pending_read"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
@@ -1714,7 +2023,11 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, pendingWriteBlock);
         LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitTlsWantWrite, EmitLoadTlsSessionSocket(state, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_pending_write_session"), "step_tls_handshake_pending_write_socket"), "step_tls_handshake_pending_write"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+    }
 
+    private static void EmitStepTlsHandshakeFail(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, LlvmValueHandle statusSlot, LlvmValueHandle errorCodeSlot, LlvmValueHandle errorStageSlot, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         EmitCleanupTlsSession(state, globals, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_fail_session"), "step_tls_handshake_fail_cleanup");
         LlvmValueHandle errorCode = LlvmApi.BuildLoad2(builder, state.I32, errorCodeSlot, "step_tls_handshake_error_code");
@@ -1768,13 +2081,14 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failGenericBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TlsHandshakeFailedMessage)), "step_tls_handshake_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+    }
 
+    private static void EmitStepTlsHandshakeSuccess(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle statusSlot, LlvmBasicBlockHandle successBlock, LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, successBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_handshake_success_session")), "step_tls_handshake_success_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_handshake_status");
     }
 
     private static LlvmValueHandle EmitStepTlsSendTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals)
@@ -1788,18 +2102,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
 
         LlvmValueHandle alreadyDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, sentSoFar, totalLen, "step_tls_send_already_done");
-        LlvmBasicBlockHandle sendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_send");
-        LlvmBasicBlockHandle applyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_apply");
-        LlvmBasicBlockHandle flushCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush_check");
-        LlvmBasicBlockHandle flushBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush");
-        LlvmBasicBlockHandle flushRetryCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush_retry_check");
-        LlvmBasicBlockHandle finalizeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_finalize");
-        LlvmBasicBlockHandle partialReadCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_partial_read_check");
-        LlvmBasicBlockHandle pendingReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_read");
-        LlvmBasicBlockHandle pendingWriteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_write");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_fail");
-        LlvmBasicBlockHandle completeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_complete");
-        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_finish");
+        (LlvmBasicBlockHandle sendBlock, LlvmBasicBlockHandle applyBlock, LlvmBasicBlockHandle flushCheckBlock, LlvmBasicBlockHandle flushBlock, LlvmBasicBlockHandle flushRetryCheckBlock, LlvmBasicBlockHandle finalizeBlock, LlvmBasicBlockHandle partialReadCheckBlock, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle completeBlock, LlvmBasicBlockHandle finishBlock) = AppendTlsSendBlocks(state);
         LlvmApi.BuildCondBr(builder, alreadyDone, flushCheckBlock, sendBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, sendBlock);
@@ -1822,6 +2125,48 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, nextSent, "step_tls_send_store_sent");
         LlvmApi.BuildBr(builder, flushCheckBlock);
 
+        EmitStepTlsSendFlush(state, taskPtr, globals, session, totalLen, statusSlot, flushCheckBlock, flushBlock, flushRetryCheckBlock, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_send_status");
+    }
+
+    private static (LlvmBasicBlockHandle Send, LlvmBasicBlockHandle Apply, LlvmBasicBlockHandle FlushCheck, LlvmBasicBlockHandle Flush, LlvmBasicBlockHandle FlushRetryCheck, LlvmBasicBlockHandle Finalize, LlvmBasicBlockHandle PartialReadCheck, LlvmBasicBlockHandle PendingRead, LlvmBasicBlockHandle PendingWrite, LlvmBasicBlockHandle Fail, LlvmBasicBlockHandle Complete, LlvmBasicBlockHandle Finish) AppendTlsSendBlocks(LlvmCodegenState state)
+    {
+        return (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_send"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_apply"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_flush_retry_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_finalize"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_partial_read_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_read"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_pending_write"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_fail"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_complete"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_send_finish"));
+    }
+
+    private static void EmitStepTlsSendFlush(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LinuxTlsGlobals globals,
+        LlvmValueHandle session,
+        LlvmValueHandle totalLen,
+        LlvmValueHandle statusSlot,
+        LlvmBasicBlockHandle flushCheckBlock,
+        LlvmBasicBlockHandle flushBlock,
+        LlvmBasicBlockHandle flushRetryCheckBlock,
+        LlvmBasicBlockHandle finalizeBlock,
+        LlvmBasicBlockHandle partialReadCheckBlock,
+        LlvmBasicBlockHandle pendingReadBlock,
+        LlvmBasicBlockHandle pendingWriteBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle completeBlock,
+        LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, flushCheckBlock);
         LlvmValueHandle flushSession = LoadMemory(state, taskPtr, TaskStructLayout.IoArg0, "step_tls_send_flush_session");
         LlvmValueHandle flushConnection = EmitLoadTlsSessionSsl(state, flushSession, "step_tls_send_flush_connection");
@@ -1844,6 +2189,25 @@ internal static partial class LlvmCodegen
         LlvmValueHandle flushWouldBlock = EmitTlsIoResultIsWouldBlock(state, flushStatus, "step_tls_send_flush_would_block");
         LlvmApi.BuildCondBr(builder, flushWouldBlock, pendingWriteBlock, failBlock);
 
+        EmitStepTlsSendFinalize(state, taskPtr, session, totalLen, statusSlot, flushConnection, finalizeBlock, partialReadCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, completeBlock, finishBlock);
+    }
+
+    private static void EmitStepTlsSendFinalize(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle session,
+        LlvmValueHandle totalLen,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle flushConnection,
+        LlvmBasicBlockHandle finalizeBlock,
+        LlvmBasicBlockHandle partialReadCheckBlock,
+        LlvmBasicBlockHandle pendingReadBlock,
+        LlvmBasicBlockHandle pendingWriteBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle completeBlock,
+        LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, finalizeBlock);
         LlvmValueHandle sentNow = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_send_sent_now");
         LlvmValueHandle allSent = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, sentNow, totalLen, "step_tls_send_all_sent");
@@ -1885,9 +2249,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, completeBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, totalLen), "step_tls_send_complete_result"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_send_status");
     }
 
     private static LlvmValueHandle EmitStepTlsReceiveTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals)
@@ -1902,35 +2263,51 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), errorStageSlot);
 
+        LlvmValueHandle readBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_receive_read_bytes_slot");
         LlvmValueHandle positiveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, maxBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_positive_max");
-        LlvmBasicBlockHandle initBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_init_buffer");
-        LlvmBasicBlockHandle receiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_receive");
-        LlvmBasicBlockHandle inspectPlaintextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_inspect_plaintext");
-        LlvmBasicBlockHandle flushCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush_check");
-        LlvmBasicBlockHandle flushBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush");
-        LlvmBasicBlockHandle flushRetryCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush_retry_check");
-        LlvmBasicBlockHandle readCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_check");
-        LlvmBasicBlockHandle readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_tls");
-        LlvmBasicBlockHandle readRetryCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_retry_check");
-        LlvmBasicBlockHandle processBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_process_packets");
-        LlvmBasicBlockHandle rereadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_reread_plaintext");
-        LlvmBasicBlockHandle inspectRereadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_inspect_reread");
-        LlvmBasicBlockHandle handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_handle_read");
-        LlvmBasicBlockHandle pendingReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_pending_read");
-        LlvmBasicBlockHandle pendingWriteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_pending_write");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_success");
-        LlvmBasicBlockHandle validateUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_validate_utf8");
-        LlvmBasicBlockHandle invalidUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_invalid_utf8");
-        LlvmBasicBlockHandle finalizeEmptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_finalize_empty");
-        LlvmBasicBlockHandle readPendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_pending_check");
-        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_finish");
+        (LlvmBasicBlockHandle initBufferBlock, LlvmBasicBlockHandle handleReadBlock, LlvmBasicBlockHandle flushCheckBlock, LlvmBasicBlockHandle readCheckBlock, LlvmBasicBlockHandle rereadBlock, LlvmBasicBlockHandle pendingReadBlock, LlvmBasicBlockHandle pendingWriteBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle finalizeEmptyBlock, LlvmBasicBlockHandle finishBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_init_buffer"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_handle_read"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_reread_plaintext"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_pending_read"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_pending_write"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_fail"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_finalize_empty"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_finish"));
 
         LlvmApi.BuildCondBr(builder, positiveMax, initBufferBlock, failBlock);
 
+        EmitStepTlsReceiveInit(state, taskPtr, session, maxBytes, readBytesSlot, errorCodeSlot, errorStageSlot, initBufferBlock, handleReadBlock, flushCheckBlock, failBlock);
+        EmitStepTlsReceiveFlush(state, session, globals, errorCodeSlot, errorStageSlot, flushCheckBlock, readCheckBlock, pendingWriteBlock, failBlock);
+        EmitStepTlsReceiveRead(state, session, globals, errorCodeSlot, errorStageSlot, readCheckBlock, rereadBlock, pendingReadBlock, finalizeEmptyBlock, failBlock);
+        EmitStepTlsReceiveReread(state, taskPtr, session, maxBytes, readBytesSlot, errorCodeSlot, errorStageSlot, rereadBlock, handleReadBlock, finalizeEmptyBlock, failBlock);
+        EmitStepTlsReceiveHandle(state, taskPtr, session, statusSlot, readBytesSlot, handleReadBlock, finalizeEmptyBlock, pendingReadBlock, pendingWriteBlock, finishBlock);
+        EmitStepTlsReceiveFail(state, taskPtr, statusSlot, errorCodeSlot, errorStageSlot, failBlock, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_receive_status");
+    }
+
+    private static void EmitStepTlsReceiveInit(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle session,
+        LlvmValueHandle maxBytes,
+        LlvmValueHandle readBytesSlot,
+        LlvmValueHandle errorCodeSlot,
+        LlvmValueHandle errorStageSlot,
+        LlvmBasicBlockHandle initBufferBlock,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle flushCheckBlock,
+        LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, initBufferBlock);
         LlvmValueHandle bufferRef = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_buffer_ref");
         LlvmValueHandle hasBuffer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, bufferRef, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_has_buffer");
+        LlvmBasicBlockHandle receiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_receive");
         LlvmBasicBlockHandle allocateBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_allocate_buffer");
         LlvmApi.BuildCondBr(builder, hasBuffer, receiveBlock, allocateBufferBlock);
 
@@ -1942,7 +2319,6 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, receiveBlock);
         LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_active_buffer");
-        LlvmValueHandle readBytesSlot = LlvmApi.BuildAlloca(builder, state.I64, "step_tls_receive_read_bytes_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readBytesSlot);
         LlvmValueHandle readStatus = EmitTlsConnectionRead(
             state,
@@ -1954,6 +2330,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle readOk = EmitTlsResultIsOk(state, readStatus, "step_tls_receive_read_ok");
         LlvmValueHandle readEmpty = EmitTlsResultIsPlaintextEmpty(state, readStatus, "step_tls_receive_read_empty");
         LlvmValueHandle readReady = LlvmApi.BuildOr(builder, readOk, readEmpty, "step_tls_receive_read_ready");
+        LlvmBasicBlockHandle inspectPlaintextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_inspect_plaintext");
         LlvmBasicBlockHandle initialReadFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_initial_read_fail");
         LlvmApi.BuildCondBr(builder, readReady, inspectPlaintextBlock, initialReadFailBlock);
 
@@ -1966,13 +2343,27 @@ internal static partial class LlvmCodegen
         LlvmValueHandle initialReadCount = LlvmApi.BuildLoad2(builder, state.I64, readBytesSlot, "step_tls_receive_initial_read_count");
         LlvmValueHandle initialReadPositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, initialReadCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_initial_read_positive");
         LlvmApi.BuildCondBr(builder, initialReadPositive, handleReadBlock, flushCheckBlock);
+    }
 
+    private static void EmitStepTlsReceiveFlush(
+        LlvmCodegenState state,
+        LlvmValueHandle session,
+        LinuxTlsGlobals globals,
+        LlvmValueHandle errorCodeSlot,
+        LlvmValueHandle errorStageSlot,
+        LlvmBasicBlockHandle flushCheckBlock,
+        LlvmBasicBlockHandle readCheckBlock,
+        LlvmBasicBlockHandle pendingWriteBlock,
+        LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, flushCheckBlock);
         LlvmValueHandle flushNeedsWrite = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             EmitTlsConnectionWantsWrite(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_connection"), "step_tls_receive_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_has_pending_write");
+        LlvmBasicBlockHandle flushBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush");
         LlvmApi.BuildCondBr(builder, flushNeedsWrite, flushBlock, readCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushBlock);
@@ -1980,6 +2371,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), flushBytesSlot);
         LlvmValueHandle flushStatus = EmitTlsConnectionWriteTls(state, globals, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_flush_write_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_flush_socket"), flushBytesSlot, "step_tls_receive_write_tls");
         LlvmValueHandle flushOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, flushStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_receive_flush_ok");
+        LlvmBasicBlockHandle flushRetryCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_flush_retry_check");
         LlvmApi.BuildCondBr(builder, flushOk, readCheckBlock, flushRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, flushRetryCheckBlock);
@@ -1991,13 +2383,28 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, flushStatus, errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 2, 0), errorStageSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsReceiveRead(
+        LlvmCodegenState state,
+        LlvmValueHandle session,
+        LinuxTlsGlobals globals,
+        LlvmValueHandle errorCodeSlot,
+        LlvmValueHandle errorStageSlot,
+        LlvmBasicBlockHandle readCheckBlock,
+        LlvmBasicBlockHandle rereadBlock,
+        LlvmBasicBlockHandle pendingReadBlock,
+        LlvmBasicBlockHandle finalizeEmptyBlock,
+        LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, readCheckBlock);
         LlvmValueHandle networkNeedsRead = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             EmitTlsConnectionWantsRead(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_read_check_connection"), "step_tls_receive_wants_read"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_has_pending_read");
+        LlvmBasicBlockHandle readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_tls");
         LlvmApi.BuildCondBr(builder, networkNeedsRead, readBlock, finalizeEmptyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
@@ -2005,6 +2412,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), networkReadBytesSlot);
         LlvmValueHandle networkReadStatus = EmitTlsConnectionReadTls(state, globals, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_network_connection"), EmitLoadTlsSessionSocket(state, session, "step_tls_receive_network_socket"), networkReadBytesSlot, "step_tls_receive_read_tls");
         LlvmValueHandle networkReadOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, networkReadStatus, LlvmApi.ConstInt(state.I32, 0, 0), "step_tls_receive_network_read_ok");
+        LlvmBasicBlockHandle readRetryCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_retry_check");
+        LlvmBasicBlockHandle processBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_process_packets");
         LlvmApi.BuildCondBr(builder, networkReadOk, processBlock, readRetryCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readRetryCheckBlock);
@@ -2027,8 +2436,24 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, processStatus, errorCodeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 4, 0), errorStageSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTlsReceiveReread(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle session,
+        LlvmValueHandle maxBytes,
+        LlvmValueHandle readBytesSlot,
+        LlvmValueHandle errorCodeSlot,
+        LlvmValueHandle errorStageSlot,
+        LlvmBasicBlockHandle rereadBlock,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle finalizeEmptyBlock,
+        LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, rereadBlock);
+        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_active_buffer");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readBytesSlot);
         LlvmValueHandle rereadStatus = EmitTlsConnectionRead(
             state,
@@ -2040,6 +2465,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle rereadOk = EmitTlsResultIsOk(state, rereadStatus, "step_tls_receive_reread_ok");
         LlvmValueHandle rereadEmpty = EmitTlsResultIsPlaintextEmpty(state, rereadStatus, "step_tls_receive_reread_empty");
         LlvmValueHandle rereadReady = LlvmApi.BuildOr(builder, rereadOk, rereadEmpty, "step_tls_receive_reread_ready");
+        LlvmBasicBlockHandle inspectRereadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_inspect_reread");
         LlvmBasicBlockHandle rereadFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_reread_fail");
         LlvmApi.BuildCondBr(builder, rereadReady, inspectRereadBlock, rereadFailBlock);
 
@@ -2052,24 +2478,44 @@ internal static partial class LlvmCodegen
         LlvmValueHandle rereadCount = LlvmApi.BuildLoad2(builder, state.I64, readBytesSlot, "step_tls_receive_reread_count");
         LlvmValueHandle rereadPositive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, rereadCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_reread_positive");
         LlvmApi.BuildCondBr(builder, rereadPositive, handleReadBlock, finalizeEmptyBlock);
+    }
 
+    private static void EmitStepTlsReceiveHandle(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle session,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle readBytesSlot,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle finalizeEmptyBlock,
+        LlvmBasicBlockHandle pendingReadBlock,
+        LlvmBasicBlockHandle pendingWriteBlock,
+        LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, handleReadBlock);
+        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_active_buffer");
         LlvmValueHandle readCount = LlvmApi.BuildLoad2(builder, state.I64, readBytesSlot, "step_tls_receive_read_count");
         StoreMemory(state, activeBuffer, 0, readCount, "step_tls_receive_store_read_len");
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_success");
+        LlvmBasicBlockHandle validateUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_validate_utf8");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_empty_read"), successBlock, validateUtf8Block);
 
         LlvmApi.PositionBuilderAtEnd(builder, validateUtf8Block);
         LlvmValueHandle utf8Valid = EmitValidateUtf8(state, GetStringBytesPointer(state, activeBuffer, "step_tls_receive_validate_bytes"), readCount, "step_tls_receive_utf8");
         LlvmValueHandle validUtf8 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_valid_utf8");
+        LlvmBasicBlockHandle invalidUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_invalid_utf8");
         LlvmApi.BuildCondBr(builder, validUtf8, successBlock, invalidUtf8Block);
 
         LlvmApi.PositionBuilderAtEnd(builder, finalizeEmptyBlock);
-        StoreMemory(state, activeBuffer, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_store_empty_len");
+        LlvmValueHandle finalizeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tls_receive_finalize_buffer");
+        StoreMemory(state, finalizeBuffer, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_store_empty_len");
         LlvmValueHandle wantsWriteAfter = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
             EmitTlsConnectionWantsWrite(state, EmitLoadTlsSessionSsl(state, session, "step_tls_receive_finalize_connection"), "step_tls_receive_finalize_wants_write"),
             LlvmApi.ConstInt(state.I8, 0, 0),
             "step_tls_receive_finalize_has_write");
+        LlvmBasicBlockHandle readPendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tls_receive_read_pending_check");
         LlvmApi.BuildCondBr(builder, wantsWriteAfter, pendingWriteBlock, readPendingCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readPendingCheckBlock);
@@ -2095,7 +2541,18 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, invalidUtf8Block);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TlsInvalidUtf8Message)), "step_tls_receive_invalid_utf8_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
+    }
 
+    private static void EmitStepTlsReceiveFail(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle errorCodeSlot,
+        LlvmValueHandle errorStageSlot,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         LlvmValueHandle errorCode = LlvmApi.BuildLoad2(builder, state.I32, errorCodeSlot, "step_tls_receive_error_code");
         LlvmValueHandle errorStage = LlvmApi.BuildLoad2(builder, state.I32, errorStageSlot, "step_tls_receive_error_stage");
@@ -2140,9 +2597,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failGenericBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TlsReceiveFailedMessage)), "step_tls_receive_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_receive_status");
     }
 
     private static LlvmValueHandle EmitStepTlsCloseTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals)
@@ -2225,32 +2679,71 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, "step_tcp_connect_win_cached_addr"), addrSlot);
         LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
 
-        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume");
-        LlvmBasicBlockHandle setupBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_setup");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_done");
+        (LlvmBasicBlockHandle resumeBlock, LlvmBasicBlockHandle setupBlock, LlvmBasicBlockHandle doneBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle successBlock, LlvmBasicBlockHandle bindBlock, LlvmBasicBlockHandle missingConnectExBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_setup"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_fail"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_bind_any"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_missing_connectex"));
         LlvmApi.BuildCondBr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_has_context"),
             resumeBlock,
             setupBlock);
 
+        EmitStepTcpConnectWinResume(state, waitContext, errorRefSlot, resumeBlock, pendingBlock, successBlock, failBlock);
+        EmitStepTcpConnectWinSetup(state, taskPtr, hostRef, port, errorRefSlot, socketSlot, addrSlot, pendingContextSlot, setupBlock, failBlock, bindBlock, missingConnectExBlock, successBlock, pendingBlock);
+        EmitStepTcpConnectWinFinish(state, taskPtr, statusSlot, socketSlot, pendingContextSlot, errorRefSlot, successBlock, pendingBlock, failBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_connect_win_status");
+    }
+
+    private static void EmitStepTcpConnectWinResume(
+        LlvmCodegenState state,
+        LlvmValueHandle waitContext,
+        LlvmValueHandle errorRefSlot,
+        LlvmBasicBlockHandle resumeBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle failBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
         LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_connect_win_resume");
         LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_connect_win_resume_pending");
         LlvmBasicBlockHandle resumeCompletedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume_completed");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_fail");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_pending");
         LlvmApi.BuildCondBr(builder, resumePending, pendingBlock, resumeCompletedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, resumeCompletedBlock);
         LlvmValueHandle resumeSucceeded = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StateCompleted, 0), "step_tcp_connect_win_resume_succeeded");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_success");
         LlvmBasicBlockHandle resumeFailBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_resume_fail");
         LlvmApi.BuildCondBr(builder, resumeSucceeded, successBlock, resumeFailBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, resumeFailBlock);
         LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: IOCP completion failed"), errorRefSlot);
         LlvmApi.BuildBr(builder, failBlock);
+    }
 
+    private static void EmitStepTcpConnectWinSetup(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle hostRef,
+        LlvmValueHandle port,
+        LlvmValueHandle errorRefSlot,
+        LlvmValueHandle socketSlot,
+        LlvmValueHandle addrSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle setupBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle bindBlock,
+        LlvmBasicBlockHandle missingConnectExBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, setupBlock);
         LlvmValueHandle resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "step_tcp_connect_win_resolve");
         LlvmValueHandle resolveTag = LoadMemory(state, resolveResult, 0, "step_tcp_connect_win_resolve_tag");
@@ -2299,10 +2792,25 @@ internal static partial class LlvmCodegen
         EmitWindowsAssociateSocketWithIocp(state, socket, "step_tcp_connect_win_associate");
         LlvmValueHandle connectExPtr = EmitWindowsLoadConnectExPointer(state, socket, "step_tcp_connect_win_connectex");
         LlvmValueHandle hasConnectEx = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, connectExPtr, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_connect_win_has_connectex");
-        LlvmBasicBlockHandle bindBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_bind_any");
-        LlvmBasicBlockHandle missingConnectExBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_connect_win_missing_connectex");
         LlvmApi.BuildCondBr(builder, hasConnectEx, bindBlock, missingConnectExBlock);
 
+        EmitStepTcpConnectWinConnect(state, socket, connectExPtr, sockaddrBytes, errorRefSlot, pendingContextSlot, bindBlock, missingConnectExBlock, successBlock, failBlock, pendingBlock);
+    }
+
+    private static void EmitStepTcpConnectWinConnect(
+        LlvmCodegenState state,
+        LlvmValueHandle socket,
+        LlvmValueHandle connectExPtr,
+        LlvmValueHandle sockaddrBytes,
+        LlvmValueHandle errorRefSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle bindBlock,
+        LlvmBasicBlockHandle missingConnectExBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, missingConnectExBlock);
         LlvmApi.BuildStore(builder, EmitHeapStringLiteral(state, "Ashes.Net.Tcp.connect() failed: ConnectEx unavailable"), errorRefSlot);
         LlvmApi.BuildBr(builder, failBlock);
@@ -2350,7 +2858,21 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, queuePendingBlock);
         LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
         LlvmApi.BuildBr(builder, pendingBlock);
+    }
 
+    private static void EmitStepTcpConnectWinFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle socketSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmValueHandle errorRefSlot,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, successBlock);
         LlvmValueHandle connectedSocket = LlvmApi.BuildLoad2(builder, state.I64, socketSlot, "step_tcp_connect_win_socket_ok");
         EmitWindowsUpdateConnectContext(state, connectedSocket, "step_tcp_connect_win_update_context");
@@ -2371,9 +2893,6 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, LlvmApi.BuildLoad2(builder, state.I64, errorRefSlot, "step_tcp_connect_win_error_ref")), "step_tcp_connect_win_fail_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_connect_win_status");
     }
 
     private static LlvmValueHandle EmitStepTcpSendTaskWindowsIocp(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -2390,18 +2909,37 @@ internal static partial class LlvmCodegen
         LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_send_win_wait_context");
         LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
 
-        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_resume");
-        LlvmBasicBlockHandle loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_loop_check");
-        LlvmBasicBlockHandle issueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_issue");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_done");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_fail");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_pending");
-        LlvmBasicBlockHandle completeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_complete");
+        (LlvmBasicBlockHandle resumeBlock, LlvmBasicBlockHandle loopCheckBlock, LlvmBasicBlockHandle doneBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle completeBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_resume"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_loop_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_fail"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_complete"));
         LlvmApi.BuildCondBr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_send_win_has_context"),
             resumeBlock,
             loopCheckBlock);
 
+        EmitStepTcpSendWinResume(state, taskPtr, waitContext, sentSlot, resumeBlock, pendingBlock, failBlock, loopCheckBlock);
+        EmitStepTcpSendWinLoop(state, taskPtr, socket, textRef, totalLen, sentSlot, pendingContextSlot, loopCheckBlock, completeBlock, failBlock, pendingBlock);
+        EmitStepTcpSendWinFinish(state, taskPtr, statusSlot, totalLen, pendingContextSlot, completeBlock, pendingBlock, failBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_send_win_status");
+    }
+
+    private static void EmitStepTcpSendWinResume(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle waitContext,
+        LlvmValueHandle sentSlot,
+        LlvmBasicBlockHandle resumeBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle loopCheckBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
         LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_send_win_resume");
         LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_send_win_resume_pending");
@@ -2425,6 +2963,23 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, resumedSent, "step_tcp_send_win_store_sent_after_resume");
         EmitClearLeafTaskWait(state, taskPtr, "step_tcp_send_win_clear_wait_after_resume");
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitStepTcpSendWinLoop(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle socket,
+        LlvmValueHandle textRef,
+        LlvmValueHandle totalLen,
+        LlvmValueHandle sentSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle completeBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle issueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_issue");
 
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle currentSent = LlvmApi.BuildLoad2(builder, state.I64, sentSlot, "step_tcp_send_win_current_sent");
@@ -2463,6 +3018,24 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle issueOverlappedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_send_win_issue_overlapped");
         LlvmApi.BuildCondBr(builder, syncWouldBlock, issueOverlappedBlock, failBlock);
 
+        EmitStepTcpSendWinOverlapped(state, taskPtr, socket, currentSent, cursorPtr, chunkLen, sentSlot, pendingContextSlot, issueOverlappedBlock, loopCheckBlock, failBlock, pendingBlock);
+    }
+
+    private static void EmitStepTcpSendWinOverlapped(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle socket,
+        LlvmValueHandle currentSent,
+        LlvmValueHandle cursorPtr,
+        LlvmValueHandle chunkLen,
+        LlvmValueHandle sentSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle issueOverlappedBlock,
+        LlvmBasicBlockHandle loopCheckBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, issueOverlappedBlock);
         EmitWindowsAssociateSocketWithIocp(state, socket, "step_tcp_send_win_associate");
         LlvmValueHandle operationContext = EmitWindowsCreateIocpOperationContext(state, "step_tcp_send_win_op_context");
@@ -2494,7 +3067,20 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, storePendingBlock);
         LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
         LlvmApi.BuildBr(builder, pendingBlock);
+    }
 
+    private static void EmitStepTcpSendWinFinish(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle totalLen,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle completeBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, completeBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, totalLen), "step_tcp_send_win_complete_result"), statusSlot);
         LlvmApi.BuildBr(builder, doneBlock);
@@ -2506,9 +3092,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpSendFailedMessage)), "step_tcp_send_win_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_send_win_status");
     }
 
     private static LlvmValueHandle EmitStepTcpReceiveTaskWindowsIocp(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -2523,24 +3106,46 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), readCountSlot);
 
         LlvmValueHandle positiveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, maxBytes, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_positive_max");
-        LlvmBasicBlockHandle allocateBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_allocate_buffer");
-        LlvmBasicBlockHandle failMaxBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail_max");
-        LlvmBasicBlockHandle afterBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_after_buffer");
-        LlvmBasicBlockHandle handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_handle_read");
-        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_finish");
-        LlvmBasicBlockHandle failBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_pending");
+        (LlvmBasicBlockHandle allocateBufferBlock, LlvmBasicBlockHandle failMaxBlock, LlvmBasicBlockHandle handleReadBlock, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle failBlock, LlvmBasicBlockHandle pendingBlock, LlvmBasicBlockHandle resumeBlock, LlvmBasicBlockHandle readBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_allocate_buffer"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail_max"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_handle_read"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_finish"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_fail"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_resume"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_read_block"));
         LlvmApi.BuildCondBr(builder, positiveMax, allocateBufferBlock, failMaxBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, failMaxBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidMaxBytesMessage)), "step_tcp_receive_win_invalid_max"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        EmitStepTcpReceiveWinBufferSetup(state, taskPtr, maxBytes, pendingContextSlot, allocateBufferBlock, resumeBlock, readBlock);
+        EmitStepTcpReceiveWinResume(state, taskPtr, readCountSlot, resumeBlock, handleReadBlock, failBlock, pendingBlock);
+        EmitStepTcpReceiveWinRead(state, taskPtr, socket, maxBytes, readCountSlot, pendingContextSlot, readBlock, handleReadBlock, failBlock, pendingBlock);
+        EmitStepTcpReceiveWinHandle(state, taskPtr, statusSlot, readCountSlot, pendingContextSlot, handleReadBlock, finishBlock, failBlock, pendingBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_receive_win_status");
+    }
+
+    private static void EmitStepTcpReceiveWinBufferSetup(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle maxBytes,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle allocateBufferBlock,
+        LlvmBasicBlockHandle resumeBlock,
+        LlvmBasicBlockHandle readBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, allocateBufferBlock);
         LlvmValueHandle bufferRef = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_buffer_ref");
         LlvmValueHandle hasBuffer = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, bufferRef, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_has_buffer");
         LlvmBasicBlockHandle reuseBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_reuse_buffer");
         LlvmBasicBlockHandle createBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_create_buffer");
+        LlvmBasicBlockHandle afterBufferBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_after_buffer");
         LlvmApi.BuildCondBr(builder, hasBuffer, reuseBufferBlock, createBufferBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createBufferBlock);
@@ -2553,17 +3158,26 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, afterBufferBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, afterBufferBlock);
-        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_active_buffer");
         LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_receive_win_wait_context");
         LlvmApi.BuildStore(builder, waitContext, pendingContextSlot);
-        LlvmBasicBlockHandle resumeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_resume");
-        LlvmBasicBlockHandle readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_read_block");
         LlvmApi.BuildCondBr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waitContext, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_has_context"),
             resumeBlock,
             readBlock);
+    }
 
+    private static void EmitStepTcpReceiveWinResume(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle readCountSlot,
+        LlvmBasicBlockHandle resumeBlock,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, resumeBlock);
+        LlvmValueHandle waitContext = LoadMemory(state, taskPtr, TaskStructLayout.WaitHandle, "step_tcp_receive_win_wait_context");
         LlvmValueHandle resumeStatus = EmitWindowsIocpOperationStatus(state, waitContext, "step_tcp_receive_win_resume");
         LlvmValueHandle resumePending = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, resumeStatus, LlvmApi.ConstInt(state.I64, WindowsIocpOperationLayout.StatePending, 0), "step_tcp_receive_win_resume_pending");
         LlvmBasicBlockHandle resumeCompletedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_resume_completed");
@@ -2578,8 +3192,23 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitWindowsIocpBytesTransferred(state, waitContext, "step_tcp_receive_win_resume"), readCountSlot);
         EmitClearLeafTaskWait(state, taskPtr, "step_tcp_receive_win_clear_wait_after_resume");
         LlvmApi.BuildBr(builder, handleReadBlock);
+    }
 
+    private static void EmitStepTcpReceiveWinRead(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle socket,
+        LlvmValueHandle maxBytes,
+        LlvmValueHandle readCountSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle readBlock,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
+        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_active_buffer");
         LlvmValueHandle syncReadCount = LlvmApi.BuildSExt(builder, EmitWindowsRecv(state, socket, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_bytes"), LlvmApi.BuildTrunc(builder, maxBytes, state.I32, "step_tcp_receive_win_max_i32"), "step_tcp_receive_win_sync_recv"), state.I64, "step_tcp_receive_win_sync_read_count");
         LlvmValueHandle readOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, syncReadCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_sync_ok");
         LlvmBasicBlockHandle syncPendingCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_sync_pending_check");
@@ -2589,28 +3218,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, syncReadSuccessBlock);
         LlvmApi.BuildStore(builder, syncReadCount, readCountSlot);
         LlvmApi.BuildBr(builder, handleReadBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, handleReadBlock);
-        LlvmValueHandle readCount = LlvmApi.BuildLoad2(builder, state.I64, readCountSlot, "step_tcp_receive_win_read_count_value");
-        StoreMemory(state, activeBuffer, 0, readCount, "step_tcp_receive_win_store_len");
-        LlvmValueHandle emptyRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_empty");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_success");
-        LlvmBasicBlockHandle validateUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_validate_utf8");
-        LlvmApi.BuildCondBr(builder, emptyRead, successBlock, validateUtf8Block);
-
-        LlvmApi.PositionBuilderAtEnd(builder, validateUtf8Block);
-        LlvmValueHandle utf8Valid = EmitValidateUtf8(state, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_validate_bytes"), readCount, "step_tcp_receive_win_utf8");
-        LlvmValueHandle validUtf8 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_valid_utf8");
-        LlvmBasicBlockHandle invalidUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_invalid_utf8");
-        LlvmApi.BuildCondBr(builder, validUtf8, successBlock, invalidUtf8Block);
-
-        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
-        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, activeBuffer), "step_tcp_receive_win_complete"), statusSlot);
-        LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, invalidUtf8Block);
-        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidUtf8Message)), "step_tcp_receive_win_invalid_utf8_complete"), statusSlot);
-        LlvmApi.BuildBr(builder, finishBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, syncPendingCheckBlock);
         LlvmValueHandle syncError = LlvmApi.BuildSExt(builder, EmitWindowsWsaGetLastError(state, "step_tcp_receive_win_sync_error"), state.I64, "step_tcp_receive_win_sync_error_i64");
@@ -2641,6 +3248,42 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, storePendingBlock);
         LlvmApi.BuildStore(builder, operationContext, pendingContextSlot);
         LlvmApi.BuildBr(builder, pendingBlock);
+    }
+
+    private static void EmitStepTcpReceiveWinHandle(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle statusSlot,
+        LlvmValueHandle readCountSlot,
+        LlvmValueHandle pendingContextSlot,
+        LlvmBasicBlockHandle handleReadBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmBasicBlockHandle failBlock,
+        LlvmBasicBlockHandle pendingBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, handleReadBlock);
+        LlvmValueHandle activeBuffer = LoadMemory(state, taskPtr, TaskStructLayout.WaitData0, "step_tcp_receive_win_active_buffer");
+        LlvmValueHandle readCount = LlvmApi.BuildLoad2(builder, state.I64, readCountSlot, "step_tcp_receive_win_read_count_value");
+        StoreMemory(state, activeBuffer, 0, readCount, "step_tcp_receive_win_store_len");
+        LlvmValueHandle emptyRead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, readCount, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_empty");
+        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_success");
+        LlvmBasicBlockHandle validateUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_validate_utf8");
+        LlvmApi.BuildCondBr(builder, emptyRead, successBlock, validateUtf8Block);
+
+        LlvmApi.PositionBuilderAtEnd(builder, validateUtf8Block);
+        LlvmValueHandle utf8Valid = EmitValidateUtf8(state, GetStringBytesPointer(state, activeBuffer, "step_tcp_receive_win_validate_bytes"), readCount, "step_tcp_receive_win_utf8");
+        LlvmValueHandle validUtf8 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, utf8Valid, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_valid_utf8");
+        LlvmBasicBlockHandle invalidUtf8Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "step_tcp_receive_win_invalid_utf8");
+        LlvmApi.BuildCondBr(builder, validUtf8, successBlock, invalidUtf8Block);
+
+        LlvmApi.PositionBuilderAtEnd(builder, successBlock);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultOk(state, activeBuffer), "step_tcp_receive_win_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, invalidUtf8Block);
+        LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpInvalidUtf8Message)), "step_tcp_receive_win_invalid_utf8_complete"), statusSlot);
+        LlvmApi.BuildBr(builder, finishBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, pendingBlock);
         LlvmApi.BuildStore(builder, EmitPendingLeafTask(state, taskPtr, TaskStructLayout.WaitSocketRead, LlvmApi.BuildLoad2(builder, state.I64, pendingContextSlot, "step_tcp_receive_win_pending_context"), "step_tcp_receive_win_pending_store"), statusSlot);
@@ -2649,9 +3292,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, failBlock);
         LlvmApi.BuildStore(builder, EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, TcpReceiveFailedMessage)), "step_tcp_receive_win_fail_complete"), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tcp_receive_win_status");
     }
 
     private static LlvmValueHandle EmitStepHttpGetTask(LlvmCodegenState state, LlvmValueHandle taskPtr)
@@ -2787,17 +3427,43 @@ internal static partial class LlvmCodegen
             prefix + "_complete");
     }
 
+    private readonly record struct HttpTaskBlocks(
+        LlvmBasicBlockHandle Dispatch,
+        LlvmBasicBlockHandle Connect,
+        LlvmBasicBlockHandle HandshakeCheck,
+        LlvmBasicBlockHandle Handshake,
+        LlvmBasicBlockHandle SendCheck,
+        LlvmBasicBlockHandle Send,
+        LlvmBasicBlockHandle ReceiveCheck,
+        LlvmBasicBlockHandle Receive,
+        LlvmBasicBlockHandle CloseSuccessCheck,
+        LlvmBasicBlockHandle CloseSuccess,
+        LlvmBasicBlockHandle CloseErrorCheck,
+        LlvmBasicBlockHandle CloseError,
+        LlvmBasicBlockHandle Invalid,
+        LlvmBasicBlockHandle Finish);
+
+    private static HttpTaskBlocks AppendHttpTaskBlocks(LlvmCodegenState state, string prefix)
+    {
+        return new HttpTaskBlocks(
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dispatch"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_connect"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_handshake_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_handshake"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_send_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_send"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_receive_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_receive"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_error_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_error"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_invalid"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish"));
+    }
+
     private static LlvmValueHandle EmitStepHttpTask(LlvmCodegenState state, LlvmValueHandle taskPtr, bool hasBody, string prefix)
     {
-        const long StageConnect = 0;
-        const long StageTlsHandshake = 1;
-        const long StageSend = 2;
-        const long StageReceive = 3;
-        const long StageCloseSuccess = 4;
-        const long StageCloseError = 5;
-        const long StageMask = 7;
-        const long StageTlsFlag = 8;
-
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle statusSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_status_slot");
         LlvmValueHandle hostSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_host_slot");
@@ -2810,22 +3476,38 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 80, 0), portSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), schemeSlot);
 
-        LlvmBasicBlockHandle dispatchBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dispatch");
-        LlvmBasicBlockHandle connectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_connect");
-        LlvmBasicBlockHandle handshakeCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_handshake_check");
-        LlvmBasicBlockHandle handshakeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_handshake");
-        LlvmBasicBlockHandle sendCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_send_check");
-        LlvmBasicBlockHandle sendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_send");
-        LlvmBasicBlockHandle receiveCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_receive_check");
-        LlvmBasicBlockHandle receiveBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_receive");
-        LlvmBasicBlockHandle closeSuccessCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success_check");
-        LlvmBasicBlockHandle closeSuccessBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success");
-        LlvmBasicBlockHandle closeErrorCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_error_check");
-        LlvmBasicBlockHandle closeErrorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_error");
-        LlvmBasicBlockHandle invalidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_invalid");
-        LlvmBasicBlockHandle finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
+        HttpTaskBlocks blocks = AppendHttpTaskBlocks(state, prefix);
+        LlvmApi.BuildBr(builder, blocks.Dispatch);
 
-        LlvmApi.BuildBr(builder, dispatchBlock);
+        EmitStepHttpTaskDispatch(state, taskPtr, hasBody, hostSlot, pathSlot, portSlot, schemeSlot, statusSlot, prefix, blocks);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Finish);
+        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, prefix + "_status");
+    }
+
+    private static void EmitStepHttpTaskDispatch(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        bool hasBody,
+        LlvmValueHandle hostSlot,
+        LlvmValueHandle pathSlot,
+        LlvmValueHandle portSlot,
+        LlvmValueHandle schemeSlot,
+        LlvmValueHandle statusSlot,
+        string prefix,
+        HttpTaskBlocks blocks)
+    {
+        const long StageConnect = 0;
+        const long StageTlsHandshake = 1;
+        const long StageSend = 2;
+        const long StageReceive = 3;
+        const long StageCloseSuccess = 4;
+        const long StageCloseError = 5;
+        const long StageMask = 7;
+        const long StageTlsFlag = 8;
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        (LlvmBasicBlockHandle dispatchBlock, LlvmBasicBlockHandle connectBlock, LlvmBasicBlockHandle handshakeCheckBlock, LlvmBasicBlockHandle handshakeBlock, LlvmBasicBlockHandle sendCheckBlock, LlvmBasicBlockHandle sendBlock, LlvmBasicBlockHandle receiveCheckBlock, LlvmBasicBlockHandle receiveBlock, LlvmBasicBlockHandle closeSuccessCheckBlock, LlvmBasicBlockHandle closeSuccessBlock, LlvmBasicBlockHandle closeErrorCheckBlock, LlvmBasicBlockHandle closeErrorBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle finishBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, dispatchBlock);
         LlvmValueHandle stageValue = LoadMemory(state, taskPtr, TaskStructLayout.WaitData1, prefix + "_stage_value");
@@ -2858,6 +3540,30 @@ internal static partial class LlvmCodegen
         LlvmValueHandle isCloseErrorStage = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stageKind, LlvmApi.ConstInt(state.I64, StageCloseError, 0), prefix + "_is_close_error_stage");
         LlvmApi.BuildCondBr(builder, isCloseErrorStage, closeErrorBlock, invalidBlock);
 
+        EmitStepHttpTaskStages(state, taskPtr, hasBody, isTlsStage, hostSlot, pathSlot, portSlot, schemeSlot, statusSlot, prefix, connectBlock, handshakeBlock, sendBlock, receiveBlock, closeSuccessBlock, closeErrorBlock, invalidBlock, finishBlock);
+    }
+
+    private static void EmitStepHttpTaskStages(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        bool hasBody,
+        LlvmValueHandle isTlsStage,
+        LlvmValueHandle hostSlot,
+        LlvmValueHandle pathSlot,
+        LlvmValueHandle portSlot,
+        LlvmValueHandle schemeSlot,
+        LlvmValueHandle statusSlot,
+        string prefix,
+        LlvmBasicBlockHandle connectBlock,
+        LlvmBasicBlockHandle handshakeBlock,
+        LlvmBasicBlockHandle sendBlock,
+        LlvmBasicBlockHandle receiveBlock,
+        LlvmBasicBlockHandle closeSuccessBlock,
+        LlvmBasicBlockHandle closeErrorBlock,
+        LlvmBasicBlockHandle invalidBlock,
+        LlvmBasicBlockHandle finishBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         EmitHttpStageConnect(state, connectBlock, taskPtr, hostSlot, pathSlot, portSlot, schemeSlot, hasBody, prefix + "_connect_stage", finishBlock, statusSlot);
         EmitHttpStageTlsHandshake(state, handshakeBlock, taskPtr, hostSlot, pathSlot, portSlot, schemeSlot, prefix + "_handshake_stage", finishBlock, statusSlot);
         EmitHttpStageSend(state, sendBlock, taskPtr, hostSlot, pathSlot, portSlot, schemeSlot, isTlsStage, hasBody, prefix + "_send_stage", finishBlock, statusSlot);
@@ -2870,9 +3576,6 @@ internal static partial class LlvmCodegen
             EmitCompleteLeafTask(state, taskPtr, EmitResultError(state, EmitHeapStringLiteral(state, "unknown http task stage")), prefix + "_invalid_complete"),
             statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, prefix + "_status");
     }
 
     private static void EmitHttpStageConnect(
@@ -2889,12 +3592,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create");
-        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success");
-        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error");
+        (LlvmBasicBlockHandle createBlock,
+            LlvmBasicBlockHandle stepBlock,
+            LlvmBasicBlockHandle pendingBlock,
+            LlvmBasicBlockHandle doneBlock,
+            LlvmBasicBlockHandle successBlock,
+            LlvmBasicBlockHandle errorBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error"));
 
         LlvmApi.PositionBuilderAtEnd(builder, stageBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
@@ -2927,6 +3636,22 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask, connectTask, prefix + "_store_child");
         LlvmApi.BuildBr(builder, stepBlock);
 
+        EmitHttpStageConnectComplete(state, taskPtr, prefix, stepBlock, pendingBlock, doneBlock, successBlock, errorBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageConnectComplete(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        string prefix,
+        LlvmBasicBlockHandle stepBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle doneBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         LlvmValueHandle stepTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_step_task");
         LlvmValueHandle childStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [stepTask], prefix + "_child_status");
@@ -2984,12 +3709,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create");
-        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success");
-        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error");
+        (LlvmBasicBlockHandle createBlock,
+            LlvmBasicBlockHandle stepBlock,
+            LlvmBasicBlockHandle pendingBlock,
+            LlvmBasicBlockHandle doneBlock,
+            LlvmBasicBlockHandle successBlock,
+            LlvmBasicBlockHandle errorBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error"));
 
         LlvmApi.PositionBuilderAtEnd(builder, stageBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
@@ -3016,6 +3747,22 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.AwaitedTask, handshakeTask, prefix + "_store_child");
         LlvmApi.BuildBr(builder, stepBlock);
 
+        EmitHttpStageTlsHandshakeComplete(state, taskPtr, prefix, stepBlock, pendingBlock, doneBlock, successBlock, errorBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageTlsHandshakeComplete(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        string prefix,
+        LlvmBasicBlockHandle stepBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle doneBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         LlvmValueHandle stepTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_step_task");
         LlvmValueHandle childStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [stepTask], prefix + "_child_status");
@@ -3060,12 +3807,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create");
-        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success");
-        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error");
+        (LlvmBasicBlockHandle createBlock,
+            LlvmBasicBlockHandle stepBlock,
+            LlvmBasicBlockHandle pendingBlock,
+            LlvmBasicBlockHandle doneBlock,
+            LlvmBasicBlockHandle successBlock,
+            LlvmBasicBlockHandle errorBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error"));
 
         LlvmApi.PositionBuilderAtEnd(builder, stageBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
@@ -3088,6 +3841,22 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        EmitHttpStageSendCreate(state, taskPtr, hostSlot, pathSlot, isTlsStage, hasBody, prefix, parseSuccessBlock, stepBlock);
+        EmitHttpStageSendComplete(state, taskPtr, isTlsStage, prefix, stepBlock, pendingBlock, doneBlock, successBlock, errorBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageSendCreate(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle hostSlot,
+        LlvmValueHandle pathSlot,
+        LlvmValueHandle isTlsStage,
+        bool hasBody,
+        string prefix,
+        LlvmBasicBlockHandle parseSuccessBlock,
+        LlvmBasicBlockHandle stepBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, parseSuccessBlock);
         LlvmValueHandle requestRef = EmitHttpRequestString(
             state,
@@ -3126,7 +3895,22 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, createdChildBlock);
         LlvmApi.BuildBr(builder, stepBlock);
+    }
 
+    private static void EmitHttpStageSendComplete(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle isTlsStage,
+        string prefix,
+        LlvmBasicBlockHandle stepBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle doneBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         LlvmValueHandle stepTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_step_task");
         LlvmValueHandle childStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [stepTask], prefix + "_child_status");
@@ -3173,14 +3957,22 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create");
-        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error");
-        LlvmBasicBlockHandle inspectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_inspect");
-        LlvmBasicBlockHandle chunkEmptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_chunk_empty");
-        LlvmBasicBlockHandle appendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_append");
+        (LlvmBasicBlockHandle createBlock,
+            LlvmBasicBlockHandle stepBlock,
+            LlvmBasicBlockHandle pendingBlock,
+            LlvmBasicBlockHandle doneBlock,
+            LlvmBasicBlockHandle errorBlock,
+            LlvmBasicBlockHandle inspectBlock,
+            LlvmBasicBlockHandle chunkEmptyBlock,
+            LlvmBasicBlockHandle appendBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_inspect"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_chunk_empty"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_append"));
 
         LlvmApi.PositionBuilderAtEnd(builder, stageBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
@@ -3220,6 +4012,25 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, createdChildBlock);
         LlvmApi.BuildBr(builder, stepBlock);
 
+        EmitHttpStageReceiveComplete(state, taskPtr, isTlsStage, prefix, stepBlock, pendingBlock, doneBlock, errorBlock, inspectBlock, chunkEmptyBlock, appendBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageReceiveComplete(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle isTlsStage,
+        string prefix,
+        LlvmBasicBlockHandle stepBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle doneBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle inspectBlock,
+        LlvmBasicBlockHandle chunkEmptyBlock,
+        LlvmBasicBlockHandle appendBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         LlvmValueHandle stepTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_step_task");
         LlvmValueHandle childStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [stepTask], prefix + "_child_status");
@@ -3261,6 +4072,19 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitLeafTaskPendingStatus(state), statusSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        EmitHttpStageReceiveAppend(state, taskPtr, prefix, chunkRef, appendBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageReceiveAppend(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        string prefix,
+        LlvmValueHandle chunkRef,
+        LlvmBasicBlockHandle appendBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, appendBlock);
         LlvmValueHandle currentResponse = LoadMemory(state, taskPtr, TaskStructLayout.ResultSlot, prefix + "_current_response");
         LlvmValueHandle hasResponse = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, currentResponse, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_response");
@@ -3292,12 +4116,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle statusSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create");
-        LlvmBasicBlockHandle stepBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step");
-        LlvmBasicBlockHandle pendingBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-        LlvmBasicBlockHandle closeSuccessBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success");
-        LlvmBasicBlockHandle closeFailureBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_failure");
+        (LlvmBasicBlockHandle createBlock,
+            LlvmBasicBlockHandle stepBlock,
+            LlvmBasicBlockHandle pendingBlock,
+            LlvmBasicBlockHandle doneBlock,
+            LlvmBasicBlockHandle closeSuccessBlock,
+            LlvmBasicBlockHandle closeFailureBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_create"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_step"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_pending"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_close_failure"));
 
         LlvmApi.PositionBuilderAtEnd(builder, stageBlock);
         LlvmValueHandle awaitedTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_awaited_task");
@@ -3337,6 +4167,23 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, createdChildBlock);
         LlvmApi.BuildBr(builder, stepBlock);
 
+        EmitHttpStageCloseComplete(state, taskPtr, closeOnError, prefix, stepBlock, pendingBlock, doneBlock, closeSuccessBlock, closeFailureBlock, finishBlock, statusSlot);
+    }
+
+    private static void EmitHttpStageCloseComplete(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        bool closeOnError,
+        string prefix,
+        LlvmBasicBlockHandle stepBlock,
+        LlvmBasicBlockHandle pendingBlock,
+        LlvmBasicBlockHandle doneBlock,
+        LlvmBasicBlockHandle closeSuccessBlock,
+        LlvmBasicBlockHandle closeFailureBlock,
+        LlvmBasicBlockHandle finishBlock,
+        LlvmValueHandle statusSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, stepBlock);
         LlvmValueHandle stepTask = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, prefix + "_step_task");
         LlvmValueHandle childStatus = EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [stepTask], prefix + "_child_status");
@@ -3397,19 +4244,50 @@ internal static partial class LlvmCodegen
         LlvmValueHandle httpsPrefix = EmitHeapStringLiteral(state, "https://");
         LlvmValueHandle httpPrefix = EmitHeapStringLiteral(state, "http://");
 
-        LlvmBasicBlockHandle httpsCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_https_check");
+        (LlvmBasicBlockHandle httpsCheckBlock,
+            LlvmBasicBlockHandle findSlashBlock,
+            LlvmBasicBlockHandle parsePortCheckBlock,
+            LlvmBasicBlockHandle buildPathBlock,
+            LlvmBasicBlockHandle malformedBlock,
+            LlvmBasicBlockHandle doneBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_https_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_find_slash"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_path"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_malformed"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"));
+
+        LlvmApi.BuildBr(builder, httpsCheckBlock);
+
+        EmitParseHttpUrlScheme(state, prefix, urlRef, httpsPrefix, httpPrefix, portSlot, schemeSlot, portValueSlot, schemeOffsetSlot, httpsCheckBlock, findSlashBlock, malformedBlock);
+        EmitParseHttpUrlHost(state, prefix, urlBytes, urlLen, hostSlot, pathSlot, portSlot, schemeSlot, resultSlot, portValueSlot, portIndexSlot, hostEndSlot, schemeOffsetSlot, findSlashBlock, parsePortCheckBlock, buildPathBlock, malformedBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, malformedBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedUrlMessage)), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result");
+    }
+
+    private static void EmitParseHttpUrlScheme(
+        LlvmCodegenState state,
+        string prefix,
+        LlvmValueHandle urlRef,
+        LlvmValueHandle httpsPrefix,
+        LlvmValueHandle httpPrefix,
+        LlvmValueHandle portSlot,
+        LlvmValueHandle schemeSlot,
+        LlvmValueHandle portValueSlot,
+        LlvmValueHandle schemeOffsetSlot,
+        LlvmBasicBlockHandle httpsCheckBlock,
+        LlvmBasicBlockHandle findSlashBlock,
+        LlvmBasicBlockHandle malformedBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle httpsBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_https");
         LlvmBasicBlockHandle httpCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_http_check");
         LlvmBasicBlockHandle httpBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_http");
-        LlvmBasicBlockHandle findSlashBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_find_slash");
-        LlvmBasicBlockHandle parsePortCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_check");
-        LlvmBasicBlockHandle parsePortLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_loop");
-        LlvmBasicBlockHandle parsePortBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_body");
-        LlvmBasicBlockHandle buildPathBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_path");
-        LlvmBasicBlockHandle malformedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_malformed");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
-
-        LlvmApi.BuildBr(builder, httpsCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, httpsCheckBlock);
         LlvmValueHandle isHttps = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, EmitStartsWith(state, urlRef, httpsPrefix, prefix + "_is_https"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_https_bool");
@@ -3432,7 +4310,29 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 80, 0), portValueSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 7, 0), schemeOffsetSlot);
         LlvmApi.BuildBr(builder, findSlashBlock);
+    }
 
+    private static void EmitParseHttpUrlHost(
+        LlvmCodegenState state,
+        string prefix,
+        LlvmValueHandle urlBytes,
+        LlvmValueHandle urlLen,
+        LlvmValueHandle hostSlot,
+        LlvmValueHandle pathSlot,
+        LlvmValueHandle portSlot,
+        LlvmValueHandle schemeSlot,
+        LlvmValueHandle resultSlot,
+        LlvmValueHandle portValueSlot,
+        LlvmValueHandle portIndexSlot,
+        LlvmValueHandle hostEndSlot,
+        LlvmValueHandle schemeOffsetSlot,
+        LlvmBasicBlockHandle findSlashBlock,
+        LlvmBasicBlockHandle parsePortCheckBlock,
+        LlvmBasicBlockHandle buildPathBlock,
+        LlvmBasicBlockHandle malformedBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, findSlashBlock);
         LlvmValueHandle schemeOffset = LlvmApi.BuildLoad2(builder, state.I64, schemeOffsetSlot, prefix + "_scheme_offset");
         LlvmValueHandle isHttpsScheme = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildLoad2(builder, state.I64, schemeSlot, prefix + "_scheme_value"), LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_scheme_is_https");
@@ -3455,6 +4355,32 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, hostEnd, hostEndSlot);
         LlvmApi.BuildStore(builder, EmitHeapStringSliceFromBytesPointer(state, LlvmApi.BuildGEP2(builder, state.I8, urlBytes, [schemeOffset], prefix + "_host_ptr"), hostLen, prefix + "_host"), hostSlot);
         LlvmApi.BuildCondBr(builder, hasColon, parsePortCheckBlock, buildPathBlock);
+
+        EmitParseHttpUrlPort(state, prefix, urlBytes, urlLen, pathSlot, portSlot, resultSlot, portValueSlot, portIndexSlot, colonIndex, hostSearchEnd, hasSlash, slashIndex, parsePortCheckBlock, buildPathBlock, malformedBlock, doneBlock);
+    }
+
+    private static void EmitParseHttpUrlPort(
+        LlvmCodegenState state,
+        string prefix,
+        LlvmValueHandle urlBytes,
+        LlvmValueHandle urlLen,
+        LlvmValueHandle pathSlot,
+        LlvmValueHandle portSlot,
+        LlvmValueHandle resultSlot,
+        LlvmValueHandle portValueSlot,
+        LlvmValueHandle portIndexSlot,
+        LlvmValueHandle colonIndex,
+        LlvmValueHandle hostSearchEnd,
+        LlvmValueHandle hasSlash,
+        LlvmValueHandle slashIndex,
+        LlvmBasicBlockHandle parsePortCheckBlock,
+        LlvmBasicBlockHandle buildPathBlock,
+        LlvmBasicBlockHandle malformedBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle parsePortLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_loop");
+        LlvmBasicBlockHandle parsePortBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_port_body");
 
         LlvmApi.PositionBuilderAtEnd(builder, parsePortCheckBlock);
         LlvmValueHandle portStart = LlvmApi.BuildAdd(builder, colonIndex, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_port_start");
@@ -3502,13 +4428,6 @@ internal static partial class LlvmCodegen
             prefix + "_path_ref");
         LlvmApi.BuildStore(builder, pathRef, pathSlot);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, malformedBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedUrlMessage)), resultSlot);
-        LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result");
     }
 
     private static LlvmValueHandle EmitParseHttpResponseResult(LlvmCodegenState state, LlvmValueHandle responseRef, string prefix)
@@ -3517,13 +4436,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
 
-        LlvmBasicBlockHandle prepareBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_prepare");
-        LlvmBasicBlockHandle parseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse");
-        LlvmBasicBlockHandle malformedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_malformed");
-        LlvmBasicBlockHandle chunkedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_chunked");
-        LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success");
-        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done");
+        (LlvmBasicBlockHandle prepareBlock,
+            LlvmBasicBlockHandle parseBlock,
+            LlvmBasicBlockHandle parseStatusBlock,
+            LlvmBasicBlockHandle parseDigitsBlock,
+            LlvmBasicBlockHandle detectChunkedBlock,
+            LlvmBasicBlockHandle buildBodyBlock,
+            LlvmBasicBlockHandle chunkedBlock,
+            LlvmBasicBlockHandle successBlock,
+            LlvmBasicBlockHandle errorBlock,
+            LlvmBasicBlockHandle malformedBlock,
+            LlvmBasicBlockHandle doneBlock) = (
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_prepare"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_status"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_digits"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_detect_chunked"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_chunked"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_success"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_error"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_malformed"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"));
 
         LlvmApi.BuildBr(builder, prepareBlock);
 
@@ -3541,19 +4475,44 @@ internal static partial class LlvmCodegen
         LlvmValueHandle responseBytes = GetStringBytesPointer(state, effectiveResponse, prefix + "_bytes");
         LlvmValueHandle separatorIndex = EmitFindByteSequence(state, responseBytes, responseLen, "\r\n\r\n"u8.ToArray(), prefix + "_separator");
         LlvmValueHandle hasSeparator = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, separatorIndex, LlvmApi.ConstInt(state.I64, 0, 1), prefix + "_has_separator");
-        LlvmBasicBlockHandle parseStatusBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_status");
         LlvmApi.BuildCondBr(builder, hasSeparator, parseStatusBlock, malformedBlock);
 
+        EmitParseHttpResponseHeaders(state, prefix, responseBytes, separatorIndex, responseLen, resultSlot, parseStatusBlock, parseDigitsBlock, detectChunkedBlock, buildBodyBlock, chunkedBlock, successBlock, errorBlock, malformedBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, malformedBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedResponseMessage)), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result");
+    }
+
+    private static void EmitParseHttpResponseHeaders(
+        LlvmCodegenState state,
+        string prefix,
+        LlvmValueHandle responseBytes,
+        LlvmValueHandle separatorIndex,
+        LlvmValueHandle responseLen,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle parseStatusBlock,
+        LlvmBasicBlockHandle parseDigitsBlock,
+        LlvmBasicBlockHandle detectChunkedBlock,
+        LlvmBasicBlockHandle buildBodyBlock,
+        LlvmBasicBlockHandle chunkedBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle malformedBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, parseStatusBlock);
         LlvmValueHandle statusSpaceIndex = EmitFindByte(state, responseBytes, separatorIndex, 0, (byte)' ', prefix + "_status_space");
         LlvmValueHandle hasStatusSpace = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 0, 1), prefix + "_has_status_space");
-        LlvmBasicBlockHandle parseDigitsBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_digits");
         LlvmApi.BuildCondBr(builder, hasStatusSpace, parseDigitsBlock, malformedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, parseDigitsBlock);
         LlvmValueHandle statusEnd = LlvmApi.BuildAdd(builder, statusSpaceIndex, LlvmApi.ConstInt(state.I64, 3, 0), prefix + "_status_end");
         LlvmValueHandle digitsInRange = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, statusEnd, separatorIndex, prefix + "_digits_in_range");
-        LlvmBasicBlockHandle detectChunkedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_detect_chunked");
         LlvmApi.BuildCondBr(builder, digitsInRange, detectChunkedBlock, malformedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, detectChunkedBlock);
@@ -3567,7 +4526,6 @@ internal static partial class LlvmCodegen
                 prefix + "_first_digits_valid"),
             BuildByteRangeCheck(state, LlvmApi.BuildZExt(builder, onesByte, state.I64, prefix + "_ones_i64"), (byte)'0', (byte)'9', prefix + "_ones_range"),
             prefix + "_digits_valid");
-        LlvmBasicBlockHandle buildBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_body");
         LlvmApi.BuildCondBr(builder, digitsValid, buildBodyBlock, malformedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildBodyBlock);
@@ -3575,6 +4533,25 @@ internal static partial class LlvmCodegen
         LlvmValueHandle hasChunkedHeader = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, chunkedHeaderIndex, LlvmApi.ConstInt(state.I64, 0, 1), prefix + "_has_chunked_header");
         LlvmApi.BuildCondBr(builder, hasChunkedHeader, chunkedBlock, successBlock);
 
+        EmitParseHttpResponseSuccess(state, prefix, responseBytes, separatorIndex, responseLen, hundredsByte, tensByte, onesByte, resultSlot, chunkedBlock, successBlock, errorBlock, doneBlock);
+    }
+
+    private static void EmitParseHttpResponseSuccess(
+        LlvmCodegenState state,
+        string prefix,
+        LlvmValueHandle responseBytes,
+        LlvmValueHandle separatorIndex,
+        LlvmValueHandle responseLen,
+        LlvmValueHandle hundredsByte,
+        LlvmValueHandle tensByte,
+        LlvmValueHandle onesByte,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle chunkedBlock,
+        LlvmBasicBlockHandle successBlock,
+        LlvmBasicBlockHandle errorBlock,
+        LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, chunkedBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpUnsupportedTransferEncodingMessage)), resultSlot);
         LlvmApi.BuildBr(builder, doneBlock);
@@ -3604,12 +4581,5 @@ internal static partial class LlvmCodegen
             prefix + "_final_result");
         LlvmApi.BuildStore(builder, finalResult, resultSlot);
         LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, malformedBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, HttpMalformedResponseMessage)), resultSlot);
-        LlvmApi.BuildBr(builder, doneBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result");
     }
 }
