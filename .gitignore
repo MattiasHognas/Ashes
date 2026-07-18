@@ -89,6 +89,7 @@ runtimes/*
 !runtimes/linux-x64/
 !runtimes/linux-arm64/
 !runtimes/win-x64/
+!runtimes/win-arm64/
 runtimes/linux-x64/*
 !runtimes/linux-x64/libmbedtls.bc
 !runtimes/linux-x64/mbedtls.version
@@ -110,6 +111,13 @@ runtimes/win-x64/*
 !runtimes/win-x64/openlibm.version
 !runtimes/win-x64/libpcre2.bc
 !runtimes/win-x64/pcre2.version
+runtimes/win-arm64/*
+!runtimes/win-arm64/libmbedtls.bc
+!runtimes/win-arm64/mbedtls.version
+!runtimes/win-arm64/libopenlibm.bc
+!runtimes/win-arm64/openlibm.version
+!runtimes/win-arm64/libpcre2.bc
+!runtimes/win-arm64/pcre2.version
 out
 *.lscache
 *.core
