@@ -1254,6 +1254,8 @@ internal static partial class LlvmCodegen
             throw new InvalidOperationException($"Failed to parse openlibm bitcode for '{targetId}': {error}");
         }
 
+        NormalizeBitcodeTriple(openlibmModule, target);
+
         // LLVMLinkModules2 consumes (and disposes) the source module. Returns non-zero on failure.
         // The vendored bitcode is the whole (small, ~190 KB) self-contained openlibm, kept intact:
         // it must retain the standard libm functions because the backend's own instruction selection
@@ -1286,6 +1288,8 @@ internal static partial class LlvmCodegen
             throw new InvalidOperationException($"Failed to parse PCRE2 bitcode for '{targetId}': {error}");
         }
 
+        NormalizeBitcodeTriple(pcre2Module, target);
+
         // LLVMLinkModules2 consumes (and disposes) the source module. Returns non-zero on failure.
         if (LlvmApi.LinkModules2(target.Module, pcre2Module) != 0)
         {
@@ -1306,10 +1310,27 @@ internal static partial class LlvmCodegen
             throw new InvalidOperationException($"Failed to parse Mbed TLS bitcode for '{targetId}': {error}");
         }
 
+        NormalizeBitcodeTriple(mbedTlsModule, target);
+
         if (LlvmApi.LinkModules2(target.Module, mbedTlsModule) != 0)
         {
             throw new InvalidOperationException($"Failed to link Mbed TLS bitcode into the program module for '{targetId}'.");
         }
+    }
+
+    /// <summary>
+    /// Rewrites a vendored bitcode payload's target triple to the program module's triple before
+    /// linking. The Windows payloads are compiled with the <c>windows-gnu</c> triple (the sources
+    /// parse under MinGW stub headers with no MSVC SDK) while the backend emits a <c>windows-msvc</c>
+    /// module. The two share an identical datalayout — which is what <c>LLVMLinkModules2</c> actually
+    /// gates on — so linking is correct either way, but a triple-string mismatch makes the linker emit
+    /// a "Linking two modules of different target triples" warning. Normalizing the source triple to
+    /// the destination's silences that noise without touching the payloads. A no-op on Linux, where
+    /// the payload and program triples already match.
+    /// </summary>
+    private static void NormalizeBitcodeTriple(LlvmModuleHandle bitcodeModule, LlvmTargetContext target)
+    {
+        LlvmApi.SetTarget(bitcodeModule, target.TargetTriple);
     }
 
     private static string GetTargetIdForFlavor(LlvmCodegenFlavor flavor)
