@@ -63,11 +63,16 @@ worker cap defaults to the detected thread count (override with `--parallel-work
 
 | Rows | Time | Peak RSS |
 |------|------|----------|
-| 10,000,000 | 0.56 s | 6.6 GB |
-| 100,000,000 | 1.26 s | 8.6 GB |
-| **1,000,000,000** (full challenge) | **8.42 s** (±0.12) | 22.2 GB |
+| 10,000,000 | 0.59 s | 6.6 GB |
+| 100,000,000 | 1.31 s | 8.6 GB |
+| **1,000,000,000** (full challenge) | **8.46 s** (±0.05) | 21.7 GB |
 
-At the full billion rows: 41,343 stations, ≈120 M rows/s.
+At the full billion rows: 41,343 stations, ≈118 M rows/s.
+
+These reflect the freestanding SWAR byte scan used by `Ashes.Byte.indexOf` in fully-static
+(non-networking) binaries. The per-row newline scan is ≈3 % slower at the full billion rows than
+the earlier glibc-`memchr` path (which made the binary dynamically linked); the heavy semicolon
+scan is unaffected as it goes through the untouched `Ashes.Byte.scanHash`.
 
 ```bash
 hyperfine --warmup 1 --runs 5 '/tmp/brc challenges/1brc/measurements.txt'
