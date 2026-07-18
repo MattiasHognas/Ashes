@@ -1,5 +1,0 @@
-let unwrapOr opt def =
-    match opt with
-        | None -> def
-        | Some(x) -> x
-in Ashes.IO.print(unwrapOr(Some(10))(0))

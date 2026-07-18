@@ -1,2 +1,0 @@
-let bang = "!"
-in bang
