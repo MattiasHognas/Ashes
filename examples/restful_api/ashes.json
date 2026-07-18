@@ -1,0 +1,7 @@
+{
+  "name": "restful-api",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "target": "linux-x64"
+}
