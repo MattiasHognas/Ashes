@@ -1,4 +1,4 @@
-import Api as api
+import Api
 import Ashes.Http.Server as http
 import Ashes.IO as io
 import Ashes.Test as test
@@ -8,7 +8,7 @@ let request m target bodyText = http.requestFromLine(m + " " + target + " HTTP/1
 
 let mocked req =
     req
-    |> api.route
+    |> route
     |> http.render
 
 let check label expected actual =

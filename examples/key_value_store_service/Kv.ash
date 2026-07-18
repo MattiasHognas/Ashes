@@ -1,4 +1,4 @@
-import Resp as resp
+import Resp
 import Ashes.Bytes as bytes
 import Ashes.Text as text
 import Ashes.UInt as uint
@@ -88,7 +88,7 @@ let recursive countExisting keys store count =
                 | None -> count
                 | Some(_v) -> count + 1)
 
-let wrongArgs name = (resp.errorReply("wrong number of arguments for '" + name + "'"), [], false)
+let wrongArgs name = (errorReply("wrong number of arguments for '" + name + "'"), [], false)
 
 let keepStore store outcome =
     match outcome with
@@ -96,8 +96,8 @@ let keepStore store outcome =
 
 let pingCommand store args =
     match args with
-        | [] -> (resp.simple("PONG"), store, false)
-        | msg :: [] -> (resp.bulk(msg), store, false)
+        | [] -> (simple("PONG"), store, false)
+        | msg :: [] -> (bulk(msg), store, false)
         | _more ->
             "ping"
             |> wrongArgs
@@ -105,7 +105,7 @@ let pingCommand store args =
 
 let echoCommand store args =
     match args with
-        | msg :: [] -> (resp.bulk(msg), store, false)
+        | msg :: [] -> (bulk(msg), store, false)
         | _other ->
             "echo"
             |> wrongArgs
@@ -113,7 +113,7 @@ let echoCommand store args =
 
 let setCommand store args =
     match args with
-        | key :: value :: [] -> (resp.simple("OK"), setValue(key)(value)(store), false)
+        | key :: value :: [] -> (simple("OK"), setValue(key)(value)(store), false)
         | _other ->
             "set"
             |> wrongArgs
@@ -123,8 +123,8 @@ let getCommand store args =
     match args with
         | key :: [] ->
             match getValue(key)(store) with
-                | None -> (resp.nullBulk(Unit), store, false)
-                | Some(value) -> (resp.bulk(value), store, false)
+                | None -> (nullBulk(Unit), store, false)
+                | Some(value) -> (bulk(value), store, false)
         | _other ->
             "get"
             |> wrongArgs
@@ -138,7 +138,7 @@ let delCommand store args =
             |> keepStore(store)
         | _keys ->
             match deleteAll(args)(store)(0) with
-                | (count, kept) -> (resp.number(count), kept, false)
+                | (count, kept) -> (number(count), kept, false)
 
 let existsCommand store args =
     match args with
@@ -149,7 +149,7 @@ let existsCommand store args =
         | _keys ->
             (0
             |> countExisting(args)(store)
-            |> resp.number, store, false)
+            |> number, store, false)
 
 let keysCommand store args =
     match args with
@@ -158,19 +158,19 @@ let keysCommand store args =
             then
                 (store
                 |> keysOf
-                |> resp.array, store, false)
+                |> array, store, false)
             else
                 (store
                 |> matchingKeys(pattern)
-                |> resp.array, store, false)
+                |> array, store, false)
         | _other ->
             "keys"
             |> wrongArgs
             |> keepStore(store)
 
-let commandStub store _args = (resp.array([]), store, false)
+let commandStub store _args = (array([]), store, false)
 
-let quitCommand store _args = (resp.simple("OK"), store, true)
+let quitCommand store _args = (simple("OK"), store, true)
 
 let attempt name handler pending =
     match pending with
@@ -186,11 +186,11 @@ let attempt name handler pending =
 let settle pending =
     match pending with
         | (_cmd, _store, _args, Some(outcome)) -> outcome
-        | (cmd, store, _args, None) -> (resp.errorReply("unknown command '" + cmd + "'"), store, false)
+        | (cmd, store, _args, None) -> (errorReply("unknown command '" + cmd + "'"), store, false)
 
 let execute store words =
     match words with
-        | [] -> (resp.errorReply("empty command"), store, false)
+        | [] -> (errorReply("empty command"), store, false)
         | cmd :: args ->
             (cmd, store, args, None)
             |> attempt("ping")(pingCommand)

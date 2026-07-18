@@ -1,4 +1,4 @@
-import Api as api
+import Api
 import Ashes.Async as tasks
 import Ashes.File as file
 import Ashes.Http.Server as http
@@ -15,7 +15,7 @@ provide Store =
                 | Ok(_written) -> Unit
                 | Error(e) -> io.panic("cannot write todos.json: " + e)
 
-let onRequest req = async(api.route(req))
+let onRequest req = async(route(req))
 
 let _banner = io.writeLine("todo API listening on http://127.0.0.1:8080")
 

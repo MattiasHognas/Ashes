@@ -1,5 +1,5 @@
-import Kv as kv
-import Resp as resp
+import Kv
+import Resp
 import Ashes.Async as tasks
 import Ashes.IO as io
 import Ashes.Net.Tcp as tcp
@@ -12,14 +12,14 @@ match tasks.run(async(match await server.listen(port) with
     | Error(bindError) -> Error(bindError)
     | Ok(listener) ->
         let recursive connLoop client buffer store =
-            match resp.parse(buffer) with
+            match parse(buffer) with
                 | RespMalformed(msg) ->
-                    let _sent = await tcp.send(client)(resp.errorReply(msg))
+                    let _sent = await tcp.send(client)(errorReply(msg))
                     in
                         let _closed = await tcp.close(client)
                         in store
                 | RespParsed(words, rest) ->
-                    match kv.execute(store)(words) with
+                    match execute(store)(words) with
                         | (reply, newStore, quit) ->
                             match await tcp.send(client)(reply) with
                                 | Error(_sendError) ->
@@ -50,7 +50,7 @@ match tasks.run(async(match await server.listen(port) with
                         then Ok(Unit)
                         else Error(acceptError)
                     | Ok(client) -> acceptLoop(connLoop(client)("")(store))
-            in acceptLoop(kv.emptyStore(Unit)))) with
+            in acceptLoop(emptyStore(Unit)))) with
     | Ok(Ok(_stopped)) -> io.print("server stopped")
     | Ok(Error(loopError)) -> io.print(loopError)
     | Error(runError) -> io.print(runError)
