@@ -478,7 +478,9 @@ representation.
 
 Example:
 
+```text
 1 :: [2,3]  // => [1,2,3]
+```
 
 ### 3.6 Pipes
 
@@ -512,19 +514,21 @@ It evaluates a `Result(E, A)` expression, binds the `Ok` payload inside the body
 
 Example:
 
+```ash
 let bumpIfOk result =
     let? n = result
     in
     Ok(n)
+```
 
 This is equivalent to:
 
+```ash
 let bumpIfOk result =
     match result with
-        | Ok(n) ->
-            Ok(n)
-        | Error(e) ->
-            Error(e)
+        | Ok(n) -> Ok(n)
+        | Error(e) -> Error(e)
+```
 
 Use `|?>` when a pipeline style is clearer and intermediate names are not needed.
 Use `let?` when sequential named Result values improve readability.
@@ -635,15 +639,19 @@ Ashes source never uses curly braces.
 
 Syntax:
 
-type TypeName =
-    | field1: Type1
-    | field2: Type2
+```text
+type TypeName =  
+  | field1: Type1
+  | field2: Type2
+```
 
 Example:
 
+```ash
 type Point =
     | x: Int
     | y: Int
+```
 
 A record declaration is a `type ... = | ...` declaration whose alternatives are
 `| name: Type` field branches instead of `| Constructor(...)` constructor
@@ -698,13 +706,17 @@ Rules:
 
 Syntax:
 
+```text
 let name = value
 in body
+```
 
 Example:
 
+```ash
 let z = 20
 in Ashes.IO.print(z)
+```
 
 Bindings are:
 
@@ -785,13 +797,17 @@ Let bindings may carry an optional type annotation between the name and `=`.
 
 Syntax:
 
+```text
 let name : TypeExpr = value
 in body
+```
 
 Example:
 
+```ash
 let x : Int = 42
 in Ashes.IO.print(x)
+```
 
 The annotation is checked against the inferred type of `value`. A mismatch is a
 compile error. Annotations do not alter inference; they serve as documentation and
@@ -815,16 +831,20 @@ Recursive bindings must be declared with `recursive`.
 
 Syntax:
 
+```text
 let recursive name = value
 in body
+```
 
 Example:
 
+```ash
 let recursive loop i =
     if i >= 10
     then i
     else loop(i + 1)
 in Ashes.IO.print(loop(0))
+```
 
 Without `recursive`, a binding cannot reference itself.
 
@@ -849,13 +869,17 @@ Anonymous functions are declared using `given`.
 
 Syntax:
 
+```text
 given (param1, param2, ...) -> expr
 given param -> expr
+```
 
 Example:
 
+```ash
 let add = given (x, y) -> x + y
 in Ashes.IO.print(add(10, 5))
+```
 
 For a single parameter the parentheses may be omitted: `given x -> x + 1`. The
 parenthesized form is canonical (the formatter re-parenthesizes the bare form).
@@ -1027,15 +1051,19 @@ bare. The parentheses are required exactly when an annotation is present.
 
 Syntax:
 
+```text
 if condition
 then whenTrue
 else whenFalse
+```
 
 Example:
 
+```ash
 if 10 >= 10
 then "true"
 else "false"
+```
 
 All branches must return compatible types.
 
@@ -1066,7 +1094,9 @@ Mixed-type lists are invalid.
 
 Syntax:
 
+```text
 x :: xs
+```
 
 Meaning:
 
@@ -1074,7 +1104,9 @@ Construct a new list by placing `x` at the front of `xs`.
 
 Example:
 
+```text
 1 :: [2,3]      // => [1,2,3]
+```
 
 Type rule:
 
@@ -1099,13 +1131,17 @@ Pattern matching is performed using `match`.
 
 Syntax:
 
+```text
 match value with
 | pattern1 -> expr1
 | pattern2 -> expr2
+```
 
 Each arm may include an optional guard:
 
+```text
 | pattern when condition -> expr
+```
 
 ---
 
@@ -1113,8 +1149,10 @@ Each arm may include an optional guard:
 
 Supported patterns:
 
+```text
 []
 x :: xs
+```
 
 Meaning:
 
@@ -1125,9 +1163,11 @@ Meaning:
 
 Example:
 
+```ash
 match xs with
-| [] -> 0
-| x :: rest -> x
+  | [] -> 0
+  | x :: rest -> x
+```
 
 Exhaustiveness:
 
@@ -1146,7 +1186,9 @@ Tuple patterns destructure tuples by position.
 
 Syntax:
 
+```text
 | (p1, p2, …) -> expr
+```
 
 Rules:
 
@@ -1155,8 +1197,10 @@ Rules:
 
 Example:
 
+```ash
 match p with
-| (a, b) -> a
+  | (a, b) -> a
+```
 
 ---
 
@@ -1166,15 +1210,19 @@ match p with
 
 Example:
 
+```ash
 match xs with
-| [] -> 0
-| _ -> 1
+  | [] -> 0
+  | _ -> 1
+```
 
 The wildcard can appear in any pattern position, including inside constructor patterns:
 
+```ash
 match opt with
 | None -> 0
 | Some(_) -> 1
+```
 
 If a wildcard (or other catch-all pattern such as a non-constructor variable pattern)
 appears in a `match`, all later arms are unreachable and are rejected.
@@ -1200,6 +1248,7 @@ Rules:
 
 Example:
 
+```ash
 import Ashes.Core.Maybe
 
 let unwrapOr opt def =
@@ -1207,6 +1256,7 @@ let unwrapOr opt def =
         | None -> def
         | Some(x) -> x
 in Ashes.IO.print(unwrapOr(Some(10))(0))
+```
 
 Errors:
 
@@ -1215,9 +1265,9 @@ Errors:
 - Redundant constructor arm: if an earlier arm already matches a constructor, a later arm
   for the same constructor is unreachable and rejected.
 
-> **Note (v0.x runtime representation)**
+> **Note**
 >
-> In the current v0.x implementation all constructor values are heap-allocated tagged
+> In the current implementation all constructor values are heap-allocated tagged
 > cells. Each cell stores a constructor tag (its 0-based index in the declaring type)
 > at offset 0, followed by any payloads at subsequent 8-byte offsets.
 >
@@ -1236,9 +1286,11 @@ Integer literal patterns match values by equality.
 
 Syntax:
 
+```text
 | 0 -> expr0
 | 1 -> expr1
 | n -> exprDefault
+```
 
 Rules:
 
@@ -1249,17 +1301,21 @@ Rules:
 
 Example:
 
+```ash
 match n with
-| 0 -> "zero"
-| 1 -> "one"
-| _ -> "other"
+  | 0 -> "zero"
+  | 1 -> "one"
+  | _ -> "other"
+```
 
 Negative integers are supported:
 
+```ash
 match n with
-| -1 -> "negative one"
-| 0 -> "zero"
-| _ -> "positive"
+  | -1 -> "negative one"
+  | 0 -> "zero"
+  | _ -> "positive"
+```
 
 ---
 
@@ -1269,9 +1325,11 @@ String literal patterns match values by equality.
 
 Syntax:
 
+```text
 | "hello" -> expr1
 | "world" -> expr2
 | s -> exprDefault
+```
 
 Rules:
 
@@ -1280,10 +1338,12 @@ Rules:
 
 Example:
 
+```ash
 match greeting with
 | "hello" -> "English"
 | "hola" -> "Spanish"
 | _ -> "unknown"
+```
 
 ---
 
@@ -1293,8 +1353,10 @@ Boolean literal patterns match `true` or `false`.
 
 Syntax:
 
+```text
 | true -> expr1
 | false -> expr2
+```
 
 Rules:
 
@@ -1303,9 +1365,11 @@ Rules:
 
 Example:
 
+```ash
 match flag with
 | true -> "yes"
 | false -> "no"
+```
 
 ---
 
@@ -1316,7 +1380,9 @@ condition to the pattern.
 
 Syntax:
 
+```text
 | pattern when condition -> expr
+```
 
 Semantics:
 
@@ -1329,20 +1395,24 @@ The guard expression has access to all bindings introduced by the pattern.
 
 Example:
 
+```ash
 match x with
 | n when n >= 10 -> "big"
 | _ -> "small"
+```
 
 Example with constructor patterns:
 
+```ash
 type Outcome =
     | Good(Int)
     | Bad(String)
 
 match outcome with
-| Good(n) when n >= 100 -> "excellent"
-| Good(n) -> "ok"
-| Bad(e) -> e
+  | Good(n) when n >= 100 -> "excellent"
+  | Good(n) -> "ok"
+  | Bad(e) -> e
+```
 
 Exhaustiveness:
 
@@ -1370,8 +1440,10 @@ Let expressions support destructuring patterns on the left side of `=`.
 
 Syntax:
 
+```text
 let (a, b) = expr in body
 let x :: xs = expr in body
+```
 
 Rules:
 
@@ -1387,11 +1459,13 @@ Rules:
 
 Example:
 
+```ash
 let (x, y) = (1, 2)
 in x + y
 
 let first :: rest = [1, 2, 3]
 in first
+```
 
 ---
 
@@ -1399,14 +1473,17 @@ in first
 
 Example:
 
+```ash
 let recursive sum lst acc =
     match lst with
         | [] -> acc
         | x :: rest -> sum(rest)(acc + x)
 in Ashes.IO.print(sum([1, 2, 3])(1))
+```
 
 Default-value list utilities are written as regular user code, for example:
 
+```ash
 let recursive lastOr xs default =
     let recursive loop ys =
         match ys with
@@ -1417,6 +1494,7 @@ let recursive lastOr xs default =
                     | _ -> loop(rest)
     in loop(xs)
 in Ashes.IO.print(lastOr([1, 2, 3])(0))
+```
 
 ---
 
@@ -1438,16 +1516,19 @@ There are two common ways to use standard library functions:
 
 #### Qualified access (no import required)
 
-    Ashes.IO.print "hello"
-    Ashes.IO.panic "boom"
-    Ashes.IO.args
+```ash
+Ashes.IO.print "hello"
+Ashes.IO.panic "boom"
+Ashes.IO.args
+```
 
 #### Import and use unqualified names
 
-    import Ashes.IO
-
-    print "hello"
-    panic "boom"
+```ash
+import Ashes.IO
+print "hello"
+panic "boom"
+```
 
 `import Module` brings the module's exported names into local scope. The import
 must appear at the top of the source file, before any expressions.
@@ -1456,9 +1537,10 @@ must appear at the top of the source file, before any expressions.
 
 An import may include an alias using `as`:
 
-    import Ashes.IO as IO
-
-    IO.print "hello"
+```ash
+import Ashes.IO as IO
+IO.print "hello"
+```
 
 The alias is a short name that can be used in place of the full module path for
 qualified access.  Unqualified access to the module's exported names is still
@@ -1628,27 +1710,28 @@ Other built-in runtime modules are also always available through qualified acces
 
 The compiler also provides built-in runtime ADTs:
 
-    type Unit =
-        | Unit
-
-    type Maybe(T) =
-        | None
-        | Some(T)
-
-    type Result(E, A) =
-        | Ok(A)
-        | Error(E)
+```ash
+type Unit =
+    | Unit
+type Maybe(T) =
+    | None
+    | Some(T)
+type Result(E, A) =
+    | Ok(A)
+    | Error(E)
+```
 
 `Maybe` and `Result` behave like any other algebraic data type during type checking
 and pattern matching.
 
 Examples:
-
-        let value = Some("hello")
-        in
-        match value with
-                | None -> Ashes.IO.print("empty")
-                | Some(text) -> Ashes.IO.print(text)
+```ash
+let value = Some("hello")
+in
+  match value with
+    | None -> Ashes.IO.print("empty")
+    | Some(text) -> Ashes.IO.print(text)
+```
 
 Rules:
 
@@ -1704,11 +1787,13 @@ Idiomatic Result handling patterns are:
 
 Example:
 
+```ash
 let describe result =
     match result with
         | Ok(value) -> Ashes.IO.writeLine("ok")
         | Error(message) -> Ashes.IO.writeLine(message)
 in describe(Ok(1))
+```
 
 `Ashes.IO.panic(message)` is reserved for unrecoverable failures.
 It prints the provided message and terminates execution with a non-zero exit code.
@@ -1801,10 +1886,11 @@ function because the language does not yet have a built-in ordering abstraction.
 
 Example:
 
-        import Ashes.Test
-
-        let checked = assertEqual(3, 3)
-        in Ashes.IO.print("ok")
+```ash
+import Ashes.Test
+let checked = assertEqual(3, 3)
+in Ashes.IO.print("ok")
+```
 
 Like other multi-argument calls in Ashes, `assertEqual(expected, actual)` is
 surface sugar for curried application.
@@ -1861,12 +1947,11 @@ with fresh type variables. This allows one binding to be reused at multiple type
 
 Example:
 
-    let id x = x
-    in
-    let _a = id(1)
-    in
-    let _b = id("x")
-    in Ashes.IO.print("ok")
+```ash
+let id x = x
+let _a = id(1)
+let _b = id("x")
+```
 
 `id` is inferred once, generalized, then instantiated separately for integer and string uses.
 
