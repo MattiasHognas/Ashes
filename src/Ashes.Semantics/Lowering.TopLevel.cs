@@ -13,79 +13,84 @@ public sealed partial class Lowering
     {
         var parameters = new HashSet<string>(paramNames, StringComparer.Ordinal);
         var found = false;
+        BodyComparesOrAddsVisit(expr, parameters, ref found);
+        return found;
+    }
 
-        bool IsParam(Expr e) => e is Expr.Var v && parameters.Contains(v.Name);
+    private static bool BodyComparesOrAddsIsParam(Expr e, HashSet<string> parameters)
+        => e is Expr.Var v && parameters.Contains(v.Name);
 
-        void Visit(object? node)
+    private static void BodyComparesOrAddsVisit(object? node, HashSet<string> parameters, ref bool found)
+    {
+        if (found || node is null or string)
         {
-            if (found || node is null or string)
+            return;
+        }
+
+        if ((node is Expr.Equal eq && BodyComparesOrAddsIsParam(eq.Left, parameters) && BodyComparesOrAddsIsParam(eq.Right, parameters))
+            || (node is Expr.NotEqual ne && BodyComparesOrAddsIsParam(ne.Left, parameters) && BodyComparesOrAddsIsParam(ne.Right, parameters))
+            || (node is Expr.Add add && BodyComparesOrAddsIsParam(add.Left, parameters) && BodyComparesOrAddsIsParam(add.Right, parameters)))
+        {
+            found = true;
+            return;
+        }
+
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length && !found; i++)
             {
-                return;
+                BodyComparesOrAddsVisit(tuple[i], parameters, ref found);
             }
 
-            if ((node is Expr.Equal eq && IsParam(eq.Left) && IsParam(eq.Right))
-                || (node is Expr.NotEqual ne && IsParam(ne.Left) && IsParam(ne.Right))
-                || (node is Expr.Add add && IsParam(add.Left) && IsParam(add.Right)))
+            return;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
             {
-                found = true;
-                return;
-            }
-
-            if (node is System.Runtime.CompilerServices.ITuple tuple)
-            {
-                for (int i = 0; i < tuple.Length && !found; i++)
-                {
-                    Visit(tuple[i]);
-                }
-
-                return;
-            }
-
-            if (node is System.Collections.IEnumerable seq)
-            {
-                foreach (var item in seq)
-                {
-                    Visit(item);
-                    if (found)
-                    {
-                        return;
-                    }
-                }
-
-                return;
-            }
-
-            if (node is not (Expr or Pattern or MatchCase or HandlerArm))
-            {
-                return;
-            }
-
-            foreach (var prop in node.GetType().GetProperties())
-            {
+                BodyComparesOrAddsVisit(item, parameters, ref found);
                 if (found)
                 {
                     return;
                 }
-
-                if (prop.GetIndexParameters().Length > 0)
-                {
-                    continue;
-                }
-
-                var t = prop.PropertyType;
-                if (typeof(Expr).IsAssignableFrom(t)
-                    || typeof(Pattern).IsAssignableFrom(t)
-                    || typeof(MatchCase).IsAssignableFrom(t)
-                    || typeof(HandlerArm).IsAssignableFrom(t)
-                    || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
-                {
-                    Visit(prop.GetValue(node));
-                }
             }
+
+            return;
         }
 
-        Visit(expr);
-        return found;
+        if (node is not (Expr or Pattern or MatchCase or HandlerArm))
+        {
+            return;
+        }
+
+        BodyComparesOrAddsVisitProperties(node, parameters, ref found);
+    }
+
+    private static void BodyComparesOrAddsVisitProperties(object node, HashSet<string> parameters, ref bool found)
+    {
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (found)
+            {
+                return;
+            }
+
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || typeof(HandlerArm).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                BodyComparesOrAddsVisit(prop.GetValue(node), parameters, ref found);
+            }
+        }
     }
 
     // Maps the unqualified export name of a stitched overload-generic stdlib function to its canonical
@@ -112,23 +117,6 @@ public sealed partial class Lowering
 
     private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
     {
-        // Strip the import stitcher's intra-module alias prefix (let helper = Ashes_Mod_helper in ...)
-        // so a stdlib function's value is seen as the clean lambda it is — otherwise the reuse
-        // registries below never recognise stdlib functions (Map.set etc.), since their value is a
-        // chain of alias `let`s rather than a Lambda. On an unhandled shape, fall back to the raw value
-        // (the function just isn't registered for reuse — correct, only unoptimized).
-        Expr Strip(Expr value)
-        {
-            try
-            {
-                return StripModuleAliasPrefix(value);
-            }
-            catch (NotSupportedException)
-            {
-                return value;
-            }
-        }
-
         foreach (var item in valueItems)
         {
             // The grained data-parallel combinators: capture their stripped multi-parameter recursive
@@ -137,62 +125,84 @@ public sealed partial class Lowering
             if (item is TopLevelItem.LetDecl { IsRecursive: true } parLet
                 && (string.Equals(parLet.Name, ParallelMapGrainedName, StringComparison.Ordinal)
                     || string.Equals(parLet.Name, ParallelReduceGrainedName, StringComparison.Ordinal))
-                && Strip(parLet.Value) is Expr.Lambda parLam)
+                && RegisterInlinableStrip(parLet.Value) is Expr.Lambda parLam)
             {
                 int arity = string.Equals(parLet.Name, ParallelMapGrainedName, StringComparison.Ordinal) ? 3 : 5;
                 _parallelSpecializable[parLet.Name] = (parLam, arity);
             }
 
-            if (item is TopLevelItem.LetDecl { IsRecursive: false } let && Strip(let.Value) is Expr.Lambda lam)
+            if (item is TopLevelItem.LetDecl { IsRecursive: false } let && RegisterInlinableStrip(let.Value) is Expr.Lambda lam)
             {
-                // A non-recursive function that returns a nested recursive single-param function
-                // (the Map.set shape) is specialized, not inlined; any other plain function is an
-                // inline candidate for helper rebuilds inside a reuse arm.
-                if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
-                {
-                    _specializableFunctions[let.Name] = (lam, nestedParam, nestedArgCount);
-                }
-                else if (ExprHasCallOrAggregate(GetInnermostBody(lam)))
-                {
-                    // Only inline helpers that can contribute an allocation. Non-allocating accessor /
-                    // arithmetic helpers are resolved as by-label calls in specializations instead (see
-                    // _topLevelFunctionRefs), which keeps the specialized function small.
-                    _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
-                    _inlinableDefiningValues[let.Name] = let.Value;
-                }
-
-                // Capability-generic: inline at concrete call sites so a parameterized capability
-                // operation resolves to its provider. Registered independently of the reuse-inline
-                // filter above (which requires an allocation).
-                if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
-                {
-                    _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
-                    _inlinableDefiningValues.TryAdd(let.Name, let.Value);
-                    _capabilityGenericInline.Add(let.Name);
-                }
-
-                // Overload-generic: compares/adds two parameters, so it can be used at Int/Str/Bool/
-                // Float across one program by inlining a type-resolved copy per concrete call site.
-                if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
-                {
-                    _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
-                    _inlinableDefiningValues.TryAdd(let.Name, let.Value);
-                    _overloadGenericInline.Add(let.Name);
-                    RegisterOverloadGenericAlias(let.Name);
-                }
+                RegisterInlinableNonRecursiveLet(let, lam);
             }
 
             // Single-parameter recursive functions (let rec f = given p -> body, body not a lambda)
             // are candidates for in-place-reuse specialization when applied to a unique accumulator.
-            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet && Strip(recursiveLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recursiveLambda)
+            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet && RegisterInlinableStrip(recursiveLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recursiveLambda)
             {
                 _specializableFunctions[recursiveLet.Name] = (recursiveLambda, recursiveLambda.ParamName, 1);
             }
             else if (item is TopLevelItem.RecursiveGroup { Bindings.Count: 1 } group
-                && Strip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
+                && RegisterInlinableStrip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
             {
                 _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
             }
+        }
+    }
+
+    // Strip the import stitcher's intra-module alias prefix (let helper = Ashes_Mod_helper in ...)
+    // so a stdlib function's value is seen as the clean lambda it is — otherwise the reuse
+    // registries below never recognise stdlib functions (Map.set etc.), since their value is a
+    // chain of alias `let`s rather than a Lambda. On an unhandled shape, fall back to the raw value
+    // (the function just isn't registered for reuse — correct, only unoptimized).
+    private static Expr RegisterInlinableStrip(Expr value)
+    {
+        try
+        {
+            return StripModuleAliasPrefix(value);
+        }
+        catch (NotSupportedException)
+        {
+            return value;
+        }
+    }
+
+    private void RegisterInlinableNonRecursiveLet(TopLevelItem.LetDecl let, Expr.Lambda lam)
+    {
+        // A non-recursive function that returns a nested recursive single-param function
+        // (the Map.set shape) is specialized, not inlined; any other plain function is an
+        // inline candidate for helper rebuilds inside a reuse arm.
+        if (TryGetNestedRecursiveReturn(lam, out var nestedParam, out var nestedArgCount))
+        {
+            _specializableFunctions[let.Name] = (lam, nestedParam, nestedArgCount);
+        }
+        else if (ExprHasCallOrAggregate(GetInnermostBody(lam)))
+        {
+            // Only inline helpers that can contribute an allocation. Non-allocating accessor /
+            // arithmetic helpers are resolved as by-label calls in specializations instead (see
+            // _topLevelFunctionRefs), which keeps the specialized function small.
+            _inlinableFunctions[let.Name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+            _inlinableDefiningValues[let.Name] = let.Value;
+        }
+
+        // Capability-generic: inline at concrete call sites so a parameterized capability
+        // operation resolves to its provider. Registered independently of the reuse-inline
+        // filter above (which requires an allocation).
+        if (BodyPerformsProvidedParameterizedCapability(GetInnermostBody(lam)))
+        {
+            _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+            _inlinableDefiningValues.TryAdd(let.Name, let.Value);
+            _capabilityGenericInline.Add(let.Name);
+        }
+
+        // Overload-generic: compares/adds two parameters, so it can be used at Int/Str/Bool/
+        // Float across one program by inlining a type-resolved copy per concrete call site.
+        if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
+        {
+            _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
+            _inlinableDefiningValues.TryAdd(let.Name, let.Value);
+            _overloadGenericInline.Add(let.Name);
+            RegisterOverloadGenericAlias(let.Name);
         }
     }
 
@@ -207,13 +217,24 @@ public sealed partial class Lowering
     /// </summary>
     private void RegisterEntryBodyFunctions(Expr body)
     {
+        var candidates = RegisterEntryBodyCollectCandidates(body);
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var registerable = RegisterEntryBodyComputeRegisterable(candidates);
+        RegisterEntryBodyRegisterCandidates(candidates, registerable);
+    }
+
+    // Collect the entry let-chain's function candidates: single-binder (unshadowed) lambda
+    // bindings not already registered from a flat top-level item.
+    private List<(string Name, bool IsRecursive, Expr.Lambda Lam)> RegisterEntryBodyCollectCandidates(Expr body)
+    {
         var binderCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         CountBinders(body, binderCounts);
 
-        // Collect the entry let-chain's function candidates: single-binder (unshadowed) lambda
-        // bindings not already registered from a flat top-level item.
         var candidates = new List<(string Name, bool IsRecursive, Expr.Lambda Lam)>();
-        var candidateNames = new HashSet<string>(StringComparer.Ordinal);
         var cur = body;
         while (cur is Expr.Let or Expr.LetRecursive)
         {
@@ -230,24 +251,24 @@ public sealed partial class Lowering
                 && value is Expr.Lambda lam)
             {
                 candidates.Add((name, isRecursive, lam));
-                candidateNames.Add(name);
             }
 
             cur = next;
         }
 
-        if (candidates.Count == 0)
-        {
-            return;
-        }
+        return candidates;
+    }
 
-        // A candidate is REGISTERABLE iff every free variable of its body resolves at an inline or
-        // specialization site — i.e. is a stitched module binding, a constructor, an
-        // already-registered function, or another registerable candidate. (A registerable function
-        // therefore captures nothing that isn't globally resolvable, so it reaches _topLevelFunctionRefs
-        // as an empty-env by-label callee.) Referencing any OTHER user sibling — a captured value, a
-        // non-registerable helper — would fail to lower inside a spec (the earlier bug this gate guards),
-        // so drop it. Compute the maximal registerable set by removing violators to a fixpoint.
+    // A candidate is REGISTERABLE iff every free variable of its body resolves at an inline or
+    // specialization site — i.e. is a stitched module binding, a constructor, an
+    // already-registered function, or another registerable candidate. (A registerable function
+    // therefore captures nothing that isn't globally resolvable, so it reaches _topLevelFunctionRefs
+    // as an empty-env by-label callee.) Referencing any OTHER user sibling — a captured value, a
+    // non-registerable helper — would fail to lower inside a spec (the earlier bug this gate guards),
+    // so drop it. Compute the maximal registerable set by removing violators to a fixpoint.
+    private HashSet<string> RegisterEntryBodyComputeRegisterable(List<(string Name, bool IsRecursive, Expr.Lambda Lam)> candidates)
+    {
+        var candidateNames = new HashSet<string>(candidates.Select(c => c.Name), StringComparer.Ordinal);
         var freeVarsByName = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var (name, _, lam) in candidates)
         {
@@ -280,9 +301,16 @@ public sealed partial class Lowering
             }
         }
 
-        // Register each registerable candidate, in let-chain order, exactly like a flat top-level item:
-        // the nested-recursive-return / single-param-recursive shapes become reuse specializations, and
-        // any other non-recursive helper with an allocating body becomes an inlinable rebuild helper.
+        return registerable;
+    }
+
+    // Register each registerable candidate, in let-chain order, exactly like a flat top-level item:
+    // the nested-recursive-return / single-param-recursive shapes become reuse specializations, and
+    // any other non-recursive helper with an allocating body becomes an inlinable rebuild helper.
+    private void RegisterEntryBodyRegisterCandidates(
+        List<(string Name, bool IsRecursive, Expr.Lambda Lam)> candidates,
+        HashSet<string> registerable)
+    {
         foreach (var (name, isRecursive, lam) in candidates)
         {
             if (!registerable.Contains(name))
@@ -552,8 +580,54 @@ public sealed partial class Lowering
         var bindings = group.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
 
-        // HM recursive-group rule, part 1: introduce a fresh type for every member up front. Function
-        // members get an arrow shape so call sites refine arg/return before the body is solved.
+        var recordTypes = LowerRecursiveGroupFreshTypes(bindings);
+        var (sharedCaptures, sharedEnvPtrTemp) = LowerRecursiveGroupSharedEnv(bindings, groupNames);
+
+        var labels = new string[bindings.Count];
+        var members = new (string Name, string Label, TypeRef Type, TextSpan Span)[bindings.Count];
+        var slots = new int[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
+            members[i] = (bindings[i].Name, labels[i], recordTypes[i], GetSpan(bindings[i].Value));
+            slots[i] = NewLocal();
+        }
+
+        var groupContext = new RecursiveGroupContext
+        {
+            SharedCaptures = sharedCaptures,
+            SharedEnvPtrTemp = sharedEnvPtrTemp,
+            Members = members
+        };
+
+        LowerRecursiveGroupMembers(bindings, recordTypes, labels, members, slots, groupContext);
+
+        // Mutual-recursion TCO: when the group is eligible, synthesize a single self-recursive
+        // dispatch function and rebind each member to a thin wrapper so the existing single-function
+        // TCO collapses the whole group into one loop instead of growing the stack through closure
+        // calls. Ineligible groups keep the closures lowered above.
+        var tcoSlots = TryLowerMutualRecursionTco(bindings, recordTypes, groupNames);
+
+        // The members stay in scope for the continuation, bound to the slots holding their closures
+        // (or their TCO wrappers) — monomorphic, matching the single let rec form.
+        var parent = _scopes.Peek();
+        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            int memberSlot = tcoSlots?[i] ?? slots[i];
+            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recordTypes[i]), members[i].Span);
+        }
+
+        _scopes.Push(child);
+        var (bodyTemp, bodyType) = LowerExpr(group.Body);
+        _scopes.Pop();
+        return (bodyTemp, bodyType);
+    }
+
+    // HM recursive-group rule, part 1: introduce a fresh type for every member up front. Function
+    // members get an arrow shape so call sites refine arg/return before the body is solved.
+    private TypeRef[] LowerRecursiveGroupFreshTypes(IReadOnlyList<(string Name, Expr Value)> bindings)
+    {
         var recordTypes = new TypeRef[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
@@ -562,6 +636,13 @@ public sealed partial class Lowering
                 : NewTypeVar();
         }
 
+        return recordTypes;
+    }
+
+    private (List<string> SharedCaptures, int SharedEnvPtrTemp) LowerRecursiveGroupSharedEnv(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        HashSet<string> groupNames)
+    {
         // The shared environment is the union of each member body's free variables, minus the group
         // names themselves (siblings are reached by symbol, never captured). Order is fixed here and
         // reused for every member so the env layout is identical across the group.
@@ -595,23 +676,17 @@ public sealed partial class Lowering
             }
         }
 
-        var labels = new string[bindings.Count];
-        var members = new (string Name, string Label, TypeRef Type, TextSpan Span)[bindings.Count];
-        var slots = new int[bindings.Count];
-        for (int i = 0; i < bindings.Count; i++)
-        {
-            labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
-            members[i] = (bindings[i].Name, labels[i], recordTypes[i], GetSpan(bindings[i].Value));
-            slots[i] = NewLocal();
-        }
+        return (sharedCaptures, sharedEnvPtrTemp);
+    }
 
-        var groupContext = new RecursiveGroupContext
-        {
-            SharedCaptures = sharedCaptures,
-            SharedEnvPtrTemp = sharedEnvPtrTemp,
-            Members = members
-        };
-
+    private void LowerRecursiveGroupMembers(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recordTypes,
+        string[] labels,
+        (string Name, string Label, TypeRef Type, TextSpan Span)[] members,
+        int[] slots,
+        RecursiveGroupContext groupContext)
+    {
         // Mutual recursion is reached through closure calls, not the single-function tail-call loop, so
         // disable TCO while lowering the group bodies.
         var savedTcoCtx = _tcoCtx;
@@ -638,27 +713,6 @@ public sealed partial class Lowering
         }
 
         _tcoCtx = savedTcoCtx;
-
-        // Mutual-recursion TCO: when the group is eligible, synthesize a single self-recursive
-        // dispatch function and rebind each member to a thin wrapper so the existing single-function
-        // TCO collapses the whole group into one loop instead of growing the stack through closure
-        // calls. Ineligible groups keep the closures lowered above.
-        var tcoSlots = TryLowerMutualRecursionTco(bindings, recordTypes, groupNames);
-
-        // The members stay in scope for the continuation, bound to the slots holding their closures
-        // (or their TCO wrappers) — monomorphic, matching the single let rec form.
-        var parent = _scopes.Peek();
-        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
-        for (int i = 0; i < bindings.Count; i++)
-        {
-            int memberSlot = tcoSlots?[i] ?? slots[i];
-            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recordTypes[i]), members[i].Span);
-        }
-
-        _scopes.Push(child);
-        var (bodyTemp, bodyType) = LowerExpr(group.Body);
-        _scopes.Pop();
-        return (bodyTemp, bodyType);
     }
 
     private static string DispatchArgName(int index) => $"__recgroup_arg{index}";
@@ -687,55 +741,14 @@ public sealed partial class Lowering
             return null;
         }
 
-        // All members must be lambdas of the same arity.
-        var lambdas = new Expr.Lambda[bindings.Count];
-        int arity = -1;
-        for (int i = 0; i < bindings.Count; i++)
-        {
-            if (bindings[i].Value is not Expr.Lambda lam)
-            {
-                return null;
-            }
-
-            lambdas[i] = lam;
-            int memberArity = CountLambdaChain(lam);
-            if (arity == -1)
-            {
-                arity = memberArity;
-            }
-            else if (memberArity != arity)
-            {
-                return null;
-            }
-        }
-
-        if (arity < 1)
+        if (!MutualRecursionTcoTryGetLambdas(bindings, out var lambdas, out int arity))
         {
             return null;
         }
 
-        // Every member must expose the same parameter type at each position so the shared dispatch
-        // parameters are well-typed without coercion.
-        var paramTypes = new List<TypeRef>[bindings.Count];
-        for (int i = 0; i < bindings.Count; i++)
+        if (!MutualRecursionTcoParamTypesMatch(bindings, recordTypes, arity))
         {
-            if (!TryGetArrowParamTypes(recordTypes[i], arity, out var memberParamTypes))
-            {
-                return null;
-            }
-
-            paramTypes[i] = memberParamTypes;
-        }
-
-        for (int j = 0; j < arity; j++)
-        {
-            for (int i = 1; i < bindings.Count; i++)
-            {
-                if (!TypesStructurallyEqual(paramTypes[0][j], paramTypes[i][j]))
-                {
-                    return null;
-                }
-            }
+            return null;
         }
 
         var tagOf = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -758,6 +771,79 @@ public sealed partial class Lowering
             return null;
         }
 
+        return MutualRecursionTcoLowerDispatchAndWrappers(bindings, recordTypes, lambdas, groupNames, tagOf, arity);
+    }
+
+    // All members must be lambdas of the same (at least unary) arity.
+    private static bool MutualRecursionTcoTryGetLambdas(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        out Expr.Lambda[] lambdas,
+        out int arity)
+    {
+        lambdas = new Expr.Lambda[bindings.Count];
+        arity = -1;
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            if (bindings[i].Value is not Expr.Lambda lam)
+            {
+                return false;
+            }
+
+            lambdas[i] = lam;
+            int memberArity = CountLambdaChain(lam);
+            if (arity == -1)
+            {
+                arity = memberArity;
+            }
+            else if (memberArity != arity)
+            {
+                return false;
+            }
+        }
+
+        return arity >= 1;
+    }
+
+    // Every member must expose the same parameter type at each position so the shared dispatch
+    // parameters are well-typed without coercion.
+    private bool MutualRecursionTcoParamTypesMatch(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recordTypes,
+        int arity)
+    {
+        var paramTypes = new List<TypeRef>[bindings.Count];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            if (!TryGetArrowParamTypes(recordTypes[i], arity, out var memberParamTypes))
+            {
+                return false;
+            }
+
+            paramTypes[i] = memberParamTypes;
+        }
+
+        for (int j = 0; j < arity; j++)
+        {
+            for (int i = 1; i < bindings.Count; i++)
+            {
+                if (!TypesStructurallyEqual(paramTypes[0][j], paramTypes[i][j]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private int[] MutualRecursionTcoLowerDispatchAndWrappers(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recordTypes,
+        Expr.Lambda[] lambdas,
+        HashSet<string> groupNames,
+        Dictionary<string, int> tagOf,
+        int arity)
+    {
         // ── Synthesize and lower the dispatch function. ──
         string dispatchName = $"__recgroup_dispatch_{_nextLambdaId++}";
         var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, arity);

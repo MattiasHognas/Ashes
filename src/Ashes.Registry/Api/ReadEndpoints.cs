@@ -14,6 +14,14 @@ public static class ReadEndpoints
 
         var api = app.MapGroup("/api/v1");
 
+        MapIndexAndListEndpoints(api);
+        MapPackageEndpoints(api);
+
+        return app;
+    }
+
+    private static void MapIndexAndListEndpoints(RouteGroupBuilder api)
+    {
         api.MapGet("/index", (IOptions<RegistryOptions> options) =>
         {
             var o = options.Value;
@@ -37,7 +45,10 @@ public static class ReadEndpoints
             var page = await search.SearchAsync(q ?? "", limit ?? 20, cursor, ct);
             return Results.Ok(Responses.ToSearch(page));
         });
+    }
 
+    private static void MapPackageEndpoints(RouteGroupBuilder api)
+    {
         api.MapGet("/packages/{ns}", async (string ns, IMetadataStore store, CancellationToken ct) =>
         {
             var pkg = await store.GetPackageAsync(ns, ct);
@@ -77,8 +88,6 @@ public static class ReadEndpoints
 
             return Results.Stream(stream, "application/gzip", $"{ns}-{version}.tar.gz");
         });
-
-        return app;
     }
 
     private static SortOrder ParseSort(string? sort) => sort?.ToLowerInvariant() switch

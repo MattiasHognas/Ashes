@@ -8,6 +8,44 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitReadLine(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        EmitReadLineSlots slots = EmitReadLineScratch(state);
+        EmitReadLineBlocks blocks = EmitReadLineCreateBlocks(state);
+        LlvmApi.BuildBr(builder, blocks.Loop);
+        EmitReadLineLoopRefill(state, slots, blocks);
+        EmitReadLineInspectStore(state, slots, blocks);
+        EmitReadLineFinish(state, slots, blocks);
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Continue);
+        return LlvmApi.BuildLoad2(builder, state.I64, slots.ResultSlot, "read_line_result_value");
+    }
+
+    private readonly record struct EmitReadLineSlots(
+        LlvmValueHandle InputBufPtr,
+        LlvmValueHandle ByteSlot,
+        LlvmValueHandle LenSlot,
+        LlvmValueHandle ResultSlot,
+        LlvmValueHandle StdinBufPtr,
+        LlvmValueHandle StdinPosSlot,
+        LlvmValueHandle StdinLenSlot,
+        LlvmValueHandle StdinHandle,
+        LlvmValueHandle BytesReadSlot);
+
+    private readonly record struct EmitReadLineBlocks(
+        LlvmBasicBlockHandle Loop,
+        LlvmBasicBlockHandle Refill,
+        LlvmBasicBlockHandle HaveByte,
+        LlvmBasicBlockHandle Inspect,
+        LlvmBasicBlockHandle SkipCr,
+        LlvmBasicBlockHandle StoreByte,
+        LlvmBasicBlockHandle AppendByte,
+        LlvmBasicBlockHandle Eof,
+        LlvmBasicBlockHandle FinishSome,
+        LlvmBasicBlockHandle ReturnNone,
+        LlvmBasicBlockHandle Overflow,
+        LlvmBasicBlockHandle Continue);
+
+    private static EmitReadLineSlots EmitReadLineScratch(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle inputBufType = LlvmApi.ArrayType2(state.I8, InputBufSize);
         // The line buffer and scratch slots are module globals, not stack allocas: a 64 KB
         // alloca per call grows the stack ~64 KB/iteration when readLine runs inside a TCO loop
@@ -40,6 +78,11 @@ internal static partial class LlvmCodegen
             bytesReadSlot = ReadLineScratchGlobal(state, "__ashes_readline_bytes_read", state.I32);
         }
 
+        return new EmitReadLineSlots(inputBufPtr, byteSlot, lenSlot, resultSlot, stdinBufPtr, stdinPosSlot, stdinLenSlot, stdinHandle, bytesReadSlot);
+    }
+
+    private static EmitReadLineBlocks EmitReadLineCreateBlocks(LlvmCodegenState state)
+    {
         var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_loop");
         var refillBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_refill");
         var haveByteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_have_byte");
@@ -52,8 +95,14 @@ internal static partial class LlvmCodegen
         var returnNoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_return_none");
         var overflowBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_overflow");
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "read_line_continue");
+        return new EmitReadLineBlocks(loopBlock, refillBlock, haveByteBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock);
+    }
 
-        LlvmApi.BuildBr(builder, loopBlock);
+    private static void EmitReadLineLoopRefill(LlvmCodegenState state, EmitReadLineSlots slots, EmitReadLineBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (inputBufPtr, byteSlot, lenSlot, resultSlot, stdinBufPtr, stdinPosSlot, stdinLenSlot, stdinHandle, bytesReadSlot) = slots;
+        var (loopBlock, refillBlock, haveByteBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock) = blocks;
 
         // loop: if the buffer is exhausted, refill; otherwise take the next buffered byte.
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
@@ -86,6 +135,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, takenByte, byteSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, takePos, LlvmApi.ConstInt(state.I64, 1, 0), "read_line_take_pos_next"), stdinPosSlot);
         LlvmApi.BuildBr(builder, inspectBlock);
+    }
+
+    private static void EmitReadLineInspectStore(LlvmCodegenState state, EmitReadLineSlots slots, EmitReadLineBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (inputBufPtr, byteSlot, lenSlot, resultSlot, stdinBufPtr, stdinPosSlot, stdinLenSlot, stdinHandle, bytesReadSlot) = slots;
+        var (loopBlock, refillBlock, haveByteBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, inspectBlock);
         LlvmValueHandle currentByte = LlvmApi.BuildLoad2(builder, state.I8, byteSlot, "read_line_current_byte");
@@ -106,6 +162,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, currentByte, destPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), "read_line_len_next"), lenSlot);
         LlvmApi.BuildBr(builder, loopBlock);
+    }
+
+    private static void EmitReadLineFinish(LlvmCodegenState state, EmitReadLineSlots slots, EmitReadLineBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (inputBufPtr, byteSlot, lenSlot, resultSlot, stdinBufPtr, stdinPosSlot, stdinLenSlot, stdinHandle, bytesReadSlot) = slots;
+        var (loopBlock, refillBlock, haveByteBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, eofBlock);
         LlvmValueHandle lenAtEof = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "read_line_len_at_eof");
@@ -128,9 +191,6 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
         EmitPanic(state, EmitStackStringObject(state, "readLine input too long"));
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "read_line_result_value");
     }
 
     /// <summary>
@@ -175,7 +235,30 @@ internal static partial class LlvmCodegen
         EmitWindowsProgramArgsInitialization(state);
     }
 
+    private readonly record struct EmitLinuxProgramArgsSlots(
+        LlvmValueHandle ListSlot,
+        LlvmValueHandle IndexSlot,
+        LlvmValueHandle ArgPtrSlot,
+        LlvmValueHandle LenSlot,
+        LlvmValueHandle StackPtr);
+
+    private readonly record struct EmitLinuxProgramArgsBlocks(
+        LlvmBasicBlockHandle Init,
+        LlvmBasicBlockHandle LoopCheck,
+        LlvmBasicBlockHandle LenCheck,
+        LlvmBasicBlockHandle LenBody,
+        LlvmBasicBlockHandle BuildNode,
+        LlvmBasicBlockHandle Done,
+        LlvmBasicBlockHandle LenLoopCheck);
+
     private static void EmitLinuxProgramArgsInitialization(LlvmCodegenState state)
+    {
+        EmitLinuxProgramArgsSlots slots = EmitLinuxProgramArgsPrologue(state, out EmitLinuxProgramArgsBlocks blocks);
+        EmitLinuxProgramArgsLoop(state, slots, blocks);
+        EmitLinuxProgramArgsBuild(state, slots, blocks);
+    }
+
+    private static EmitLinuxProgramArgsSlots EmitLinuxProgramArgsPrologue(LlvmCodegenState state, out EmitLinuxProgramArgsBlocks blocks)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle listSlot = LlvmApi.BuildAlloca(builder, state.I64, "program_args_list");
@@ -193,6 +276,8 @@ internal static partial class LlvmCodegen
         var lenBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_len_body");
         var buildNodeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_build_node");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_done");
+        var lenLoopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_len_loop_check");
+        blocks = new EmitLinuxProgramArgsBlocks(initBlock, loopCheckBlock, lenCheckBlock, lenBodyBlock, buildNodeBlock, doneBlock, lenLoopCheckBlock);
 
         LlvmValueHandle hasArgs = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Sgt,
@@ -206,6 +291,15 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildSub(builder, argc, LlvmApi.ConstInt(state.I64, 1, 0), "program_args_start_index"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        return new EmitLinuxProgramArgsSlots(listSlot, indexSlot, argPtrSlot, lenSlot, stackPtr);
+    }
+
+    private static void EmitLinuxProgramArgsLoop(LlvmCodegenState state, EmitLinuxProgramArgsSlots slots, EmitLinuxProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (listSlot, indexSlot, argPtrSlot, lenSlot, stackPtr) = slots;
+        var (initBlock, loopCheckBlock, lenCheckBlock, lenBodyBlock, buildNodeBlock, doneBlock, lenLoopCheckBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "program_args_index_value");
@@ -226,7 +320,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, argPtr, argPtrSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), lenSlot);
 
-        var lenLoopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_len_loop_check");
         LlvmApi.BuildBr(builder, lenLoopCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, lenLoopCheckBlock);
@@ -244,10 +337,17 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I8, 0, 0),
             "program_args_reached_terminator");
         LlvmApi.BuildCondBr(builder, reachedTerminator, buildNodeBlock, lenBodyBlock);
+    }
+
+    private static void EmitLinuxProgramArgsBuild(LlvmCodegenState state, EmitLinuxProgramArgsSlots slots, EmitLinuxProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (listSlot, indexSlot, argPtrSlot, lenSlot, stackPtr) = slots;
+        var (initBlock, loopCheckBlock, lenCheckBlock, lenBodyBlock, buildNodeBlock, doneBlock, lenLoopCheckBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, lenBodyBlock);
         LlvmApi.BuildStore(builder,
-            LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), "program_args_next_len"),
+            LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "program_args_current_len"), LlvmApi.ConstInt(state.I64, 1, 0), "program_args_next_len"),
             lenSlot);
         LlvmApi.BuildBr(builder, lenLoopCheckBlock);
 
@@ -276,7 +376,44 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
     }
 
+    private readonly record struct EmitWindowsProgramArgsSlots(
+        LlvmTypeHandle I16,
+        LlvmTypeHandle I16Ptr,
+        LlvmTypeHandle WideCharToMultiByteType,
+        LlvmTypeHandle LocalFreeType,
+        LlvmValueHandle ListSlot,
+        LlvmValueHandle ArgcSlot,
+        LlvmValueHandle IndexSlot,
+        LlvmValueHandle WideArgSlot,
+        LlvmValueHandle WideLenSlot,
+        LlvmValueHandle StringRefSlot,
+        LlvmValueHandle ArgvWide);
+
+    private readonly record struct EmitWindowsProgramArgsBlocks(
+        LlvmBasicBlockHandle HaveArgv,
+        LlvmBasicBlockHandle MaybeLoop,
+        LlvmBasicBlockHandle LoopCheck,
+        LlvmBasicBlockHandle WideArgSetup,
+        LlvmBasicBlockHandle WideLenBody,
+        LlvmBasicBlockHandle WideLenInc,
+        LlvmBasicBlockHandle ConvertArg,
+        LlvmBasicBlockHandle CreateUtf8String,
+        LlvmBasicBlockHandle CreateEmptyString,
+        LlvmBasicBlockHandle LinkArg,
+        LlvmBasicBlockHandle FreeArgv,
+        LlvmBasicBlockHandle Done);
+
     private static void EmitWindowsProgramArgsInitialization(LlvmCodegenState state)
+    {
+        EmitWindowsProgramArgsSlots slots = EmitWindowsProgramArgsSetup(state);
+        EmitWindowsProgramArgsBlocks blocks = EmitWindowsProgramArgsCreateBlocks(state);
+        EmitWindowsProgramArgsDecide(state, slots, blocks);
+        EmitWindowsProgramArgsWideLen(state, slots, blocks);
+        EmitWindowsProgramArgsConvert(state, slots, blocks);
+        EmitWindowsProgramArgsTail(state, slots, blocks);
+    }
+
+    private static EmitWindowsProgramArgsSlots EmitWindowsProgramArgsSetup(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
@@ -317,6 +454,11 @@ internal static partial class LlvmCodegen
             [commandLinePtr, argcSlot],
             "argv_wide");
 
+        return new EmitWindowsProgramArgsSlots(i16, i16Ptr, wideCharToMultiByteType, localFreeType, listSlot, argcSlot, indexSlot, wideArgSlot, wideLenSlot, stringRefSlot, argvWide);
+    }
+
+    private static EmitWindowsProgramArgsBlocks EmitWindowsProgramArgsCreateBlocks(LlvmCodegenState state)
+    {
         var haveArgvBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_have_argv");
         var maybeLoopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_maybe_loop");
         var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_loop_check");
@@ -329,6 +471,14 @@ internal static partial class LlvmCodegen
         var linkArgBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_link_arg");
         var freeArgvBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_free_argv");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "program_args_done");
+        return new EmitWindowsProgramArgsBlocks(haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock);
+    }
+
+    private static void EmitWindowsProgramArgsDecide(LlvmCodegenState state, EmitWindowsProgramArgsSlots slots, EmitWindowsProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (i16, i16Ptr, wideCharToMultiByteType, localFreeType, listSlot, argcSlot, indexSlot, wideArgSlot, wideLenSlot, stringRefSlot, argvWide) = slots;
+        var (haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock) = blocks;
 
         LlvmValueHandle hasArgv = LlvmApi.BuildICmp(builder,
             LlvmIntPredicate.Ne,
@@ -351,6 +501,13 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildSub(builder, argc, LlvmApi.ConstInt(state.I32, 1, 0), "program_args_start_index"),
             indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    private static void EmitWindowsProgramArgsWideLen(LlvmCodegenState state, EmitWindowsProgramArgsSlots slots, EmitWindowsProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (i16, i16Ptr, wideCharToMultiByteType, localFreeType, listSlot, argcSlot, indexSlot, wideArgSlot, wideLenSlot, stringRefSlot, argvWide) = slots;
+        var (haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I32, indexSlot, "program_args_index_value");
@@ -392,6 +549,13 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I32, wideLenSlot, "program_args_wide_len_before_inc"), LlvmApi.ConstInt(state.I32, 1, 0), "program_args_wide_len_inc"),
             wideLenSlot);
         LlvmApi.BuildBr(builder, wideLenBodyBlock);
+    }
+
+    private static void EmitWindowsProgramArgsConvert(LlvmCodegenState state, EmitWindowsProgramArgsSlots slots, EmitWindowsProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (i16, i16Ptr, wideCharToMultiByteType, localFreeType, listSlot, argcSlot, indexSlot, wideArgSlot, wideLenSlot, stringRefSlot, argvWide) = slots;
+        var (haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, convertArgBlock);
         LlvmValueHandle wideArg = LlvmApi.BuildLoad2(builder, i16Ptr, wideArgSlot, "program_args_wide_arg_for_convert");
@@ -444,6 +608,13 @@ internal static partial class LlvmCodegen
             "program_args_copy_utf8");
         LlvmApi.BuildStore(builder, stringRef, stringRefSlot);
         LlvmApi.BuildBr(builder, linkArgBlock);
+    }
+
+    private static void EmitWindowsProgramArgsTail(LlvmCodegenState state, EmitWindowsProgramArgsSlots slots, EmitWindowsProgramArgsBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (i16, i16Ptr, wideCharToMultiByteType, localFreeType, listSlot, argcSlot, indexSlot, wideArgSlot, wideLenSlot, stringRefSlot, argvWide) = slots;
+        var (haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, createEmptyStringBlock);
         LlvmValueHandle emptyStringRef = EmitAlloc(state, 8);
@@ -477,8 +648,34 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_final_list"), state.ProgramArgsSlot);
     }
 
+    private readonly record struct EmitReadExactSlots(
+        LlvmValueHandle DestPtr,
+        LlvmValueHandle ReadSoFarSlot,
+        LlvmValueHandle ResultSlot,
+        LlvmValueHandle StringRef,
+        LlvmValueHandle StdinHandle,
+        LlvmValueHandle BytesReadSlot);
+
+    private readonly record struct EmitReadExactBlocks(
+        LlvmBasicBlockHandle Loop,
+        LlvmBasicBlockHandle Read,
+        LlvmBasicBlockHandle Error,
+        LlvmBasicBlockHandle Done,
+        LlvmBasicBlockHandle Continue);
+
     // Ashes.IO.readExact(n): read exactly n bytes from stdin; return Result(Str, Str).
     private static LlvmValueHandle EmitReadExact(LlvmCodegenState state, LlvmValueHandle countVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        EmitReadExactSlots slots = EmitReadExactSetup(state, countVal);
+        EmitReadExactDrain(state, slots, countVal);
+        EmitReadExactBlocks blocks = EmitReadExactCreateBlocks(state);
+        LlvmApi.BuildBr(builder, blocks.Loop);
+        EmitReadExactLoop(state, slots, blocks, countVal);
+        return EmitReadExactTail(state, slots, blocks);
+    }
+
+    private static EmitReadExactSlots EmitReadExactSetup(LlvmCodegenState state, LlvmValueHandle countVal)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
@@ -501,6 +698,14 @@ internal static partial class LlvmCodegen
             bytesReadSlot = LlvmApi.BuildAlloca(builder, state.I32, "re_bytes_read");
         }
 
+        return new EmitReadExactSlots(destPtr, readSoFarSlot, resultSlot, stringRef, stdinHandle, bytesReadSlot);
+    }
+
+    private static void EmitReadExactDrain(LlvmCodegenState state, EmitReadExactSlots slots, LlvmValueHandle countVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (destPtr, readSoFarSlot, resultSlot, stringRef, stdinHandle, bytesReadSlot) = slots;
+
         // Drain bytes already buffered by readLine (the shared stdin buffer) before touching the
         // fd, so readLine + readExact interleave correctly — e.g. Ashes.Rpc reads the header with
         // readLine then the body with readExact. Without this, readLine's read-ahead would be lost.
@@ -518,14 +723,23 @@ internal static partial class LlvmCodegen
         EmitCopyBytes(state, destPtr, reSrcPtr, reToDrain, "re_drain_copy");
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, rePos, reToDrain, "re_rpos_next"), reStdinPosSlot);
         LlvmApi.BuildStore(builder, reToDrain, readSoFarSlot);
+    }
 
+    private static EmitReadExactBlocks EmitReadExactCreateBlocks(LlvmCodegenState state)
+    {
         var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "re_loop");
         var readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "re_read");
         var errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "re_error");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "re_done");
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "re_continue");
+        return new EmitReadExactBlocks(loopBlock, readBlock, errorBlock, doneBlock, continueBlock);
+    }
 
-        LlvmApi.BuildBr(builder, loopBlock);
+    private static void EmitReadExactLoop(LlvmCodegenState state, EmitReadExactSlots slots, EmitReadExactBlocks blocks, LlvmValueHandle countVal)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (destPtr, readSoFarSlot, resultSlot, stringRef, stdinHandle, bytesReadSlot) = slots;
+        var (loopBlock, readBlock, errorBlock, doneBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle readSoFar = LlvmApi.BuildLoad2(builder, state.I64, readSoFarSlot, "re_read_so_far_val");
@@ -564,6 +778,13 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, errorBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitStackStringObject(state, "readExact: unexpected EOF")), resultSlot);
         LlvmApi.BuildBr(builder, doneBlock);
+    }
+
+    private static LlvmValueHandle EmitReadExactTail(LlvmCodegenState state, EmitReadExactSlots slots, EmitReadExactBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (destPtr, readSoFarSlot, resultSlot, stringRef, stdinHandle, bytesReadSlot) = slots;
+        var (loopBlock, readBlock, errorBlock, doneBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         LlvmValueHandle resultAtDone = LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "re_result_at_done");

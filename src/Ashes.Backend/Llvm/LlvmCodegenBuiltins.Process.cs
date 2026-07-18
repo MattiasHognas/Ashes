@@ -72,6 +72,18 @@ internal static partial class LlvmCodegen
         LlvmValueHandle argcSlot = LlvmApi.BuildAlloca(builder, state.I64, "spawn_argc");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), argcSlot);
 
+        var (exeCstr, argvBase) = EmitLinuxSpawnProcessBuildArgv(state, exeRef, argsRef, argvArray, argcSlot, MaxArgs);
+        var (stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd) =
+            EmitLinuxSpawnProcessOpenPipes(state, pipeArrayType, stdinPipe, stdoutPipe, stderrPipe);
+        return EmitLinuxSpawnProcessForkExec(state, exeCstr, argvBase, resultSlot,
+            stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd);
+    }
+
+    private static (LlvmValueHandle ExeCstr, LlvmValueHandle ArgvBase) EmitLinuxSpawnProcessBuildArgv(
+        LlvmCodegenState state, LlvmValueHandle exeRef, LlvmValueHandle argsRef, LlvmValueHandle argvArray, LlvmValueHandle argcSlot, int maxArgs)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         // argv[0] = exe as cstring
         LlvmValueHandle exeCstr = EmitStringToCString(state, exeRef, "spawn_exe_cstr");
         LlvmValueHandle argvBase = LlvmApi.BuildPtrToInt(builder, argvArray, state.I64, "spawn_argv_base");
@@ -97,7 +109,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, listBodyBlock);
         LlvmValueHandle argc = LlvmApi.BuildLoad2(builder, state.I64, argcSlot, "spawn_argc_val");
-        LlvmValueHandle tooMany = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, argc, LlvmApi.ConstInt(state.I64, MaxArgs, 0), "spawn_too_many");
+        LlvmValueHandle tooMany = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, argc, LlvmApi.ConstInt(state.I64, (ulong)maxArgs, 0), "spawn_too_many");
         var listAppendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "spawn_list_append");
         LlvmApi.BuildCondBr(builder, tooMany, listTooManyBlock, listAppendBlock);
 
@@ -119,6 +131,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalArgc = LlvmApi.BuildLoad2(builder, state.I64, argcSlot, "spawn_final_argc");
         // argv[finalArgc] = null sentinel
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, argvBase, LlvmApi.BuildMul(builder, finalArgc, LlvmApi.ConstInt(state.I64, 8, 0), "spawn_null_off"), "spawn_null_addr"), state.I8Ptr, "spawn_null_ptr"));
+        return (exeCstr, argvBase);
+    }
+
+    private static (LlvmValueHandle StdinReadFd, LlvmValueHandle StdinWriteFd, LlvmValueHandle StdoutReadFd, LlvmValueHandle StdoutWriteFd, LlvmValueHandle StderrReadFd, LlvmValueHandle StderrWriteFd) EmitLinuxSpawnProcessOpenPipes(
+        LlvmCodegenState state, LlvmTypeHandle pipeArrayType, LlvmValueHandle stdinPipe, LlvmValueHandle stdoutPipe, LlvmValueHandle stderrPipe)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         // pipe2 for stdin, stdout, stderr
         LlvmValueHandle stdinPipePtr = LlvmApi.BuildPtrToInt(builder, stdinPipe, state.I64, "spawn_stdin_pipe_ptr");
@@ -135,6 +154,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle stdoutWriteFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stdoutPipe, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_stdout_w_ptr"), "spawn_stdout_write_fd_i32"), state.I64, "spawn_stdout_write_fd");
         LlvmValueHandle stderrReadFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stderrPipe, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_stderr_r_ptr"), "spawn_stderr_read_fd_i32"), state.I64, "spawn_stderr_read_fd");
         LlvmValueHandle stderrWriteFd = LlvmApi.BuildZExt(builder, LlvmApi.BuildLoad2(builder, state.I32, GetArrayElementPointer(state, pipeArrayType, stderrPipe, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_stderr_w_ptr"), "spawn_stderr_write_fd_i32"), state.I64, "spawn_stderr_write_fd");
+        return (stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd);
+    }
+
+    private static LlvmValueHandle EmitLinuxSpawnProcessForkExec(
+        LlvmCodegenState state, LlvmValueHandle exeCstr, LlvmValueHandle argvBase, LlvmValueHandle resultSlot,
+        LlvmValueHandle stdinReadFd, LlvmValueHandle stdinWriteFd, LlvmValueHandle stdoutReadFd, LlvmValueHandle stdoutWriteFd, LlvmValueHandle stderrReadFd, LlvmValueHandle stderrWriteFd)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         // fork() on x86-64 / clone(SIGCHLD, 0, 0) on arm64.
         // On arm64, SyscallFork maps to clone(); flags=SIGCHLD(17) is required for
@@ -152,27 +179,8 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildCondBr(builder, isChild, childBlock, parentCheckBlock);
 
-        // Child process
-        LlvmApi.PositionBuilderAtEnd(builder, childBlock);
-        EmitLinuxSyscall(state, SyscallDup2, stdinReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stdin");
-        EmitLinuxSyscall(state, SyscallDup2, stdoutWriteFd, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stdout");
-        EmitLinuxSyscall(state, SyscallDup2, stderrWriteFd, LlvmApi.ConstInt(state.I64, 2, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stderr");
-        EmitLinuxSyscall(state, SyscallClose, stdinReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdin_r");
-        EmitLinuxSyscall(state, SyscallClose, stdinWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdin_w");
-        EmitLinuxSyscall(state, SyscallClose, stdoutReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdout_r");
-        EmitLinuxSyscall(state, SyscallClose, stdoutWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdout_w");
-        EmitLinuxSyscall(state, SyscallClose, stderrReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_r");
-        EmitLinuxSyscall(state, SyscallClose, stderrWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_w");
-        // execve(exe_cstr, argv_ptr, null_envp)
-        LlvmValueHandle envpNull = LlvmApi.ConstInt(state.I64, 0, 0);
-        EmitLinuxSyscall(state, SyscallExecve,
-            LlvmApi.BuildPtrToInt(builder, exeCstr, state.I64, "spawn_exe_int"),
-            argvBase,
-            envpNull,
-            "spawn_execve");
-        // execve failed - _exit(1)
-        EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_exit");
-        LlvmApi.BuildUnreachable(builder);
+        EmitLinuxSpawnProcessChild(state, childBlock, exeCstr, argvBase,
+            stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd);
 
         // Parent
         LlvmApi.PositionBuilderAtEnd(builder, parentCheckBlock);
@@ -201,19 +209,58 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "spawn_result_val");
     }
 
+    private static void EmitLinuxSpawnProcessChild(
+        LlvmCodegenState state, LlvmBasicBlockHandle childBlock, LlvmValueHandle exeCstr, LlvmValueHandle argvBase,
+        LlvmValueHandle stdinReadFd, LlvmValueHandle stdinWriteFd, LlvmValueHandle stdoutReadFd, LlvmValueHandle stdoutWriteFd, LlvmValueHandle stderrReadFd, LlvmValueHandle stderrWriteFd)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        // Child process
+        LlvmApi.PositionBuilderAtEnd(builder, childBlock);
+        EmitLinuxSyscall(state, SyscallDup2, stdinReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stdin");
+        EmitLinuxSyscall(state, SyscallDup2, stdoutWriteFd, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stdout");
+        EmitLinuxSyscall(state, SyscallDup2, stderrWriteFd, LlvmApi.ConstInt(state.I64, 2, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_dup_stderr");
+        EmitLinuxSyscall(state, SyscallClose, stdinReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdin_r");
+        EmitLinuxSyscall(state, SyscallClose, stdinWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdin_w");
+        EmitLinuxSyscall(state, SyscallClose, stdoutReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdout_r");
+        EmitLinuxSyscall(state, SyscallClose, stdoutWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdout_w");
+        EmitLinuxSyscall(state, SyscallClose, stderrReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_r");
+        EmitLinuxSyscall(state, SyscallClose, stderrWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_w");
+        // execve(exe_cstr, argv_ptr, null_envp)
+        LlvmValueHandle envpNull = LlvmApi.ConstInt(state.I64, 0, 0);
+        EmitLinuxSyscall(state, SyscallExecve,
+            LlvmApi.BuildPtrToInt(builder, exeCstr, state.I64, "spawn_exe_int"),
+            argvBase,
+            envpNull,
+            "spawn_execve");
+        // execve failed - _exit(1)
+        EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_exit");
+        LlvmApi.BuildUnreachable(builder);
+    }
+
     private static LlvmValueHandle EmitWindowsSpawnProcess(LlvmCodegenState state, LlvmValueHandle exeRef, LlvmValueHandle argsRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        const int CmdBufSize = 4096;
-        const int StartupInfoASize = 104;
-        const int ProcessInfoSize = 24;
-        // SECURITY_ATTRIBUTES: nLength(4)+pad(4)+lpSecurityDescriptor(8)+bInheritHandle(4)+pad(4) = 24
-        const int SecurityAttrSize = 24;
-        const uint StartfUsestdhandles = 0x100;
 
-        LlvmValueHandle nullPtr = LlvmApi.ConstNull(state.I8Ptr);
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "spawn_w_result");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+
+        LlvmValueHandle saPtr = EmitWindowsSpawnProcessSecurityAttrs(state);
+        var (stdinReadHandle, stdinWriteHandle, stdoutReadHandle, stdoutWriteHandle, stderrReadHandle, stderrWriteHandle) =
+            EmitWindowsSpawnProcessCreatePipes(state, saPtr);
+        LlvmValueHandle cmdPtr = EmitWindowsSpawnProcessBuildCommandLine(state, exeRef, argsRef);
+        LlvmValueHandle siPtr = EmitWindowsSpawnProcessStartupInfo(state, stdinReadHandle, stdoutWriteHandle, stderrWriteHandle);
+        LlvmValueHandle piPtr = EmitWindowsSpawnProcessProcessInfo(state);
+        EmitWindowsSpawnProcessCreateAndCollect(state, exeRef, cmdPtr, siPtr, piPtr, resultSlot,
+            stdinReadHandle, stdinWriteHandle, stdoutReadHandle, stdoutWriteHandle, stderrReadHandle, stderrWriteHandle);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "spawn_w_result_val");
+    }
+
+    private static LlvmValueHandle EmitWindowsSpawnProcessSecurityAttrs(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // SECURITY_ATTRIBUTES: nLength(4)+pad(4)+lpSecurityDescriptor(8)+bInheritHandle(4)+pad(4) = 24
+        const int SecurityAttrSize = 24;
 
         // SECURITY_ATTRIBUTES with bInheritHandle = TRUE for pipe handles
         LlvmTypeHandle saType = LlvmApi.ArrayType2(state.I8, SecurityAttrSize);
@@ -223,6 +270,13 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, saPtr, [LlvmApi.ConstInt(state.I64, (ulong)(zi * 8), 0)], $"spawn_w_sa_z{zi}"), state.I64Ptr, $"spawn_w_sa_z{zi}p"));
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 20, 0), LlvmApi.BuildBitCast(builder, saPtr, state.I32Ptr, "spawn_w_sa_len"));
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 1, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, saPtr, [LlvmApi.ConstInt(state.I64, 16, 0)], "spawn_w_sa_inh_off"), state.I32Ptr, "spawn_w_sa_inh"));
+        return saPtr;
+    }
+
+    private static (LlvmValueHandle StdinReadHandle, LlvmValueHandle StdinWriteHandle, LlvmValueHandle StdoutReadHandle, LlvmValueHandle StdoutWriteHandle, LlvmValueHandle StderrReadHandle, LlvmValueHandle StderrWriteHandle) EmitWindowsSpawnProcessCreatePipes(
+        LlvmCodegenState state, LlvmValueHandle saPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         // Pipe handle slots (i64 each = HANDLE)
         LlvmValueHandle stdinReadSlot = LlvmApi.BuildAlloca(builder, state.I64, "spawn_w_stdin_r");
@@ -245,6 +299,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle stdoutWriteHandle = LlvmApi.BuildLoad2(builder, state.I64, stdoutWriteSlot, "spawn_w_stdout_wh");
         LlvmValueHandle stderrReadHandle = LlvmApi.BuildLoad2(builder, state.I64, stderrReadSlot, "spawn_w_stderr_rh");
         LlvmValueHandle stderrWriteHandle = LlvmApi.BuildLoad2(builder, state.I64, stderrWriteSlot, "spawn_w_stderr_wh");
+        return (stdinReadHandle, stdinWriteHandle, stdoutReadHandle, stdoutWriteHandle, stderrReadHandle, stderrWriteHandle);
+    }
+
+    private static LlvmValueHandle EmitWindowsSpawnProcessBuildCommandLine(LlvmCodegenState state, LlvmValueHandle exeRef, LlvmValueHandle argsRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        const int CmdBufSize = 4096;
 
         // Build command line: "exe arg1 arg2 ..." into a stack buffer
         LlvmTypeHandle cmdBufType = LlvmApi.ArrayType2(state.I8, CmdBufSize);
@@ -282,6 +343,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalCmdLen = LlvmApi.BuildLoad2(builder, state.I64, cmdLenSlot, "spawn_w_final_cmd_len");
         LlvmValueHandle nullTermPtr = LlvmApi.BuildGEP2(builder, state.I8, cmdPtr, [finalCmdLen], "spawn_w_null_term_ptr");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I8, 0, 0), nullTermPtr);
+        return cmdPtr;
+    }
+
+    private static LlvmValueHandle EmitWindowsSpawnProcessStartupInfo(
+        LlvmCodegenState state, LlvmValueHandle stdinReadHandle, LlvmValueHandle stdoutWriteHandle, LlvmValueHandle stderrWriteHandle)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        const int StartupInfoASize = 104;
+        const uint StartfUsestdhandles = 0x100;
 
         // STARTUPINFOA (104 bytes, zero-initialized)
         LlvmTypeHandle siType = LlvmApi.ArrayType2(state.I8, StartupInfoASize);
@@ -299,6 +369,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, stdoutWriteHandle, LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, siPtr, [LlvmApi.ConstInt(state.I64, 88, 0)], "spawn_w_si_sout_off"), state.I64Ptr, "spawn_w_si_sout"));
         // hStdError at offset 96 (i64)
         LlvmApi.BuildStore(builder, stderrWriteHandle, LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, siPtr, [LlvmApi.ConstInt(state.I64, 96, 0)], "spawn_w_si_serr_off"), state.I64Ptr, "spawn_w_si_serr"));
+        return siPtr;
+    }
+
+    private static LlvmValueHandle EmitWindowsSpawnProcessProcessInfo(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        const int ProcessInfoSize = 24;
 
         // PROCESS_INFORMATION (24 bytes, zero-initialized)
         LlvmTypeHandle piType = LlvmApi.ArrayType2(state.I8, ProcessInfoSize);
@@ -306,6 +383,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle piPtr = GetArrayElementPointer(state, piType, piBuf, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_w_pi_ptr");
         for (int zi = 0; zi < ProcessInfoSize / 8; zi++)
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, piPtr, [LlvmApi.ConstInt(state.I64, (ulong)(zi * 8), 0)], $"spawn_w_pi_z{zi}"), state.I64Ptr, $"spawn_w_pi_z{zi}p"));
+        return piPtr;
+    }
+
+    private static void EmitWindowsSpawnProcessCreateAndCollect(
+        LlvmCodegenState state, LlvmValueHandle exeRef, LlvmValueHandle cmdPtr, LlvmValueHandle siPtr, LlvmValueHandle piPtr, LlvmValueHandle resultSlot,
+        LlvmValueHandle stdinReadHandle, LlvmValueHandle stdinWriteHandle, LlvmValueHandle stdoutReadHandle, LlvmValueHandle stdoutWriteHandle, LlvmValueHandle stderrReadHandle, LlvmValueHandle stderrWriteHandle)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle nullPtr = LlvmApi.ConstNull(state.I8Ptr);
 
         // exe as cstring for lpApplicationName
         LlvmValueHandle exeCstr = EmitStringToCString(state, exeRef, "spawn_w_exe");
@@ -357,7 +443,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, spawnDoneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, spawnDoneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "spawn_w_result_val");
     }
 
     // Appends the bytes of strRef to cmdBufPtr[*cmdLenSlot..], advancing cmdLenSlot.
@@ -474,6 +559,22 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, loopBlock);
 
+        EmitProcessReadLineScanLoop(state, prefix, fd, fileHandle, bytesReadSlot, byteSlot, lenSlot, inputBufPtr,
+            loopBlock, inspectBlock, skipCrBlock, storeByteBlock, appendByteBlock, eofBlock, finishSomeBlock, overflowBlock);
+        EmitProcessReadLineFinish(state, prefix, inputBufPtr, lenSlot, resultSlot,
+            eofBlock, finishSomeBlock, returnNoneBlock, overflowBlock, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static void EmitProcessReadLineScanLoop(
+        LlvmCodegenState state, string prefix, LlvmValueHandle fd, LlvmValueHandle fileHandle, LlvmValueHandle bytesReadSlot,
+        LlvmValueHandle byteSlot, LlvmValueHandle lenSlot, LlvmValueHandle inputBufPtr,
+        LlvmBasicBlockHandle loopBlock, LlvmBasicBlockHandle inspectBlock, LlvmBasicBlockHandle skipCrBlock,
+        LlvmBasicBlockHandle storeByteBlock, LlvmBasicBlockHandle appendByteBlock, LlvmBasicBlockHandle eofBlock,
+        LlvmBasicBlockHandle finishSomeBlock, LlvmBasicBlockHandle overflowBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle bytesRead = IsLinuxFlavor(state.Flavor)
             ? EmitLinuxSyscall(state, SyscallRead, fd,
@@ -504,6 +605,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, currentByte, destPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, currentLen, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_len_next"), lenSlot);
         LlvmApi.BuildBr(builder, loopBlock);
+    }
+
+    private static void EmitProcessReadLineFinish(
+        LlvmCodegenState state, string prefix, LlvmValueHandle inputBufPtr, LlvmValueHandle lenSlot, LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle eofBlock, LlvmBasicBlockHandle finishSomeBlock, LlvmBasicBlockHandle returnNoneBlock,
+        LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, eofBlock);
         LlvmValueHandle lenAtEof = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, prefix + "_len_at_eof");
@@ -528,7 +637,6 @@ internal static partial class LlvmCodegen
         EmitPanic(state, EmitStackStringObject(state, "Process.readLine: line too long"));
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
     // Ashes.Process.waitForExit(proc): Int (exit code)

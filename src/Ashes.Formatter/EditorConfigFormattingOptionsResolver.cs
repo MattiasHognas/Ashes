@@ -19,6 +19,51 @@ public static class EditorConfigFormattingOptionsResolver
             return options;
         }
 
+        var state = new EffectiveOptionsState
+        {
+            IndentSize = options.IndentSize,
+            UseTabs = options.UseTabs,
+            NewLine = options.NewLine
+        };
+
+        var configPaths = CollectEditorConfigPaths(directory);
+        while (configPaths.Count > 0)
+        {
+            ParseAndApply(configPaths.Pop(), fullPath, state);
+        }
+
+        if (!state.HasIndentSize && state.TabWidth is int tabWidth && tabWidth > 0)
+        {
+            state.IndentSize = tabWidth;
+        }
+
+        return new FormattingOptions
+        {
+            IndentSize = state.IndentSize > 0 ? state.IndentSize : 4,
+            UseTabs = state.UseTabs,
+            NewLine = state.NewLine is "\n" or "\r\n" ? state.NewLine : Environment.NewLine
+        };
+    }
+
+    // Mutable accumulator for the option values discovered while walking the .editorconfig chain
+    // root-most to nearest (later files win).
+    private sealed class EffectiveOptionsState
+    {
+        public int IndentSize;
+        public bool UseTabs;
+        public string NewLine = Environment.NewLine;
+        public int? TabWidth;
+        public bool HasIndentSize;
+        public bool IndentSizeUsesTabWidth;
+    }
+
+    /// <summary>
+    /// Walks from <paramref name="directory"/> upward collecting every <c>.editorconfig</c>, stopping
+    /// at the first one that declares <c>root = true</c>. The stack pops root-most first so nearer
+    /// files override.
+    /// </summary>
+    private static Stack<string> CollectEditorConfigPaths(string directory)
+    {
         var configPaths = new Stack<string>();
         for (var current = new DirectoryInfo(directory); current is not null; current = current.Parent)
         {
@@ -35,37 +80,7 @@ public static class EditorConfigFormattingOptionsResolver
             }
         }
 
-        var effectiveIndentSize = options.IndentSize;
-        var effectiveUseTabs = options.UseTabs;
-        var effectiveNewLine = options.NewLine;
-        int? effectiveTabWidth = null;
-        var hasIndentSize = false;
-        var indentSizeUsesTabWidth = false;
-
-        while (configPaths.Count > 0)
-        {
-            ParseAndApply(
-                configPaths.Pop(),
-                fullPath,
-                ref effectiveIndentSize,
-                ref effectiveUseTabs,
-                ref effectiveNewLine,
-                ref effectiveTabWidth,
-                ref hasIndentSize,
-                ref indentSizeUsesTabWidth);
-        }
-
-        if (!hasIndentSize && effectiveTabWidth is int tabWidth && tabWidth > 0)
-        {
-            effectiveIndentSize = tabWidth;
-        }
-
-        return new FormattingOptions
-        {
-            IndentSize = effectiveIndentSize > 0 ? effectiveIndentSize : 4,
-            UseTabs = effectiveUseTabs,
-            NewLine = effectiveNewLine is "\n" or "\r\n" ? effectiveNewLine : Environment.NewLine
-        };
+        return configPaths;
     }
 
     private static bool ContainsRootTrue(string editorConfigPath)
@@ -100,15 +115,7 @@ public static class EditorConfigFormattingOptionsResolver
         return false;
     }
 
-    private static void ParseAndApply(
-        string editorConfigPath,
-        string filePath,
-        ref int indentSize,
-        ref bool useTabs,
-        ref string newLine,
-        ref int? tabWidth,
-        ref bool hasIndentSize,
-        ref bool indentSizeUsesTabWidth)
+    private static void ParseAndApply(string editorConfigPath, string filePath, EffectiveOptionsState state)
     {
         string? currentSection = null;
         var sectionDirectory = Path.GetDirectoryName(editorConfigPath) ?? string.Empty;
@@ -142,67 +149,75 @@ public static class EditorConfigFormattingOptionsResolver
 
             var key = line[..equalsIndex].Trim();
             var value = line[(equalsIndex + 1)..].Trim();
+            ApplyProperty(key, value, state);
+        }
+    }
 
-            if (key.Equals("indent_style", StringComparison.OrdinalIgnoreCase))
+    private static void ApplyProperty(string key, string value, EffectiveOptionsState state)
+    {
+        if (key.Equals("indent_style", StringComparison.OrdinalIgnoreCase))
+        {
+            if (value.Equals("tab", StringComparison.OrdinalIgnoreCase))
             {
-                if (value.Equals("tab", StringComparison.OrdinalIgnoreCase))
-                {
-                    useTabs = true;
-                }
-                else if (value.Equals("space", StringComparison.OrdinalIgnoreCase))
-                {
-                    useTabs = false;
-                }
-
-                continue;
+                state.UseTabs = true;
+            }
+            else if (value.Equals("space", StringComparison.OrdinalIgnoreCase))
+            {
+                state.UseTabs = false;
             }
 
-            if (key.Equals("indent_size", StringComparison.OrdinalIgnoreCase))
-            {
-                if (value.Equals("tab", StringComparison.OrdinalIgnoreCase))
-                {
-                    hasIndentSize = true;
-                    indentSizeUsesTabWidth = true;
-                    if (tabWidth is int width && width > 0)
-                    {
-                        indentSize = width;
-                    }
-                }
-                else if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedIndent) && parsedIndent > 0)
-                {
-                    hasIndentSize = true;
-                    indentSizeUsesTabWidth = false;
-                    indentSize = parsedIndent;
-                }
+            return;
+        }
 
-                continue;
+        if (key.Equals("indent_size", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyIndentSize(value, state);
+            return;
+        }
+
+        if (key.Equals("tab_width", StringComparison.OrdinalIgnoreCase))
+        {
+            if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedTabWidth) && parsedTabWidth > 0)
+            {
+                state.TabWidth = parsedTabWidth;
+                if (state.IndentSizeUsesTabWidth)
+                {
+                    state.IndentSize = parsedTabWidth;
+                }
             }
 
-            if (key.Equals("tab_width", StringComparison.OrdinalIgnoreCase))
-            {
-                if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedTabWidth) && parsedTabWidth > 0)
-                {
-                    tabWidth = parsedTabWidth;
-                    if (indentSizeUsesTabWidth)
-                    {
-                        indentSize = parsedTabWidth;
-                    }
-                }
+            return;
+        }
 
-                continue;
-            }
-
-            if (key.Equals("end_of_line", StringComparison.OrdinalIgnoreCase))
+        if (key.Equals("end_of_line", StringComparison.OrdinalIgnoreCase))
+        {
+            if (value.Equals("lf", StringComparison.OrdinalIgnoreCase))
             {
-                if (value.Equals("lf", StringComparison.OrdinalIgnoreCase))
-                {
-                    newLine = "\n";
-                }
-                else if (value.Equals("crlf", StringComparison.OrdinalIgnoreCase))
-                {
-                    newLine = "\r\n";
-                }
+                state.NewLine = "\n";
             }
+            else if (value.Equals("crlf", StringComparison.OrdinalIgnoreCase))
+            {
+                state.NewLine = "\r\n";
+            }
+        }
+    }
+
+    private static void ApplyIndentSize(string value, EffectiveOptionsState state)
+    {
+        if (value.Equals("tab", StringComparison.OrdinalIgnoreCase))
+        {
+            state.HasIndentSize = true;
+            state.IndentSizeUsesTabWidth = true;
+            if (state.TabWidth is int width && width > 0)
+            {
+                state.IndentSize = width;
+            }
+        }
+        else if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsedIndent) && parsedIndent > 0)
+        {
+            state.HasIndentSize = true;
+            state.IndentSizeUsesTabWidth = false;
+            state.IndentSize = parsedIndent;
         }
     }
 

@@ -147,6 +147,29 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
 
         // Load all field values, then store update values, allocate new cell
+        var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, resultType);
+
+        int ptrTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        for (int i = 0; i < fieldTemps.Length; i++)
+        {
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemps[i]));
+        }
+
+        return (ptrTemp, resultType);
+    }
+
+    /// <summary>
+    /// Builds the per-field temps for a record update: updated fields are lowered and unified with
+    /// their declared parameter types; unchanged fields are loaded from the update target.
+    /// </summary>
+    private int[] BuildRecordUpdateFieldTemps(
+        ConstructorSymbol ctor,
+        IReadOnlyList<string> fieldNames,
+        Dictionary<string, Expr> updateByName,
+        int targetTemp,
+        TypeRef.TNamedType resultType)
+    {
         var fieldTemps = new int[fieldNames.Count];
         for (int i = 0; i < fieldNames.Count; i++)
         {
@@ -165,14 +188,7 @@ public sealed partial class Lowering
             }
         }
 
-        int ptrTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
-        for (int i = 0; i < fieldTemps.Length; i++)
-        {
-            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemps[i]));
-        }
-
-        return (ptrTemp, resultType);
+        return fieldTemps;
     }
 
     private void RegisterTypeDeclarations(IReadOnlyList<TypeDecl> typeDecls)
@@ -187,85 +203,101 @@ public sealed partial class Lowering
 
         foreach (var decl in typeDecls)
         {
-            if (BuiltinRegistry.IsReservedTypeName(decl.Name))
+            RegisterTypeDeclaration(decl, knownTypeNames);
+        }
+    }
+
+    private void RegisterTypeDeclaration(TypeDecl decl, HashSet<string> knownTypeNames)
+    {
+        if (BuiltinRegistry.IsReservedTypeName(decl.Name))
+        {
+            ReportDiagnostic(GetSpan(decl), "'Ashes' and built-in runtime types are reserved");
+            return;
+        }
+
+        if (_typeSymbols.ContainsKey(decl.Name))
+        {
+            ReportDiagnostic(GetSpan(decl), $"Duplicate type name '{decl.Name}'.");
+            return;
+        }
+
+        var declaredOrInferredTypeParameters = decl.TypeParameters.Count > 0
+            ? decl.TypeParameters
+            : InferImplicitTypeParameters(decl.Name, decl.Constructors, knownTypeNames);
+
+        if (HasDuplicateTypeParameters(decl, declaredOrInferredTypeParameters))
+        {
+            return; // Do not register an inconsistent type symbol when type parameters are duplicated
+        }
+
+        if (decl.Constructors.Count == 0)
+        {
+            ReportDiagnostic(GetSpan(decl), $"Type '{decl.Name}' must have at least one constructor.");
+            return; // Cannot register a usable type symbol without constructors
+        }
+
+        var typeParameterSymbols = declaredOrInferredTypeParameters
+            .Select(tp => new TypeParameterSymbol(tp.Name))
+            .ToList();
+        var ctorSymbols = new List<ConstructorSymbol>();
+        var typeSymbol = new TypeSymbol(
+            Name: decl.Name,
+            TypeParameters: typeParameterSymbols,
+            Constructors: ctorSymbols,
+            DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
+        );
+        // Register the type symbol (and its resolved TNamedType) before resolving field types, so
+        // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
+        // constructor list is filled in place below.
+        _typeSymbols[decl.Name] = typeSymbol;
+        _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
+            typeSymbol,
+            typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
+
+        RegisterConstructorSymbols(decl, typeSymbol, ctorSymbols);
+    }
+
+    private bool HasDuplicateTypeParameters(TypeDecl decl, IReadOnlyList<TypeParameter> typeParameters)
+    {
+        var seenTypeParams = new HashSet<string>(StringComparer.Ordinal);
+        var hasDuplicateTypeParams = false;
+        foreach (var tp in typeParameters)
+        {
+            if (!seenTypeParams.Add(tp.Name))
             {
-                ReportDiagnostic(GetSpan(decl), "'Ashes' and built-in runtime types are reserved");
+                ReportDiagnostic(GetSpan(decl), $"Duplicate type parameter '{tp.Name}' in type '{decl.Name}'.");
+                hasDuplicateTypeParams = true;
+            }
+        }
+
+        return hasDuplicateTypeParams;
+    }
+
+    private void RegisterConstructorSymbols(TypeDecl decl, TypeSymbol typeSymbol, List<ConstructorSymbol> ctorSymbols)
+    {
+        var seenCtors = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var ctor in decl.Constructors)
+        {
+            if (!seenCtors.Add(ctor.Name))
+            {
+                ReportDiagnostic(GetSpan(ctor), $"Duplicate constructor name '{ctor.Name}' in type '{decl.Name}'.");
                 continue;
             }
 
-            if (_typeSymbols.ContainsKey(decl.Name))
-            {
-                ReportDiagnostic(GetSpan(decl), $"Duplicate type name '{decl.Name}'.");
-                continue;
-            }
-
-            var declaredOrInferredTypeParameters = decl.TypeParameters.Count > 0
-                ? decl.TypeParameters
-                : InferImplicitTypeParameters(decl.Name, decl.Constructors, knownTypeNames);
-
-            var seenTypeParams = new HashSet<string>(StringComparer.Ordinal);
-            var hasDuplicateTypeParams = false;
-            foreach (var tp in declaredOrInferredTypeParameters)
-            {
-                if (!seenTypeParams.Add(tp.Name))
-                {
-                    ReportDiagnostic(GetSpan(decl), $"Duplicate type parameter '{tp.Name}' in type '{decl.Name}'.");
-                    hasDuplicateTypeParams = true;
-                }
-            }
-
-            if (hasDuplicateTypeParams)
-            {
-                continue; // Do not register an inconsistent type symbol when type parameters are duplicated
-            }
-
-            if (decl.Constructors.Count == 0)
-            {
-                ReportDiagnostic(GetSpan(decl), $"Type '{decl.Name}' must have at least one constructor.");
-                continue; // Cannot register a usable type symbol without constructors
-            }
-
-            var typeParameterSymbols = declaredOrInferredTypeParameters
-                .Select(tp => new TypeParameterSymbol(tp.Name))
-                .ToList();
-            var ctorSymbols = new List<ConstructorSymbol>();
-            var typeSymbol = new TypeSymbol(
-                Name: decl.Name,
-                TypeParameters: typeParameterSymbols,
-                Constructors: ctorSymbols,
-                DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
+            var ctorSymbol = new ConstructorSymbol(
+                Name: ctor.Name,
+                ParentType: decl.Name,
+                Arity: ctor.Parameters.Count,
+                ParameterTypes: ctor.Parameters
+                    .Select(fieldType => ResolveConstructorFieldType(fieldType, typeSymbol))
+                    .ToList(),
+                DeclaringSyntax: ctor
             );
-            // Register the type symbol (and its resolved TNamedType) before resolving field types, so
-            // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
-            // constructor list is filled in place below.
-            _typeSymbols[decl.Name] = typeSymbol;
-            _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
-                typeSymbol,
-                typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
-            var seenCtors = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var ctor in decl.Constructors)
-            {
-                if (!seenCtors.Add(ctor.Name))
-                {
-                    ReportDiagnostic(GetSpan(ctor), $"Duplicate constructor name '{ctor.Name}' in type '{decl.Name}'.");
-                    continue;
-                }
-
-                var ctorSymbol = new ConstructorSymbol(
-                    Name: ctor.Name,
-                    ParentType: decl.Name,
-                    Arity: ctor.Parameters.Count,
-                    ParameterTypes: ctor.Parameters
-                        .Select(fieldType => ResolveConstructorFieldType(fieldType, typeSymbol))
-                        .ToList(),
-                    DeclaringSyntax: ctor
-                );
-                ctorSymbols.Add(ctorSymbol);
-                // Constructor names are globally visible (ML/F#-style): a later type's
-                // constructor with the same name shadows an earlier one intentionally.
-                _constructorSymbols[ctor.Name] = ctorSymbol;
-            }
+            ctorSymbols.Add(ctorSymbol);
+            // Constructor names are globally visible (ML/F#-style): a later type's
+            // constructor with the same name shadows an earlier one intentionally.
+            _constructorSymbols[ctor.Name] = ctorSymbol;
         }
     }
 
@@ -638,15 +670,33 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
+        int ptrTemp = AllocateConstructorCell(ctor, tag, stackAllocate, out bool reuseNode, out int consumedTokenTemp);
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp);
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
+        }
+
+        return (ptrTemp, resultType);
+    }
+
+    /// <summary>
+    /// Allocates the tagged cell for a constructor application, choosing between in-place reuse,
+    /// stack allocation, to-space allocation (inside a reuse specialization), and a plain arena
+    /// allocation. Returns the cell temp; <paramref name="reuseNode"/> and
+    /// <paramref name="consumedTokenTemp"/> report whether (and which) reuse token was consumed.
+    /// </summary>
+    private int AllocateConstructorCell(ConstructorSymbol ctor, int tag, bool stackAllocate, out bool reuseNode, out int consumedTokenTemp)
+    {
         int ptrTemp = NewTemp();
-        bool reuseNode = false;
-        int consumedTokenTemp = -1;
+        reuseNode = false;
+        consumedTokenTemp = -1;
         if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
         {
             consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
-            // above, so overwriting the cell now is safe.
+            // by the caller, so overwriting the cell now is safe.
             Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
             _reuseResultTemps.Add(ptrTemp);
             reuseNode = true;
@@ -669,57 +719,60 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
         }
-        for (int i = 0; i < argTemps.Count; i++)
+
+        return ptrTemp;
+    }
+
+    /// <summary>
+    /// A FRESH heap leaf field of a reuse-built node (a Map key/value produced from the spec's
+    /// newKey/newValue input, on insert OR update) must be copied into the persistent blob, or it
+    /// dangles past the per-iteration reset (the node survives, but the field would point into
+    /// reclaimed scratch). Fields taken from the matched accumulator (pattern bindings) are already
+    /// persistent and are NOT copied — identified by the field argument being a variable that is
+    /// not one of the spec's fresh-input names (see <c>_specFreshInputNames</c>, propagated through
+    /// inlined helpers). Any non-variable field expression (a value computed in the arm, e.g. an
+    /// upsert's onHit(value) call) is fresh arena scratch and must be materialized as well —
+    /// over-materializing an already-persistent value only costs a copy, never correctness.
+    /// Returns the (possibly persisted) field temp to store into the cell.
+    /// </summary>
+    private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp)
+    {
+        if (_inSpecialization && _specFreshInputNames is not null
+            && (argExpr is not Expr.Var fieldVar || _specFreshInputNames.Contains(fieldVar.Name)))
         {
-            int fieldTemp = argTemps[i];
-            // A FRESH heap leaf field of a reuse-built node (a Map key/value produced from the spec's
-            // newKey/newValue input, on insert OR update) must be copied into the persistent blob, or it
-            // dangles past the per-iteration reset (the node survives, but the field would point into
-            // reclaimed scratch). Fields taken from the matched accumulator (pattern bindings) are already
-            // persistent and are NOT copied — identified by the field argument being a variable that is
-            // not one of the spec's fresh-input names (see _specFreshInputNames, propagated through
-            // inlined helpers). Any non-variable field expression (a value computed in the arm, e.g. an
-            // upsert's onHit(value) call) is fresh arena scratch and must be materialized as well —
-            // over-materializing an already-persistent value only costs a copy, never correctness.
-            if (_inSpecialization && _specFreshInputNames is not null
-                && (args[i] is not Expr.Var fieldVar || _specFreshInputNames.Contains(fieldVar.Name)))
+            var pruned = Prune(argType);
+            if (pruned is TypeRef.TStr or TypeRef.TBytes)
             {
-                var pruned = Prune(argTypes[i]);
-                if (pruned is TypeRef.TStr or TypeRef.TBytes)
+                int persistentField = NewTemp();
+                Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                fieldTemp = persistentField;
+            }
+            else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
+            {
+                int sizeBytes = tup.Elements.Count * 8;
+                if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
                 {
+                    // Update path: the reused node's old value cell (a same-size blob tuple, still in
+                    // the field until the caller overwrites it) is dead. Overwrite its contents in place
+                    // rather than allocating a fresh blob cell, so value storage is reused and the blob
+                    // stays bounded by distinct keys instead of growing per update.
+                    int oldValueTemp = NewTemp();
+                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
+                    Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
+                    fieldTemp = oldValueTemp;
+                }
+                else
+                {
+                    // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
+                    // the number of distinct keys).
                     int persistentField = NewTemp();
-                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, sizeBytes));
                     fieldTemp = persistentField;
                 }
-                else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
-                {
-                    int sizeBytes = tup.Elements.Count * 8;
-                    if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, i))
-                    {
-                        // Update path: the reused node's old value cell (a same-size blob tuple, still in
-                        // field i until we overwrite it below) is dead. Overwrite its contents in place
-                        // rather than allocating a fresh blob cell, so value storage is reused and the blob
-                        // stays bounded by distinct keys instead of growing per update.
-                        int oldValueTemp = NewTemp();
-                        Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, i));
-                        Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
-                        fieldTemp = oldValueTemp;
-                    }
-                    else
-                    {
-                        // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
-                        // the number of distinct keys).
-                        int persistentField = NewTemp();
-                        Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, sizeBytes));
-                        fieldTemp = persistentField;
-                    }
-                }
             }
-
-            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
         }
 
-        return (ptrTemp, resultType);
+        return fieldTemp;
     }
 
     private int GetConstructorTag(ConstructorSymbol ctor)

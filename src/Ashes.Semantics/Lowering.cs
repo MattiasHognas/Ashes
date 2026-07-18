@@ -796,91 +796,13 @@ public sealed partial class Lowering
         var argTypes = info.ArgTypes;
         int tcoPreRestoreEndSlot = NewLocal();
 
-        // An arg needs no copy-out at the reset if it's a copy type (inline), a resource handle
-        // (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), a loop-invariant
-        // pass-through (holds the pre-loop value, below the watermark), or a fully-reusing
-        // specialized accumulator (rewritten in place below the watermark).
-        bool ArgResetSafe(int i) => CanArenaReset(argTypes[i])
-            || IsResourceHandleType(argTypes[i])
-            || info.PassThrough[i]
-            || info.StableAccArg[i];
-
-        if (Enumerable.Range(0, argTypes.Length).All(ArgResetSafe))
+        if (TcoBackEdgeTryEmitPlainReset(info, tcoPreRestoreEndSlot))
         {
-            // All copy types and/or in-place-reused accumulators: plain reset. Skipped
-            // while a one-shot capability post pushed this iteration is still pending — the
-            // post (and its captures) lives in the iteration's allocations.
-            var tcoResetSkipLabel = BeginLivePostsGuard();
-            Emit(new IrInst.RestoreArenaState(info.ArenaCursorSlot, info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
-            Emit(new IrInst.ReclaimArenaChunks(info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
-            EndLivePostsGuard(tcoResetSkipLabel);
             return;
         }
 
-        // Check whether every heap-type arg can be copy-outed. The single-cell list copy-outs
-        // preserve only the list's TOP cons cell across the reset, valid only for the
-        // `head :: <loop accumulator param>` shape (captured in SingleFreshCons); any other list
-        // shape — except a DeepAdt list, which the synthesized copier clones WHOLE — disqualifies
-        // the reset (those iterations simply don't reclaim).
-        // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
-        // at every back-edge, affordable only when the body already paid O(length) rebuilding the
-        // list this iteration (info.FreshListRebuild). A threaded/consumed list (a bare var, a
-        // pattern-derived tail, a cons onto the accumulator) can share unbounded structure with
-        // the previous iteration — cloning it per back-edge multiplies the loop's cost by the
-        // list length (1brc's merge phase regressed ~400x) — so it downgrades to None here.
-        CopyOutKind ArgCopyOutKind(int i, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy)
-        {
-            var argKind = GetTcoCopyOutKind(argTypes[i], out sizeBytes, out headCopy);
-            if (argKind == CopyOutKind.DeepAdt
-                && Prune(argTypes[i]) is TypeRef.TList
-                && !info.FreshListRebuild[i])
-            {
-                return CopyOutKind.None;
-            }
-
-            return argKind;
-        }
-
-        bool allCopyable = true;
-        for (int i = 0; i < argTypes.Length; i++)
-        {
-            if (info.PassThrough[i])
-            {
-                continue;
-            }
-
-            if (!CanArenaReset(argTypes[i])
-                && ArgCopyOutKind(i, out _, out _) == CopyOutKind.None)
-            {
-                allCopyable = false;
-                break;
-            }
-
-            if (Prune(argTypes[i]) is TypeRef.TList
-                && ArgCopyOutKind(i, out _, out _) != CopyOutKind.DeepAdt
-                && !info.SingleFreshCons[i])
-            {
-                allCopyable = false;
-                break;
-            }
-        }
-
-        // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's whole-value
-        // accumulator copies) instead of the per-iteration one WHEN every arg is a non-sharing
-        // whole-value type: a copy type, a resource handle, a String, a BigInt, a self-contained
-        // DeepAdt clone (ADT/tuple/list), or a loop-invariant pass-through. A single-fresh-cons
-        // list shares its tail with the prior accumulator, which sits below the per-iteration
-        // watermark and would be overwritten by a fixed-mark reset — it keeps the advancing one.
-        // This is what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident.
-        bool useFixedWatermark = info.FixedCursorSlot >= 0
-            && Enumerable.Range(0, argTypes.Length).All(i =>
-                info.PassThrough[i]
-                || CanArenaReset(argTypes[i])
-                || IsResourceHandleType(argTypes[i])
-                || Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBigInt
-                || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
-                || (Prune(argTypes[i]) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(argTypes[i])))
-                || (Prune(argTypes[i]) is TypeRef.TList && ArgCopyOutKind(i, out _, out _) == CopyOutKind.DeepAdt));
+        bool allCopyable = TcoBackEdgeAllArgsCopyable(info);
+        bool useFixedWatermark = TcoBackEdgeUseFixedWatermark(info);
         int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
 
@@ -900,78 +822,217 @@ public sealed partial class Lowering
         // Skipped entirely while a one-shot capability post pushed this iteration is still pending.
         var tcoCopySkipLabel = BeginLivePostsGuard();
 
-        // Amortized compaction (fixed watermark only): copying the WHOLE growing accumulator at
-        // every back-edge is O(N^2) TIME (each of N iterations copies O(N) live bytes). Instead,
-        // skip the copy-out + reset while the arena has grown less than 2x the live size recorded
-        // at the last compaction (+ slack) — the skipped iterations just keep allocating above W.
-        // Each compaction then reclaims at least as much garbage as it copies live bytes, so total
-        // copy work is LINEAR in bytes allocated (the doubling amortization) and resident memory
-        // stays bounded by ~3x the live accumulator. Skipping is trivially safe: it is exactly the
-        // no-reset behavior every non-qualifying loop already has. The advancing-mark path is NOT
-        // amortized — its single-cell list copies must track the moving mark every iteration.
-        string? compactSkipLabel = null;
-        if (useFixedWatermark && info.CompactionSizeSlot >= 0)
+        string? compactSkipLabel = TcoBackEdgeEmitCompactionCheck(info, useFixedWatermark);
+
+        var upCopyTemps = TcoBackEdgeEmitPhaseAUpCopies(info);
+
+        TcoBackEdgeEmitResetAndZeroReservations(info, resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot);
+
+        TcoBackEdgeEmitPhaseBDownCopies(info, upCopyTemps);
+
+        // Free the chunks abandoned above W (including the Phase A up-copies, now fully consumed).
+        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+
+        if (compactSkipLabel is not null)
         {
-            int curCursorSlot = NewLocal();
-            int curEndSlot = NewLocal();
-            Emit(new IrInst.SaveArenaState(curCursorSlot, curEndSlot));
-            int curTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(curTemp, curCursorSlot));
-            int wTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(wTemp, info.FixedCursorSlot));
-            int growthTemp = NewTemp();
-            Emit(new IrInst.SubInt(growthTemp, curTemp, wTemp));
-
-            // An active string reservation (ConcatStrTip) is LIVE capacity, not garbage — without
-            // subtracting its span, a fresh doubling reservation (~2x live) plus the live data
-            // always exceeds the 2M threshold, so every doubling would resonate into an immediate
-            // compact -> zero -> re-reserve -> compact cycle: one full copy per append, quadratic
-            // again. Netting the span out restores the intended accounting (only abandoned copies
-            // and iteration scraps count), keeping compactions geometric.
-            for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
-            {
-                if (info.ArgResvStartSlots[r] < 0)
-                {
-                    continue;
-                }
-
-                int resvStartTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(resvStartTemp, info.ArgResvStartSlots[r]));
-                int resvEndTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(resvEndTemp, info.ArgResvEndSlots[r]));
-                int resvSpanTemp = NewTemp();
-                Emit(new IrInst.SubInt(resvSpanTemp, resvEndTemp, resvStartTemp));
-                int nettedTemp = NewTemp();
-                Emit(new IrInst.SubInt(nettedTemp, growthTemp, resvSpanTemp));
-                growthTemp = nettedTemp;
-            }
-            int mTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(mTemp, info.CompactionSizeSlot));
-            int oneTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(oneTemp, 1));
-            int twoMTemp = NewTemp();
-            Emit(new IrInst.ShlInt(twoMTemp, mTemp, oneTemp));
-            int slackTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(slackTemp, TcoCompactionSlackBytes));
-            int thresholdTemp = NewTemp();
-            Emit(new IrInst.AddInt(thresholdTemp, twoMTemp, slackTemp));
-            int growthGtTemp = NewTemp();
-            Emit(new IrInst.CmpIntGt(growthGtTemp, growthTemp, thresholdTemp));
-            // cursor - W is only meaningful while the cursor is still in W's chunk; once the arena
-            // grew into another chunk the difference is garbage (distinct mmaps). A crossed chunk
-            // also means at least a chunk's worth of allocation since W — compact unconditionally.
-            int wEndTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(wEndTemp, info.FixedEndSlot));
-            int curEndTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(curEndTemp, curEndSlot));
-            int endsDifferTemp = NewTemp();
-            Emit(new IrInst.CmpIntNe(endsDifferTemp, curEndTemp, wEndTemp));
-            int needTemp = NewTemp();
-            Emit(new IrInst.OrInt(needTemp, growthGtTemp, endsDifferTemp));
-            compactSkipLabel = $"tco_compact_skip_{_nextLambdaId++}";
-            Emit(new IrInst.JumpIfFalse(needTemp, compactSkipLabel));
+            TcoBackEdgeEmitCompactionRecord(info, compactSkipLabel);
         }
 
+        EndLivePostsGuard(tcoCopySkipLabel);
+    }
+
+    /// <summary>
+    /// Emits the plain per-iteration reset when every argument is reset-safe; returns false (and
+    /// emits nothing) when some argument needs a copy-out instead.
+    /// </summary>
+    private bool TcoBackEdgeTryEmitPlainReset(PendingTcoReset info, int tcoPreRestoreEndSlot)
+    {
+        var argTypes = info.ArgTypes;
+
+        // An arg needs no copy-out at the reset if it's a copy type (inline), a resource handle
+        // (a scalar fd/HANDLE — no heap reference, and a reset never Drops it), a loop-invariant
+        // pass-through (holds the pre-loop value, below the watermark), or a fully-reusing
+        // specialized accumulator (rewritten in place below the watermark).
+        bool ArgResetSafe(int i) => CanArenaReset(argTypes[i])
+            || IsResourceHandleType(argTypes[i])
+            || info.PassThrough[i]
+            || info.StableAccArg[i];
+
+        if (!Enumerable.Range(0, argTypes.Length).All(ArgResetSafe))
+        {
+            return false;
+        }
+
+        // All copy types and/or in-place-reused accumulators: plain reset. Skipped
+        // while a one-shot capability post pushed this iteration is still pending — the
+        // post (and its captures) lives in the iteration's allocations.
+        var tcoResetSkipLabel = BeginLivePostsGuard();
+        Emit(new IrInst.RestoreArenaState(info.ArenaCursorSlot, info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+        Emit(new IrInst.ReclaimArenaChunks(info.ArenaEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
+        EndLivePostsGuard(tcoResetSkipLabel);
+        return true;
+    }
+
+    // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
+    // at every back-edge, affordable only when the body already paid O(length) rebuilding the
+    // list this iteration (info.FreshListRebuild). A threaded/consumed list (a bare var, a
+    // pattern-derived tail, a cons onto the accumulator) can share unbounded structure with
+    // the previous iteration — cloning it per back-edge multiplies the loop's cost by the
+    // list length (1brc's merge phase regressed ~400x) — so it downgrades to None here.
+    private CopyOutKind TcoBackEdgeArgCopyOutKind(PendingTcoReset info, int i, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy)
+    {
+        var argKind = GetTcoCopyOutKind(info.ArgTypes[i], out sizeBytes, out headCopy);
+        if (argKind == CopyOutKind.DeepAdt
+            && Prune(info.ArgTypes[i]) is TypeRef.TList
+            && !info.FreshListRebuild[i])
+        {
+            return CopyOutKind.None;
+        }
+
+        return argKind;
+    }
+
+    // Check whether every heap-type arg can be copy-outed. The single-cell list copy-outs
+    // preserve only the list's TOP cons cell across the reset, valid only for the
+    // `head :: <loop accumulator param>` shape (captured in SingleFreshCons); any other list
+    // shape — except a DeepAdt list, which the synthesized copier clones WHOLE — disqualifies
+    // the reset (those iterations simply don't reclaim).
+    private bool TcoBackEdgeAllArgsCopyable(PendingTcoReset info)
+    {
+        var argTypes = info.ArgTypes;
+        for (int i = 0; i < argTypes.Length; i++)
+        {
+            if (info.PassThrough[i])
+            {
+                continue;
+            }
+
+            if (!CanArenaReset(argTypes[i])
+                && TcoBackEdgeArgCopyOutKind(info, i, out _, out _) == CopyOutKind.None)
+            {
+                return false;
+            }
+
+            if (Prune(argTypes[i]) is TypeRef.TList
+                && TcoBackEdgeArgCopyOutKind(info, i, out _, out _) != CopyOutKind.DeepAdt
+                && !info.SingleFreshCons[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Reset to the FIXED loop-entry watermark (reclaiming the previous iteration's whole-value
+    // accumulator copies) instead of the per-iteration one WHEN every arg is a non-sharing
+    // whole-value type: a copy type, a resource handle, a String, a BigInt, a self-contained
+    // DeepAdt clone (ADT/tuple/list), or a loop-invariant pass-through. A single-fresh-cons
+    // list shares its tail with the prior accumulator, which sits below the per-iteration
+    // watermark and would be overwritten by a fixed-mark reset — it keeps the advancing one.
+    // This is what turns a growing String/BigInt accumulator from O(N^2) to O(N) resident.
+    private bool TcoBackEdgeUseFixedWatermark(PendingTcoReset info)
+    {
+        var argTypes = info.ArgTypes;
+        return info.FixedCursorSlot >= 0
+            && Enumerable.Range(0, argTypes.Length).All(i =>
+                info.PassThrough[i]
+                || CanArenaReset(argTypes[i])
+                || IsResourceHandleType(argTypes[i])
+                || Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBigInt
+                || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
+                || (Prune(argTypes[i]) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(argTypes[i])))
+                || (Prune(argTypes[i]) is TypeRef.TList && TcoBackEdgeArgCopyOutKind(info, i, out _, out _) == CopyOutKind.DeepAdt));
+    }
+
+    // Amortized compaction (fixed watermark only): copying the WHOLE growing accumulator at
+    // every back-edge is O(N^2) TIME (each of N iterations copies O(N) live bytes). Instead,
+    // skip the copy-out + reset while the arena has grown less than 2x the live size recorded
+    // at the last compaction (+ slack) — the skipped iterations just keep allocating above W.
+    // Each compaction then reclaims at least as much garbage as it copies live bytes, so total
+    // copy work is LINEAR in bytes allocated (the doubling amortization) and resident memory
+    // stays bounded by ~3x the live accumulator. Skipping is trivially safe: it is exactly the
+    // no-reset behavior every non-qualifying loop already has. The advancing-mark path is NOT
+    // amortized — its single-cell list copies must track the moving mark every iteration.
+    // Returns the skip label when the check was emitted, null otherwise.
+    private string? TcoBackEdgeEmitCompactionCheck(PendingTcoReset info, bool useFixedWatermark)
+    {
+        if (!useFixedWatermark || info.CompactionSizeSlot < 0)
+        {
+            return null;
+        }
+
+        int curCursorSlot = NewLocal();
+        int curEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(curCursorSlot, curEndSlot));
+        int curTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(curTemp, curCursorSlot));
+        int wTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(wTemp, info.FixedCursorSlot));
+        int growthTemp = NewTemp();
+        Emit(new IrInst.SubInt(growthTemp, curTemp, wTemp));
+        growthTemp = TcoBackEdgeNetReservationSpans(info, growthTemp);
+        int mTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(mTemp, info.CompactionSizeSlot));
+        int oneTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(oneTemp, 1));
+        int twoMTemp = NewTemp();
+        Emit(new IrInst.ShlInt(twoMTemp, mTemp, oneTemp));
+        int slackTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(slackTemp, TcoCompactionSlackBytes));
+        int thresholdTemp = NewTemp();
+        Emit(new IrInst.AddInt(thresholdTemp, twoMTemp, slackTemp));
+        int growthGtTemp = NewTemp();
+        Emit(new IrInst.CmpIntGt(growthGtTemp, growthTemp, thresholdTemp));
+        // cursor - W is only meaningful while the cursor is still in W's chunk; once the arena
+        // grew into another chunk the difference is garbage (distinct mmaps). A crossed chunk
+        // also means at least a chunk's worth of allocation since W — compact unconditionally.
+        int wEndTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(wEndTemp, info.FixedEndSlot));
+        int curEndTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(curEndTemp, curEndSlot));
+        int endsDifferTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(endsDifferTemp, curEndTemp, wEndTemp));
+        int needTemp = NewTemp();
+        Emit(new IrInst.OrInt(needTemp, growthGtTemp, endsDifferTemp));
+        string compactSkipLabel = $"tco_compact_skip_{_nextLambdaId++}";
+        Emit(new IrInst.JumpIfFalse(needTemp, compactSkipLabel));
+        return compactSkipLabel;
+    }
+
+    // An active string reservation (ConcatStrTip) is LIVE capacity, not garbage — without
+    // subtracting its span, a fresh doubling reservation (~2x live) plus the live data
+    // always exceeds the 2M threshold, so every doubling would resonate into an immediate
+    // compact -> zero -> re-reserve -> compact cycle: one full copy per append, quadratic
+    // again. Netting the span out restores the intended accounting (only abandoned copies
+    // and iteration scraps count), keeping compactions geometric.
+    private int TcoBackEdgeNetReservationSpans(PendingTcoReset info, int growthTemp)
+    {
+        for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
+        {
+            if (info.ArgResvStartSlots[r] < 0)
+            {
+                continue;
+            }
+
+            int resvStartTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(resvStartTemp, info.ArgResvStartSlots[r]));
+            int resvEndTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(resvEndTemp, info.ArgResvEndSlots[r]));
+            int resvSpanTemp = NewTemp();
+            Emit(new IrInst.SubInt(resvSpanTemp, resvEndTemp, resvStartTemp));
+            int nettedTemp = NewTemp();
+            Emit(new IrInst.SubInt(nettedTemp, growthTemp, resvSpanTemp));
+            growthTemp = nettedTemp;
+        }
+
+        return growthTemp;
+    }
+
+    // Phase A: copy every heap arg UP above the current cursor; -1 marks args with no up-copy.
+    private int[] TcoBackEdgeEmitPhaseAUpCopies(PendingTcoReset info)
+    {
+        var argTypes = info.ArgTypes;
         var upCopyTemps = new int[argTypes.Length];
         for (int i = 0; i < argTypes.Length; i++)
         {
@@ -983,7 +1044,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
+            var kind = TcoBackEdgeArgCopyOutKind(info, i, out int sizeBytes, out var headCopy);
             if (kind == CopyOutKind.None)
             {
                 upCopyTemps[i] = -1;
@@ -1011,6 +1072,11 @@ public sealed partial class Lowering
             }
         }
 
+        return upCopyTemps;
+    }
+
+    private void TcoBackEdgeEmitResetAndZeroReservations(PendingTcoReset info, int resetCursorSlot, int resetEndSlot, int tcoPreRestoreEndSlot)
+    {
         // Reset (pointer reset only, no chunk freeing): cursor → W.
         Emit(new IrInst.RestoreArenaState(resetCursorSlot, resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
 
@@ -1029,14 +1095,18 @@ public sealed partial class Lowering
                 }
             }
         }
+    }
 
-        // Phase B: copy each up-copy down to W and store into the slot.
+    // Phase B: copy each up-copy down to W and store into the slot.
+    private void TcoBackEdgeEmitPhaseBDownCopies(PendingTcoReset info, int[] upCopyTemps)
+    {
+        var argTypes = info.ArgTypes;
         for (int i = 0; i < argTypes.Length; i++)
         {
             if (upCopyTemps[i] < 0)
                 continue;
 
-            var kind = ArgCopyOutKind(i, out int sizeBytes, out var headCopy);
+            var kind = TcoBackEdgeArgCopyOutKind(info, i, out int sizeBytes, out var headCopy);
             int copyDest;
             if (kind == CopyOutKind.DeepAdt)
             {
@@ -1064,62 +1134,57 @@ public sealed partial class Lowering
 
             Emit(new IrInst.StoreLocal(info.ParamSlots[i], copyDest));
         }
+    }
 
-        // Free the chunks abandoned above W (including the Phase A up-copies, now fully consumed).
-        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot) { CoroutineLoop = info.CoroutineLoop });
-
-        if (compactSkipLabel is not null)
-        {
-            // Record the compacted live size (cursor - W) for the next amortization trigger. When
-            // the down-copy overflowed into a NEW chunk (the accumulator outgrew W's chunk), the
-            // difference is garbage — instead REBASE the fixed watermark to the post-copy position
-            // in the new chunk and restart the epoch (M = 0). The old chunk's region above the old
-            // W is stranded, but crossings happen only when the live size doubles past a chunk
-            // (the grow path gives oversized chunks 2x headroom), so the stranded generations form
-            // a geometric series bounded by ~2x the final live size. After the rebase, appends and
-            // compactions run entirely inside the roomy new chunk.
-            int afterCursorSlot = NewLocal();
-            int afterEndSlot = NewLocal();
-            Emit(new IrInst.SaveArenaState(afterCursorSlot, afterEndSlot));
-            int afterTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(afterTemp, afterCursorSlot));
-            int wAfterTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(wAfterTemp, info.FixedCursorSlot));
-            int liveTemp = NewTemp();
-            Emit(new IrInst.SubInt(liveTemp, afterTemp, wAfterTemp));
-            int afterEndTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(afterEndTemp, afterEndSlot));
-            int wEndAfterTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(wEndAfterTemp, info.FixedEndSlot));
-            int sameChunkTemp = NewTemp();
-            Emit(new IrInst.CmpIntEq(sameChunkTemp, afterEndTemp, wEndAfterTemp));
-            string rebaseLabel = $"tco_compact_rebase_{_nextLambdaId++}";
-            string recordedLabel = $"tco_compact_recorded_{_nextLambdaId++}";
-            Emit(new IrInst.JumpIfFalse(sameChunkTemp, rebaseLabel));
-            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, liveTemp));
-            Emit(new IrInst.Jump(recordedLabel));
-            Emit(new IrInst.Label(rebaseLabel));
-            // W' = the new chunk's allocation start, recovered from the chunk FOOTER (the usable
-            // end holds the chunk's own base; allocations start at base + 8). The down-copy landed
-            // exactly there, so the live accumulator sits AT W' — future compactions copy down to
-            // W' with the accumulator's full size counted in the body-allocation term (B >= S), and
-            // in-place appends see acc >= W' immediately. M restarts at the region size.
-            int chunkBaseTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(chunkBaseTemp, afterEndTemp, 0));
-            int eightTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(eightTemp, 8));
-            int rebaseCursorTemp = NewTemp();
-            Emit(new IrInst.AddInt(rebaseCursorTemp, chunkBaseTemp, eightTemp));
-            Emit(new IrInst.StoreLocal(info.FixedCursorSlot, rebaseCursorTemp));
-            Emit(new IrInst.StoreLocal(info.FixedEndSlot, afterEndTemp));
-            int rebasedLiveTemp = NewTemp();
-            Emit(new IrInst.SubInt(rebasedLiveTemp, afterTemp, rebaseCursorTemp));
-            Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, rebasedLiveTemp));
-            Emit(new IrInst.Label(recordedLabel));
-            Emit(new IrInst.Label(compactSkipLabel));
-        }
-
-        EndLivePostsGuard(tcoCopySkipLabel);
+    // Record the compacted live size (cursor - W) for the next amortization trigger. When
+    // the down-copy overflowed into a NEW chunk (the accumulator outgrew W's chunk), the
+    // difference is garbage — instead REBASE the fixed watermark to the post-copy position
+    // in the new chunk and restart the epoch (M = 0). The old chunk's region above the old
+    // W is stranded, but crossings happen only when the live size doubles past a chunk
+    // (the grow path gives oversized chunks 2x headroom), so the stranded generations form
+    // a geometric series bounded by ~2x the final live size. After the rebase, appends and
+    // compactions run entirely inside the roomy new chunk.
+    private void TcoBackEdgeEmitCompactionRecord(PendingTcoReset info, string compactSkipLabel)
+    {
+        int afterCursorSlot = NewLocal();
+        int afterEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(afterCursorSlot, afterEndSlot));
+        int afterTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(afterTemp, afterCursorSlot));
+        int wAfterTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(wAfterTemp, info.FixedCursorSlot));
+        int liveTemp = NewTemp();
+        Emit(new IrInst.SubInt(liveTemp, afterTemp, wAfterTemp));
+        int afterEndTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(afterEndTemp, afterEndSlot));
+        int wEndAfterTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(wEndAfterTemp, info.FixedEndSlot));
+        int sameChunkTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(sameChunkTemp, afterEndTemp, wEndAfterTemp));
+        string rebaseLabel = $"tco_compact_rebase_{_nextLambdaId++}";
+        string recordedLabel = $"tco_compact_recorded_{_nextLambdaId++}";
+        Emit(new IrInst.JumpIfFalse(sameChunkTemp, rebaseLabel));
+        Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, liveTemp));
+        Emit(new IrInst.Jump(recordedLabel));
+        Emit(new IrInst.Label(rebaseLabel));
+        // W' = the new chunk's allocation start, recovered from the chunk FOOTER (the usable
+        // end holds the chunk's own base; allocations start at base + 8). The down-copy landed
+        // exactly there, so the live accumulator sits AT W' — future compactions copy down to
+        // W' with the accumulator's full size counted in the body-allocation term (B >= S), and
+        // in-place appends see acc >= W' immediately. M restarts at the region size.
+        int chunkBaseTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(chunkBaseTemp, afterEndTemp, 0));
+        int eightTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(eightTemp, 8));
+        int rebaseCursorTemp = NewTemp();
+        Emit(new IrInst.AddInt(rebaseCursorTemp, chunkBaseTemp, eightTemp));
+        Emit(new IrInst.StoreLocal(info.FixedCursorSlot, rebaseCursorTemp));
+        Emit(new IrInst.StoreLocal(info.FixedEndSlot, afterEndTemp));
+        int rebasedLiveTemp = NewTemp();
+        Emit(new IrInst.SubInt(rebasedLiveTemp, afterTemp, rebaseCursorTemp));
+        Emit(new IrInst.StoreLocal(info.CompactionSizeSlot, rebasedLiveTemp));
+        Emit(new IrInst.Label(recordedLabel));
+        Emit(new IrInst.Label(compactSkipLabel));
     }
 
     /// <summary>
@@ -1166,45 +1231,52 @@ public sealed partial class Lowering
                 continue;
             }
 
-            var savedInst = new List<IrInst>(_inst);
-            var savedTemp = _nextTempSlot;
-            var savedLocal = _nextLocalSlot;
-            var savedLocalNames = new Dictionary<int, string>(_localNames);
-            var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
-            _inst.Clear();
-            _nextTempSlot = f.TempCount;
-            _nextLocalSlot = f.LocalCount;
-            foreach (var inst in f.Instructions)
-            {
-                if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
-                {
-                    EmitTcoBackEdgeArenaBlock(info);
-                }
-                else
-                {
-                    _inst.Add(inst);
-                }
-            }
-
-            _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
-            _inst.Clear();
-            _inst.AddRange(savedInst);
-            _nextTempSlot = savedTemp;
-            _nextLocalSlot = savedLocal;
-            _localNames.Clear();
-            foreach (var kv in savedLocalNames)
-            {
-                _localNames[kv.Key] = kv.Value;
-            }
-
-            _localTypes.Clear();
-            foreach (var kv in savedLocalTypes)
-            {
-                _localTypes[kv.Key] = kv.Value;
-            }
+            ResolveDeferredTcoResetsInFunction(fi, f);
         }
 
         _pendingTcoResets.Clear();
+    }
+
+    // Splices one lifted function's placeholders, with the counters swapped to the function's and
+    // restored afterwards.
+    private void ResolveDeferredTcoResetsInFunction(int fi, IrFunction f)
+    {
+        var savedInst = new List<IrInst>(_inst);
+        var savedTemp = _nextTempSlot;
+        var savedLocal = _nextLocalSlot;
+        var savedLocalNames = new Dictionary<int, string>(_localNames);
+        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        _inst.Clear();
+        _nextTempSlot = f.TempCount;
+        _nextLocalSlot = f.LocalCount;
+        foreach (var inst in f.Instructions)
+        {
+            if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
+            {
+                EmitTcoBackEdgeArenaBlock(info);
+            }
+            else
+            {
+                _inst.Add(inst);
+            }
+        }
+
+        _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
+        _inst.Clear();
+        _inst.AddRange(savedInst);
+        _nextTempSlot = savedTemp;
+        _nextLocalSlot = savedLocal;
+        _localNames.Clear();
+        foreach (var kv in savedLocalNames)
+        {
+            _localNames[kv.Key] = kv.Value;
+        }
+
+        _localTypes.Clear();
+        foreach (var kv in savedLocalTypes)
+        {
+            _localTypes[kv.Key] = kv.Value;
+        }
     }
 
     // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
@@ -1365,7 +1437,16 @@ public sealed partial class Lowering
             return (helperLowered.Item1, Prune(helperLowered.Item2));
         }
 
-        (int Temp, TypeRef Type) lowered = e switch
+        var lowered = LowerExprDispatch(e);
+
+        RecordExprHoverType(e, lowered.Type);
+        _currentSourceExpr = previousExpr;
+        return (lowered.Temp, Prune(lowered.Type));
+    }
+
+    private (int Temp, TypeRef Type) LowerExprDispatch(Expr e)
+    {
+        return e switch
         {
             Expr.IntLit lit => LowerInt(lit),
             Expr.UIntLit lit => LowerUInt(lit),
@@ -1413,10 +1494,6 @@ public sealed partial class Lowering
             CapabilityPostExpr capabilityPost => LowerCapabilityPost(capabilityPost),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
-
-        RecordExprHoverType(e, lowered.Type);
-        _currentSourceExpr = previousExpr;
-        return (lowered.Temp, Prune(lowered.Type));
     }
 
     private (int, TypeRef) LowerInt(Expr.IntLit lit)
@@ -1464,7 +1541,34 @@ public sealed partial class Lowering
             _reuseBindingSeenBySlot[seenLocal.Slot]++;
         }
 
-        if (b is null && _topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
+        if (b is null)
+        {
+            return LowerVarUnbound(v);
+        }
+
+        var result = LowerVarBound(v, b);
+
+        RecordHoverType(GetSpan(v), v.Name, result.Type);
+
+        // Compiler-inferred borrowing.
+        // When an owned binding is accessed, emit a Borrow instruction.
+        // This tells the IR that we're taking a non-owning reference — the
+        // owning scope is still responsible for the Drop.
+        var ownerInfo = LookupOwnedValue(v.Name);
+        if (ownerInfo is not null && !ownerInfo.IsDropped)
+        {
+            int borrowTemp = NewTemp();
+            Emit(new IrInst.Borrow(borrowTemp, result.Temp));
+            ownerInfo.ActiveBorrows++;
+            result = (borrowTemp, result.Type);
+        }
+
+        return result;
+    }
+
+    private (int, TypeRef) LowerVarUnbound(Expr.Var v)
+    {
+        if (_topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
             // This name is a non-inlined top-level helper (e.g. an AVL height/max reader, or a plain
             // helper called from an inlined/specialized body) referenced from an isolated scope where its
@@ -1482,41 +1586,41 @@ public sealed partial class Lowering
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
-        if (b is null)
+        if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
         {
-            if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
+            if (ctorSym.Arity == 0)
             {
-                if (ctorSym.Arity == 0)
-                {
-                    return LowerNullaryConstructor(ctorSym);
-                }
-
-                return LowerExpr(BuildConstructorLambda(ctorSym));
+                return LowerNullaryConstructor(ctorSym);
             }
 
-            if (_topLevelBindingNames.Contains(v.Name))
-            {
-                // Out of scope but declared later in the file: a forward reference under Model-A
-                // sequential scoping. Self/mutual recursion needs 'let rec' / 'let rec ... and ...'.
-                if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
-                {
-                    Console.Error.WriteLine($"[reuse] ASH014 on '{v.Name}' inSpec={_inSpecialization} inlinable={_inlinableFunctions.ContainsKey(v.Name)} depth={_lambdaDepth}");
-                }
-
-                ReportDiagnostic(GetSpan(v), $"Binding '{v.Name}' is not yet declared at this point.", ForwardReferenceCode);
-            }
-            else if (v.Name.Length > 0 && char.IsUpper(v.Name[0]))
-            {
-                ReportDiagnostic(GetSpan(v), $"Unknown constructor '{v.Name}'.{BuildUnknownConstructorHint(v.Name)}");
-            }
-            else
-            {
-                ReportDiagnostic(GetSpan(v), $"Undefined variable '{v.Name}'.{BuildUnknownVariableHint(v.Name)}", DiagnosticCodes.UnknownIdentifier);
-            }
-
-            return ReturnNeverWithDummyTemp();
+            return LowerExpr(BuildConstructorLambda(ctorSym));
         }
 
+        if (_topLevelBindingNames.Contains(v.Name))
+        {
+            // Out of scope but declared later in the file: a forward reference under Model-A
+            // sequential scoping. Self/mutual recursion needs 'let rec' / 'let rec ... and ...'.
+            if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
+            {
+                Console.Error.WriteLine($"[reuse] ASH014 on '{v.Name}' inSpec={_inSpecialization} inlinable={_inlinableFunctions.ContainsKey(v.Name)} depth={_lambdaDepth}");
+            }
+
+            ReportDiagnostic(GetSpan(v), $"Binding '{v.Name}' is not yet declared at this point.", ForwardReferenceCode);
+        }
+        else if (v.Name.Length > 0 && char.IsUpper(v.Name[0]))
+        {
+            ReportDiagnostic(GetSpan(v), $"Unknown constructor '{v.Name}'.{BuildUnknownConstructorHint(v.Name)}");
+        }
+        else
+        {
+            ReportDiagnostic(GetSpan(v), $"Undefined variable '{v.Name}'.{BuildUnknownVariableHint(v.Name)}", DiagnosticCodes.UnknownIdentifier);
+        }
+
+        return ReturnNeverWithDummyTemp();
+    }
+
+    private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
+    {
         int temp = NewTemp();
         (int Temp, TypeRef Type) result;
 
@@ -1569,21 +1673,6 @@ public sealed partial class Lowering
 
             default:
                 throw new InvalidOperationException();
-        }
-
-        RecordHoverType(GetSpan(v), v.Name, result.Type);
-
-        // Compiler-inferred borrowing.
-        // When an owned binding is accessed, emit a Borrow instruction.
-        // This tells the IR that we're taking a non-owning reference — the
-        // owning scope is still responsible for the Drop.
-        var ownerInfo = LookupOwnedValue(v.Name);
-        if (ownerInfo is not null && !ownerInfo.IsDropped)
-        {
-            int borrowTemp = NewTemp();
-            Emit(new IrInst.Borrow(borrowTemp, result.Temp));
-            ownerInfo.ActiveBorrows++;
-            result = (borrowTemp, result.Type);
         }
 
         return result;
@@ -1715,27 +1804,7 @@ public sealed partial class Lowering
 
         int depth0Before = _depth0LambdaCount;
 
-        // Seed parameter types from the annotation (if any) before lowering the value, so operators on
-        // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
-        var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
-        var savedAnnotParams = _annotationParamTypes;
-        var savedAnnotCursor = _annotationParamCursor;
-        if (annotatedLetType is not null && let.Value is Expr.Lambda letLambda)
-        {
-            _annotationParamTypes = PeelAnnotationParamTypes(annotatedLetType, CountLambdaChain(letLambda));
-            _annotationParamCursor = 0;
-        }
-
-        var (valueTemp, valueType) = LowerLetValue(let);
-        _annotationParamTypes = savedAnnotParams;
-        _annotationParamCursor = savedAnnotCursor;
-
-        // If the user wrote a type annotation, verify it matches the inferred type.
-        if (annotatedLetType is not null)
-        {
-            using var annotationSpan = PushDiagnosticSpan(GetSpan(let.Value));
-            Unify(annotatedLetType, valueType);
-        }
+        var (valueTemp, valueType) = LowerLetAnnotatedValue(let);
 
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valueTemp));
@@ -1772,6 +1841,33 @@ public sealed partial class Lowering
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
+    }
+
+    // Seed parameter types from the annotation (if any) before lowering the value, so operators on
+    // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
+    private (int Temp, TypeRef Type) LowerLetAnnotatedValue(Expr.Let let)
+    {
+        var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
+        var savedAnnotParams = _annotationParamTypes;
+        var savedAnnotCursor = _annotationParamCursor;
+        if (annotatedLetType is not null && let.Value is Expr.Lambda letLambda)
+        {
+            _annotationParamTypes = PeelAnnotationParamTypes(annotatedLetType, CountLambdaChain(letLambda));
+            _annotationParamCursor = 0;
+        }
+
+        var (valueTemp, valueType) = LowerLetValue(let);
+        _annotationParamTypes = savedAnnotParams;
+        _annotationParamCursor = savedAnnotCursor;
+
+        // If the user wrote a type annotation, verify it matches the inferred type.
+        if (annotatedLetType is not null)
+        {
+            using var annotationSpan = PushDiagnosticSpan(GetSpan(let.Value));
+            Unify(annotatedLetType, valueType);
+        }
+
+        return (valueTemp, valueType);
     }
 
     private (int Temp, TypeRef Type) LowerLetValue(Expr.Let let)
@@ -1874,26 +1970,7 @@ public sealed partial class Lowering
         var errorLabel = NewLabel("let_result_error");
         var endLabel = NewLabel("let_result_end");
 
-        var tagTemp = NewTemp();
-        var expectedOkTagTemp = NewTemp();
-        var isOkTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
-        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
-        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
-        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
-
-        var payloadTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, 0));
-
-        var boundSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(boundSlot, payloadTemp));
-        RecordLocalDebugInfo(boundSlot, letResult.Name, successType);
-        var child = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
-        {
-            [letResult.Name] = new Binding.Local(boundSlot, Prune(successType), AstSpans.GetLetResultNameOrDefault(letResult))
-        };
-        _scopes.Push(child);
-        RecordHoverType(AstSpans.GetLetResultNameOrDefault(letResult), letResult.Name, successType);
+        LowerLetResultOkBinding(letResult, valueTemp, okConstructor, successType, errorLabel);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var (bodyTemp, bodyType) = LowerExpr(letResult.Body);
@@ -1922,12 +1999,83 @@ public sealed partial class Lowering
         return (resultTemp, Prune(resultType));
     }
 
+    // Emits the Ok-tag test (jumping to errorLabel otherwise) and binds the Ok payload for the
+    // let? body, pushing a child scope the caller pops after lowering the body.
+    private void LowerLetResultOkBinding(Expr.LetResult letResult, int valueTemp, ConstructorSymbol okConstructor, TypeRef successType, string errorLabel)
+    {
+        var tagTemp = NewTemp();
+        var expectedOkTagTemp = NewTemp();
+        var isOkTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.LoadConstInt(expectedOkTagTemp, GetConstructorTag(okConstructor)));
+        Emit(new IrInst.CmpIntEq(isOkTemp, tagTemp, expectedOkTagTemp));
+        Emit(new IrInst.JumpIfFalse(isOkTemp, errorLabel));
+
+        var payloadTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, 0));
+
+        var boundSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(boundSlot, payloadTemp));
+        RecordLocalDebugInfo(boundSlot, letResult.Name, successType);
+        var child = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
+        {
+            [letResult.Name] = new Binding.Local(boundSlot, Prune(successType), AstSpans.GetLetResultNameOrDefault(letResult))
+        };
+        _scopes.Push(child);
+        RecordHoverType(AstSpans.GetLetResultNameOrDefault(letResult), letResult.Name, successType);
+    }
+
     private (int, TypeRef) LowerLetRecursive(Expr.LetRecursive letRecursive)
     {
         int slot = NewLocal();
         // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
         var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
+        var recursiveType = LowerLetRecursiveBindSelf(letRecursive, innerLambda, slot);
+
+        var (savedAnnotationParamTypes, savedAnnotationParamCursor) = LowerLetRecursiveSeedAnnotation(letRecursive, innerLambda, recursiveType);
+
+        (int valTemp, TypeRef valType) valueAndType;
+        bool helperMarkerAdded = false;
+        if (letRecursive.Value is Expr.Lambda lam
+            && _inCoroutineBody
+            && !IsAsyncIntrinsicCall(GetInnermostBody(lam))
+            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(lam)))
+        {
+            valueAndType = LowerLetRecursiveCoroutineHelperValue(letRecursive, lam, recursiveType, out helperMarkerAdded);
+        }
+        else if (letRecursive.Value is Expr.Lambda lam2)
+        {
+            valueAndType = LowerLetRecursiveLambdaValue(letRecursive, lam2, recursiveType);
+        }
+        else if (innerLambda is not null)
+        {
+            valueAndType = LowerLetRecursiveAliasChainValue(letRecursive, innerLambda, recursiveType);
+        }
+        else
+        {
+            ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
+            valueAndType = LowerExpr(letRecursive.Value);
+        }
+
+        _annotationParamTypes = savedAnnotationParamTypes;
+        _annotationParamCursor = savedAnnotationParamCursor;
+
+        LowerLetRecursiveFinalizeValue(letRecursive, slot, recursiveType, valueAndType);
+
+        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body);
+        if (helperMarkerAdded)
+        {
+            _coroutineHelperArity.Remove(letRecursive.Name);
+        }
+
+        _scopes.Pop();
+        return (bodyTemp, bodyType);
+    }
+
+    // Binds the recursive name to its slot in a child scope (popped by the caller after the body).
+    private TypeRef LowerLetRecursiveBindSelf(Expr.LetRecursive letRecursive, Expr.Lambda? innerLambda, int slot)
+    {
         // The self-type's arrow must carry an OPEN row variable, not a null (pure) row: a recursive
         // helper that performs a capability — or captures a capability-performing parameter it applies, as
         // `List.map`'s `mapGo` applies `f` — has an open latent row, and unifying the real open row
@@ -1945,12 +2093,17 @@ public sealed partial class Lowering
             [letRecursive.Name] = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))
         };
         _scopes.Push(child);
+        return recursiveType;
+    }
 
-        // Seed the recursive function's parameter types from its declared annotation BEFORE lowering
-        // the body, so that operator-overload resolution inside the body (e.g. `a * b` on Float
-        // params) sees the annotated types rather than defaulting an unresolved type var to Int.
-        // Resolving the annotation against recursiveType up front also makes self-calls type-check
-        // against the declared arrow. Restored after the value branches so nested lets don't inherit it.
+    // Seed the recursive function's parameter types from its declared annotation BEFORE lowering
+    // the body, so that operator-overload resolution inside the body (e.g. `a * b` on Float
+    // params) sees the annotated types rather than defaulting an unresolved type var to Int.
+    // Resolving the annotation against recursiveType up front also makes self-calls type-check
+    // against the declared arrow. Restored after the value branches so nested lets don't inherit it.
+    // Returns the previous seed state for the caller to restore.
+    private (IReadOnlyList<TypeRef>? SavedTypes, int SavedCursor) LowerLetRecursiveSeedAnnotation(Expr.LetRecursive letRecursive, Expr.Lambda? innerLambda, TypeRef recursiveType)
+    {
         var savedAnnotationParamTypes = _annotationParamTypes;
         var savedAnnotationParamCursor = _annotationParamCursor;
         _annotationParamTypes = null;
@@ -1963,119 +2116,118 @@ public sealed partial class Lowering
             _annotationParamCursor = 0;
         }
 
-        (int valTemp, TypeRef valType) valueAndType;
-        bool helperMarkerAdded = false;
-        if (letRecursive.Value is Expr.Lambda lam
-            && _inCoroutineBody
-            && !IsAsyncIntrinsicCall(GetInnermostBody(lam))
-            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(lam)))
-        {
-            // Async tail-recursive loop: the helper's body awaits and it is defined inside a coroutine
-            // body, so lower it as a task-returning closure around a transparent coroutine (awaits
-            // suspend on the enclosing run; self tail calls restart the coroutine in place). Without
-            // this, every await in the helper would compile to a nested blocking scheduler run.
-            var loopParamCount = CountLambdaChain(lam);
-            var savedPending = _pendingHelperCoroutine;
-            var savedHelperTco = _tcoCtx;
-            _tcoCtx = null;
-            _pendingHelperCoroutine = new HelperCoroutineInfo(letRecursive.Name, CollectLambdaParams(lam), GetInnermostBody(lam));
-            helperMarkerAdded = !_coroutineHelperArity.ContainsKey(letRecursive.Name);
-            if (helperMarkerAdded)
-            {
-                _coroutineHelperArity[letRecursive.Name] = loopParamCount;
-            }
+        return (savedAnnotationParamTypes, savedAnnotationParamCursor);
+    }
 
-            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
-            _pendingHelperCoroutine = savedPending;
-            _tcoCtx = savedHelperTco;
+    // Async tail-recursive loop: the helper's body awaits and it is defined inside a coroutine
+    // body, so lower it as a task-returning closure around a transparent coroutine (awaits
+    // suspend on the enclosing run; self tail calls restart the coroutine in place). Without
+    // this, every await in the helper would compile to a nested blocking scheduler run.
+    private (int, TypeRef) LowerLetRecursiveCoroutineHelperValue(Expr.LetRecursive letRecursive, Expr.Lambda lam, TypeRef recursiveType, out bool helperMarkerAdded)
+    {
+        var loopParamCount = CountLambdaChain(lam);
+        var savedPending = _pendingHelperCoroutine;
+        var savedHelperTco = _tcoCtx;
+        _tcoCtx = null;
+        _pendingHelperCoroutine = new HelperCoroutineInfo(letRecursive.Name, CollectLambdaParams(lam), GetInnermostBody(lam));
+        helperMarkerAdded = !_coroutineHelperArity.ContainsKey(letRecursive.Name);
+        if (helperMarkerAdded)
+        {
+            _coroutineHelperArity[letRecursive.Name] = loopParamCount;
         }
-        else if (letRecursive.Value is Expr.Lambda lam2)
+
+        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
+        _pendingHelperCoroutine = savedPending;
+        _tcoCtx = savedHelperTco;
+        return valueAndType;
+    }
+
+    private (int, TypeRef) LowerLetRecursiveLambdaValue(Expr.LetRecursive letRecursive, Expr.Lambda lam2, TypeRef recursiveType)
+    {
+        // Detect lambda chain for TCO: given (x) -> given (y) -> body
+        var paramCount = CountLambdaChain(lam2);
+        var innermostBody = GetInnermostBody(lam2);
+        var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
+
+        var savedTcoCtx = _tcoCtx;
+        if (hasTailSelfCalls)
         {
-            // Detect lambda chain for TCO: given (x) -> given (y) -> body
-            var paramCount = CountLambdaChain(lam2);
-            var innermostBody = GetInnermostBody(lam2);
-            var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
-
-            var savedTcoCtx = _tcoCtx;
-            if (hasTailSelfCalls)
+            var tcoParamNames = CollectLambdaParams(lam2);
+            _tcoCtx = new TcoContext
             {
-                var tcoParamNames = CollectLambdaParams(lam2);
-                _tcoCtx = new TcoContext
-                {
-                    SelfName = letRecursive.Name,
-                    ParamCount = paramCount,
-                    ParamNames = tcoParamNames,
-                    InTailPosition = false,
-                    LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name),
-                    AffineStrParams = CollectAffineAccumulators(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
-                };
-            }
-            else
-            {
-                _tcoCtx = null;
-            }
-
-            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam2);
-
-            _tcoCtx = savedTcoCtx;
-        }
-        else if (innerLambda is not null)
-        {
-            // Value is a let-chain of alias bindings (injected by the module system) wrapping a lambda.
-            // Process each alias let into scope first, then lower the innermost lambda with the
-            // self-reference (selfName) set so that recursive calls use Binding.Self rather than
-            // capturing the uninitialized slot value (which would be 0 at closure-creation time).
-            //
-            // Self-aliases (let unmangledName = mangledSelf) must NOT be processed as regular lets
-            // because the mangled slot is uninitialized at this point. Instead, they are collected
-            // as selfAliases and given Binding.Self treatment inside LowerLambdaCore.
-            var savedTcoCtx = _tcoCtx;
-            _tcoCtx = null;
-
-            int aliasCount = 0;
-            List<string>? selfAliases = null;
-            var aliasExpr = letRecursive.Value;
-            while (aliasExpr is Expr.Let aliasLet)
-            {
-                if (aliasLet.Value is Expr.Var selfVar && string.Equals(selfVar.Name, letRecursive.Name, StringComparison.Ordinal))
-                {
-                    // Self-alias: let unmangledName = mangledSelf — skip slot capture, pass as Binding.Self alias.
-                    selfAliases ??= new List<string>();
-                    selfAliases.Add(aliasLet.Name);
-                }
-                else
-                {
-                    var (aliasValueTemp, aliasValueType) = LowerExpr(aliasLet.Value);
-                    int aliasSlot = NewLocal();
-                    Emit(new IrInst.StoreLocal(aliasSlot, aliasValueTemp));
-                    RecordLocalDebugInfo(aliasSlot, aliasLet.Name, aliasValueType);
-                    var aliasScheme = Generalize(Prune(aliasValueType));
-                    RecordHoverType(AstSpans.GetLetNameOrDefault(aliasLet), aliasLet.Name, aliasScheme.Body);
-                    PushLetScope(aliasLet, aliasSlot, aliasScheme);
-                    aliasCount++;
-                }
-
-                aliasExpr = aliasLet.Body;
-            }
-
-            valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, innerLambda, selfAliases: selfAliases);
-
-            for (int i = 0; i < aliasCount; i++)
-            {
-                _scopes.Pop();
-            }
-
-            _tcoCtx = savedTcoCtx;
+                SelfName = letRecursive.Name,
+                ParamCount = paramCount,
+                ParamNames = tcoParamNames,
+                InTailPosition = false,
+                LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name),
+                AffineStrParams = CollectAffineAccumulators(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
+            };
         }
         else
         {
-            ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
-            valueAndType = LowerExpr(letRecursive.Value);
+            _tcoCtx = null;
         }
 
-        _annotationParamTypes = savedAnnotationParamTypes;
-        _annotationParamCursor = savedAnnotationParamCursor;
+        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam2);
 
+        _tcoCtx = savedTcoCtx;
+        return valueAndType;
+    }
+
+    // Value is a let-chain of alias bindings (injected by the module system) wrapping a lambda.
+    // Process each alias let into scope first, then lower the innermost lambda with the
+    // self-reference (selfName) set so that recursive calls use Binding.Self rather than
+    // capturing the uninitialized slot value (which would be 0 at closure-creation time).
+    //
+    // Self-aliases (let unmangledName = mangledSelf) must NOT be processed as regular lets
+    // because the mangled slot is uninitialized at this point. Instead, they are collected
+    // as selfAliases and given Binding.Self treatment inside LowerLambdaCore.
+    private (int, TypeRef) LowerLetRecursiveAliasChainValue(Expr.LetRecursive letRecursive, Expr.Lambda innerLambda, TypeRef recursiveType)
+    {
+        var savedTcoCtx = _tcoCtx;
+        _tcoCtx = null;
+
+        int aliasCount = 0;
+        List<string>? selfAliases = null;
+        var aliasExpr = letRecursive.Value;
+        while (aliasExpr is Expr.Let aliasLet)
+        {
+            if (aliasLet.Value is Expr.Var selfVar && string.Equals(selfVar.Name, letRecursive.Name, StringComparison.Ordinal))
+            {
+                // Self-alias: let unmangledName = mangledSelf — skip slot capture, pass as Binding.Self alias.
+                selfAliases ??= new List<string>();
+                selfAliases.Add(aliasLet.Name);
+            }
+            else
+            {
+                var (aliasValueTemp, aliasValueType) = LowerExpr(aliasLet.Value);
+                int aliasSlot = NewLocal();
+                Emit(new IrInst.StoreLocal(aliasSlot, aliasValueTemp));
+                RecordLocalDebugInfo(aliasSlot, aliasLet.Name, aliasValueType);
+                var aliasScheme = Generalize(Prune(aliasValueType));
+                RecordHoverType(AstSpans.GetLetNameOrDefault(aliasLet), aliasLet.Name, aliasScheme.Body);
+                PushLetScope(aliasLet, aliasSlot, aliasScheme);
+                aliasCount++;
+            }
+
+            aliasExpr = aliasLet.Body;
+        }
+
+        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, innerLambda, selfAliases: selfAliases);
+
+        for (int i = 0; i < aliasCount; i++)
+        {
+            _scopes.Pop();
+        }
+
+        _tcoCtx = savedTcoCtx;
+        return valueAndType;
+    }
+
+    // Unifies the lowered value with the self-type (and the declared annotation, if any), records
+    // hover info, and stores the closure into the recursive slot.
+    private void LowerLetRecursiveFinalizeValue(Expr.LetRecursive letRecursive, int slot, TypeRef recursiveType, (int valTemp, TypeRef valType) valueAndType)
+    {
         Unify(recursiveType, valueAndType.valType);
 
         // If the user wrote a type annotation, verify it matches the inferred type.
@@ -2105,15 +2257,6 @@ public sealed partial class Lowering
             _scopes.Push(selfScope);
             _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
         }
-
-        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body);
-        if (helperMarkerAdded)
-        {
-            _coroutineHelperArity.Remove(letRecursive.Name);
-        }
-
-        _scopes.Pop();
-        return (bodyTemp, bodyType);
     }
 
 
@@ -2233,9 +2376,61 @@ public sealed partial class Lowering
         var retTy = NewTypeVar();
         var rowTy = NewTypeVar();
         var funTy = new TypeRef.TFun(paramTy, retTy) { Row = rowTy };
+        LowerLambdaCoreSeedParamType(lam, paramTy);
 
-        // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
-        // the routed call, so the body (and the heap-field key materialization) sees concrete types.
+        // Compute free variables for capture, then allocate and fill the env at the creation site.
+        var (free, captures, envPtrTemp) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
+
+        // Create lambda function label
+        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+
+        // Build function body IR in isolation
+        var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
+        int argSlot = LowerLambdaCoreResetFrame();
+        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
+        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+
+        // TCO: for the innermost lambda in a recursive chain, create local copies of captured params
+        // and emit a loop start label so tail self-calls can jump back (see the loop-entry helper).
+        bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
+        bool isChainLambda = wasDescendingChain;
+        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
+        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        var directReuseSlots = new HashSet<int>();
+        var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
+        int reuseInsertIndex = -1;
+        if (isInnermostTco)
+        {
+            reuseInsertIndex = LowerLambdaCoreEnterTcoLoop(lam, label, captures, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
+        }
+
+        var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
+        var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
+        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
+
+        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, reuseInsertIndex);
+
+        LowerLambdaCoreRecordAccStableFold(lam, savedTcoCtx, specElidedAccs);
+
+        _tcoCtx = outerTcoCtx;
+        if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
+
+        Unify(bodyType, retTy);
+        Emit(new IrInst.Return(bodyTemp));
+
+        LowerLambdaCoreFinishFunction(label);
+        LowerLambdaCoreRestoreFrame(savedFrame);
+
+        int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
+        return (closureTemp, funTy);
+    }
+
+    // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
+    // the routed call, so the body (and the heap-field key materialization) sees concrete types.
+    // Then seed the parameter from the enclosing annotation forms.
+    private void LowerLambdaCoreSeedParamType(Expr.Lambda lam, TypeRef paramTy)
+    {
         if (_specializationConcreteParamTypes is { } concreteParamTypes
             && _specializationParamCursor < concreteParamTypes.Count)
         {
@@ -2258,8 +2453,10 @@ public sealed partial class Lowering
         {
             Unify(paramTy, ResolveAnnotationType(inlineAnnotation));
         }
+    }
 
-        // Compute free variables for capture
+    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
+    {
         var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
         if (selfName is not null)
         {
@@ -2310,10 +2507,28 @@ public sealed partial class Lowering
             }
         }
 
-        // Create lambda function label
-        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        return (free, captures, envPtrTemp);
+    }
 
-        // Build function body IR in isolation
+    // The enclosing function's lowering state snapshotted around a lambda body (restored by
+    // LowerLambdaCoreRestoreFrame).
+    private sealed record LowerLambdaCoreFrame(
+        List<IrInst> Inst,
+        int TempSlot,
+        int LocalSlot,
+        Dictionary<string, Binding>[] Scopes,
+        bool InCoroutineBody,
+        Dictionary<int, string> LocalNames,
+        Dictionary<int, TypeRef> LocalTypes,
+        HashSet<string> LinearReuseNames,
+        List<(int, int)> ReuseTokens,
+        HashSet<string> SpecAccumulators,
+        HashSet<string> ResetSafe,
+        HashSet<int> ReuseResultTemps,
+        Dictionary<int, Expr> LetBindingValues);
+
+    private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
+    {
         var savedInst = new List<IrInst>(_inst);
         var savedTemp = _nextTempSlot;
         var savedLocal = _nextLocalSlot;
@@ -2358,6 +2573,14 @@ public sealed partial class Lowering
         _reuseResultTemps.Clear();
         _letBindingValues.Clear();
 
+        return new LowerLambdaCoreFrame(
+            savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
+            savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
+            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps, savedLetBindingValues);
+    }
+
+    private int LowerLambdaCoreResetFrame()
+    {
         // new function state
         _inst.Clear();
         _nextTempSlot = 0;
@@ -2368,14 +2591,24 @@ public sealed partial class Lowering
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
         int argSlot = NewLocal(); // 1
-        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
 
-        // Bind param name as local slot
-        var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        // Lambda bodies are lowered as separate functions with a fresh scope. Slot/env bindings are
-        // captured above, but scope-independent bindings must be re-seeded so direct calls to
-        // intrinsics, externals, and prelude values still resolve inside helper functions.
-        foreach (var enclosingScope in savedScopes.Reverse())
+        // In function prologue, backend will store RDI(env) to envSlot and RSI(arg) to argSlot.
+        // Our LoadEnv instruction implicitly uses envSlot; backend knows envSlot is 0.
+        // We'll enforce envSlot==0.
+        if (envSlot != 0)
+        {
+            throw new InvalidOperationException("envSlot must be 0");
+        }
+
+        return argSlot;
+    }
+
+    // Lambda bodies are lowered as separate functions with a fresh scope. Slot/env bindings are
+    // captured elsewhere, but scope-independent bindings must be re-seeded so direct calls to
+    // intrinsics, externals, and prelude values still resolve inside helper functions.
+    private static void LowerLambdaCoreReseedScopeIndependentBindings(Dictionary<string, Binding> scope, Dictionary<string, Binding>[] enclosingScopes)
+    {
+        foreach (var enclosingScope in enclosingScopes.Reverse())
         {
             foreach (var (bindingName, binding) in enclosingScope)
             {
@@ -2385,30 +2618,14 @@ public sealed partial class Lowering
                 }
             }
         }
+    }
 
-        // Re-seed the always-available root-scope intrinsic `async` (like AddStdIOBindings below) so a
-        // function body may itself build a task with `async(E)` — e.g. a `serve`/handler combinator.
-        // Without this, `async` (an unqualified root-scope binding) is invisible inside any lambda body.
-        // Reuse the cached instance so no fresh type var is consumed per lambda.
-        if (_asyncBinding is not null)
-        {
-            scope["async"] = _asyncBinding;
-        }
-        if (_hasAshesIO)
-        {
-            AddStdIOBindings(scope);
-        }
-        var paramSpan = AstSpans.GetLambdaParameterOrDefault(lam);
-        RecordHoverType(paramSpan, lam.ParamName, paramTy);
-        scope[lam.ParamName] = new Binding.Local(argSlot, paramTy, paramSpan);
-        // Reuse specialization: treat this parameter as a linear reuse root so a match-then-rebuild
-        // on it overwrites the node in place. Consume the request so nested lambdas don't inherit it.
-        if (string.Equals(_specializingLinearParam, lam.ParamName, StringComparison.Ordinal))
-        {
-            _linearReuseNames.Add(lam.ParamName);
-            _specializingReuseLabel = label;
-            _specializingLinearParam = null;
-        }
+    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
+    {
+        // Bind param name as local slot
+        var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        LowerLambdaCoreReseedScopeIndependentBindings(scope, enclosingScopes);
+        LowerLambdaCoreSeedScopeBindings(scope, lam, label, paramTy, argSlot);
 
         for (int i = 0; i < captures.Count; i++)
         {
@@ -2449,277 +2666,312 @@ public sealed partial class Lowering
             }
         }
 
-        // Reuse specialization: a stdlib helper this body references (Ashes_Map_makeNode, ...) is a
-        // top-level function not present in the generation-site scope (we are deep inside a loop body).
-        // Bind each such free reference to its top-level Binding.Self — a direct global reference that
-        // needs no env capture (the helper is inlined at its call sites, or called by label). Added to
-        // the scope only, never to `captures`, so the closure construction does not try to fill it.
-        if (_inSpecialization && _topLevelScopeStack.Length > 0)
-        {
-            foreach (var name in free)
-            {
-                if (scope.ContainsKey(name))
-                {
-                    continue;
-                }
-
-                foreach (var topScope in _topLevelScopeStack)
-                {
-                    if (topScope.TryGetValue(name, out var topBinding) && topBinding is Binding.Self)
-                    {
-                        scope[name] = topBinding;
-                        break;
-                    }
-                }
-            }
-        }
+        LowerLambdaCoreBindSpecializationGlobals(scope, free);
 
         _scopes.Clear();
         _scopes.Push(scope);
+    }
 
-        // In function prologue, backend will store RDI(env) to envSlot and RSI(arg) to argSlot.
-        // Our LoadEnv instruction implicitly uses envSlot; backend knows envSlot is 0.
-        // We'll enforce envSlot==0.
-        if (envSlot != 0)
+    private void LowerLambdaCoreSeedScopeBindings(Dictionary<string, Binding> scope, Expr.Lambda lam, string label, TypeRef paramTy, int argSlot)
+    {
+        // Re-seed the always-available root-scope intrinsic `async` (like AddStdIOBindings below) so a
+        // function body may itself build a task with `async(E)` — e.g. a `serve`/handler combinator.
+        // Without this, `async` (an unqualified root-scope binding) is invisible inside any lambda body.
+        // Reuse the cached instance so no fresh type var is consumed per lambda.
+        if (_asyncBinding is not null)
         {
-            throw new InvalidOperationException("envSlot must be 0");
+            scope["async"] = _asyncBinding;
+        }
+        if (_hasAshesIO)
+        {
+            AddStdIOBindings(scope);
+        }
+        var paramSpan = AstSpans.GetLambdaParameterOrDefault(lam);
+        RecordHoverType(paramSpan, lam.ParamName, paramTy);
+        scope[lam.ParamName] = new Binding.Local(argSlot, paramTy, paramSpan);
+        // Reuse specialization: treat this parameter as a linear reuse root so a match-then-rebuild
+        // on it overwrites the node in place. Consume the request so nested lambdas don't inherit it.
+        if (string.Equals(_specializingLinearParam, lam.ParamName, StringComparison.Ordinal))
+        {
+            _linearReuseNames.Add(lam.ParamName);
+            _specializingReuseLabel = label;
+            _specializingLinearParam = null;
+        }
+    }
+
+    // Reuse specialization: a stdlib helper this body references (Ashes_Map_makeNode, ...) is a
+    // top-level function not present in the generation-site scope (we are deep inside a loop body).
+    // Bind each such free reference to its top-level Binding.Self — a direct global reference that
+    // needs no env capture (the helper is inlined at its call sites, or called by label). Added to
+    // the scope only, never to `captures`, so the closure construction does not try to fill it.
+    private void LowerLambdaCoreBindSpecializationGlobals(Dictionary<string, Binding> scope, HashSet<string> free)
+    {
+        if (!_inSpecialization || _topLevelScopeStack.Length == 0)
+        {
+            return;
         }
 
-        // TCO: For the innermost lambda in a recursive chain, create local copies
-        // of captured params and emit a loop start label so tail self-calls can jump back.
-        // A lambda only belongs to the recursive chain while we are still descending the binding's
-        // curried lambda chain. A nested let-bound lambda inside the body (e.g.
-        // `let rec f n = let helper x = x + n in ...`) is a separate frame: if treated as the
-        // innermost chain lambda it would emit the loop label into its own frame while the outer
-        // self-call jumps to a label that frame never contains (KeyNotFoundException in codegen).
-        bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
-        bool isChainLambda = wasDescendingChain;
-        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
-        // In-place reuse: accumulators to deep-copy once at loop entry. The copy IR is
-        // emitted only after the body is lowered (so HM has resolved the accumulator's type), then
-        // spliced in at reuseInsertIndex (before the loop body label). See below.
-        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
-        // Slots whose defensive copy is for DIRECT in-place reuse (the body itself rebuilds the
-        // accumulator). These are only needed if reuse actually fired (an AllocReusing was emitted);
-        // a pure traversal that matches but never rebuilds (e.g. a tree lookup) must NOT copy, or every
-        // call becomes O(size) instead of O(depth). Specialization copies (the reuse is in a $reuse
-        // clone) are not gated this way.
-        var directReuseSlots = new HashSet<int>();
-        // Spec-path reuse accumulators (by name) whose entry deep-copy was elided this frame — i.e. the
-        // accumulator is threaded into its reuse specialization without a relocating copy, so its address
-        // is preserved. Used after the body is lowered to decide whether this fold is address-stable.
-        var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
-        int reuseInsertIndex = -1;
-        if (isInnermostTco)
+        foreach (var name in free)
         {
-            var tco = _tcoCtx!;
-            tco.ParamSlots.Clear();
-
-            // Only create mutable local copies for captured params that are PART OF
-            // the recursive function's lambda chain (not arbitrary outer captures).
-            var tcoParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal);
-            tcoParamNames.Remove(lam.ParamName); // the current param is already in argSlot
-
-            for (int i = 0; i < captures.Count; i++)
+            if (scope.ContainsKey(name))
             {
-                var capName = captures[i];
-                if (!tcoParamNames.Contains(capName))
-                {
-                    continue;
-                }
-
-                var envIdx = -1;
-                foreach (var (name, binding) in scope)
-                {
-                    if (string.Equals(name, capName, StringComparison.Ordinal) && binding is Binding.Env env)
-                    {
-                        envIdx = env.Index;
-                        break;
-                    }
-                }
-                if (envIdx >= 0)
-                {
-                    var localSlot = NewLocal();
-                    // Load from env into local at function start
-                    int loadTemp = NewTemp();
-                    Emit(new IrInst.LoadEnv(loadTemp, envIdx));
-                    Emit(new IrInst.StoreLocal(localSlot, loadTemp));
-                    RecordLocalDebugInfo(localSlot, capName, scope[capName].Type);
-                    // Override binding to use local slot
-                    scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
-                }
+                continue;
             }
 
-            // Build ParamSlots in PARAMETER (declaration/application) order, so ParamSlots[i] is the slot
-            // of the i-th curried parameter — which is also the i-th collected back-edge argument. The
-            // captured params were just bound to fresh locals in capture-DISCOVERY order (the order free
-            // variables appear in the body), which need not match declaration order; indexing the slots by
-            // capture order stored each back-edge argument into the wrong parameter's slot (a swap that
-            // corrupts both when, e.g., a string and a list parameter are captured in reverse order).
-            // Every parameter — including the innermost, bound to argSlot — resolves through the scope.
-            foreach (var pname in tco.ParamNames)
+            foreach (var topScope in _topLevelScopeStack)
             {
-                if (scope.TryGetValue(pname, out var pBinding) && pBinding is Binding.Local pLocal)
+                if (topScope.TryGetValue(name, out var topBinding) && topBinding is Binding.Self)
                 {
-                    tco.ParamSlots.Add(pLocal.Slot);
+                    scope[name] = topBinding;
+                    break;
+                }
+            }
+        }
+    }
+
+    // TCO: For the innermost lambda in a recursive chain, create local copies of captured params
+    // and emit a loop start label so tail self-calls can jump back.
+    // A lambda only belongs to the recursive chain while we are still descending the binding's
+    // curried lambda chain. A nested let-bound lambda inside the body (e.g.
+    // `let rec f n = let helper x = x + n in ...`) is a separate frame: if treated as the
+    // innermost chain lambda it would emit the loop label into its own frame while the outer
+    // self-call jumps to a label that frame never contains (KeyNotFoundException in codegen).
+    // Returns reuseInsertIndex — the instruction index (before the loop body label) where the
+    // one-time defensive deep copies are spliced in after the body is lowered.
+    private int LowerLambdaCoreEnterTcoLoop(Expr.Lambda lam, string label, IReadOnlyList<string> captures, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, HashSet<string> specElidedAccs)
+    {
+        var tco = _tcoCtx!;
+        var scope = _scopes.Peek();
+        tco.ParamSlots.Clear();
+
+        LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
+
+        var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
+        int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
+        LowerLambdaCoreScanSpecializationReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, specElidedAccs);
+        LowerLambdaCoreEmitTcoLoopEntry(label, tco);
+
+        tco.InTailPosition = true;
+        return reuseInsertIndex;
+    }
+
+    private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
+    {
+        // Only create mutable local copies for captured params that are PART OF
+        // the recursive function's lambda chain (not arbitrary outer captures).
+        var tcoParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal);
+        tcoParamNames.Remove(lam.ParamName); // the current param is already in argSlot
+
+        for (int i = 0; i < captures.Count; i++)
+        {
+            var capName = captures[i];
+            if (!tcoParamNames.Contains(capName))
+            {
+                continue;
+            }
+
+            var envIdx = -1;
+            foreach (var (name, binding) in scope)
+            {
+                if (string.Equals(name, capName, StringComparison.Ordinal) && binding is Binding.Env env)
+                {
+                    envIdx = env.Index;
+                    break;
+                }
+            }
+            if (envIdx >= 0)
+            {
+                var localSlot = NewLocal();
+                // Load from env into local at function start
+                int loadTemp = NewTemp();
+                Emit(new IrInst.LoadEnv(loadTemp, envIdx));
+                Emit(new IrInst.StoreLocal(localSlot, loadTemp));
+                RecordLocalDebugInfo(localSlot, capName, scope[capName].Type);
+                // Override binding to use local slot
+                scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
+            }
+        }
+
+        // Build ParamSlots in PARAMETER (declaration/application) order, so ParamSlots[i] is the slot
+        // of the i-th curried parameter — which is also the i-th collected back-edge argument. The
+        // captured params were just bound to fresh locals in capture-DISCOVERY order (the order free
+        // variables appear in the body), which need not match declaration order; indexing the slots by
+        // capture order stored each back-edge argument into the wrong parameter's slot (a swap that
+        // corrupts both when, e.g., a string and a list parameter are captured in reverse order).
+        // Every parameter — including the innermost, bound to argSlot — resolves through the scope.
+        foreach (var pname in tco.ParamNames)
+        {
+            if (scope.TryGetValue(pname, out var pBinding) && pBinding is Binding.Local pLocal)
+            {
+                tco.ParamSlots.Add(pLocal.Slot);
+            }
+            else
+            {
+                throw new InvalidOperationException($"TCO parameter '{pname}' has no local slot for the back-edge.");
+            }
+        }
+    }
+
+    // In-place reuse: mark accumulators that are deconstructed in the loop body as
+    // linear (so the body's match→construct lowering reuses their nodes in place) and record
+    // them for a one-time deep copy at loop entry. The copy makes the loop-local accumulator
+    // region uniquely owned regardless of whether the caller still holds the initial value —
+    // which is what makes the per-iteration in-place reuse sound (no runtime refcounting;
+    // Ground Rule 6). The copy IR is generated after the body (resolved types) and spliced in
+    // here. Type comes from the matched constructor — the param's own type var isn't unified
+    // until the body is lowered.
+    private int LowerLambdaCoreScanDirectReuse(Expr.Lambda lam, TcoContext tco, HashSet<string> reuseParamNames, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, HashSet<string> specElidedAccs)
+    {
+        _linearReuseNames.Clear();
+        var reuseScan = new Dictionary<string, string>(StringComparer.Ordinal);
+        CollectCtorMatchedScrutinees(lam.Body, reuseParamNames, reuseScan);
+        int reuseInsertIndex = _inst.Count;
+        foreach (var (accName, ctorName) in reuseScan)
+        {
+            if (_scopes.Peek().TryGetValue(accName, out var accBinding)
+                && accBinding is Binding.Local accLocal
+                && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
+                && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
+                && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
+                && !IsResourceBearing(accNamed)
+                // Only pointer-bearing/recursive ADTs benefit: copy-type ADTs are already bounded
+                // by the existing shallow copy-out, so reuse there is redundant and the entry deep
+                // copy would be wasted.
+                && !CanCopyOutAdt(accNamed, out _)
+                && TrySynthesizeAdtCopier(accNamed) is not null)
+            {
+                _linearReuseNames.Add(accName);
+
+                // Move/linearity elision (CO-2), symmetric to the specialization path below: the
+                // direct-reuse entry deep-copy exists only to make the accumulator uniquely owned
+                // so the loop body may overwrite its matched cells in place. When the whole-program
+                // move analysis proves the accumulator is already uniquely owned at every external
+                // call site of this fold, the copy is redundant (and, when the fold is called from
+                // an outer loop, re-executes per re-entry). Skip it only when provably safe; the
+                // conservative default keeps the copy. The slot is still tracked in
+                // directReuseSlots so the non-structural-reuse revert below still governs it — a
+                // move-safe *pure reader* (nullary-only reuse, result type ≠ accumulator) must
+                // still fall back to a fresh allocation so its returned cell is not a reused
+                // accumulator cell. When the reuse is structural, the AllocReusing fires in place
+                // against the already-unique accumulator with no copy — the actual win.
+                directReuseSlots.Add(accLocal.Slot);
+                bool elideDirect = tco.SelfName.Length > 0
+                    && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                if (!elideDirect)
+                {
+                    reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
                 }
                 else
                 {
-                    throw new InvalidOperationException($"TCO parameter '{pname}' has no local slot for the back-edge.");
+                    specElidedAccs.Add(accName);
                 }
             }
-
-            // In-place reuse: mark accumulators that are deconstructed in the loop body as
-            // linear (so the body's match→construct lowering reuses their nodes in place) and record
-            // them for a one-time deep copy at loop entry. The copy makes the loop-local accumulator
-            // region uniquely owned regardless of whether the caller still holds the initial value —
-            // which is what makes the per-iteration in-place reuse sound (no runtime refcounting;
-            // Ground Rule 6). The copy IR is generated after the body (resolved types) and spliced in
-            // here. Type comes from the matched constructor — the param's own type var isn't unified
-            // until the body is lowered.
-            _linearReuseNames.Clear();
-            var reuseScan = new Dictionary<string, string>(StringComparer.Ordinal);
-            var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
-            CollectCtorMatchedScrutinees(lam.Body, reuseParamNames, reuseScan);
-            reuseInsertIndex = _inst.Count;
-            foreach (var (accName, ctorName) in reuseScan)
-            {
-                if (_scopes.Peek().TryGetValue(accName, out var accBinding)
-                    && accBinding is Binding.Local accLocal
-                    && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
-                    && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
-                    && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
-                    && !IsResourceBearing(accNamed)
-                    // Only pointer-bearing/recursive ADTs benefit: copy-type ADTs are already bounded
-                    // by the existing shallow copy-out, so reuse there is redundant and the entry deep
-                    // copy would be wasted.
-                    && !CanCopyOutAdt(accNamed, out _)
-                    && TrySynthesizeAdtCopier(accNamed) is not null)
-                {
-                    _linearReuseNames.Add(accName);
-
-                    // Move/linearity elision (CO-2), symmetric to the specialization path below: the
-                    // direct-reuse entry deep-copy exists only to make the accumulator uniquely owned
-                    // so the loop body may overwrite its matched cells in place. When the whole-program
-                    // move analysis proves the accumulator is already uniquely owned at every external
-                    // call site of this fold, the copy is redundant (and, when the fold is called from
-                    // an outer loop, re-executes per re-entry). Skip it only when provably safe; the
-                    // conservative default keeps the copy. The slot is still tracked in
-                    // directReuseSlots so the non-structural-reuse revert below still governs it — a
-                    // move-safe *pure reader* (nullary-only reuse, result type ≠ accumulator) must
-                    // still fall back to a fresh allocation so its returned cell is not a reused
-                    // accumulator cell. When the reuse is structural, the AllocReusing fires in place
-                    // against the already-unique accumulator with no copy — the actual win.
-                    directReuseSlots.Add(accLocal.Slot);
-                    bool elideDirect = tco.SelfName.Length > 0
-                        && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
-                    if (!elideDirect)
-                    {
-                        reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
-                    }
-                    else
-                    {
-                        specElidedAccs.Add(accName);
-                    }
-                }
-            }
-
-            // Indirect reuse: an accumulator passed to a specializable recursive function f(acc) is
-            // also deep-copied once here (so f$reuse can rewrite it in place) and tracked so the call
-            // is routed to f$reuse. Eligibility from f's parameter type (a non-resource recursive ADT).
-            _linearSpecializationAccumulators.Clear();
-            var specScan = new Dictionary<string, string>(StringComparer.Ordinal);
-            CollectSpecializableCallArgs(lam.Body, reuseParamNames, specScan);
-            foreach (var (accName, funcName) in specScan)
-            {
-                if (_linearReuseNames.Contains(accName) || _linearSpecializationAccumulators.Contains(accName))
-                {
-                    continue;
-                }
-
-                if (_scopes.Peek().TryGetValue(accName, out var accB)
-                    && accB is Binding.Local accL
-                    && Lookup(funcName) is { } funcBinding
-                    && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
-                    && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed
-                    && !BuiltinRegistry.IsResourceTypeName(paramNamed.Symbol.Name)
-                    && !IsResourceBearing(paramNamed)
-                    && !CanCopyOutAdt(paramNamed, out _)
-                    && TrySynthesizeAdtCopier(paramNamed) is not null)
-                {
-                    _linearSpecializationAccumulators.Add(accName);
-
-                    // Move/linearity elision: the entry deep-copy exists only to make the
-                    // accumulator uniquely owned so f$reuse may overwrite it in place. When the
-                    // whole-program move analysis proves the accumulator is already uniquely owned
-                    // at every external call site of this fold (moved, unaliased, seeded from a
-                    // never-overwritable value), the copy is redundant and re-executes on every
-                    // re-entry (the nested-reuse leak). Skip it only when provably safe; the
-                    // conservative default keeps the copy.
-                    bool elide = tco.SelfName.Length > 0
-                        && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
-                    if (!elide)
-                    {
-                        reuseDefensiveCopy.Add((accL.Slot, accL.T));
-                    }
-                    else
-                    {
-                        specElidedAccs.Add(accName);
-                    }
-                }
-            }
-
-            // Save a FIXED loop-entry watermark BEFORE the loop label (runs once). A back-edge whose
-            // accumulators are all non-sharing whole-value types resets here instead of the per-iteration
-            // mark, so the previous iteration's whole-value copy is reclaimed rather than stranded below
-            // an advancing watermark (the growing-accumulator O(N^2) leak). Same cursor position as the
-            // first per-iteration save below (nothing is emitted between them).
-            tco.FixedCursorSlot = NewLocal();
-            tco.FixedEndSlot = NewLocal();
-            Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
-            // Live-size slot for the amortized fixed-watermark compaction (see TcoContext), starts 0
-            // so the first qualifying back-edge compacts and records the true live size.
-            tco.CompactionSizeSlot = NewLocal();
-            int compactionZero = NewTemp();
-            Emit(new IrInst.LoadConstInt(compactionZero, 0));
-            Emit(new IrInst.StoreLocal(tco.CompactionSizeSlot, compactionZero));
-
-            // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
-            // zeroed here so no string matches until the loop's first fallback reserves.
-            foreach (var affineParam in tco.AffineStrParams)
-            {
-                int resvStart = NewLocal();
-                int resvEnd = NewLocal();
-                Emit(new IrInst.StoreLocal(resvStart, compactionZero));
-                Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
-                tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
-            }
-
-            // Emit loop start label
-            tco.BodyLabel = $"{label}_body";
-            Emit(new IrInst.Label(tco.BodyLabel));
-
-            // Save arena watermark at loop body start so per-iteration heap
-            // allocations can be reclaimed before jumping back to the next iteration.
-            tco.ArenaCursorSlot = NewLocal();
-            tco.ArenaEndSlot = NewLocal();
-            Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
-            // Save the stack pointer too: dynamic stack allocations in the loop body (per-iteration string /
-            // syscall scratch) must be freed at each back-edge, or they accumulate across iterations and
-            // overflow the stack at scale. Restored in the back-edge alongside the arena reset.
-            tco.StackPtrSlot = NewLocal();
-            Emit(new IrInst.SaveStackPointer(tco.StackPtrSlot));
-            tco.OwnershipDepthAtEntry = _ownershipScopes.Count;
-
-            tco.InTailPosition = true;
         }
 
-        // Decide what TCO context the body sees:
-        //  - a chain link whose body is the next curried lambda keeps descending,
-        //  - the chain's innermost lambda stops descending so nested lambdas in the body don't
-        //    re-trigger TCO,
-        //  - a non-chain nested lambda suspends the outer TCO entirely (it is a separate frame, and
-        //    tail-call back-edges can't cross frames).
+        return reuseInsertIndex;
+    }
+
+    // Indirect reuse: an accumulator passed to a specializable recursive function f(acc) is
+    // also deep-copied once here (so f$reuse can rewrite it in place) and tracked so the call
+    // is routed to f$reuse. Eligibility from f's parameter type (a non-resource recursive ADT).
+    private void LowerLambdaCoreScanSpecializationReuse(Expr.Lambda lam, TcoContext tco, HashSet<string> reuseParamNames, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<string> specElidedAccs)
+    {
+        _linearSpecializationAccumulators.Clear();
+        var specScan = new Dictionary<string, string>(StringComparer.Ordinal);
+        CollectSpecializableCallArgs(lam.Body, reuseParamNames, specScan);
+        foreach (var (accName, funcName) in specScan)
+        {
+            if (_linearReuseNames.Contains(accName) || _linearSpecializationAccumulators.Contains(accName))
+            {
+                continue;
+            }
+
+            if (_scopes.Peek().TryGetValue(accName, out var accB)
+                && accB is Binding.Local accL
+                && Lookup(funcName) is { } funcBinding
+                && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
+                && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed
+                && !BuiltinRegistry.IsResourceTypeName(paramNamed.Symbol.Name)
+                && !IsResourceBearing(paramNamed)
+                && !CanCopyOutAdt(paramNamed, out _)
+                && TrySynthesizeAdtCopier(paramNamed) is not null)
+            {
+                _linearSpecializationAccumulators.Add(accName);
+
+                // Move/linearity elision: the entry deep-copy exists only to make the
+                // accumulator uniquely owned so f$reuse may overwrite it in place. When the
+                // whole-program move analysis proves the accumulator is already uniquely owned
+                // at every external call site of this fold (moved, unaliased, seeded from a
+                // never-overwritable value), the copy is redundant and re-executes on every
+                // re-entry (the nested-reuse leak). Skip it only when provably safe; the
+                // conservative default keeps the copy.
+                bool elide = tco.SelfName.Length > 0
+                    && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                if (!elide)
+                {
+                    reuseDefensiveCopy.Add((accL.Slot, accL.T));
+                }
+                else
+                {
+                    specElidedAccs.Add(accName);
+                }
+            }
+        }
+    }
+
+    private void LowerLambdaCoreEmitTcoLoopEntry(string label, TcoContext tco)
+    {
+        // Save a FIXED loop-entry watermark BEFORE the loop label (runs once). A back-edge whose
+        // accumulators are all non-sharing whole-value types resets here instead of the per-iteration
+        // mark, so the previous iteration's whole-value copy is reclaimed rather than stranded below
+        // an advancing watermark (the growing-accumulator O(N^2) leak). Same cursor position as the
+        // first per-iteration save below (nothing is emitted between them).
+        tco.FixedCursorSlot = NewLocal();
+        tco.FixedEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(tco.FixedCursorSlot, tco.FixedEndSlot));
+        // Live-size slot for the amortized fixed-watermark compaction (see TcoContext), starts 0
+        // so the first qualifying back-edge compacts and records the true live size.
+        tco.CompactionSizeSlot = NewLocal();
+        int compactionZero = NewTemp();
+        Emit(new IrInst.LoadConstInt(compactionZero, 0));
+        Emit(new IrInst.StoreLocal(tco.CompactionSizeSlot, compactionZero));
+
+        // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
+        // zeroed here so no string matches until the loop's first fallback reserves.
+        foreach (var affineParam in tco.AffineStrParams)
+        {
+            int resvStart = NewLocal();
+            int resvEnd = NewLocal();
+            Emit(new IrInst.StoreLocal(resvStart, compactionZero));
+            Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
+            tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
+        }
+
+        // Emit loop start label
+        tco.BodyLabel = $"{label}_body";
+        Emit(new IrInst.Label(tco.BodyLabel));
+
+        // Save arena watermark at loop body start so per-iteration heap
+        // allocations can be reclaimed before jumping back to the next iteration.
+        tco.ArenaCursorSlot = NewLocal();
+        tco.ArenaEndSlot = NewLocal();
+        Emit(new IrInst.SaveArenaState(tco.ArenaCursorSlot, tco.ArenaEndSlot));
+        // Save the stack pointer too: dynamic stack allocations in the loop body (per-iteration string /
+        // syscall scratch) must be freed at each back-edge, or they accumulate across iterations and
+        // overflow the stack at scale. Restored in the back-edge alongside the arena reset.
+        tco.StackPtrSlot = NewLocal();
+        Emit(new IrInst.SaveStackPointer(tco.StackPtrSlot));
+        tco.OwnershipDepthAtEntry = _ownershipScopes.Count;
+    }
+
+    // Decide what TCO context the body sees:
+    //  - a chain link whose body is the next curried lambda keeps descending,
+    //  - the chain's innermost lambda stops descending so nested lambdas in the body don't
+    //    re-trigger TCO,
+    //  - a non-chain nested lambda suspends the outer TCO entirely (it is a separate frame, and
+    //    tail-call back-edges can't cross frames).
+    private TcoContext? LowerLambdaCoreSuspendOuterTco(bool isChainLambda, Expr.Lambda lam)
+    {
         var outerTcoCtx = _tcoCtx;
         if (isChainLambda)
         {
@@ -2730,7 +2982,11 @@ public sealed partial class Lowering
             _tcoCtx = null;
         }
 
-        var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
+        return outerTcoCtx;
+    }
+
+    private (int Temp, TypeRef Type) LowerLambdaCoreLowerBody(Expr.Lambda lam, TypeRef rowTy, string? selfName)
+    {
         bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
         // If this lambda parameter is a capability op-parameter, mark it active so a call at a
         // still-abstract instance inside the body threads it.
@@ -2743,77 +2999,82 @@ public sealed partial class Lowering
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitOpParamScope(opParamScope);
         if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
-        if (isInnermostTco && savedTcoCtx is not null)
+        return (bodyTemp, bodyType);
+    }
+
+    // In-place reuse: now that the body is lowered and the accumulators' types are
+    // resolved, generate the one-time defensive deep copies and splice them in at loop entry
+    // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
+    // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
+    // Run when there is any copy to emit, or any direct-reuse slot whose copy was elided by the
+    // move analysis (directReuseSlots without a matching reuseDefensiveCopy entry) — the latter
+    // still needs the non-structural-reuse revert below to protect a move-safe pure reader.
+    private void LowerLambdaCoreSpliceReuseCopies(List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, int reuseInsertIndex)
+    {
+        if ((reuseDefensiveCopy.Count == 0 && directReuseSlots.Count == 0) || reuseInsertIndex < 0)
         {
-            savedTcoCtx.InTailPosition = false;
+            return;
         }
 
-        // In-place reuse: now that the body is lowered and the accumulators' types are
-        // resolved, generate the one-time defensive deep copies and splice them in at loop entry
-        // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
-        // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
-        // Run when there is any copy to emit, or any direct-reuse slot whose copy was elided by the
-        // move analysis (directReuseSlots without a matching reuseDefensiveCopy entry) — the latter
-        // still needs the non-structural-reuse revert below to protect a move-safe pure reader.
-        if ((reuseDefensiveCopy.Count > 0 || directReuseSlots.Count > 0) && reuseInsertIndex >= 0)
+        // A direct-reuse defensive copy (O(size)) is only worth it if reuse rebuilds the
+        // accumulator's recursive *structure* — i.e. an AllocReusing with fields. A function that
+        // matches the accumulator but only reads it — a tree lookup like Map.get, whose arms
+        // return a different type (None/Some) — at most reuses a dead nullary leaf (Lf -> None),
+        // an O(1) saving that does not justify the O(size) copy. Without a non-nullary rebuild,
+        // copying the recursive argument turns an O(depth) traversal into an O(size) deep copy per
+        // call (the 1BRC get/set O(N·K) leak). So: keep the copy only when a field-bearing
+        // AllocReusing fired; otherwise skip the direct-reuse copies AND revert this body's
+        // (now unbacked-by-a-copy, hence unsound) nullary reuses to fresh allocations.
+        // Specialization copies (reuse lives in a $reuse clone) are unaffected.
+        bool structuralReuse = false;
+        for (int i = reuseInsertIndex; i < _inst.Count; i++)
         {
-            // A direct-reuse defensive copy (O(size)) is only worth it if reuse rebuilds the
-            // accumulator's recursive *structure* — i.e. an AllocReusing with fields. A function that
-            // matches the accumulator but only reads it — a tree lookup like Map.get, whose arms
-            // return a different type (None/Some) — at most reuses a dead nullary leaf (Lf -> None),
-            // an O(1) saving that does not justify the O(size) copy. Without a non-nullary rebuild,
-            // copying the recursive argument turns an O(depth) traversal into an O(size) deep copy per
-            // call (the 1BRC get/set O(N·K) leak). So: keep the copy only when a field-bearing
-            // AllocReusing fired; otherwise skip the direct-reuse copies AND revert this body's
-            // (now unbacked-by-a-copy, hence unsound) nullary reuses to fresh allocations.
-            // Specialization copies (reuse lives in a $reuse clone) are unaffected.
-            bool structuralReuse = false;
+            if (_inst[i] is IrInst.AllocReusing { FieldCount: > 0 })
+            {
+                structuralReuse = true;
+                break;
+            }
+        }
+
+        if (!structuralReuse)
+        {
             for (int i = reuseInsertIndex; i < _inst.Count; i++)
             {
-                if (_inst[i] is IrInst.AllocReusing { FieldCount: > 0 })
+                if (_inst[i] is IrInst.AllocReusing ar)
                 {
-                    structuralReuse = true;
-                    break;
+                    _inst[i] = new IrInst.AllocAdt(ar.Target, ar.Tag, ar.FieldCount) { Location = ar.Location };
                 }
             }
-
-            if (!structuralReuse)
-            {
-                for (int i = reuseInsertIndex; i < _inst.Count; i++)
-                {
-                    if (_inst[i] is IrInst.AllocReusing ar)
-                    {
-                        _inst[i] = new IrInst.AllocAdt(ar.Target, ar.Tag, ar.FieldCount) { Location = ar.Location };
-                    }
-                }
-            }
-
-            int genStart = _inst.Count;
-            foreach (var (slot, typeRef) in reuseDefensiveCopy)
-            {
-                if (directReuseSlots.Contains(slot) && !structuralReuse)
-                {
-                    continue;
-                }
-
-                int loaded = NewTemp();
-                Emit(new IrInst.LoadLocal(loaded, slot));
-                int copied = EmitDeepCopy(loaded, Prune(typeRef));
-                Emit(new IrInst.StoreLocal(slot, copied));
-            }
-
-            int genCount = _inst.Count - genStart;
-            var generated = _inst.GetRange(genStart, genCount);
-            _inst.RemoveRange(genStart, genCount);
-            _inst.InsertRange(reuseInsertIndex, generated);
         }
 
-        // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
-        // decide whether calling this fold returns its accumulator at a stable address, so a caller
-        // threading it across a loop back-edge can keep the plain arena reset. The accumulator is the
-        // last curried param; require its spec-path entry copy to have been elided AND every tail leaf
-        // to preserve its address. Recorded by definition span → param count. Skip inside a
-        // specialization clone (it re-lowers the same AST/spans; the primary lowering already records).
+        int genStart = _inst.Count;
+        foreach (var (slot, typeRef) in reuseDefensiveCopy)
+        {
+            if (directReuseSlots.Contains(slot) && !structuralReuse)
+            {
+                continue;
+            }
+
+            int loaded = NewTemp();
+            Emit(new IrInst.LoadLocal(loaded, slot));
+            int copied = EmitDeepCopy(loaded, Prune(typeRef));
+            Emit(new IrInst.StoreLocal(slot, copied));
+        }
+
+        int genCount = _inst.Count - genStart;
+        var generated = _inst.GetRange(genStart, genCount);
+        _inst.RemoveRange(genStart, genCount);
+        _inst.InsertRange(reuseInsertIndex, generated);
+    }
+
+    // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
+    // decide whether calling this fold returns its accumulator at a stable address, so a caller
+    // threading it across a loop back-edge can keep the plain arena reset. The accumulator is the
+    // last curried param; require its spec-path entry copy to have been elided AND every tail leaf
+    // to preserve its address. Recorded by definition span → param count. Skip inside a
+    // specialization clone (it re-lowers the same AST/spans; the primary lowering already records).
+    private void LowerLambdaCoreRecordAccStableFold(Expr.Lambda lam, TcoContext? savedTcoCtx, HashSet<string> specElidedAccs)
+    {
         if (savedTcoCtx is not null
             && !_inSpecialization
             && !_inParallelSpecialization
@@ -2828,16 +3089,10 @@ public sealed partial class Lowering
                 _accStableFolds[foldSpan] = paramCount;
             }
         }
+    }
 
-        _tcoCtx = outerTcoCtx;
-        if (isChainLambda)
-        {
-            _tcoCtx!.DescendingChain = wasDescendingChain;
-        }
-
-        Unify(bodyType, retTy);
-        Emit(new IrInst.Return(bodyTemp));
-
+    private void LowerLambdaCoreFinishFunction(string label)
+    {
         var func = new IrFunction(
             Label: label,
             Instructions: new List<IrInst>(_inst),
@@ -2848,39 +3103,45 @@ public sealed partial class Lowering
             LocalTypes: SnapshotLocalTypes()
         );
 
-        // restore state
         _funcs.Add(func);
+    }
 
+    // restore state
+    private void LowerLambdaCoreRestoreFrame(LowerLambdaCoreFrame frame)
+    {
         _inst.Clear();
-        _inst.AddRange(savedInst);
-        _nextTempSlot = savedTemp;
-        _nextLocalSlot = savedLocal;
+        _inst.AddRange(frame.Inst);
+        _nextTempSlot = frame.TempSlot;
+        _nextLocalSlot = frame.LocalSlot;
         _localNames.Clear();
         _localTypes.Clear();
-        foreach (var kv in savedLocalNames) _localNames[kv.Key] = kv.Value;
-        foreach (var kv in savedLocalTypes) _localTypes[kv.Key] = kv.Value;
+        foreach (var kv in frame.LocalNames) _localNames[kv.Key] = kv.Value;
+        foreach (var kv in frame.LocalTypes) _localTypes[kv.Key] = kv.Value;
         _scopes.Clear();
-        foreach (var s in savedScopes.Reverse())
+        foreach (var s in frame.Scopes.Reverse())
         {
             _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
         }
 
         _lambdaDepth--;
-        _inCoroutineBody = savedInCoroutineBody;
+        _inCoroutineBody = frame.InCoroutineBody;
 
         _linearReuseNames.Clear();
-        foreach (var n in savedLinearReuseNames) _linearReuseNames.Add(n);
+        foreach (var n in frame.LinearReuseNames) _linearReuseNames.Add(n);
         _linearSpecializationAccumulators.Clear();
-        foreach (var n in savedSpecAccumulators) _linearSpecializationAccumulators.Add(n);
+        foreach (var n in frame.SpecAccumulators) _linearSpecializationAccumulators.Add(n);
         _resetSafeAccumulators.Clear();
-        foreach (var n in savedResetSafe) _resetSafeAccumulators.Add(n);
+        foreach (var n in frame.ResetSafe) _resetSafeAccumulators.Add(n);
         _reuseResultTemps.Clear();
-        foreach (var t in savedReuseResultTemps) _reuseResultTemps.Add(t);
+        foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         _reuseTokens.Clear();
-        _reuseTokens.AddRange(savedReuseTokens);
+        _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
-        foreach (var kv in savedLetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+        foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+    }
 
+    private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
+    {
         // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
@@ -2911,7 +3172,7 @@ public sealed partial class Lowering
             _closureResourceCaptures[closureTemp] = resourceCaptures;
         }
 
-        return (closureTemp, funTy);
+        return closureTemp;
     }
 
     // Collect the names a pattern binds (Var subpatterns), recursively.
@@ -3005,6 +3266,64 @@ public sealed partial class Lowering
         //   Pair(1, 2) is parsed as Call(Call(Var("Pair"), 1), 2) — collect [1, 2] with root Var("Pair")
         var collectedArgs = new List<Expr>();
         var rootExpr = CollectCallArgs(call, collectedArgs);
+
+        if (LowerCallTryDirectForms(call, rootExpr, collectedArgs) is { } directResult)
+        {
+            return directResult;
+        }
+
+        if (LowerCallTryParallelAndReuseForms(call, rootExpr, collectedArgs) is { } routedResult)
+        {
+            return routedResult;
+        }
+
+        if (LowerCallTryGenericInlineForm(rootExpr, collectedArgs) is { } genericInlineResult)
+        {
+            return genericInlineResult;
+        }
+
+        if (LowerCallTryReuseInlineForm(rootExpr, collectedArgs) is { } reuseInlineResult)
+        {
+            return reuseInlineResult;
+        }
+
+        // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
+        if (_tcoCtx is { InTailPosition: true } tco
+            && rootExpr is Expr.Var selfVar
+            && string.Equals(selfVar.Name, tco.SelfName, StringComparison.Ordinal)
+            && collectedArgs.Count == tco.ParamCount)
+        {
+            return LowerCallTcoSelfCall(tco, collectedArgs);
+        }
+
+        if (LowerCallTryCoroutineHelperForm(call, rootExpr, collectedArgs) is { } helperResult)
+        {
+            return helperResult;
+        }
+
+        if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)
+        {
+            return LowerCallIntrinsic(rootExpr, intrinsic, collectedArgs);
+        }
+
+        if (rootExpr is Expr.Var externalVar && Lookup(externalVar.Name) is Binding.ExternalFunction externalFunction)
+        {
+            return LowerExternalCall(rootExpr, externalFunction.Function, collectedArgs);
+        }
+
+        // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
+        if (rootExpr is Expr.QualifiedVar qv && LowerCallQualifiedBuiltin(rootExpr, qv, collectedArgs) is { } builtinResult)
+        {
+            return builtinResult;
+        }
+
+        return LowerCallGeneral(call, rootExpr, collectedArgs);
+    }
+
+    // Direct call forms resolved from the root expression alone: constructor application, the
+    // built-in Stop.stop, a capability operation call, and a dictionary-passing generic function.
+    private (int, TypeRef)? LowerCallTryDirectForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    {
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(ctorSym, collectedArgs);
@@ -3039,6 +3358,11 @@ public sealed partial class Lowering
             return LowerDictionaryFunctionCall(dictInfo, rootExpr, dictFnName, collectedArgs, GetSpan(call));
         }
 
+        return null;
+    }
+
+    private (int, TypeRef)? LowerCallTryParallelAndReuseForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    {
         // Work-conserving parallel reduce: a saturated `Parallel.reduce` call at a concrete result
         // type routes to the runtime chunk queue (workers pull element indexes from a shared atomic
         // counter; the caller merges per-index results in fixed list order), which packs workers
@@ -3080,13 +3404,18 @@ public sealed partial class Lowering
             return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs, call);
         }
 
-        // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
-        // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
-        // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
-        // Only when the callee name resolves to that top-level function (not shadowed by a local).
-        // Inline a saturated helper call when a reuse token is live, OR unconditionally inside a
-        // specialization (so every helper folds down to constructors and never leaves a call to a
-        // top-level function the specialization didn't capture).
+        return null;
+    }
+
+    // Capability monomorphization: a saturated call to a capability-generic function is inlined so
+    // the body lowers with the call's concrete argument types, letting a parameterized capability
+    // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
+    // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
+    // Capability-generic and overload-generic (==/+ on two params) functions inline a fresh,
+    // type-resolved copy of their body at each concrete call site. For an overload-generic stdlib
+    // function called by its imported short name, resolve the alias to the stitched name first.
+    private (int, TypeRef)? LowerCallTryGenericInlineForm(Expr rootExpr, List<Expr> collectedArgs)
+    {
         if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
             && rootExpr is Expr.Var dbgFn && _inlinableFunctions.TryGetValue(dbgFn.Name, out var dbgInl)
             && dbgFn.Name.Contains("Map", StringComparison.Ordinal))
@@ -3094,13 +3423,6 @@ public sealed partial class Lowering
             Console.Error.WriteLine($"[reuse] call {dbgFn.Name}: inSpec={_inSpecialization} tokens={_reuseTokens.Count} shadowed={_shadowedInlinables.ContainsKey(dbgFn.Name)} inProgress={_inliningInProgress.Contains(dbgFn.Name)} params={dbgInl.Params.Count} args={collectedArgs.Count}");
         }
 
-        // Capability monomorphization: a saturated call to a capability-generic function is inlined so
-        // the body lowers with the call's concrete argument types, letting a parameterized capability
-        // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
-        // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
-        // Capability-generic and overload-generic (==/+ on two params) functions inline a fresh,
-        // type-resolved copy of their body at each concrete call site. For an overload-generic stdlib
-        // function called by its imported short name, resolve the alias to the stitched name first.
         if (rootExpr is Expr.Var capGenVar)
         {
             string capGenName = capGenVar.Name;
@@ -3121,11 +3443,23 @@ public sealed partial class Lowering
             }
         }
 
-        // The callee may be a plain Var (module code, where the stitcher already rewrote member
-        // references to flat names) or a qualified stdlib reference from user code
-        // (Ashes.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
-        // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
-        // isolated scope where only inline/by-label resolution works.
+        return null;
+    }
+
+    // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
+    // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
+    // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
+    // Only when the callee name resolves to that top-level function (not shadowed by a local).
+    // Inline a saturated helper call when a reuse token is live, OR unconditionally inside a
+    // specialization (so every helper folds down to constructors and never leaves a call to a
+    // top-level function the specialization didn't capture).
+    // The callee may be a plain Var (module code, where the stitcher already rewrote member
+    // references to flat names) or a qualified stdlib reference from user code
+    // (Ashes.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
+    // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
+    // isolated scope where only inline/by-label resolution works.
+    private (int, TypeRef)? LowerCallTryReuseInlineForm(Expr rootExpr, List<Expr> collectedArgs)
+    {
         if ((_reuseTokens.Count > 0 || _inSpecialization)
             && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
@@ -3136,205 +3470,229 @@ public sealed partial class Lowering
             return InlineCall(inlineName, inlinable.Params, inlinable.Body, collectedArgs);
         }
 
-        // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
-        if (_tcoCtx is { InTailPosition: true } tco
-            && rootExpr is Expr.Var selfVar
-            && string.Equals(selfVar.Name, tco.SelfName, StringComparison.Ordinal)
-            && collectedArgs.Count == tco.ParamCount)
+        return null;
+    }
+
+    private (int, TypeRef) LowerCallTcoSelfCall(TcoContext tco, List<Expr> collectedArgs)
+    {
+        // Evaluate all new arg values first (into temps), BEFORE storing any
+        var savedTail = tco.InTailPosition;
+        tco.InTailPosition = false;
+
+        var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+
+        // Store new values into TCO param slots
+        for (int i = 0; i < tco.ParamSlots.Count; i++)
         {
-            // Evaluate all new arg values first (into temps), BEFORE storing any
-            var savedTail = tco.InTailPosition;
-            tco.InTailPosition = false;
-
-            var newArgTemps = new int[collectedArgs.Count];
-            var newArgTypes = new TypeRef[collectedArgs.Count];
-            // Type-check: resolve self binding and unify arg types with param types
-            var selfBinding = Lookup(tco.SelfName);
-            var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
-            for (int i = 0; i < collectedArgs.Count; i++)
-            {
-                // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
-                // concat chain with the accumulator as its leftmost leaf) appends in place at every
-                // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
-                var savedAffineCtx = _affineAppendCtx;
-                if (i < tco.ParamNames.Count
-                    && tco.FixedCursorSlot >= 0
-                    && tco.AffineStrParams.Contains(tco.ParamNames[i])
-                    && i < tco.ParamSlots.Count
-                    && collectedArgs[i] is Expr.Add)
-                {
-                    var chainLeaf = collectedArgs[i];
-                    while (chainLeaf is Expr.Add chainAdd)
-                    {
-                        chainLeaf = chainAdd.Left;
-                    }
-
-                    if (chainLeaf is Expr.Var affineVar
-                        && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
-                        && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
-                    {
-                        _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
-                    }
-                }
-
-                var (argTemp, argType) = LowerExpr(collectedArgs[i]);
-                _affineAppendCtx = savedAffineCtx;
-                newArgTemps[i] = argTemp;
-                newArgTypes[i] = argType;
-                if (curType is TypeRef.TFun funType)
-                {
-                    Unify(funType.Arg, argType);
-                    curType = Prune(funType.Ret);
-                }
-            }
-
-            // Store new values into TCO param slots
-            for (int i = 0; i < tco.ParamSlots.Count; i++)
-            {
-                Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
-            }
-
-            // An owned value passed by name as a self-call argument moves to the next iteration —
-            // it must not be dropped at this back-edge (a resource would be closed, a closure with a
-            // dropper would close its captured resource). Mark it consumed so
-            // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
-            foreach (var arg in collectedArgs)
-            {
-                if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
-                {
-                    movedOwned.IsDropped = true;
-                }
-            }
-
-            // Close iteration-local resources (open files/sockets/processes bound this iteration)
-            // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
-            // after the jump as dead code and the resource leaks every iteration.
-            EmitTcoBackEdgeResourceDrops(tco);
-
-            // Arena reset: restore heap state to loop-iteration watermark before
-            // jumping back.
-            //
-            // All args are copy types (Int, Float, Bool) → plain reset.
-            // No heap pointers escape, so reclaiming the iteration's allocations is safe.
-            //
-            // Some args are heap types but all heap-type args can be copied out
-            // (TStr, or TList with copy-type element).  After the reset we copy each such
-            // argument out to the fresh watermark position, then overwrite its param slot
-            // with the copy pointer.  The previous iteration's cells lie BELOW the saved
-            // watermark and are therefore never reclaimed.
-            if (tco.ArenaCursorSlot >= 0)
-            {
-                // Gather the AST/scope-dependent facts about each argument NOW (they need the
-                // current scope and the raw arg expressions); the TYPE-dependent copy-out decision
-                // may have to wait until inference finishes (see below).
-                var passThrough = new bool[newArgTypes.Length];
-                var singleFreshCons = new bool[newArgTypes.Length];
-                var freshListRebuild = new bool[newArgTypes.Length];
-                var stableAccArg = new bool[newArgTypes.Length];
-                for (int i = 0; i < newArgTypes.Length; i++)
-                {
-                    // A loop-invariant pass-through arg (the param's own unchanged Var at every tail
-                    // self-call) still holds the value passed INTO the loop — allocated before entry,
-                    // hence below even the FIXED loop-entry watermark. It needs no copy-out at all and
-                    // never endangers (or is endangered by) a reset. This is what lets a loop threading
-                    // a closure (fasta's randomFasta table), an invariant list, or any other heap value
-                    // alongside a growing accumulator keep the fixed mark instead of stranding every
-                    // iteration's accumulator copy below an advancing one.
-                    passThrough[i] = i < tco.ParamNames.Count
-                        && tco.LoopInvariantParams.Contains(tco.ParamNames[i])
-                        && collectedArgs[i] is Expr.Var passVar
-                        && string.Equals(passVar.Name, tco.ParamNames[i], StringComparison.Ordinal);
-
-                    // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
-                    // tail already lives below the watermark — which holds only for literally
-                    // `head :: <loop accumulator param>` (through one level of let-binding).
-                    var argExpr = collectedArgs[i];
-                    if (argExpr is Expr.Var v
-                        && Lookup(v.Name) is Binding.Local local
-                        && _letBindingValues.TryGetValue(local.Slot, out var bound))
-                    {
-                        argExpr = bound;
-                    }
-
-                    singleFreshCons[i] = argExpr is Expr.Cons cons
-                        && cons.Tail is Expr.Var tailVar
-                        && tco.ParamNames.Contains(tailVar.Name);
-
-                    // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
-                    // licensed only when the list was freshly REBUILT this iteration (see
-                    // IsFreshListRebuildExpr); a threaded/consumed shape falls back to no reset.
-                    freshListRebuild[i] = IsFreshListRebuildExpr(argExpr);
-
-                    // A fully-reusing specialized accumulator is rewritten in place below the
-                    // watermark, so it survives a plain reset.
-                    stableAccArg[i] = i < tco.ParamNames.Count
-                        && _resetSafeAccumulators.Contains(tco.ParamNames[i])
-                        && IsStableAccumulatorExpr(
-                            collectedArgs[i],
-                            name => Lookup(name) is Binding.Local sl && sl.Slot == tco.ParamSlots[i]);
-                }
-
-                var resetInfo = new PendingTcoReset(
-                    newArgTemps,
-                    newArgTypes,
-                    passThrough,
-                    singleFreshCons,
-                    freshListRebuild,
-                    stableAccArg,
-                    tco.ParamSlots.ToArray(),
-                    tco.FixedCursorSlot,
-                    tco.FixedEndSlot,
-                    tco.ArenaCursorSlot,
-                    tco.ArenaEndSlot,
-                    tco.CoroutineLoopReset,
-                    tco.CompactionSizeSlot,
-                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
-                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rp) ? rp.Start : -1).ToArray(),
-                    Enumerable.Range(0, collectedArgs.Count).Select(k =>
-                        k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
-
-                // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
-                // still be an unresolved inference variable here (e.g. constrained only by a deferred
-                // `+`, or by the caller, lowered later). Deciding on a TVar would silently decline the
-                // reset and leak every iteration. Emit a placeholder instead and let
-                // ResolveDeferredTcoResets re-run the decision at the end of lowering, when the types
-                // are as resolved as they will ever be.
-                if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
-                {
-                    int pendingId = _nextTcoResetId++;
-                    _pendingTcoResets[pendingId] = resetInfo;
-                    Emit(new IrInst.TcoResetPending(pendingId));
-                }
-                else
-                {
-                    EmitTcoBackEdgeArenaBlock(resetInfo);
-                }
-            }
-
-            // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
-            // pointer to the loop-body-entry watermark). The next-iteration arguments live in param slots
-            // (function-entry allocas, above this watermark) and the arena, so they survive. Without this,
-            // per-iteration stack scratch accumulates and overflows the stack at scale.
-            if (tco.StackPtrSlot >= 0)
-            {
-                Emit(new IrInst.RestoreStackPointer(tco.StackPtrSlot));
-            }
-
-            // Jump back to loop start
-            Emit(new IrInst.Jump(tco.BodyLabel));
-
-            tco.InTailPosition = savedTail;
-
-            // Return a dummy value — this code path won't execute at runtime
-            int dummy = NewTemp();
-            Emit(new IrInst.LoadConstInt(dummy, 0));
-            return (dummy, NewTypeVar());
+            Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
         }
 
-        // Async-loop helper call site: the helper's closure returns a transparent coroutine task, so
-        // a saturated call awaits it implicitly and yields the helper body's own type — source-level
-        // transparency for `let recursive` loops with awaits. (Self tail calls were already taken by
-        // the TCO branch above and restart the coroutine in place.)
+        LowerCallTcoMarkMovedArgs(collectedArgs);
+
+        // Close iteration-local resources (open files/sockets/processes bound this iteration)
+        // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
+        // after the jump as dead code and the resource leaks every iteration.
+        EmitTcoBackEdgeResourceDrops(tco);
+
+        // Arena reset: restore heap state to loop-iteration watermark before
+        // jumping back.
+        //
+        // All args are copy types (Int, Float, Bool) → plain reset.
+        // No heap pointers escape, so reclaiming the iteration's allocations is safe.
+        //
+        // Some args are heap types but all heap-type args can be copied out
+        // (TStr, or TList with copy-type element).  After the reset we copy each such
+        // argument out to the fresh watermark position, then overwrite its param slot
+        // with the copy pointer.  The previous iteration's cells lie BELOW the saved
+        // watermark and are therefore never reclaimed.
+        if (tco.ArenaCursorSlot >= 0)
+        {
+            var facts = LowerCallTcoGatherResetFacts(tco, collectedArgs, newArgTypes);
+            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, facts);
+        }
+
+        // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
+        // pointer to the loop-body-entry watermark). The next-iteration arguments live in param slots
+        // (function-entry allocas, above this watermark) and the arena, so they survive. Without this,
+        // per-iteration stack scratch accumulates and overflows the stack at scale.
+        if (tco.StackPtrSlot >= 0)
+        {
+            Emit(new IrInst.RestoreStackPointer(tco.StackPtrSlot));
+        }
+
+        // Jump back to loop start
+        Emit(new IrInst.Jump(tco.BodyLabel));
+
+        tco.InTailPosition = savedTail;
+
+        // Return a dummy value — this code path won't execute at runtime
+        int dummy = NewTemp();
+        Emit(new IrInst.LoadConstInt(dummy, 0));
+        return (dummy, NewTypeVar());
+    }
+
+    // An owned value passed by name as a self-call argument moves to the next iteration —
+    // it must not be dropped at this back-edge (a resource would be closed, a closure with a
+    // dropper would close its captured resource). Mark it consumed so
+    // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
+    private void LowerCallTcoMarkMovedArgs(List<Expr> collectedArgs)
+    {
+        foreach (var arg in collectedArgs)
+        {
+            if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
+            {
+                movedOwned.IsDropped = true;
+            }
+        }
+    }
+
+    private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalArgs(TcoContext tco, List<Expr> collectedArgs)
+    {
+        var newArgTemps = new int[collectedArgs.Count];
+        var newArgTypes = new TypeRef[collectedArgs.Count];
+        // Type-check: resolve self binding and unify arg types with param types
+        var selfBinding = Lookup(tco.SelfName);
+        var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
+        for (int i = 0; i < collectedArgs.Count; i++)
+        {
+            // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
+            // concat chain with the accumulator as its leftmost leaf) appends in place at every
+            // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
+            var savedAffineCtx = _affineAppendCtx;
+            if (i < tco.ParamNames.Count
+                && tco.FixedCursorSlot >= 0
+                && tco.AffineStrParams.Contains(tco.ParamNames[i])
+                && i < tco.ParamSlots.Count
+                && collectedArgs[i] is Expr.Add)
+            {
+                var chainLeaf = collectedArgs[i];
+                while (chainLeaf is Expr.Add chainAdd)
+                {
+                    chainLeaf = chainAdd.Left;
+                }
+
+                if (chainLeaf is Expr.Var affineVar
+                    && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
+                    && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
+                {
+                    _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
+                }
+            }
+
+            var (argTemp, argType) = LowerExpr(collectedArgs[i]);
+            _affineAppendCtx = savedAffineCtx;
+            newArgTemps[i] = argTemp;
+            newArgTypes[i] = argType;
+            if (curType is TypeRef.TFun funType)
+            {
+                Unify(funType.Arg, argType);
+                curType = Prune(funType.Ret);
+            }
+        }
+
+        return (newArgTemps, newArgTypes);
+    }
+
+    // Gather the AST/scope-dependent facts about each argument NOW (they need the
+    // current scope and the raw arg expressions); the TYPE-dependent copy-out decision
+    // may have to wait until inference finishes (see LowerCallTcoEmitReset).
+    private (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) LowerCallTcoGatherResetFacts(TcoContext tco, List<Expr> collectedArgs, TypeRef[] newArgTypes)
+    {
+        var passThrough = new bool[newArgTypes.Length];
+        var singleFreshCons = new bool[newArgTypes.Length];
+        var freshListRebuild = new bool[newArgTypes.Length];
+        var stableAccArg = new bool[newArgTypes.Length];
+        for (int i = 0; i < newArgTypes.Length; i++)
+        {
+            // A loop-invariant pass-through arg (the param's own unchanged Var at every tail
+            // self-call) still holds the value passed INTO the loop — allocated before entry,
+            // hence below even the FIXED loop-entry watermark. It needs no copy-out at all and
+            // never endangers (or is endangered by) a reset. This is what lets a loop threading
+            // a closure (fasta's randomFasta table), an invariant list, or any other heap value
+            // alongside a growing accumulator keep the fixed mark instead of stranding every
+            // iteration's accumulator copy below an advancing one.
+            passThrough[i] = i < tco.ParamNames.Count
+                && tco.LoopInvariantParams.Contains(tco.ParamNames[i])
+                && collectedArgs[i] is Expr.Var passVar
+                && string.Equals(passVar.Name, tco.ParamNames[i], StringComparison.Ordinal);
+
+            // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
+            // tail already lives below the watermark — which holds only for literally
+            // `head :: <loop accumulator param>` (through one level of let-binding).
+            var argExpr = collectedArgs[i];
+            if (argExpr is Expr.Var v
+                && Lookup(v.Name) is Binding.Local local
+                && _letBindingValues.TryGetValue(local.Slot, out var bound))
+            {
+                argExpr = bound;
+            }
+
+            singleFreshCons[i] = argExpr is Expr.Cons cons
+                && cons.Tail is Expr.Var tailVar
+                && tco.ParamNames.Contains(tailVar.Name);
+
+            // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
+            // licensed only when the list was freshly REBUILT this iteration (see
+            // IsFreshListRebuildExpr); a threaded/consumed shape falls back to no reset.
+            freshListRebuild[i] = IsFreshListRebuildExpr(argExpr);
+
+            // A fully-reusing specialized accumulator is rewritten in place below the
+            // watermark, so it survives a plain reset.
+            stableAccArg[i] = i < tco.ParamNames.Count
+                && _resetSafeAccumulators.Contains(tco.ParamNames[i])
+                && IsStableAccumulatorExpr(
+                    collectedArgs[i],
+                    name => Lookup(name) is Binding.Local sl && sl.Slot == tco.ParamSlots[i]);
+        }
+
+        return (passThrough, singleFreshCons, freshListRebuild, stableAccArg);
+    }
+
+    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
+    {
+        var resetInfo = new PendingTcoReset(
+            newArgTemps,
+            newArgTypes,
+            facts.PassThrough,
+            facts.SingleFreshCons,
+            facts.FreshListRebuild,
+            facts.StableAccArg,
+            tco.ParamSlots.ToArray(),
+            tco.FixedCursorSlot,
+            tco.FixedEndSlot,
+            tco.ArenaCursorSlot,
+            tco.ArenaEndSlot,
+            tco.CoroutineLoopReset,
+            tco.CompactionSizeSlot,
+            Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rp) ? rp.Start : -1).ToArray(),
+            Enumerable.Range(0, collectedArgs.Count).Select(k =>
+                k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
+
+        // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
+        // still be an unresolved inference variable here (e.g. constrained only by a deferred
+        // `+`, or by the caller, lowered later). Deciding on a TVar would silently decline the
+        // reset and leak every iteration. Emit a placeholder instead and let
+        // ResolveDeferredTcoResets re-run the decision at the end of lowering, when the types
+        // are as resolved as they will ever be.
+        if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
+        {
+            int pendingId = _nextTcoResetId++;
+            _pendingTcoResets[pendingId] = resetInfo;
+            Emit(new IrInst.TcoResetPending(pendingId));
+        }
+        else
+        {
+            EmitTcoBackEdgeArenaBlock(resetInfo);
+        }
+    }
+
+    // Async-loop helper call site: the helper's closure returns a transparent coroutine task, so
+    // a saturated call awaits it implicitly and yields the helper body's own type — source-level
+    // transparency for `let recursive` loops with awaits. (Self tail calls were already taken by
+    // the TCO branch above and restart the coroutine in place.)
+    private (int, TypeRef)? LowerCallTryCoroutineHelperForm(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    {
         if (rootExpr is Expr.Var helperVar
             && _coroutineHelperArity.TryGetValue(helperVar.Name, out int helperArity)
             && collectedArgs.Count == helperArity
@@ -3355,260 +3713,293 @@ public sealed partial class Lowering
             return (helperResultTemp, helperSuccessType);
         }
 
-        if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)
-        {
-            int expectedArity = GetIntrinsicArity(intrinsic.Kind);
-            if (collectedArgs.Count != expectedArity)
-            {
-                return ReportArityMismatch(rootExpr, expectedArity, collectedArgs.Count);
-            }
+        return null;
+    }
 
-            return intrinsic.Kind switch
-            {
-                IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
-                IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
-                IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
-                IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
-                IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
-                IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
-                IntrinsicKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
-                IntrinsicKind.FileMmap => LowerFileMmap(collectedArgs[0]),
-                IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
-                IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
-                IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
-                IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
-                IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
-                IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
-                IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
-                IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
-                IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
-                IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
-                IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
-                IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
-                IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
-                IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
-                IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
-                IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-                IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
-                IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
-                IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
-                IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
-                IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
-                IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
-                IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
-                IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
-                IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
-                IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
-                IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
-                IntrinsicKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
-                IntrinsicKind.NetForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
-                IntrinsicKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
-                IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
-                IntrinsicKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
-                IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
-                IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
-                IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
-                IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
-                IntrinsicKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
-                IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
-                IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
-                IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
-                IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
-                IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
-                IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
-                IntrinsicKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
-                IntrinsicKind.BytesHash => LowerBytesHash(collectedArgs[0]),
-                IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
-                IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
-                IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
-                IntrinsicKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
-                IntrinsicKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
-                IntrinsicKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
-                IntrinsicKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
-                IntrinsicKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
-                IntrinsicKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
-                IntrinsicKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
-                IntrinsicKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
-                IntrinsicKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
-                IntrinsicKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
-                IntrinsicKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
-                IntrinsicKind k when LibmIntrinsics.ContainsKey(k) => LowerLibm(k, collectedArgs),
-                IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.ReadExact => LowerReadExact(collectedArgs[0]),
-                IntrinsicKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
-                IntrinsicKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
-                IntrinsicKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
-                IntrinsicKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
-                IntrinsicKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
-                IntrinsicKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
-                _ => throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}")
-            };
+    private (int, TypeRef) LowerCallIntrinsic(Expr rootExpr, Binding.Intrinsic intrinsic, List<Expr> collectedArgs)
+    {
+        int expectedArity = GetIntrinsicArity(intrinsic.Kind);
+        if (collectedArgs.Count != expectedArity)
+        {
+            return ReportArityMismatch(rootExpr, expectedArity, collectedArgs.Count);
         }
 
-        if (rootExpr is Expr.Var externalVar && Lookup(externalVar.Name) is Binding.ExternalFunction externalFunction)
+        // The dispatch is split into ordered groups; each group falls through (null) to the next.
+        return LowerCallIntrinsicIoText(intrinsic.Kind, collectedArgs)
+            ?? LowerCallIntrinsicNetBytes(intrinsic.Kind, collectedArgs)
+            ?? LowerCallIntrinsicMathProcess(intrinsic.Kind, collectedArgs)
+            ?? throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}");
+    }
+
+    private (int, TypeRef)? LowerCallIntrinsicIoText(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
+        IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+        IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
+        IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+        IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
+        IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+        IntrinsicKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
+        IntrinsicKind.FileMmap => LowerFileMmap(collectedArgs[0]),
+        IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
+        IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
+        IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
+        IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+        IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+        IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+        IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+        IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+        IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
+        IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
+        IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
+        IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
+        IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
+        IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
+        IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
+        IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
+        IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
+        IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
+        IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
+        IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
+        IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
+        IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
+        IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
+        IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
+        IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
+        _ => null,
+    };
+
+    private (int, TypeRef)? LowerCallIntrinsicNetBytes(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+        IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+        IntrinsicKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+        IntrinsicKind.NetForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
+        IntrinsicKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
+        IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+        IntrinsicKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
+        IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+        IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
+        IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+        IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+        IntrinsicKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
+        IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+        IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+        IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
+        IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
+        IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+        IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+        IntrinsicKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+        IntrinsicKind.BytesHash => LowerBytesHash(collectedArgs[0]),
+        IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
+        IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
+        IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
+        IntrinsicKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+        _ => null,
+    };
+
+    private (int, TypeRef)? LowerCallIntrinsicMathProcess(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        IntrinsicKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
+        IntrinsicKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
+        IntrinsicKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
+        IntrinsicKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
+        IntrinsicKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
+        IntrinsicKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
+        IntrinsicKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
+        IntrinsicKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
+        IntrinsicKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
+        IntrinsicKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
+        IntrinsicKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
+        IntrinsicKind k when LibmIntrinsics.ContainsKey(k) => LowerLibm(k, collectedArgs),
+        IntrinsicKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.ReadExact => LowerReadExact(collectedArgs[0]),
+        IntrinsicKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
+        IntrinsicKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
+        IntrinsicKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
+        IntrinsicKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
+        IntrinsicKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
+        IntrinsicKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
+        _ => null,
+    };
+
+    private (int, TypeRef)? LowerCallQualifiedBuiltin(Expr rootExpr, Expr.QualifiedVar qv, List<Expr> collectedArgs)
+    {
+        var resolvedModule = ResolveModuleAlias(qv.Module);
+        if (!BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule)
+            || !builtinModule.Members.TryGetValue(qv.Name, out var builtinMember))
         {
-            return LowerExternalCall(rootExpr, externalFunction.Function, collectedArgs);
+            return null;
         }
 
-        // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
-        if (rootExpr is Expr.QualifiedVar qv)
+        if (!builtinMember.IsCallable)
         {
-            var resolvedModule = ResolveModuleAlias(qv.Module);
-            if (BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule)
-                && builtinModule.Members.TryGetValue(qv.Name, out var builtinMember))
-            {
-                if (!builtinMember.IsCallable)
-                {
-                    ReportDiagnostic(GetSpan(qv), $"'{resolvedModule}.{qv.Name}' is not callable.");
-                    return ReturnNeverWithDummyTemp();
-                }
-
-                if (collectedArgs.Count != builtinMember.Arity)
-                {
-                    return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
-                }
-
-                return builtinMember.Kind switch
-                {
-                    BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
-                    BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
-                    BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileMmap => LowerFileMmap(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
-                    BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
-                    BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
-                    BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
-                    BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
-                    BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
-                    BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
-                    BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
-                    BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-                    BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesHash => LowerBytesHash(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
-                    BuiltinRegistry.BuiltinValueKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
-                    BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerLibm(libmKind, collectedArgs),
-                    BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerReadExact(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
-                    BuiltinRegistry.BuiltinValueKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
-                    BuiltinRegistry.BuiltinValueKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
-                    _ => StdMemberNotFound(resolvedModule, qv.Name)
-                };
-            }
+            ReportDiagnostic(GetSpan(qv), $"'{resolvedModule}.{qv.Name}' is not callable.");
+            return ReturnNeverWithDummyTemp();
         }
 
+        if (collectedArgs.Count != builtinMember.Arity)
+        {
+            return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
+        }
+
+        // The dispatch is split into ordered groups; each group falls through (null) to the next.
+        return LowerCallBuiltinIoText(builtinMember.Kind, collectedArgs)
+            ?? LowerCallBuiltinNetBytes(builtinMember.Kind, collectedArgs)
+            ?? LowerCallBuiltinMathProcess(builtinMember.Kind, collectedArgs)
+            ?? StdMemberNotFound(resolvedModule, qv.Name);
+    }
+
+    private (int, TypeRef)? LowerCallBuiltinIoText(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+        BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+        BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileMmap => LowerFileMmap(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.BigInt.add()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.BigInt.sub()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.BigInt.mul()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.BigInt.div()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.BigInt.mod()", false),
+        BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.BigInt.compare()", true),
+        BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
+        BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
+        _ => null,
+    };
+
+    private (int, TypeRef)? LowerCallBuiltinNetBytes(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+        BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesHash => LowerBytesHash(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+        _ => null,
+    };
+
+    private (int, TypeRef)? LowerCallBuiltinMathProcess(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.sqrt", "llvm.sqrt.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.floor", "llvm.floor.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathCeil => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.ceil", "llvm.ceil.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathRound => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.round", "llvm.round.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathTrunc => LowerMathFloatUnary(collectedArgs[0], "Ashes.Math.trunc", "llvm.trunc.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathFloorToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.floorToInt", "llvm.floor.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathRoundToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.roundToInt", "llvm.round.f64"),
+        BuiltinRegistry.BuiltinValueKind.MathTruncToInt => LowerMathFloatToInt(collectedArgs[0], "Ashes.Math.truncToInt", null),
+        BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerLibm(libmKind, collectedArgs),
+        BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerFileWriteBytes(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerReadExact(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerTextByteLength(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerSpawnProcess(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerProcessWriteStdin(collectedArgs[0], collectedArgs[1]),
+        BuiltinRegistry.BuiltinValueKind.ProcessReadStdoutLine => LowerProcessReadStdoutLine(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ProcessReadStderrLine => LowerProcessReadStderrLine(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ProcessWaitForExit => LowerProcessWaitForExit(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.ProcessKill => LowerProcessKill(collectedArgs[0]),
+        _ => null,
+    };
+
+    private (int, TypeRef) LowerCallGeneral(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    {
         // Per-call arena watermark — save the heap cursor/end before
         // evaluating the callee and arguments so that intermediate allocations
         // (closures from partial application, temporary data structures inside
@@ -3643,6 +4034,22 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArgs, collectedArgs.Count);
         }
 
+        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType) is { } earlyResult)
+        {
+            return earlyResult;
+        }
+
+        var callResultType = Prune(currentType);
+        currentTemp = LowerCallRestoreArena(callWmCursorSlot, callWmEndSlot, currentTemp, callResultType);
+
+        return (currentTemp, currentType);
+    }
+
+    // Applies the collected arguments one closure call at a time, unifying each parameter and
+    // recording the applied arrow's capabilities. Returns a diagnostic result to propagate on an
+    // early error, or null when the whole chain applied cleanly.
+    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, ref int currentTemp, ref TypeRef currentType)
+    {
         for (int i = 0; i < collectedArgs.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(collectedArgs[i]);
@@ -3697,13 +4104,17 @@ public sealed partial class Lowering
             currentType = Prune(funType.Ret);
         }
 
-        // Restore arena after the call chain completes.
-        // - Copy-type result (Int, Float, Bool): all allocations from the call
-        //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
-        // - Self-contained heap result (String, List with safe element, Closure,
-        //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
-        //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
-        var callResultType = Prune(currentType);
+        return null;
+    }
+
+    // Restore arena after the call chain completes.
+    // - Copy-type result (Int, Float, Bool): all allocations from the call
+    //   chain are unreachable → reclaim via RestoreArenaState + ReclaimArenaChunks.
+    // - Self-contained heap result (String, List with safe element, Closure,
+    //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
+    //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
+    private int LowerCallRestoreArena(int callWmCursorSlot, int callWmEndSlot, int currentTemp, TypeRef callResultType)
+    {
         int callPreRestoreEndSlot = NewLocal();
         if (CanArenaReset(callResultType))
         {
@@ -3713,55 +4124,57 @@ public sealed partial class Lowering
             Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
             Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
             EndLivePostsGuard(callResetSkipLabel);
+            return currentTemp;
         }
-        else
+
+        var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
+        if (callCopyOutKind == CopyOutKind.None)
         {
-            var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
-            if (callCopyOutKind != CopyOutKind.None)
-            {
-                // With capabilities in the program the copy-out is conditional on no post being
-                // pending, so the result is routed through a local slot that the skipped path
-                // leaves holding the original pointer.
-                int callGuardResultSlot = -1;
-                string? callCopySkipLabel = null;
-                if (CapabilityGlobalCount > 0)
-                {
-                    callGuardResultSlot = NewLocal();
-                    Emit(new IrInst.StoreLocal(callGuardResultSlot, currentTemp));
-                    callCopySkipLabel = BeginLivePostsGuard();
-                }
-
-                Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-                int copyDest = NewTemp();
-                switch (callCopyOutKind)
-                {
-                    case CopyOutKind.Shallow:
-                        Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
-                        break;
-                    case CopyOutKind.List:
-                        Emit(new IrInst.CopyOutList(copyDest, currentTemp));
-                        break;
-                    case CopyOutKind.Closure:
-                        Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
-                        break;
-                }
-                Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
-                if (callGuardResultSlot >= 0)
-                {
-                    Emit(new IrInst.StoreLocal(callGuardResultSlot, copyDest));
-                    EndLivePostsGuard(callCopySkipLabel);
-                    int guardedResultTemp = NewTemp();
-                    Emit(new IrInst.LoadLocal(guardedResultTemp, callGuardResultSlot));
-                    currentTemp = guardedResultTemp;
-                }
-                else
-                {
-                    currentTemp = copyDest;
-                }
-            }
+            return currentTemp;
         }
 
-        return (currentTemp, currentType);
+        return LowerCallCopyOutResult(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot, currentTemp, callCopyOutKind, callCopySize);
+    }
+
+    private int LowerCallCopyOutResult(int callWmCursorSlot, int callWmEndSlot, int callPreRestoreEndSlot, int currentTemp, CopyOutKind callCopyOutKind, int callCopySize)
+    {
+        // With capabilities in the program the copy-out is conditional on no post being
+        // pending, so the result is routed through a local slot that the skipped path
+        // leaves holding the original pointer.
+        int callGuardResultSlot = -1;
+        string? callCopySkipLabel = null;
+        if (CapabilityGlobalCount > 0)
+        {
+            callGuardResultSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(callGuardResultSlot, currentTemp));
+            callCopySkipLabel = BeginLivePostsGuard();
+        }
+
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        int copyDest = NewTemp();
+        switch (callCopyOutKind)
+        {
+            case CopyOutKind.Shallow:
+                Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+                break;
+            case CopyOutKind.List:
+                Emit(new IrInst.CopyOutList(copyDest, currentTemp));
+                break;
+            case CopyOutKind.Closure:
+                Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
+                break;
+        }
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        if (callGuardResultSlot >= 0)
+        {
+            Emit(new IrInst.StoreLocal(callGuardResultSlot, copyDest));
+            EndLivePostsGuard(callCopySkipLabel);
+            int guardedResultTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(guardedResultTemp, callGuardResultSlot));
+            return guardedResultTemp;
+        }
+
+        return copyDest;
     }
 
     private (int, TypeRef) LowerExternalCall(Expr rootExpr, IrExternalFunction externalFunction, List<Expr> args)
@@ -3848,109 +4261,7 @@ public sealed partial class Lowering
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
 
-        // Build from innermost layer (n-1) outward to layer 0 so each layer can reference the
-        // label of the next-inner layer.
-        for (int layer = n - 1; layer >= 0; layer--)
-        {
-            _inst.Clear();
-            _nextTempSlot = 0;
-            _nextLocalSlot = 0;
-            _localNames.Clear();
-            _localTypes.Clear();
-            _scopes.Clear();
-            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
-
-            int envSlot = NewLocal(); // slot 0 — must stay 0 (backend convention)
-            int argSlot = NewLocal(); // slot 1
-            Debug.Assert(envSlot == 0, "envSlot must be 0");
-
-            if (layer == n - 1)
-            {
-                // Innermost: load all previously captured args from env then call the external.
-                var callArgTemps = new List<int>(n);
-
-                for (int j = 0; j < layer; j++)
-                {
-                    int envArgTemp = NewTemp();
-                    Emit(new IrInst.LoadEnv(envArgTemp, j));
-                    if (externalFunc.ParameterTypes[j] is FfiType.Str)
-                    {
-                        int cStrTemp = NewTemp();
-                        Emit(new IrInst.ToCString(cStrTemp, envArgTemp));
-                        callArgTemps.Add(cStrTemp);
-                    }
-                    else
-                    {
-                        callArgTemps.Add(envArgTemp);
-                    }
-                }
-
-                int finalArgTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(finalArgTemp, argSlot));
-                if (externalFunc.ParameterTypes[layer] is FfiType.Str)
-                {
-                    int cStrFinalTemp = NewTemp();
-                    Emit(new IrInst.ToCString(cStrFinalTemp, finalArgTemp));
-                    callArgTemps.Add(cStrFinalTemp);
-                }
-                else
-                {
-                    callArgTemps.Add(finalArgTemp);
-                }
-
-                int callResultTemp = NewTemp();
-                Emit(new IrInst.CallExternal(callResultTemp, externalFunc.SymbolName, externalFunc.LibraryName, callArgTemps, externalFunc.ParameterTypes, externalFunc.ReturnType));
-
-                int retTemp;
-                if (externalFunc.ReturnType is FfiType.Void)
-                {
-                    retTemp = NewTemp();
-                    Emit(new IrInst.LoadConstInt(retTemp, 0)); // Unit is represented as 0
-                }
-                else
-                {
-                    retTemp = callResultTemp;
-                }
-
-                Emit(new IrInst.Return(retTemp));
-            }
-            else
-            {
-                // Outer layer: pack current arg together with args captured from the outer env,
-                // then return a closure pointing at the next inner layer.
-                int capturedCount = layer; // env slots used by previous layers
-                int newEnvSize = (capturedCount + 1) * 8;
-
-                int newEnvTemp = NewTemp();
-                Emit(new IrInst.Alloc(newEnvTemp, newEnvSize));
-
-                for (int j = 0; j < capturedCount; j++)
-                {
-                    int loadedCapture = NewTemp();
-                    Emit(new IrInst.LoadEnv(loadedCapture, j));
-                    Emit(new IrInst.StoreMemOffset(newEnvTemp, j * 8, loadedCapture));
-                }
-
-                int newArgTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(newArgTemp, argSlot));
-                Emit(new IrInst.StoreMemOffset(newEnvTemp, capturedCount * 8, newArgTemp));
-
-                int closureTemp = NewTemp();
-                Emit(new IrInst.MakeClosure(closureTemp, layerLabels[layer + 1], newEnvTemp, newEnvSize));
-                Emit(new IrInst.Return(closureTemp));
-            }
-
-            var func = new IrFunction(
-                Label: layerLabels[layer],
-                Instructions: new List<IrInst>(_inst),
-                LocalCount: _nextLocalSlot,
-                TempCount: _nextTempSlot,
-                HasEnvAndArgParams: true,
-                LocalNames: new Dictionary<int, string>(_localNames),
-                LocalTypes: SnapshotLocalTypes()
-            );
-            _funcs.Add(func);
-        }
+        EmitExternalFunctionThunkLayers(externalFunc, layerLabels);
 
         // Restore outer compilation state.
         _inst.Clear();
@@ -3973,6 +4284,124 @@ public sealed partial class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.MakeClosure(resultTemp, layerLabels[0], nullEnvTemp, 0));
         return (resultTemp, closureType);
+    }
+
+    // Build from innermost layer (n-1) outward to layer 0 so each layer can reference the
+    // label of the next-inner layer.
+    private void EmitExternalFunctionThunkLayers(IrExternalFunction externalFunc, string[] layerLabels)
+    {
+        int n = externalFunc.ParameterTypes.Count;
+        for (int layer = n - 1; layer >= 0; layer--)
+        {
+            _inst.Clear();
+            _nextTempSlot = 0;
+            _nextLocalSlot = 0;
+            _localNames.Clear();
+            _localTypes.Clear();
+            _scopes.Clear();
+            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+
+            int envSlot = NewLocal(); // slot 0 — must stay 0 (backend convention)
+            int argSlot = NewLocal(); // slot 1
+            Debug.Assert(envSlot == 0, "envSlot must be 0");
+
+            if (layer == n - 1)
+            {
+                EmitExternalFunctionThunkInnermostLayer(externalFunc, layer, argSlot);
+            }
+            else
+            {
+                EmitExternalFunctionThunkOuterLayer(layerLabels, layer, argSlot);
+            }
+
+            var func = new IrFunction(
+                Label: layerLabels[layer],
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true,
+                LocalNames: new Dictionary<int, string>(_localNames),
+                LocalTypes: SnapshotLocalTypes()
+            );
+            _funcs.Add(func);
+        }
+    }
+
+    // Innermost: load all previously captured args from env then call the external.
+    private void EmitExternalFunctionThunkInnermostLayer(IrExternalFunction externalFunc, int layer, int argSlot)
+    {
+        var callArgTemps = new List<int>(externalFunc.ParameterTypes.Count);
+
+        for (int j = 0; j < layer; j++)
+        {
+            int envArgTemp = NewTemp();
+            Emit(new IrInst.LoadEnv(envArgTemp, j));
+            if (externalFunc.ParameterTypes[j] is FfiType.Str)
+            {
+                int cStrTemp = NewTemp();
+                Emit(new IrInst.ToCString(cStrTemp, envArgTemp));
+                callArgTemps.Add(cStrTemp);
+            }
+            else
+            {
+                callArgTemps.Add(envArgTemp);
+            }
+        }
+
+        int finalArgTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(finalArgTemp, argSlot));
+        if (externalFunc.ParameterTypes[layer] is FfiType.Str)
+        {
+            int cStrFinalTemp = NewTemp();
+            Emit(new IrInst.ToCString(cStrFinalTemp, finalArgTemp));
+            callArgTemps.Add(cStrFinalTemp);
+        }
+        else
+        {
+            callArgTemps.Add(finalArgTemp);
+        }
+
+        int callResultTemp = NewTemp();
+        Emit(new IrInst.CallExternal(callResultTemp, externalFunc.SymbolName, externalFunc.LibraryName, callArgTemps, externalFunc.ParameterTypes, externalFunc.ReturnType));
+
+        int retTemp;
+        if (externalFunc.ReturnType is FfiType.Void)
+        {
+            retTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(retTemp, 0)); // Unit is represented as 0
+        }
+        else
+        {
+            retTemp = callResultTemp;
+        }
+
+        Emit(new IrInst.Return(retTemp));
+    }
+
+    // Outer layer: pack current arg together with args captured from the outer env,
+    // then return a closure pointing at the next inner layer.
+    private void EmitExternalFunctionThunkOuterLayer(string[] layerLabels, int layer, int argSlot)
+    {
+        int capturedCount = layer; // env slots used by previous layers
+        int newEnvSize = (capturedCount + 1) * 8;
+
+        int newEnvTemp = NewTemp();
+        Emit(new IrInst.Alloc(newEnvTemp, newEnvSize));
+
+        for (int j = 0; j < capturedCount; j++)
+        {
+            int loadedCapture = NewTemp();
+            Emit(new IrInst.LoadEnv(loadedCapture, j));
+            Emit(new IrInst.StoreMemOffset(newEnvTemp, j * 8, loadedCapture));
+        }
+
+        int newArgTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(newArgTemp, argSlot));
+        Emit(new IrInst.StoreMemOffset(newEnvTemp, capturedCount * 8, newArgTemp));
+
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, layerLabels[layer + 1], newEnvTemp, newEnvSize));
+        Emit(new IrInst.Return(closureTemp));
     }
 
     private static TypeRef FromFfiType(FfiType ffiType)
@@ -4203,237 +4632,296 @@ public sealed partial class Lowering
     private HashSet<string> FreeVars(Expr e, HashSet<string> bound)
     {
         var res = new HashSet<string>(StringComparer.Ordinal);
+        FreeVarsVisit(e, bound, res);
+        return res;
+    }
 
-        void Visit(Expr ex, HashSet<string> bnd)
+    // The node-kind dispatch is split into ordered groups; each group reports whether it handled
+    // the node so the next group only sees the remaining kinds.
+    private void FreeVarsVisit(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        if (FreeVarsVisitAtomOrArith(ex, bnd, res))
         {
-            switch (ex)
-            {
-                case Expr.IntLit:
-                case Expr.UIntLit:
-                case Expr.BigIntLit:
-                case Expr.FloatLit:
-                case Expr.StrLit:
-                case Expr.BoolLit:
-                    return;
-                case Expr.Var v:
-                    if (!bnd.Contains(v.Name))
-                    {
-                        res.Add(v.Name);
-                    }
-
-                    return;
-                case Expr.QualifiedVar qv:
-                    {
-                        var resolvedModule = ResolveModuleAlias(qv.Module);
-
-                        // An intrinsic member (Ashes.IO.print, Ashes.Text.uncons, ...) lowers directly
-                        // to a builtin and introduces no free variable. A SHIPPED-helper or user-module
-                        // member (Ashes.String.indexOf, Ashes.Map.get, ...) lowers to a stitched
-                        // top-level binding `Module_name`; when such a reference appears inside a lambda
-                        // body it IS a free variable that the closure must capture, otherwise the
-                        // synthesized binding is out of scope inside the lambda and resolution fails with
-                        // a spurious "Unknown module".
-                        if (BuiltinRegistry.TryGetModule(resolvedModule, out var qvModule)
-                            && qvModule.Members.ContainsKey(qv.Name))
-                        {
-                            return;
-                        }
-
-                        var synthesized = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
-                        if (!bnd.Contains(synthesized)
-                            && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
-                        {
-                            res.Add(synthesized);
-                        }
-
-                        return;
-                    }
-                case Expr.Add a:
-                    Visit(a.Left, bnd);
-                    Visit(a.Right, bnd);
-                    return;
-                case Expr.Subtract sub:
-                    Visit(sub.Left, bnd);
-                    Visit(sub.Right, bnd);
-                    return;
-                case Expr.Multiply mul:
-                    Visit(mul.Left, bnd);
-                    Visit(mul.Right, bnd);
-                    return;
-                case Expr.Divide div:
-                    Visit(div.Left, bnd);
-                    Visit(div.Right, bnd);
-                    return;
-                case Expr.Modulo modExpr:
-                    Visit(modExpr.Left, bnd);
-                    Visit(modExpr.Right, bnd);
-                    return;
-                case Expr.BitwiseAnd bitAnd:
-                    Visit(bitAnd.Left, bnd);
-                    Visit(bitAnd.Right, bnd);
-                    return;
-                case Expr.BitwiseOr bitOr:
-                    Visit(bitOr.Left, bnd);
-                    Visit(bitOr.Right, bnd);
-                    return;
-                case Expr.BitwiseXor bitXor:
-                    Visit(bitXor.Left, bnd);
-                    Visit(bitXor.Right, bnd);
-                    return;
-                case Expr.ShiftLeft shiftLeft:
-                    Visit(shiftLeft.Left, bnd);
-                    Visit(shiftLeft.Right, bnd);
-                    return;
-                case Expr.ShiftRight shiftRight:
-                    Visit(shiftRight.Left, bnd);
-                    Visit(shiftRight.Right, bnd);
-                    return;
-                case Expr.BitwiseNot bitwiseNot:
-                    Visit(bitwiseNot.Operand, bnd);
-                    return;
-                case Expr.GreaterThan gt:
-                    Visit(gt.Left, bnd);
-                    Visit(gt.Right, bnd);
-                    return;
-                case Expr.GreaterOrEqual ge:
-                    Visit(ge.Left, bnd);
-                    Visit(ge.Right, bnd);
-                    return;
-                case Expr.LessThan lt:
-                    Visit(lt.Left, bnd);
-                    Visit(lt.Right, bnd);
-                    return;
-                case Expr.LessOrEqual le:
-                    Visit(le.Left, bnd);
-                    Visit(le.Right, bnd);
-                    return;
-                case Expr.Equal eq:
-                    Visit(eq.Left, bnd);
-                    Visit(eq.Right, bnd);
-                    return;
-                case Expr.NotEqual ne:
-                    Visit(ne.Left, bnd);
-                    Visit(ne.Right, bnd);
-                    return;
-                case Expr.ResultPipe pipe:
-                    Visit(pipe.Left, bnd);
-                    Visit(pipe.Right, bnd);
-                    return;
-                case Expr.ResultMapErrorPipe pipe:
-                    Visit(pipe.Left, bnd);
-                    Visit(pipe.Right, bnd);
-                    return;
-                case Expr.Call c:
-                    Visit(c.Func, bnd);
-                    Visit(c.Arg, bnd);
-                    return;
-                case Expr.TupleLit tuple:
-                    foreach (var elem in tuple.Elements)
-                    {
-                        Visit(elem, bnd);
-                    }
-                    return;
-                case Expr.ListLit list:
-                    foreach (var e in list.Elements)
-                    {
-                        Visit(e, bnd);
-                    }
-
-                    return;
-                case Expr.Cons c:
-                    Visit(c.Head, bnd);
-                    Visit(c.Tail, bnd);
-                    return;
-                case Expr.Match m:
-                    Visit(m.Value, bnd);
-                    foreach (var mc in m.Cases)
-                    {
-                        var bndCase = new HashSet<string>(bnd, StringComparer.Ordinal);
-                        foreach (var name in PatternBindings(mc.Pattern))
-                        {
-                            bndCase.Add(name);
-                        }
-
-                        if (mc.Guard is not null)
-                        {
-                            Visit(mc.Guard, bndCase);
-                        }
-                        Visit(mc.Body, bndCase);
-                    }
-                    return;
-                case Expr.If iff:
-                    Visit(iff.Cond, bnd);
-                    Visit(iff.Then, bnd);
-                    Visit(iff.Else, bnd);
-                    return;
-                case Expr.Let l:
-                    Visit(l.Value, bnd);
-                    var boundWithLetVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Body, boundWithLetVar);
-                    return;
-                case Expr.LetResult l:
-                    Visit(l.Value, bnd);
-                    var boundWithResultVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Body, boundWithResultVar);
-                    return;
-                case Expr.LetRecursive l:
-                    var boundWithRecursiveVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                    Visit(l.Value, boundWithRecursiveVar);
-                    Visit(l.Body, boundWithRecursiveVar);
-                    return;
-                case Expr.Lambda lam:
-                    var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
-                    Visit(lam.Body, boundWithParam);
-                    return;
-                case Expr.Await awaitExpr:
-                    Visit(awaitExpr.Task, bnd);
-                    return;
-                case Expr.RecordLit recordLit:
-                    foreach (var field in recordLit.Fields)
-                    {
-                        Visit(field.Value, bnd);
-                    }
-
-                    return;
-                case Expr.RecordUpdate recordUpdate:
-                    Visit(recordUpdate.Target, bnd);
-                    foreach (var update in recordUpdate.Updates)
-                    {
-                        Visit(update.Value, bnd);
-                    }
-
-                    return;
-                case Expr.Perform perform:
-                    Visit(perform.Operation, bnd);
-                    return;
-                case CapabilityPostExpr capabilityPost:
-                    Visit(capabilityPost.Value, bnd);
-                    Visit(capabilityPost.PostLambda, bnd);
-                    return;
-                case Expr.Handle handleExpr:
-                    Visit(handleExpr.Body, bnd);
-                    foreach (var arm in handleExpr.Arms)
-                    {
-                        var bndArm = new HashSet<string>(bnd, StringComparer.Ordinal) { "resume" };
-                        foreach (var armParam in arm.Parameters)
-                        {
-                            foreach (var name in PatternBindings(armParam))
-                            {
-                                bndArm.Add(name);
-                            }
-                        }
-
-                        Visit(arm.Body, bndArm);
-                    }
-
-                    return;
-                default:
-                    throw new NotSupportedException(ex.GetType().Name);
-            }
+            return;
         }
 
-        Visit(e, bound);
-        return res;
+        if (FreeVarsVisitBitwiseOrCompare(ex, bnd, res))
+        {
+            return;
+        }
+
+        if (FreeVarsVisitApplicationOrAggregate(ex, bnd, res))
+        {
+            return;
+        }
+
+        FreeVarsVisitBinderForms(ex, bnd, res);
+    }
+
+    private bool FreeVarsVisitAtomOrArith(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        switch (ex)
+        {
+            case Expr.IntLit:
+            case Expr.UIntLit:
+            case Expr.BigIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                return true;
+            case Expr.Var v:
+                if (!bnd.Contains(v.Name))
+                {
+                    res.Add(v.Name);
+                }
+
+                return true;
+            case Expr.QualifiedVar qv:
+                FreeVarsVisitQualifiedVar(qv, bnd, res);
+                return true;
+            case Expr.Add a:
+                FreeVarsVisit(a.Left, bnd, res);
+                FreeVarsVisit(a.Right, bnd, res);
+                return true;
+            case Expr.Subtract sub:
+                FreeVarsVisit(sub.Left, bnd, res);
+                FreeVarsVisit(sub.Right, bnd, res);
+                return true;
+            case Expr.Multiply mul:
+                FreeVarsVisit(mul.Left, bnd, res);
+                FreeVarsVisit(mul.Right, bnd, res);
+                return true;
+            case Expr.Divide div:
+                FreeVarsVisit(div.Left, bnd, res);
+                FreeVarsVisit(div.Right, bnd, res);
+                return true;
+            case Expr.Modulo modExpr:
+                FreeVarsVisit(modExpr.Left, bnd, res);
+                FreeVarsVisit(modExpr.Right, bnd, res);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void FreeVarsVisitQualifiedVar(Expr.QualifiedVar qv, HashSet<string> bnd, HashSet<string> res)
+    {
+        var resolvedModule = ResolveModuleAlias(qv.Module);
+
+        // An intrinsic member (Ashes.IO.print, Ashes.Text.uncons, ...) lowers directly
+        // to a builtin and introduces no free variable. A SHIPPED-helper or user-module
+        // member (Ashes.String.indexOf, Ashes.Map.get, ...) lowers to a stitched
+        // top-level binding `Module_name`; when such a reference appears inside a lambda
+        // body it IS a free variable that the closure must capture, otherwise the
+        // synthesized binding is out of scope inside the lambda and resolution fails with
+        // a spurious "Unknown module".
+        if (BuiltinRegistry.TryGetModule(resolvedModule, out var qvModule)
+            && qvModule.Members.ContainsKey(qv.Name))
+        {
+            return;
+        }
+
+        var synthesized = ProjectSupport.SanitizeModuleBindingName(resolvedModule) + "_" + qv.Name;
+        if (!bnd.Contains(synthesized)
+            && (_topLevelBindingNames.Contains(synthesized) || Lookup(synthesized) is not null))
+        {
+            res.Add(synthesized);
+        }
+    }
+
+    private bool FreeVarsVisitBitwiseOrCompare(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        switch (ex)
+        {
+            case Expr.BitwiseAnd bitAnd:
+                FreeVarsVisit(bitAnd.Left, bnd, res);
+                FreeVarsVisit(bitAnd.Right, bnd, res);
+                return true;
+            case Expr.BitwiseOr bitOr:
+                FreeVarsVisit(bitOr.Left, bnd, res);
+                FreeVarsVisit(bitOr.Right, bnd, res);
+                return true;
+            case Expr.BitwiseXor bitXor:
+                FreeVarsVisit(bitXor.Left, bnd, res);
+                FreeVarsVisit(bitXor.Right, bnd, res);
+                return true;
+            case Expr.ShiftLeft shiftLeft:
+                FreeVarsVisit(shiftLeft.Left, bnd, res);
+                FreeVarsVisit(shiftLeft.Right, bnd, res);
+                return true;
+            case Expr.ShiftRight shiftRight:
+                FreeVarsVisit(shiftRight.Left, bnd, res);
+                FreeVarsVisit(shiftRight.Right, bnd, res);
+                return true;
+            case Expr.BitwiseNot bitwiseNot:
+                FreeVarsVisit(bitwiseNot.Operand, bnd, res);
+                return true;
+            case Expr.GreaterThan gt:
+                FreeVarsVisit(gt.Left, bnd, res);
+                FreeVarsVisit(gt.Right, bnd, res);
+                return true;
+            case Expr.GreaterOrEqual ge:
+                FreeVarsVisit(ge.Left, bnd, res);
+                FreeVarsVisit(ge.Right, bnd, res);
+                return true;
+            case Expr.LessThan lt:
+                FreeVarsVisit(lt.Left, bnd, res);
+                FreeVarsVisit(lt.Right, bnd, res);
+                return true;
+            case Expr.LessOrEqual le:
+                FreeVarsVisit(le.Left, bnd, res);
+                FreeVarsVisit(le.Right, bnd, res);
+                return true;
+            case Expr.Equal eq:
+                FreeVarsVisit(eq.Left, bnd, res);
+                FreeVarsVisit(eq.Right, bnd, res);
+                return true;
+            case Expr.NotEqual ne:
+                FreeVarsVisit(ne.Left, bnd, res);
+                FreeVarsVisit(ne.Right, bnd, res);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool FreeVarsVisitApplicationOrAggregate(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        switch (ex)
+        {
+            case Expr.ResultPipe pipe:
+                FreeVarsVisit(pipe.Left, bnd, res);
+                FreeVarsVisit(pipe.Right, bnd, res);
+                return true;
+            case Expr.ResultMapErrorPipe pipe:
+                FreeVarsVisit(pipe.Left, bnd, res);
+                FreeVarsVisit(pipe.Right, bnd, res);
+                return true;
+            case Expr.Call c:
+                FreeVarsVisit(c.Func, bnd, res);
+                FreeVarsVisit(c.Arg, bnd, res);
+                return true;
+            case Expr.TupleLit tuple:
+                foreach (var elem in tuple.Elements)
+                {
+                    FreeVarsVisit(elem, bnd, res);
+                }
+                return true;
+            case Expr.ListLit list:
+                foreach (var e in list.Elements)
+                {
+                    FreeVarsVisit(e, bnd, res);
+                }
+
+                return true;
+            case Expr.Cons c:
+                FreeVarsVisit(c.Head, bnd, res);
+                FreeVarsVisit(c.Tail, bnd, res);
+                return true;
+            case Expr.Match m:
+                FreeVarsVisitMatch(m, bnd, res);
+                return true;
+            case Expr.If iff:
+                FreeVarsVisit(iff.Cond, bnd, res);
+                FreeVarsVisit(iff.Then, bnd, res);
+                FreeVarsVisit(iff.Else, bnd, res);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void FreeVarsVisitMatch(Expr.Match m, HashSet<string> bnd, HashSet<string> res)
+    {
+        FreeVarsVisit(m.Value, bnd, res);
+        foreach (var mc in m.Cases)
+        {
+            var bndCase = new HashSet<string>(bnd, StringComparer.Ordinal);
+            foreach (var name in PatternBindings(mc.Pattern))
+            {
+                bndCase.Add(name);
+            }
+
+            if (mc.Guard is not null)
+            {
+                FreeVarsVisit(mc.Guard, bndCase, res);
+            }
+            FreeVarsVisit(mc.Body, bndCase, res);
+        }
+    }
+
+    private void FreeVarsVisitBinderForms(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        switch (ex)
+        {
+            case Expr.Let l:
+                FreeVarsVisit(l.Value, bnd, res);
+                var boundWithLetVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                FreeVarsVisit(l.Body, boundWithLetVar, res);
+                return;
+            case Expr.LetResult l:
+                FreeVarsVisit(l.Value, bnd, res);
+                var boundWithResultVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                FreeVarsVisit(l.Body, boundWithResultVar, res);
+                return;
+            case Expr.LetRecursive l:
+                var boundWithRecursiveVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
+                FreeVarsVisit(l.Value, boundWithRecursiveVar, res);
+                FreeVarsVisit(l.Body, boundWithRecursiveVar, res);
+                return;
+            case Expr.Lambda lam:
+                var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
+                FreeVarsVisit(lam.Body, boundWithParam, res);
+                return;
+            case Expr.Await awaitExpr:
+                FreeVarsVisit(awaitExpr.Task, bnd, res);
+                return;
+            case Expr.RecordLit recordLit:
+                foreach (var field in recordLit.Fields)
+                {
+                    FreeVarsVisit(field.Value, bnd, res);
+                }
+
+                return;
+            case Expr.RecordUpdate recordUpdate:
+                FreeVarsVisit(recordUpdate.Target, bnd, res);
+                foreach (var update in recordUpdate.Updates)
+                {
+                    FreeVarsVisit(update.Value, bnd, res);
+                }
+
+                return;
+            case Expr.Perform perform:
+                FreeVarsVisit(perform.Operation, bnd, res);
+                return;
+            case CapabilityPostExpr capabilityPost:
+                FreeVarsVisit(capabilityPost.Value, bnd, res);
+                FreeVarsVisit(capabilityPost.PostLambda, bnd, res);
+                return;
+            case Expr.Handle handleExpr:
+                FreeVarsVisitHandle(handleExpr, bnd, res);
+                return;
+            default:
+                throw new NotSupportedException(ex.GetType().Name);
+        }
+    }
+
+    private void FreeVarsVisitHandle(Expr.Handle handleExpr, HashSet<string> bnd, HashSet<string> res)
+    {
+        FreeVarsVisit(handleExpr.Body, bnd, res);
+        foreach (var arm in handleExpr.Arms)
+        {
+            var bndArm = new HashSet<string>(bnd, StringComparer.Ordinal) { "resume" };
+            foreach (var armParam in arm.Parameters)
+            {
+                foreach (var name in PatternBindings(armParam))
+                {
+                    bndArm.Add(name);
+                }
+            }
+
+            FreeVarsVisit(arm.Body, bndArm, res);
+        }
     }
 
     private static Expr SubstituteVars(Expr e, Dictionary<string, string> renames)
@@ -4444,13 +4932,6 @@ public sealed partial class Lowering
         }
 
         Expr S(Expr x) => SubstituteVars(x, renames);
-
-        // A binder shadows a renamed name within its scope: drop it from the rename set for the subtree.
-        T WithShadowed<T>(IEnumerable<string> bound, Func<Dictionary<string, string>, T> build)
-        {
-            var sub = renames.Where(kv => !bound.Contains(kv.Key, StringComparer.Ordinal)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
-            return build(sub);
-        }
 
         switch (e)
         {
@@ -4484,6 +4965,26 @@ public sealed partial class Lowering
             case Expr.If i: return new Expr.If(S(i.Cond), S(i.Then), S(i.Else));
             case Expr.Await a: return new Expr.Await(S(a.Task));
             case Expr.Perform p: return new Expr.Perform(S(p.Operation));
+            case Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Match:
+                return SubstituteVarsBinders(e, renames);
+            default:
+                throw new NotSupportedException($"SubstituteVars: unhandled {e.GetType().Name}");
+        }
+    }
+
+    private static Expr SubstituteVarsBinders(Expr e, Dictionary<string, string> renames)
+    {
+        Expr S(Expr x) => SubstituteVars(x, renames);
+
+        // A binder shadows a renamed name within its scope: drop it from the rename set for the subtree.
+        T WithShadowed<T>(IEnumerable<string> bound, Func<Dictionary<string, string>, T> build)
+        {
+            var sub = renames.Where(kv => !bound.Contains(kv.Key, StringComparer.Ordinal)).ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            return build(sub);
+        }
+
+        switch (e)
+        {
             case Expr.Lambda lam:
                 return WithShadowed([lam.ParamName], sub => new Expr.Lambda(lam.ParamName, SubstituteVars(lam.Body, sub)));
             case Expr.Let l:
@@ -4559,7 +5060,17 @@ public sealed partial class Lowering
             && !ExprReferencesName(cases[0].Body, name, shadowedInArm);
     }
 
+    // The node-kind dispatch is split into ordered groups; each group returns null for the kinds
+    // it does not handle so the next group sees them.
     private static bool UsesNameOnlyAsDirectCallee(Expr expr, string targetName, bool shadowed = false, bool allowDirectCallee = false)
+    {
+        return UsesNameOnlyAsDirectCalleeAtomOrArith(expr, targetName, shadowed, allowDirectCallee)
+            ?? UsesNameOnlyAsDirectCalleeBitwiseOrCompare(expr, targetName, shadowed)
+            ?? UsesNameOnlyAsDirectCalleeApplicationOrAggregate(expr, targetName, shadowed)
+            ?? UsesNameOnlyAsDirectCalleeBinderForms(expr, targetName, shadowed);
+    }
+
+    private static bool? UsesNameOnlyAsDirectCalleeAtomOrArith(Expr expr, string targetName, bool shadowed, bool allowDirectCallee)
     {
         switch (expr)
         {
@@ -4590,6 +5101,15 @@ public sealed partial class Lowering
             case Expr.Modulo modExpr:
                 return UsesNameOnlyAsDirectCallee(modExpr.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(modExpr.Right, targetName, shadowed);
+            default:
+                return null;
+        }
+    }
+
+    private static bool? UsesNameOnlyAsDirectCalleeBitwiseOrCompare(Expr expr, string targetName, bool shadowed)
+    {
+        switch (expr)
+        {
             case Expr.BitwiseAnd bitAnd:
                 return UsesNameOnlyAsDirectCallee(bitAnd.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(bitAnd.Right, targetName, shadowed);
@@ -4625,6 +5145,15 @@ public sealed partial class Lowering
             case Expr.NotEqual ne:
                 return UsesNameOnlyAsDirectCallee(ne.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(ne.Right, targetName, shadowed);
+            default:
+                return null;
+        }
+    }
+
+    private static bool? UsesNameOnlyAsDirectCalleeApplicationOrAggregate(Expr expr, string targetName, bool shadowed)
+    {
+        switch (expr)
+        {
             case Expr.ResultPipe pipe:
                 return UsesNameOnlyAsDirectCallee(pipe.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(pipe.Right, targetName, shadowed);
@@ -4645,6 +5174,15 @@ public sealed partial class Lowering
                 return UsesNameOnlyAsDirectCallee(iff.Cond, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(iff.Then, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(iff.Else, targetName, shadowed);
+            default:
+                return null;
+        }
+    }
+
+    private static bool UsesNameOnlyAsDirectCalleeBinderForms(Expr expr, string targetName, bool shadowed)
+    {
+        switch (expr)
+        {
             case Expr.Let let:
                 return UsesNameOnlyAsDirectCallee(let.Value, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(let.Body, targetName, shadowed || string.Equals(let.Name, targetName, StringComparison.Ordinal));
@@ -4660,26 +5198,7 @@ public sealed partial class Lowering
             case Expr.Lambda lam:
                 return UsesNameOnlyAsDirectCallee(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
             case Expr.Match match:
-                if (!UsesNameOnlyAsDirectCallee(match.Value, targetName, shadowed))
-                {
-                    return false;
-                }
-
-                foreach (var matchCase in match.Cases)
-                {
-                    bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
-                    if (matchCase.Guard is not null && !UsesNameOnlyAsDirectCallee(matchCase.Guard, targetName, caseShadowed))
-                    {
-                        return false;
-                    }
-
-                    if (!UsesNameOnlyAsDirectCallee(matchCase.Body, targetName, caseShadowed))
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
+                return UsesNameOnlyAsDirectCalleeMatch(match, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
             case Expr.Perform perform:
@@ -4695,6 +5214,30 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(expr.GetType().Name);
         }
+    }
+
+    private static bool UsesNameOnlyAsDirectCalleeMatch(Expr.Match match, string targetName, bool shadowed)
+    {
+        if (!UsesNameOnlyAsDirectCallee(match.Value, targetName, shadowed))
+        {
+            return false;
+        }
+
+        foreach (var matchCase in match.Cases)
+        {
+            bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
+            if (matchCase.Guard is not null && !UsesNameOnlyAsDirectCallee(matchCase.Guard, targetName, caseShadowed))
+            {
+                return false;
+            }
+
+            if (!UsesNameOnlyAsDirectCallee(matchCase.Body, targetName, caseShadowed))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

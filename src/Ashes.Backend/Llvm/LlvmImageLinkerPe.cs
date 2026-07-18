@@ -104,7 +104,109 @@ internal static partial class LlvmImageLinker
         var parsed = ParseCoffObject(objectBytes, entrySymbolName);
         externalLibraries = CollectWindowsRuntimeImports(objectBytes, parsed.SymbolTableOffset, parsed.SymbolCount, externalLibraries);
 
+        (byte[] rdataBytes, WindowsRdataLayout rdataLayout) = BuildWindowsRdataSection(
+            objectBytes, parsed, externalLibraries, linkedPayload);
+        WindowsSymbolResolution resolution = ResolveWindowsSymbols(rdataBytes, rdataLayout, parsed, linkedPayload);
+        byte[] codeBytes = ApplyWindowsRelocations(objectBytes, parsed, rdataBytes, rdataLayout, resolution);
+        return WriteWindowsImage(parsed, codeBytes, rdataBytes, rdataLayout, resolution);
+    }
+
+    private readonly record struct WindowsExtraSectionsLayout(
+        Dictionary<int, uint> ExtraSectionOffsets,
+        uint BssTotalSize,
+        Dictionary<int, uint> BssSectionOffsets);
+
+    private readonly record struct WindowsHintOffsetsA(
+        int ExitProcess, int GetStdHandle, int WriteFile, int ReadFile, int CreateFile,
+        int CloseHandle, int GetFileAttributes, int GetCommandLine, int WideCharToMultiByte,
+        int LocalFree, int CommandLineToArgv, int WsaStartup, int Socket, int Connect, int Send,
+        int Recv, int CloseSocket, int IoctlSocket, int WsaGetLastError, int Bind, int SetSockOpt,
+        int WsaIoctl, int WsaSend);
+
+    private readonly record struct WindowsHintOffsetsB(
+        int WsaRecv, int WsaPoll, int Listen, int Accept, int Sleep, int GetTickCount64,
+        int VirtualAlloc, int VirtualFree, int CreateIoCompletionPort, int GetQueuedCompletionStatus,
+        int LoadLibrary, int GetProcAddress, int CertOpenSystemStore, int CertEnumCertificatesInStore,
+        int CertCloseStore, int CreatePipe, int CreateProcessA, int TerminateProcess,
+        int WaitForSingleObject, int GetExitCodeProcess, int CreateThread, int GetSystemInfo);
+
+    private readonly record struct WindowsIatLayout(
+        int IatSectionOffset,
+        int Kernel32IatOffset,
+        int Shell32IatOffset,
+        int Ws2IatOffset,
+        int Crypt32IatOffset,
+        List<(WindowsImportLibrary Import, int Offset)> ExternalIatOffsets,
+        int IatEndOffset,
+        int Kernel32IltOffset,
+        int Shell32IltOffset,
+        int Ws2IltOffset,
+        int Crypt32IltOffset,
+        List<(WindowsImportLibrary Import, int Offset)> ExternalIltOffsets);
+
+    private readonly record struct WindowsRdataLayout(
+        Dictionary<int, uint> ExtraSectionOffsets,
+        uint BssTotalSize,
+        Dictionary<int, uint> BssSectionOffsets,
+        WindowsImportLibrary[] ExternalImports,
+        uint RdataRva,
+        int Kernel32IatOffset,
+        int Shell32IatOffset,
+        int Ws2IatOffset,
+        int Crypt32IatOffset,
+        List<(WindowsImportLibrary Import, int Offset)> ExternalIatOffsets,
+        int IatSectionOffset,
+        int IatEndOffset,
+        int ImportDirOffset,
+        int ImportDirSize,
+        ulong PayloadStartVa,
+        ulong PayloadEndVa,
+        int ExternalThunkCount);
+
+    private static (byte[] RdataBytes, WindowsRdataLayout Layout) BuildWindowsRdataSection(
+        byte[] objectBytes,
+        ParsedCoffObject parsed,
+        IReadOnlyDictionary<string, string>? externalLibraries,
+        LinkedImagePayload? linkedPayload)
+    {
         using var rdataStream = new MemoryStream();
+        WindowsExtraSectionsLayout extra = WriteWindowsExtraSections(rdataStream, objectBytes, parsed);
+        WriteWindowsDllNames(rdataStream, out int kernelNameOffset, out int shellNameOffset, out int ws2NameOffset, out int crypt32NameOffset);
+        var externalImports = BuildWindowsExternalImports(externalLibraries);
+        var externalNameOffsets = WriteWindowsExternalDllNames(rdataStream, externalImports);
+        WindowsHintOffsetsA hintsA = WriteWindowsHintNamesA(rdataStream);
+        WindowsHintOffsetsB hintsB = WriteWindowsHintNamesB(rdataStream);
+        var externalHintOffsets = WriteWindowsExternalHints(rdataStream, externalImports);
+
+        // Group hint offsets by DLL for IAT/ILT construction
+        int[] kernel32Hints = [hintsA.ExitProcess, hintsA.GetStdHandle, hintsA.WriteFile, hintsA.ReadFile, hintsA.CreateFile, hintsA.CloseHandle, hintsA.GetFileAttributes, hintsA.GetCommandLine, hintsA.WideCharToMultiByte, hintsA.LocalFree, hintsB.Sleep, hintsB.VirtualAlloc, hintsB.VirtualFree, hintsB.CreateIoCompletionPort, hintsB.GetQueuedCompletionStatus, hintsB.LoadLibrary, hintsB.GetProcAddress, hintsB.CreatePipe, hintsB.CreateProcessA, hintsB.TerminateProcess, hintsB.WaitForSingleObject, hintsB.GetExitCodeProcess, hintsB.CreateThread, hintsB.GetSystemInfo, hintsB.GetTickCount64];
+        int[] shell32Hints = [hintsA.CommandLineToArgv];
+        int[] ws2Hints = [hintsA.WsaStartup, hintsA.Socket, hintsA.Connect, hintsA.Send, hintsA.Recv, hintsA.CloseSocket, hintsA.IoctlSocket, hintsA.WsaGetLastError, hintsA.Bind, hintsA.SetSockOpt, hintsA.WsaIoctl, hintsA.WsaSend, hintsB.WsaRecv, hintsB.WsaPoll, hintsB.Listen, hintsB.Accept];
+        int[] crypt32Hints = [hintsB.CertOpenSystemStore, hintsB.CertEnumCertificatesInStore, hintsB.CertCloseStore];
+
+        // Import call thunks live at the end of .text (one per external import symbol), so the
+        // .rdata base must account for them before any RVA-dependent content is written.
+        int externalThunkCount = externalImports.Sum(static import => import.SymbolNames.Length);
+        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTextPrefixLength + parsed.TextBytes.Length + externalThunkCount * WindowsImportThunkLength)), PeSectionAlignment);
+
+        WindowsIatLayout iat = WriteWindowsIatIlt(rdataStream, kernel32Hints, shell32Hints, ws2Hints, crypt32Hints, externalImports, externalHintOffsets, rdataRva);
+        (int importDirOffset, int importDirSize) = WriteWindowsImportDirectory(
+            rdataStream, iat, externalNameOffsets, kernelNameOffset, shellNameOffset, ws2NameOffset, crypt32NameOffset, rdataRva);
+        (ulong payloadStartVa, ulong payloadEndVa) = WriteWindowsPayload(rdataStream, linkedPayload, rdataRva);
+
+        var layout = new WindowsRdataLayout(
+            extra.ExtraSectionOffsets, extra.BssTotalSize, extra.BssSectionOffsets, externalImports, rdataRva,
+            iat.Kernel32IatOffset, iat.Shell32IatOffset, iat.Ws2IatOffset, iat.Crypt32IatOffset, iat.ExternalIatOffsets,
+            iat.IatSectionOffset, iat.IatEndOffset, importDirOffset, importDirSize, payloadStartVa, payloadEndVa,
+            externalThunkCount);
+        return (rdataStream.ToArray(), layout);
+    }
+
+    private static WindowsExtraSectionsLayout WriteWindowsExtraSections(
+        MemoryStream rdataStream,
+        byte[] objectBytes,
+        ParsedCoffObject parsed)
+    {
         var extraSectionOffsets = new Dictionary<int, uint>();
         uint bssTotalSize = 0;
         var bssSectionOffsets = new Dictionary<int, uint>();
@@ -148,17 +250,32 @@ internal static partial class LlvmImageLinker
             }
         }
 
+        return new WindowsExtraSectionsLayout(extraSectionOffsets, bssTotalSize, bssSectionOffsets);
+    }
+
+    private static void WriteWindowsDllNames(
+        MemoryStream rdataStream,
+        out int kernelNameOffset,
+        out int shellNameOffset,
+        out int ws2NameOffset,
+        out int crypt32NameOffset)
+    {
         // Write DLL name strings
         AlignStream(rdataStream, 2);
-        int kernelNameOffset = (int)rdataStream.Position;
+        kernelNameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("KERNEL32.DLL\0"));
-        int shellNameOffset = (int)rdataStream.Position;
+        shellNameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("SHELL32.DLL\0"));
-        int ws2NameOffset = (int)rdataStream.Position;
+        ws2NameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("WS2_32.DLL\0"));
-        int crypt32NameOffset = (int)rdataStream.Position;
+        crypt32NameOffset = (int)rdataStream.Position;
         rdataStream.Write(Encoding.ASCII.GetBytes("CRYPT32.DLL\0"));
-        var externalImports = BuildWindowsExternalImports(externalLibraries);
+    }
+
+    private static Dictionary<string, int> WriteWindowsExternalDllNames(
+        MemoryStream rdataStream,
+        WindowsImportLibrary[] externalImports)
+    {
         var externalNameOffsets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var import in externalImports)
         {
@@ -167,52 +284,70 @@ internal static partial class LlvmImageLinker
             rdataStream.WriteByte(0);
         }
 
-        // Write Hint/Name entries for each import function
-        int exitProcessHintOffset = WriteHintName(rdataStream, 0, "ExitProcess");
-        int getStdHandleHintOffset = WriteHintName(rdataStream, 0, "GetStdHandle");
-        int writeFileHintOffset = WriteHintName(rdataStream, 0, "WriteFile");
-        int readFileHintOffset = WriteHintName(rdataStream, 0, "ReadFile");
-        int createFileHintOffset = WriteHintName(rdataStream, 0, "CreateFileA");
-        int closeHandleHintOffset = WriteHintName(rdataStream, 0, "CloseHandle");
-        int getFileAttributesHintOffset = WriteHintName(rdataStream, 0, "GetFileAttributesA");
-        int getCommandLineHintOffset = WriteHintName(rdataStream, 0, "GetCommandLineW");
-        int wideCharToMultiByteHintOffset = WriteHintName(rdataStream, 0, "WideCharToMultiByte");
-        int localFreeHintOffset = WriteHintName(rdataStream, 0, "LocalFree");
-        int commandLineToArgvHintOffset = WriteHintName(rdataStream, 0, "CommandLineToArgvW");
-        int wsaStartupHintOffset = WriteHintName(rdataStream, 0, "WSAStartup");
-        int socketHintOffset = WriteHintName(rdataStream, 0, "socket");
-        int connectHintOffset = WriteHintName(rdataStream, 0, "connect");
-        int sendHintOffset = WriteHintName(rdataStream, 0, "send");
-        int recvHintOffset = WriteHintName(rdataStream, 0, "recv");
-        int closeSocketHintOffset = WriteHintName(rdataStream, 0, "closesocket");
-        int ioctlSocketHintOffset = WriteHintName(rdataStream, 0, "ioctlsocket");
-        int wsaGetLastErrorHintOffset = WriteHintName(rdataStream, 0, "WSAGetLastError");
-        int bindHintOffset = WriteHintName(rdataStream, 0, "bind");
-        int setSockOptHintOffset = WriteHintName(rdataStream, 0, "setsockopt");
-        int wsaIoctlHintOffset = WriteHintName(rdataStream, 0, "WSAIoctl");
-        int wsaSendHintOffset = WriteHintName(rdataStream, 0, "WSASend");
-        int wsaRecvHintOffset = WriteHintName(rdataStream, 0, "WSARecv");
-        int wsaPollHintOffset = WriteHintName(rdataStream, 0, "WSAPoll");
-        int listenHintOffset = WriteHintName(rdataStream, 0, "listen");
-        int acceptHintOffset = WriteHintName(rdataStream, 0, "accept");
-        int sleepHintOffset = WriteHintName(rdataStream, 0, "Sleep");
-        int getTickCount64HintOffset = WriteHintName(rdataStream, 0, "GetTickCount64");
-        int virtualAllocHintOffset = WriteHintName(rdataStream, 0, "VirtualAlloc");
-        int virtualFreeHintOffset = WriteHintName(rdataStream, 0, "VirtualFree");
-        int createIoCompletionPortHintOffset = WriteHintName(rdataStream, 0, "CreateIoCompletionPort");
-        int getQueuedCompletionStatusHintOffset = WriteHintName(rdataStream, 0, "GetQueuedCompletionStatus");
-        int loadLibraryHintOffset = WriteHintName(rdataStream, 0, "LoadLibraryA");
-        int getProcAddressHintOffset = WriteHintName(rdataStream, 0, "GetProcAddress");
-        int certOpenSystemStoreHintOffset = WriteHintName(rdataStream, 0, "CertOpenSystemStoreA");
-        int certEnumCertificatesInStoreHintOffset = WriteHintName(rdataStream, 0, "CertEnumCertificatesInStore");
-        int certCloseStoreHintOffset = WriteHintName(rdataStream, 0, "CertCloseStore");
-        int createPipeHintOffset = WriteHintName(rdataStream, 0, "CreatePipe");
-        int createProcessAHintOffset = WriteHintName(rdataStream, 0, "CreateProcessA");
-        int terminateProcessHintOffset = WriteHintName(rdataStream, 0, "TerminateProcess");
-        int waitForSingleObjectHintOffset = WriteHintName(rdataStream, 0, "WaitForSingleObject");
-        int getExitCodeProcessHintOffset = WriteHintName(rdataStream, 0, "GetExitCodeProcess");
-        int createThreadHintOffset = WriteHintName(rdataStream, 0, "CreateThread");
-        int getSystemInfoHintOffset = WriteHintName(rdataStream, 0, "GetSystemInfo");
+        return externalNameOffsets;
+    }
+
+    private static WindowsHintOffsetsA WriteWindowsHintNamesA(MemoryStream rdataStream)
+    {
+        // Write Hint/Name entries for each import function (first half, in stream order)
+        return new WindowsHintOffsetsA(
+            ExitProcess: WriteHintName(rdataStream, 0, "ExitProcess"),
+            GetStdHandle: WriteHintName(rdataStream, 0, "GetStdHandle"),
+            WriteFile: WriteHintName(rdataStream, 0, "WriteFile"),
+            ReadFile: WriteHintName(rdataStream, 0, "ReadFile"),
+            CreateFile: WriteHintName(rdataStream, 0, "CreateFileA"),
+            CloseHandle: WriteHintName(rdataStream, 0, "CloseHandle"),
+            GetFileAttributes: WriteHintName(rdataStream, 0, "GetFileAttributesA"),
+            GetCommandLine: WriteHintName(rdataStream, 0, "GetCommandLineW"),
+            WideCharToMultiByte: WriteHintName(rdataStream, 0, "WideCharToMultiByte"),
+            LocalFree: WriteHintName(rdataStream, 0, "LocalFree"),
+            CommandLineToArgv: WriteHintName(rdataStream, 0, "CommandLineToArgvW"),
+            WsaStartup: WriteHintName(rdataStream, 0, "WSAStartup"),
+            Socket: WriteHintName(rdataStream, 0, "socket"),
+            Connect: WriteHintName(rdataStream, 0, "connect"),
+            Send: WriteHintName(rdataStream, 0, "send"),
+            Recv: WriteHintName(rdataStream, 0, "recv"),
+            CloseSocket: WriteHintName(rdataStream, 0, "closesocket"),
+            IoctlSocket: WriteHintName(rdataStream, 0, "ioctlsocket"),
+            WsaGetLastError: WriteHintName(rdataStream, 0, "WSAGetLastError"),
+            Bind: WriteHintName(rdataStream, 0, "bind"),
+            SetSockOpt: WriteHintName(rdataStream, 0, "setsockopt"),
+            WsaIoctl: WriteHintName(rdataStream, 0, "WSAIoctl"),
+            WsaSend: WriteHintName(rdataStream, 0, "WSASend"));
+    }
+
+    private static WindowsHintOffsetsB WriteWindowsHintNamesB(MemoryStream rdataStream)
+    {
+        // Write Hint/Name entries for each import function (second half, in stream order)
+        return new WindowsHintOffsetsB(
+            WsaRecv: WriteHintName(rdataStream, 0, "WSARecv"),
+            WsaPoll: WriteHintName(rdataStream, 0, "WSAPoll"),
+            Listen: WriteHintName(rdataStream, 0, "listen"),
+            Accept: WriteHintName(rdataStream, 0, "accept"),
+            Sleep: WriteHintName(rdataStream, 0, "Sleep"),
+            GetTickCount64: WriteHintName(rdataStream, 0, "GetTickCount64"),
+            VirtualAlloc: WriteHintName(rdataStream, 0, "VirtualAlloc"),
+            VirtualFree: WriteHintName(rdataStream, 0, "VirtualFree"),
+            CreateIoCompletionPort: WriteHintName(rdataStream, 0, "CreateIoCompletionPort"),
+            GetQueuedCompletionStatus: WriteHintName(rdataStream, 0, "GetQueuedCompletionStatus"),
+            LoadLibrary: WriteHintName(rdataStream, 0, "LoadLibraryA"),
+            GetProcAddress: WriteHintName(rdataStream, 0, "GetProcAddress"),
+            CertOpenSystemStore: WriteHintName(rdataStream, 0, "CertOpenSystemStoreA"),
+            CertEnumCertificatesInStore: WriteHintName(rdataStream, 0, "CertEnumCertificatesInStore"),
+            CertCloseStore: WriteHintName(rdataStream, 0, "CertCloseStore"),
+            CreatePipe: WriteHintName(rdataStream, 0, "CreatePipe"),
+            CreateProcessA: WriteHintName(rdataStream, 0, "CreateProcessA"),
+            TerminateProcess: WriteHintName(rdataStream, 0, "TerminateProcess"),
+            WaitForSingleObject: WriteHintName(rdataStream, 0, "WaitForSingleObject"),
+            GetExitCodeProcess: WriteHintName(rdataStream, 0, "GetExitCodeProcess"),
+            CreateThread: WriteHintName(rdataStream, 0, "CreateThread"),
+            GetSystemInfo: WriteHintName(rdataStream, 0, "GetSystemInfo"));
+    }
+
+    private static Dictionary<string, int> WriteWindowsExternalHints(
+        MemoryStream rdataStream,
+        WindowsImportLibrary[] externalImports)
+    {
         var externalHintOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var import in externalImports)
         {
@@ -222,20 +357,22 @@ internal static partial class LlvmImageLinker
             }
         }
 
-        // Group hint offsets by DLL for IAT/ILT construction
-        int[] kernel32Hints = [exitProcessHintOffset, getStdHandleHintOffset, writeFileHintOffset, readFileHintOffset, createFileHintOffset, closeHandleHintOffset, getFileAttributesHintOffset, getCommandLineHintOffset, wideCharToMultiByteHintOffset, localFreeHintOffset, sleepHintOffset, virtualAllocHintOffset, virtualFreeHintOffset, createIoCompletionPortHintOffset, getQueuedCompletionStatusHintOffset, loadLibraryHintOffset, getProcAddressHintOffset, createPipeHintOffset, createProcessAHintOffset, terminateProcessHintOffset, waitForSingleObjectHintOffset, getExitCodeProcessHintOffset, createThreadHintOffset, getSystemInfoHintOffset, getTickCount64HintOffset];
-        int[] shell32Hints = [commandLineToArgvHintOffset];
-        int[] ws2Hints = [wsaStartupHintOffset, socketHintOffset, connectHintOffset, sendHintOffset, recvHintOffset, closeSocketHintOffset, ioctlSocketHintOffset, wsaGetLastErrorHintOffset, bindHintOffset, setSockOptHintOffset, wsaIoctlHintOffset, wsaSendHintOffset, wsaRecvHintOffset, wsaPollHintOffset, listenHintOffset, acceptHintOffset];
-        int[] crypt32Hints = [certOpenSystemStoreHintOffset, certEnumCertificatesInStoreHintOffset, certCloseStoreHintOffset];
+        return externalHintOffsets;
+    }
 
+    private static WindowsIatLayout WriteWindowsIatIlt(
+        MemoryStream rdataStream,
+        int[] kernel32Hints,
+        int[] shell32Hints,
+        int[] ws2Hints,
+        int[] crypt32Hints,
+        WindowsImportLibrary[] externalImports,
+        Dictionary<string, int> externalHintOffsets,
+        uint rdataRva)
+    {
         // Write IAT (Import Address Table) — 8 bytes per entry + 8-byte null terminator per DLL
         AlignStream(rdataStream, 8);
         int iatSectionOffset = (int)rdataStream.Position;
-
-        // Import call thunks live at the end of .text (one per external import symbol), so the
-        // .rdata base must account for them before any RVA-dependent content is written.
-        int externalThunkCount = externalImports.Sum(static import => import.SymbolNames.Length);
-        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTextPrefixLength + parsed.TextBytes.Length + externalThunkCount * WindowsImportThunkLength)), PeSectionAlignment);
 
         int kernel32IatOffset = (int)rdataStream.Position;
         WriteImportAddressTable(rdataStream, kernel32Hints, rdataRva);
@@ -272,21 +409,37 @@ internal static partial class LlvmImageLinker
             externalIltOffsets.Add((import, offset));
         }
 
+        return new WindowsIatLayout(
+            iatSectionOffset, kernel32IatOffset, shell32IatOffset, ws2IatOffset, crypt32IatOffset,
+            externalIatOffsets, iatEndOffset, kernel32IltOffset, shell32IltOffset, ws2IltOffset,
+            crypt32IltOffset, externalIltOffsets);
+    }
+
+    private static (int ImportDirOffset, int ImportDirSize) WriteWindowsImportDirectory(
+        MemoryStream rdataStream,
+        WindowsIatLayout iat,
+        Dictionary<string, int> externalNameOffsets,
+        int kernelNameOffset,
+        int shellNameOffset,
+        int ws2NameOffset,
+        int crypt32NameOffset,
+        uint rdataRva)
+    {
         // Write Import Directory Table (fixed imports + external imports + null terminator)
         // Each entry is 20 bytes: ILT RVA, TimeDateStamp, ForwarderChain, Name RVA, IAT RVA
         int importDirOffset = (int)rdataStream.Position;
-        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)kernel32IltOffset, rdataRva + (uint)kernelNameOffset, rdataRva + (uint)kernel32IatOffset);
-        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)shell32IltOffset, rdataRva + (uint)shellNameOffset, rdataRva + (uint)shell32IatOffset);
-        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)ws2IltOffset, rdataRva + (uint)ws2NameOffset, rdataRva + (uint)ws2IatOffset);
-        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)crypt32IltOffset, rdataRva + (uint)crypt32NameOffset, rdataRva + (uint)crypt32IatOffset);
-        for (int i = 0; i < externalIatOffsets.Count; i++)
+        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)iat.Kernel32IltOffset, rdataRva + (uint)kernelNameOffset, rdataRva + (uint)iat.Kernel32IatOffset);
+        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)iat.Shell32IltOffset, rdataRva + (uint)shellNameOffset, rdataRva + (uint)iat.Shell32IatOffset);
+        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)iat.Ws2IltOffset, rdataRva + (uint)ws2NameOffset, rdataRva + (uint)iat.Ws2IatOffset);
+        WriteImportDirectoryEntry(rdataStream, rdataRva + (uint)iat.Crypt32IltOffset, rdataRva + (uint)crypt32NameOffset, rdataRva + (uint)iat.Crypt32IatOffset);
+        for (int i = 0; i < iat.ExternalIatOffsets.Count; i++)
         {
-            var import = externalIatOffsets[i].Import;
+            var import = iat.ExternalIatOffsets[i].Import;
             WriteImportDirectoryEntry(
                 rdataStream,
-                rdataRva + (uint)externalIltOffsets[i].Offset,
+                rdataRva + (uint)iat.ExternalIltOffsets[i].Offset,
                 rdataRva + (uint)externalNameOffsets[import.LibraryName],
-                rdataRva + (uint)externalIatOffsets[i].Offset);
+                rdataRva + (uint)iat.ExternalIatOffsets[i].Offset);
         }
         // Null terminator entry (20 zero bytes)
         for (int i = 0; i < 20; i++)
@@ -295,7 +448,14 @@ internal static partial class LlvmImageLinker
         }
 
         int importDirSize = (int)rdataStream.Position - importDirOffset;
+        return (importDirOffset, importDirSize);
+    }
 
+    private static (ulong PayloadStartVa, ulong PayloadEndVa) WriteWindowsPayload(
+        MemoryStream rdataStream,
+        LinkedImagePayload? linkedPayload,
+        uint rdataRva)
+    {
         ulong payloadStartVa = 0;
         ulong payloadEndVa = 0;
         if (linkedPayload is LinkedImagePayload payload)
@@ -307,131 +467,201 @@ internal static partial class LlvmImageLinker
             payloadEndVa = payloadStartVa + (ulong)payload.Bytes.Length;
         }
 
-        // Compute IAT VAs from recorded offsets — each entry is 8 bytes.
-        ulong kernel32IatVa = PeImageBase + rdataRva + (ulong)kernel32IatOffset;
-        ulong shell32IatVa = PeImageBase + rdataRva + (ulong)shell32IatOffset;
-        ulong ws2IatVa = PeImageBase + rdataRva + (ulong)ws2IatOffset;
-        ulong crypt32IatVa = PeImageBase + rdataRva + (ulong)crypt32IatOffset;
+        return (payloadStartVa, payloadEndVa);
+    }
 
-        ulong exitProcessIatVa = kernel32IatVa;
-        ulong getStdHandleIatVa = kernel32IatVa + 1 * 8;
-        ulong writeFileIatVa = kernel32IatVa + 2 * 8;
-        ulong readFileIatVa = kernel32IatVa + 3 * 8;
-        ulong createFileIatVa = kernel32IatVa + 4 * 8;
-        ulong closeHandleIatVa = kernel32IatVa + 5 * 8;
-        ulong getFileAttributesIatVa = kernel32IatVa + 6 * 8;
-        ulong getCommandLineIatVa = kernel32IatVa + 7 * 8;
-        ulong wideCharToMultiByteIatVa = kernel32IatVa + 8 * 8;
-        ulong localFreeIatVa = kernel32IatVa + 9 * 8;
-        ulong sleepIatVa = kernel32IatVa + 10 * 8;
-        ulong virtualAllocIatVa = kernel32IatVa + 11 * 8;
-        ulong virtualFreeIatVa = kernel32IatVa + 12 * 8;
-        ulong createIoCompletionPortIatVa = kernel32IatVa + 13 * 8;
-        ulong getQueuedCompletionStatusIatVa = kernel32IatVa + 14 * 8;
-        ulong loadLibraryIatVa = kernel32IatVa + 15 * 8;
-        ulong getProcAddressIatVa = kernel32IatVa + 16 * 8;
-        ulong createPipeIatVa = kernel32IatVa + 17 * 8;
-        ulong createProcessAIatVa = kernel32IatVa + 18 * 8;
-        ulong terminateProcessIatVa = kernel32IatVa + 19 * 8;
-        ulong waitForSingleObjectIatVa = kernel32IatVa + 20 * 8;
-        ulong getExitCodeProcessIatVa = kernel32IatVa + 21 * 8;
-        ulong createThreadIatVa = kernel32IatVa + 22 * 8;
-        ulong getSystemInfoIatVa = kernel32IatVa + 23 * 8;
-        ulong getTickCount64IatVa = kernel32IatVa + 24 * 8;
-        ulong commandLineToArgvIatVa = shell32IatVa;
-        ulong wsaStartupIatVa = ws2IatVa;
-        ulong socketIatVa = ws2IatVa + 1 * 8;
-        ulong connectIatVa = ws2IatVa + 2 * 8;
-        ulong sendIatVa = ws2IatVa + 3 * 8;
-        ulong recvIatVa = ws2IatVa + 4 * 8;
-        ulong closeSocketIatVa = ws2IatVa + 5 * 8;
-        ulong ioctlSocketIatVa = ws2IatVa + 6 * 8;
-        ulong wsaGetLastErrorIatVa = ws2IatVa + 7 * 8;
-        ulong bindIatVa = ws2IatVa + 8 * 8;
-        ulong setSockOptIatVa = ws2IatVa + 9 * 8;
-        ulong wsaIoctlIatVa = ws2IatVa + 10 * 8;
-        ulong wsaSendIatVa = ws2IatVa + 11 * 8;
-        ulong wsaRecvIatVa = ws2IatVa + 12 * 8;
-        ulong wsaPollIatVa = ws2IatVa + 13 * 8;
-        ulong listenIatVa = ws2IatVa + 14 * 8;
-        ulong acceptIatVa = ws2IatVa + 15 * 8;
-        ulong certOpenSystemStoreIatVa = crypt32IatVa;
-        ulong certEnumCertificatesInStoreIatVa = crypt32IatVa + 1 * 8;
-        ulong certCloseStoreIatVa = crypt32IatVa + 2 * 8;
+    private readonly record struct WindowsKernel32IatVas(
+        ulong ExitProcess, ulong GetStdHandle, ulong WriteFile, ulong ReadFile, ulong CreateFile,
+        ulong CloseHandle, ulong GetFileAttributes, ulong GetCommandLine, ulong WideCharToMultiByte,
+        ulong LocalFree, ulong Sleep, ulong VirtualAlloc, ulong VirtualFree, ulong CreateIoCompletionPort,
+        ulong GetQueuedCompletionStatus, ulong LoadLibrary, ulong GetProcAddress, ulong CreatePipe,
+        ulong CreateProcessA, ulong TerminateProcess, ulong WaitForSingleObject, ulong GetExitCodeProcess,
+        ulong CreateThread, ulong GetSystemInfo, ulong GetTickCount64);
+
+    private readonly record struct WindowsNetIatVas(
+        ulong CommandLineToArgv, ulong WsaStartup, ulong Socket, ulong Connect, ulong Send, ulong Recv,
+        ulong CloseSocket, ulong IoctlSocket, ulong WsaGetLastError, ulong Bind, ulong SetSockOpt,
+        ulong WsaIoctl, ulong WsaSend, ulong WsaRecv, ulong WsaPoll, ulong Listen, ulong Accept,
+        ulong CertOpenSystemStore, ulong CertEnumCertificatesInStore, ulong CertCloseStore);
+
+    private readonly record struct WindowsSymbolResolution(
+        Dictionary<string, ulong> ExternalSymbolVas,
+        Dictionary<int, ulong> SectionBaseVas,
+        uint BssRva,
+        byte[] ExternalThunkBytes,
+        ulong ExitProcessIatVa);
+
+    private static WindowsSymbolResolution ResolveWindowsSymbols(
+        byte[] rdataBytes,
+        WindowsRdataLayout layout,
+        ParsedCoffObject parsed,
+        LinkedImagePayload? linkedPayload)
+    {
+        // Compute IAT VAs from recorded offsets — each entry is 8 bytes.
+        ulong kernel32IatVa = PeImageBase + layout.RdataRva + (ulong)layout.Kernel32IatOffset;
+        ulong shell32IatVa = PeImageBase + layout.RdataRva + (ulong)layout.Shell32IatOffset;
+        ulong ws2IatVa = PeImageBase + layout.RdataRva + (ulong)layout.Ws2IatOffset;
+        ulong crypt32IatVa = PeImageBase + layout.RdataRva + (ulong)layout.Crypt32IatOffset;
+
+        WindowsKernel32IatVas kernelVas = ComputeWindowsKernel32IatVas(kernel32IatVa);
+        WindowsNetIatVas netVas = ComputeWindowsNetIatVas(shell32IatVa, ws2IatVa, crypt32IatVa);
         ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
-        var sectionBaseVas = extraSectionOffsets.ToDictionary(
-            static pair => pair.Key,
-            pair => PeImageBase + rdataRva + pair.Value);
-        uint bssRva = 0;
-        if (bssTotalSize > 0)
+        var externalSymbolVas = BuildWindowsExternalSymbolVas(kernelVas, netVas, chkstkStubVa);
+
+        (Dictionary<int, ulong> sectionBaseVas, uint bssRva) = BuildWindowsSectionBaseVas(layout, rdataBytes.Length);
+        byte[] externalThunkBytes = BuildWindowsExternalThunks(layout, externalSymbolVas, parsed, linkedPayload);
+
+        return new WindowsSymbolResolution(externalSymbolVas, sectionBaseVas, bssRva, externalThunkBytes, kernel32IatVa);
+    }
+
+    private static WindowsKernel32IatVas ComputeWindowsKernel32IatVas(ulong kernel32IatVa)
+    {
+        return new WindowsKernel32IatVas(
+            ExitProcess: kernel32IatVa,
+            GetStdHandle: kernel32IatVa + 1 * 8,
+            WriteFile: kernel32IatVa + 2 * 8,
+            ReadFile: kernel32IatVa + 3 * 8,
+            CreateFile: kernel32IatVa + 4 * 8,
+            CloseHandle: kernel32IatVa + 5 * 8,
+            GetFileAttributes: kernel32IatVa + 6 * 8,
+            GetCommandLine: kernel32IatVa + 7 * 8,
+            WideCharToMultiByte: kernel32IatVa + 8 * 8,
+            LocalFree: kernel32IatVa + 9 * 8,
+            Sleep: kernel32IatVa + 10 * 8,
+            VirtualAlloc: kernel32IatVa + 11 * 8,
+            VirtualFree: kernel32IatVa + 12 * 8,
+            CreateIoCompletionPort: kernel32IatVa + 13 * 8,
+            GetQueuedCompletionStatus: kernel32IatVa + 14 * 8,
+            LoadLibrary: kernel32IatVa + 15 * 8,
+            GetProcAddress: kernel32IatVa + 16 * 8,
+            CreatePipe: kernel32IatVa + 17 * 8,
+            CreateProcessA: kernel32IatVa + 18 * 8,
+            TerminateProcess: kernel32IatVa + 19 * 8,
+            WaitForSingleObject: kernel32IatVa + 20 * 8,
+            GetExitCodeProcess: kernel32IatVa + 21 * 8,
+            CreateThread: kernel32IatVa + 22 * 8,
+            GetSystemInfo: kernel32IatVa + 23 * 8,
+            GetTickCount64: kernel32IatVa + 24 * 8);
+    }
+
+    private static WindowsNetIatVas ComputeWindowsNetIatVas(ulong shell32IatVa, ulong ws2IatVa, ulong crypt32IatVa)
+    {
+        return new WindowsNetIatVas(
+            CommandLineToArgv: shell32IatVa,
+            WsaStartup: ws2IatVa,
+            Socket: ws2IatVa + 1 * 8,
+            Connect: ws2IatVa + 2 * 8,
+            Send: ws2IatVa + 3 * 8,
+            Recv: ws2IatVa + 4 * 8,
+            CloseSocket: ws2IatVa + 5 * 8,
+            IoctlSocket: ws2IatVa + 6 * 8,
+            WsaGetLastError: ws2IatVa + 7 * 8,
+            Bind: ws2IatVa + 8 * 8,
+            SetSockOpt: ws2IatVa + 9 * 8,
+            WsaIoctl: ws2IatVa + 10 * 8,
+            WsaSend: ws2IatVa + 11 * 8,
+            WsaRecv: ws2IatVa + 12 * 8,
+            WsaPoll: ws2IatVa + 13 * 8,
+            Listen: ws2IatVa + 14 * 8,
+            Accept: ws2IatVa + 15 * 8,
+            CertOpenSystemStore: crypt32IatVa,
+            CertEnumCertificatesInStore: crypt32IatVa + 1 * 8,
+            CertCloseStore: crypt32IatVa + 2 * 8);
+    }
+
+    private static Dictionary<string, ulong> BuildWindowsExternalSymbolVas(
+        WindowsKernel32IatVas kernel,
+        WindowsNetIatVas net,
+        ulong chkstkStubVa)
+    {
+        return new Dictionary<string, ulong>(StringComparer.Ordinal)
         {
-            bssRva = AlignUp(checked(rdataRva + (uint)rdataStream.Length), PeSectionAlignment);
-            foreach (var pair in bssSectionOffsets)
+            ["__imp_ExitProcess"] = kernel.ExitProcess,
+            ["__imp_GetStdHandle"] = kernel.GetStdHandle,
+            ["__imp_WriteFile"] = kernel.WriteFile,
+            ["__imp_ReadFile"] = kernel.ReadFile,
+            ["__imp_CreateFileA"] = kernel.CreateFile,
+            ["__imp_CloseHandle"] = kernel.CloseHandle,
+            ["__imp_GetFileAttributesA"] = kernel.GetFileAttributes,
+            ["__imp_GetCommandLineW"] = kernel.GetCommandLine,
+            ["__imp_WideCharToMultiByte"] = kernel.WideCharToMultiByte,
+            ["__imp_LocalFree"] = kernel.LocalFree,
+            ["__imp_Sleep"] = kernel.Sleep,
+            ["__imp_GetTickCount64"] = kernel.GetTickCount64,
+            ["__imp_VirtualAlloc"] = kernel.VirtualAlloc,
+            ["__imp_VirtualFree"] = kernel.VirtualFree,
+            ["__imp_CreateIoCompletionPort"] = kernel.CreateIoCompletionPort,
+            ["__imp_GetQueuedCompletionStatus"] = kernel.GetQueuedCompletionStatus,
+            ["__imp_LoadLibraryA"] = kernel.LoadLibrary,
+            ["__imp_GetProcAddress"] = kernel.GetProcAddress,
+            ["__imp_CommandLineToArgvW"] = net.CommandLineToArgv,
+            ["__imp_WSAStartup"] = net.WsaStartup,
+            ["__imp_socket"] = net.Socket,
+            ["__imp_connect"] = net.Connect,
+            ["__imp_send"] = net.Send,
+            ["__imp_recv"] = net.Recv,
+            ["__imp_closesocket"] = net.CloseSocket,
+            ["__imp_ioctlsocket"] = net.IoctlSocket,
+            ["__imp_WSAGetLastError"] = net.WsaGetLastError,
+            ["__imp_bind"] = net.Bind,
+            ["__imp_setsockopt"] = net.SetSockOpt,
+            ["__imp_WSAIoctl"] = net.WsaIoctl,
+            ["__imp_WSASend"] = net.WsaSend,
+            ["__imp_WSARecv"] = net.WsaRecv,
+            ["__imp_WSAPoll"] = net.WsaPoll,
+            ["__imp_listen"] = net.Listen,
+            ["__imp_accept"] = net.Accept,
+            ["__imp_CertOpenSystemStoreA"] = net.CertOpenSystemStore,
+            ["__imp_CertEnumCertificatesInStore"] = net.CertEnumCertificatesInStore,
+            ["__imp_CertCloseStore"] = net.CertCloseStore,
+            ["__imp_CreatePipe"] = kernel.CreatePipe,
+            ["__imp_CreateProcessA"] = kernel.CreateProcessA,
+            ["__imp_TerminateProcess"] = kernel.TerminateProcess,
+            ["__imp_WaitForSingleObject"] = kernel.WaitForSingleObject,
+            ["__imp_GetExitCodeProcess"] = kernel.GetExitCodeProcess,
+            ["__imp_CreateThread"] = kernel.CreateThread,
+            ["__imp_GetSystemInfo"] = kernel.GetSystemInfo,
+            ["__chkstk"] = chkstkStubVa,
+        };
+    }
+
+    private static (Dictionary<int, ulong> SectionBaseVas, uint BssRva) BuildWindowsSectionBaseVas(
+        WindowsRdataLayout layout,
+        int rdataLength)
+    {
+        var sectionBaseVas = layout.ExtraSectionOffsets.ToDictionary(
+            static pair => pair.Key,
+            pair => PeImageBase + layout.RdataRva + pair.Value);
+        uint bssRva = 0;
+        if (layout.BssTotalSize > 0)
+        {
+            bssRva = AlignUp(checked(layout.RdataRva + (uint)rdataLength), PeSectionAlignment);
+            foreach (var pair in layout.BssSectionOffsets)
             {
                 sectionBaseVas[pair.Key] = PeImageBase + bssRva + pair.Value;
             }
         }
 
-        var externalSymbolVas = new Dictionary<string, ulong>(StringComparer.Ordinal)
-        {
-            ["__imp_ExitProcess"] = exitProcessIatVa,
-            ["__imp_GetStdHandle"] = getStdHandleIatVa,
-            ["__imp_WriteFile"] = writeFileIatVa,
-            ["__imp_ReadFile"] = readFileIatVa,
-            ["__imp_CreateFileA"] = createFileIatVa,
-            ["__imp_CloseHandle"] = closeHandleIatVa,
-            ["__imp_GetFileAttributesA"] = getFileAttributesIatVa,
-            ["__imp_GetCommandLineW"] = getCommandLineIatVa,
-            ["__imp_WideCharToMultiByte"] = wideCharToMultiByteIatVa,
-            ["__imp_LocalFree"] = localFreeIatVa,
-            ["__imp_Sleep"] = sleepIatVa,
-            ["__imp_GetTickCount64"] = getTickCount64IatVa,
-            ["__imp_VirtualAlloc"] = virtualAllocIatVa,
-            ["__imp_VirtualFree"] = virtualFreeIatVa,
-            ["__imp_CreateIoCompletionPort"] = createIoCompletionPortIatVa,
-            ["__imp_GetQueuedCompletionStatus"] = getQueuedCompletionStatusIatVa,
-            ["__imp_LoadLibraryA"] = loadLibraryIatVa,
-            ["__imp_GetProcAddress"] = getProcAddressIatVa,
-            ["__imp_CommandLineToArgvW"] = commandLineToArgvIatVa,
-            ["__imp_WSAStartup"] = wsaStartupIatVa,
-            ["__imp_socket"] = socketIatVa,
-            ["__imp_connect"] = connectIatVa,
-            ["__imp_send"] = sendIatVa,
-            ["__imp_recv"] = recvIatVa,
-            ["__imp_closesocket"] = closeSocketIatVa,
-            ["__imp_ioctlsocket"] = ioctlSocketIatVa,
-            ["__imp_WSAGetLastError"] = wsaGetLastErrorIatVa,
-            ["__imp_bind"] = bindIatVa,
-            ["__imp_setsockopt"] = setSockOptIatVa,
-            ["__imp_WSAIoctl"] = wsaIoctlIatVa,
-            ["__imp_WSASend"] = wsaSendIatVa,
-            ["__imp_WSARecv"] = wsaRecvIatVa,
-            ["__imp_WSAPoll"] = wsaPollIatVa,
-            ["__imp_listen"] = listenIatVa,
-            ["__imp_accept"] = acceptIatVa,
-            ["__imp_CertOpenSystemStoreA"] = certOpenSystemStoreIatVa,
-            ["__imp_CertEnumCertificatesInStore"] = certEnumCertificatesInStoreIatVa,
-            ["__imp_CertCloseStore"] = certCloseStoreIatVa,
-            ["__imp_CreatePipe"] = createPipeIatVa,
-            ["__imp_CreateProcessA"] = createProcessAIatVa,
-            ["__imp_TerminateProcess"] = terminateProcessIatVa,
-            ["__imp_WaitForSingleObject"] = waitForSingleObjectIatVa,
-            ["__imp_GetExitCodeProcess"] = getExitCodeProcessIatVa,
-            ["__imp_CreateThread"] = createThreadIatVa,
-            ["__imp_GetSystemInfo"] = getSystemInfoIatVa,
-            ["__chkstk"] = chkstkStubVa,
-        };
+        return (sectionBaseVas, bssRva);
+    }
+
+    private static byte[] BuildWindowsExternalThunks(
+        WindowsRdataLayout layout,
+        Dictionary<string, ulong> externalSymbolVas,
+        ParsedCoffObject parsed,
+        LinkedImagePayload? linkedPayload)
+    {
         // Each external import symbol gets its IAT slot exposed as `__imp_<name>` (indirect
         // references) plus a call thunk at the end of .text exposed as `<name>` (direct calls and
         // address-taken references from statically linked bitcode, e.g. Mbed TLS).
         ulong externalThunkBaseVa = PeImageBase + PeTextRva + (ulong)(WindowsTextPrefixLength + parsed.TextBytes.Length);
-        byte[] externalThunkBytes = new byte[externalThunkCount * WindowsImportThunkLength];
+        byte[] externalThunkBytes = new byte[layout.ExternalThunkCount * WindowsImportThunkLength];
         int externalThunkIndex = 0;
-        foreach (var (import, offset) in externalIatOffsets)
+        foreach (var (import, offset) in layout.ExternalIatOffsets)
         {
             for (int i = 0; i < import.SymbolNames.Length; i++)
             {
-                ulong iatEntryVa = PeImageBase + rdataRva + (ulong)offset + (ulong)i * 8UL;
+                ulong iatEntryVa = PeImageBase + layout.RdataRva + (ulong)offset + (ulong)i * 8UL;
                 externalSymbolVas["__imp_" + import.SymbolNames[i]] = iatEntryVa;
 
                 ulong thunkVa = externalThunkBaseVa + (ulong)(externalThunkIndex * WindowsImportThunkLength);
@@ -447,12 +677,23 @@ internal static partial class LlvmImageLinker
                 externalThunkIndex++;
             }
         }
+
         if (linkedPayload is LinkedImagePayload windowsPayload)
         {
-            externalSymbolVas[windowsPayload.StartSymbolName] = payloadStartVa;
-            externalSymbolVas[windowsPayload.EndSymbolName] = payloadEndVa;
+            externalSymbolVas[windowsPayload.StartSymbolName] = layout.PayloadStartVa;
+            externalSymbolVas[windowsPayload.EndSymbolName] = layout.PayloadEndVa;
         }
 
+        return externalThunkBytes;
+    }
+
+    private static byte[] ApplyWindowsRelocations(
+        byte[] objectBytes,
+        ParsedCoffObject parsed,
+        byte[] rdataBytes,
+        WindowsRdataLayout layout,
+        WindowsSymbolResolution resolution)
+    {
         ApplyCoffTextRelocations(
             objectBytes,
             parsed.TextBytes,
@@ -460,15 +701,13 @@ internal static partial class LlvmImageLinker
             parsed.SymbolTableOffset,
             parsed.SymbolCount,
             parsed.TextSectionNumber,
-            sectionBaseVas,
-            externalSymbolVas);
-        byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, exitProcessIatVa)
+            resolution.SectionBaseVas,
+            resolution.ExternalSymbolVas);
+        byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, resolution.ExitProcessIatVa)
             .Concat(BuildWindowsChkstkStub())
             .Concat(parsed.TextBytes)
-            .Concat(externalThunkBytes)
+            .Concat(resolution.ExternalThunkBytes)
             .ToArray();
-
-        byte[] rdataBytes = rdataStream.ToArray();
 
         // Patch relocations that live inside data sections — most importantly a `switch` jump table
         // in `.rdata`, whose 8-byte entries are absolute `.text` block addresses
@@ -478,11 +717,11 @@ internal static partial class LlvmImageLinker
             rdataBytes,
             parsed.Sections,
             parsed.TextSectionNumber,
-            extraSectionOffsets,
+            layout.ExtraSectionOffsets,
             parsed.SymbolTableOffset,
             parsed.SymbolCount,
-            sectionBaseVas,
-            externalSymbolVas);
+            resolution.SectionBaseVas,
+            resolution.ExternalSymbolVas);
 
         ApplyCoffDebugRelocations(
             objectBytes,
@@ -490,21 +729,75 @@ internal static partial class LlvmImageLinker
             parsed.SymbolTableOffset,
             parsed.SymbolCount,
             parsed.TextSectionNumber,
-            sectionBaseVas,
-            externalSymbolVas);
+            resolution.SectionBaseVas,
+            resolution.ExternalSymbolVas);
 
+        return codeBytes;
+    }
+
+    private readonly record struct WindowsSectionLayout(
+        bool HasBss,
+        int DebugSectionCount,
+        int SectionCount,
+        uint HeadersFileSize,
+        uint TextFileOffset,
+        uint TextRawSize,
+        uint RdataFileOffset,
+        uint RdataRawSize,
+        uint SizeOfImage,
+        uint TotalFileSize,
+        uint[] DebugRvas,
+        uint[] DebugFileOffsets,
+        uint DebugRvaCursor,
+        uint DebugFileCursor,
+        uint BssRva,
+        uint BssTotalSize);
+
+    private readonly record struct WindowsDebugStringTable(
+        byte[] StringTableBytes,
+        uint StringTableFileOffset,
+        uint SizeOfImage,
+        uint TotalFileSize,
+        string[] DebugNameFields);
+
+    private static byte[] WriteWindowsImage(
+        ParsedCoffObject parsed,
+        byte[] codeBytes,
+        byte[] rdataBytes,
+        WindowsRdataLayout layout,
+        WindowsSymbolResolution resolution)
+    {
+        WindowsSectionLayout sections = ComputeWindowsSectionLayout(parsed, codeBytes.Length, rdataBytes.Length, layout, resolution.BssRva);
+        WindowsDebugStringTable debugStr = BuildWindowsDebugStringTable(parsed, sections);
+
+        var output = new byte[debugStr.TotalFileSize];
+        WriteWindowsDosAndCoffHeader(output, sections.SectionCount, debugStr.StringTableFileOffset);
+        WriteWindowsOptionalHeader(output, sections, layout.BssTotalSize, debugStr.SizeOfImage);
+        WriteWindowsDataDirectories(output, layout);
+        WriteWindowsSectionHeaders(output, parsed, sections, layout, debugStr, codeBytes.Length, rdataBytes.Length);
+        WriteWindowsSectionData(output, parsed, codeBytes, rdataBytes, sections, debugStr);
+        return output;
+    }
+
+    private static WindowsSectionLayout ComputeWindowsSectionLayout(
+        ParsedCoffObject parsed,
+        int codeLength,
+        int rdataLength,
+        WindowsRdataLayout layout,
+        uint bssRva)
+    {
         // Compute section count and file layout
-        bool hasBss = bssTotalSize > 0;
+        bool hasBss = layout.BssTotalSize > 0;
         int debugSectionCount = parsed.DebugSections.Count;
         int sectionCount = (hasBss ? 3 : 2) + debugSectionCount; // .text, .rdata, optionally .bss, debug sections
         int headersSize = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + PeOptionalHeaderSize + sectionCount * PeSectionHeaderSize;
         uint headersFileSize = AlignUp((uint)headersSize, PeFileAlignment);
 
         uint textFileOffset = headersFileSize;
-        uint textRawSize = AlignUp((uint)codeBytes.Length, PeFileAlignment);
+        uint textRawSize = AlignUp((uint)codeLength, PeFileAlignment);
 
         uint rdataFileOffset = textFileOffset + textRawSize;
-        uint rdataRawSize = AlignUp((uint)rdataBytes.Length, PeFileAlignment);
+        uint rdataRawSize = AlignUp((uint)rdataLength, PeFileAlignment);
 
         uint bssFileOffset = 0;
         if (hasBss)
@@ -516,11 +809,11 @@ internal static partial class LlvmImageLinker
         uint sizeOfImage;
         if (hasBss)
         {
-            sizeOfImage = bssRva + AlignUp(bssTotalSize, PeSectionAlignment);
+            sizeOfImage = bssRva + AlignUp(layout.BssTotalSize, PeSectionAlignment);
         }
         else
         {
-            sizeOfImage = rdataRva + AlignUp((uint)rdataBytes.Length, PeSectionAlignment);
+            sizeOfImage = layout.RdataRva + AlignUp((uint)rdataLength, PeSectionAlignment);
         }
 
         uint totalFileSize = hasBss ? bssFileOffset : rdataFileOffset + rdataRawSize;
@@ -539,19 +832,31 @@ internal static partial class LlvmImageLinker
             debugFileCursor = AlignUp(checked(debugFileCursor + (uint)parsed.DebugSections[i].Bytes.Length), PeFileAlignment);
         }
 
+        return new WindowsSectionLayout(
+            hasBss, debugSectionCount, sectionCount, headersFileSize, textFileOffset, textRawSize,
+            rdataFileOffset, rdataRawSize, sizeOfImage, totalFileSize, debugRvas, debugFileOffsets,
+            debugRvaCursor, debugFileCursor, bssRva, layout.BssTotalSize);
+    }
+
+    private static WindowsDebugStringTable BuildWindowsDebugStringTable(
+        ParsedCoffObject parsed,
+        WindowsSectionLayout sections)
+    {
         // PE section names longer than 8 characters (every .debug_* name) go through a COFF
         // string table referenced as "/<offset>" — the MinGW/LLD convention debuggers understand.
         // The table sits at the end of the file with PointerToSymbolTable aiming at it and a
         // symbol count of zero.
         uint stringTableFileOffset = 0;
         byte[] stringTableBytes = [];
-        var debugNameFields = new string[debugSectionCount];
-        if (debugSectionCount > 0)
+        var debugNameFields = new string[sections.DebugSectionCount];
+        uint sizeOfImage = sections.SizeOfImage;
+        uint totalFileSize = sections.TotalFileSize;
+        if (sections.DebugSectionCount > 0)
         {
-            sizeOfImage = debugRvaCursor;
+            sizeOfImage = sections.DebugRvaCursor;
             using var stringTable = new MemoryStream();
             stringTable.Write(new byte[4]); // total-size field, patched below
-            for (int i = 0; i < debugSectionCount; i++)
+            for (int i = 0; i < sections.DebugSectionCount; i++)
             {
                 string name = parsed.DebugSections[i].Name;
                 if (name.Length <= 8)
@@ -567,12 +872,15 @@ internal static partial class LlvmImageLinker
 
             stringTableBytes = stringTable.ToArray();
             BinaryPrimitives.WriteUInt32LittleEndian(stringTableBytes.AsSpan(0, 4), (uint)stringTableBytes.Length);
-            stringTableFileOffset = debugFileCursor;
+            stringTableFileOffset = sections.DebugFileCursor;
             totalFileSize = checked(stringTableFileOffset + (uint)stringTableBytes.Length);
         }
 
-        var output = new byte[totalFileSize];
+        return new WindowsDebugStringTable(stringTableBytes, stringTableFileOffset, sizeOfImage, totalFileSize, debugNameFields);
+    }
 
+    private static void WriteWindowsDosAndCoffHeader(byte[] output, int sectionCount, uint stringTableFileOffset)
+    {
         // DOS header (minimal)
         output[0] = (byte)'M';
         output[1] = (byte)'Z';
@@ -596,16 +904,23 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 12, 4), 0);      // NumberOfSymbols
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 16, 2), PeOptionalHeaderSize); // SizeOfOptionalHeader
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 18, 2), 0x0022); // Characteristics: EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+    }
 
+    private static void WriteWindowsOptionalHeader(
+        byte[] output,
+        WindowsSectionLayout sections,
+        uint bssTotalSize,
+        uint sizeOfImage)
+    {
         uint stackReserveBytes = ResolvePeStackReserveBytes();
 
         // Optional header (PE32+)
-        int optOff = coffOff + PeCoffHeaderSize;
+        int optOff = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize;
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff, 2), 0x020B);       // Magic: PE32+
         output[optOff + 2] = 1;  // MajorLinkerVersion
         output[optOff + 3] = 0;  // MinorLinkerVersion
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 4, 4), textRawSize);   // SizeOfCode
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 8, 4), rdataRawSize);  // SizeOfInitializedData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 4, 4), sections.TextRawSize);   // SizeOfCode
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 8, 4), sections.RdataRawSize);  // SizeOfInitializedData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 12, 4), bssTotalSize);           // SizeOfUninitializedData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 16, 4), PeTextRva);              // AddressOfEntryPoint
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 20, 4), PeTextRva);              // BaseOfCode
@@ -620,7 +935,7 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 50, 2), 0);  // MinorSubsystemVersion
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 52, 4), 0);  // Win32VersionValue
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 56, 4), sizeOfImage);      // SizeOfImage
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 60, 4), headersFileSize);   // SizeOfHeaders
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 60, 4), sections.HeadersFileSize);   // SizeOfHeaders
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 64, 4), 0);  // CheckSum
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 68, 2), 3);  // Subsystem: CONSOLE
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 70, 2), 0x8100); // DllCharacteristics: NX_COMPAT | TERMINAL_SERVER_AWARE
@@ -630,77 +945,113 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 96, 8), 0x1000);    // SizeOfHeapCommit
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 104, 4), 0);        // LoaderFlags
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 108, 4), 16);       // NumberOfRvaAndSizes
+    }
 
+    private static void WriteWindowsDataDirectories(byte[] output, WindowsRdataLayout layout)
+    {
         // Data directories (16 entries, each 8 bytes = 128 bytes starting at optOff+112)
         // Entry 1 (index 1): Import Directory
-        int dataDirOff = optOff + 112;
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 8, 4), rdataRva + (uint)importDirOffset);  // Import Table RVA
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 12, 4), (uint)importDirSize);               // Import Table Size
+        int dataDirOff = PeDosHeaderSize + PeSignatureSize + PeCoffHeaderSize + 112;
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 8, 4), layout.RdataRva + (uint)layout.ImportDirOffset);  // Import Table RVA
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 12, 4), (uint)layout.ImportDirSize);               // Import Table Size
 
         // Entry 12 (index 12): IAT Directory
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 96, 4), rdataRva + (uint)iatSectionOffset); // IAT RVA
-        int iatTotalSize = iatEndOffset - iatSectionOffset;
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 96, 4), layout.RdataRva + (uint)layout.IatSectionOffset); // IAT RVA
+        int iatTotalSize = layout.IatEndOffset - layout.IatSectionOffset;
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(dataDirOff + 100, 4), (uint)iatTotalSize); // IAT Size
+    }
 
+    private static void WriteWindowsSectionHeaders(
+        byte[] output,
+        ParsedCoffObject parsed,
+        WindowsSectionLayout sections,
+        WindowsRdataLayout layout,
+        WindowsDebugStringTable debugStr,
+        int codeLength,
+        int rdataLength)
+    {
         // Section headers
         int secOff = PeHeadersStart;
 
         // .text section header
         Encoding.ASCII.GetBytes(".text").CopyTo(output.AsSpan(secOff));
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)codeBytes.Length);   // VirtualSize
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)codeLength);   // VirtualSize
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), PeTextRva);                // VirtualAddress
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), textRawSize);              // SizeOfRawData
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), textFileOffset);           // PointerToRawData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), sections.TextRawSize);              // SizeOfRawData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), sections.TextFileOffset);           // PointerToRawData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0x60000020);               // Characteristics: CODE | EXECUTE | READ
         secOff += PeSectionHeaderSize;
 
         // .rdata section header
         Encoding.ASCII.GetBytes(".rdata").CopyTo(output.AsSpan(secOff));
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)rdataBytes.Length);   // VirtualSize
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), rdataRva);                  // VirtualAddress
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), rdataRawSize);              // SizeOfRawData
-        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), rdataFileOffset);           // PointerToRawData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)rdataLength);   // VirtualSize
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), layout.RdataRva);                  // VirtualAddress
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), sections.RdataRawSize);              // SizeOfRawData
+        BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), sections.RdataFileOffset);           // PointerToRawData
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0x40000040);               // Characteristics: INITIALIZED_DATA | READ
         secOff += PeSectionHeaderSize;
 
+        secOff = WriteWindowsBssSectionHeader(output, sections, secOff);
+        WriteWindowsDebugSectionHeaders(output, parsed, sections, debugStr, secOff);
+    }
+
+    private static int WriteWindowsBssSectionHeader(byte[] output, WindowsSectionLayout sections, int secOff)
+    {
         // .bss section header (if needed)
-        if (hasBss)
+        if (sections.HasBss)
         {
             Encoding.ASCII.GetBytes(".bss").CopyTo(output.AsSpan(secOff));
-            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), bssTotalSize);          // VirtualSize
-            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), bssRva);                // VirtualAddress
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), sections.BssTotalSize);          // VirtualSize
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), sections.BssRva);                // VirtualAddress
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), 0);                     // SizeOfRawData (zero for BSS)
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), 0);                     // PointerToRawData
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0xC0000080);           // Characteristics: UNINITIALIZED_DATA | READ | WRITE
             secOff += PeSectionHeaderSize;
         }
 
+        return secOff;
+    }
+
+    private static void WriteWindowsDebugSectionHeaders(
+        byte[] output,
+        ParsedCoffObject parsed,
+        WindowsSectionLayout sections,
+        WindowsDebugStringTable debugStr,
+        int secOff)
+    {
         // Debug section headers
-        for (int i = 0; i < debugSectionCount; i++)
+        for (int i = 0; i < sections.DebugSectionCount; i++)
         {
-            Encoding.ASCII.GetBytes(debugNameFields[i]).CopyTo(output.AsSpan(secOff));
+            Encoding.ASCII.GetBytes(debugStr.DebugNameFields[i]).CopyTo(output.AsSpan(secOff));
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 8, 4), (uint)parsed.DebugSections[i].Bytes.Length); // VirtualSize
-            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), debugRvas[i]);                              // VirtualAddress
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 12, 4), sections.DebugRvas[i]);                              // VirtualAddress
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 16, 4), AlignUp((uint)parsed.DebugSections[i].Bytes.Length, PeFileAlignment)); // SizeOfRawData
-            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), debugFileOffsets[i]);                       // PointerToRawData
+            BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 20, 4), sections.DebugFileOffsets[i]);                       // PointerToRawData
             BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(secOff + 36, 4), 0x42000040);           // Characteristics: INITIALIZED_DATA | DISCARDABLE | READ
             secOff += PeSectionHeaderSize;
         }
+    }
 
+    private static void WriteWindowsSectionData(
+        byte[] output,
+        ParsedCoffObject parsed,
+        byte[] codeBytes,
+        byte[] rdataBytes,
+        WindowsSectionLayout sections,
+        WindowsDebugStringTable debugStr)
+    {
         // Write section data
-        Array.Copy(codeBytes, 0, output, (int)textFileOffset, codeBytes.Length);
-        Array.Copy(rdataBytes, 0, output, (int)rdataFileOffset, rdataBytes.Length);
-        for (int i = 0; i < debugSectionCount; i++)
+        Array.Copy(codeBytes, 0, output, (int)sections.TextFileOffset, codeBytes.Length);
+        Array.Copy(rdataBytes, 0, output, (int)sections.RdataFileOffset, rdataBytes.Length);
+        for (int i = 0; i < sections.DebugSectionCount; i++)
         {
-            Array.Copy(parsed.DebugSections[i].Bytes, 0, output, (int)debugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
+            Array.Copy(parsed.DebugSections[i].Bytes, 0, output, (int)sections.DebugFileOffsets[i], parsed.DebugSections[i].Bytes.Length);
         }
 
-        if (stringTableBytes.Length > 0)
+        if (debugStr.StringTableBytes.Length > 0)
         {
-            Array.Copy(stringTableBytes, 0, output, (int)stringTableFileOffset, stringTableBytes.Length);
+            Array.Copy(debugStr.StringTableBytes, 0, output, (int)debugStr.StringTableFileOffset, debugStr.StringTableBytes.Length);
         }
-
-        return output;
     }
 
     private static uint ResolvePeStackReserveBytes()

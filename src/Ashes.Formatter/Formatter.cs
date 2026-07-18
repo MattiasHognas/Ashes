@@ -428,39 +428,7 @@ public static class Formatter
                 sb.Append(')');
                 return;
             case TypeExpr.Arrow arr:
-                // An arrow in parameter position must be parenthesized to keep the arrow
-                // right-associative on re-parse: (A -> B) -> C.
-                if (arr.From is TypeExpr.Arrow)
-                {
-                    sb.Append('(');
-                    WriteTypeExpr(sb, arr.From);
-                    sb.Append(')');
-                }
-                else
-                {
-                    WriteTypeExpr(sb, arr.From);
-                }
-
-                sb.Append(" -> ");
-                // When this arrow carries a row and its result is itself an arrow, the result must
-                // be parenthesized or the row would re-attach to the inner arrow on re-parse
-                // (`uses` binds to the innermost arrow whose result it follows).
-                if (arr.Needs is not null && arr.To is TypeExpr.Arrow)
-                {
-                    sb.Append('(');
-                    WriteTypeExpr(sb, arr.To);
-                    sb.Append(')');
-                }
-                else
-                {
-                    WriteTypeExpr(sb, arr.To);
-                }
-
-                if (arr.Needs is { } needs)
-                {
-                    WriteNeedsRow(sb, needs);
-                }
-
+                WriteArrowTypeExpr(sb, arr);
                 return;
             case TypeExpr.TupleType t:
                 sb.Append('(');
@@ -471,6 +439,42 @@ public static class Formatter
                 }
                 sb.Append(')');
                 return;
+        }
+    }
+
+    private static void WriteArrowTypeExpr(StringBuilder sb, TypeExpr.Arrow arr)
+    {
+        // An arrow in parameter position must be parenthesized to keep the arrow
+        // right-associative on re-parse: (A -> B) -> C.
+        if (arr.From is TypeExpr.Arrow)
+        {
+            sb.Append('(');
+            WriteTypeExpr(sb, arr.From);
+            sb.Append(')');
+        }
+        else
+        {
+            WriteTypeExpr(sb, arr.From);
+        }
+
+        sb.Append(" -> ");
+        // When this arrow carries a row and its result is itself an arrow, the result must
+        // be parenthesized or the row would re-attach to the inner arrow on re-parse
+        // (`uses` binds to the innermost arrow whose result it follows).
+        if (arr.Needs is not null && arr.To is TypeExpr.Arrow)
+        {
+            sb.Append('(');
+            WriteTypeExpr(sb, arr.To);
+            sb.Append(')');
+        }
+        else
+        {
+            WriteTypeExpr(sb, arr.To);
+        }
+
+        if (arr.Needs is { } needs)
+        {
+            WriteNeedsRow(sb, needs);
         }
     }
 
@@ -703,7 +707,20 @@ public static class Formatter
         }
 
         sb.Append(" = ");
+        WriteLetValueAndBody(sb, value, l.Body, indent, preferPipelines, options);
 
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    /// <summary>
+    /// Writes the shared <c>= value ... in body</c> tail of a nested let form: the value inline or
+    /// indented on its own line, then <c>in</c> and the body (also inline or indented when multiline).
+    /// </summary>
+    private static void WriteLetValueAndBody(StringBuilder sb, Expr value, Expr body, int indent, bool preferPipelines, FormattingOptions options)
+    {
         if (IsSingleLine(value, preferPipelines))
         {
             WriteExprInline(sb, value, indent, 0, preferPipelines, options);
@@ -723,20 +740,15 @@ public static class Formatter
         WriteIndent(sb, indent, options);
         sb.Append("in ");
         // Body can be multiline; if so, put it on next line indented
-        if (IsSingleLine(l.Body, preferPipelines))
+        if (IsSingleLine(body, preferPipelines))
         {
-            WriteExprInline(sb, l.Body, indent, 0, preferPipelines, options);
+            WriteExprInline(sb, body, indent, 0, preferPipelines, options);
         }
         else
         {
             sb.Append('\n');
             WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, l.Body, indent + options.IndentSize, 0, preferPipelines, options);
-        }
-
-        if (needsParens)
-        {
-            sb.Append(')');
+            WriteExpr(sb, body, indent + options.IndentSize, 0, preferPipelines, options);
         }
     }
 
@@ -769,35 +781,7 @@ public static class Formatter
         }
 
         sb.Append(" = ");
-
-        if (IsSingleLine(value, preferPipelines))
-        {
-            WriteExprInline(sb, value, indent, 0, preferPipelines, options);
-            sb.Append('\n');
-        }
-        else
-        {
-            sb.Append('\n');
-            WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, value, indent + options.IndentSize, 0, preferPipelines, options);
-            if (!EndsWithNewLine(sb, "\n"))
-            {
-                sb.Append('\n');
-            }
-        }
-
-        WriteIndent(sb, indent, options);
-        sb.Append("in ");
-        if (IsSingleLine(l.Body, preferPipelines))
-        {
-            WriteExprInline(sb, l.Body, indent, 0, preferPipelines, options);
-        }
-        else
-        {
-            sb.Append('\n');
-            WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, l.Body, indent + options.IndentSize, 0, preferPipelines, options);
-        }
+        WriteLetValueAndBody(sb, value, l.Body, indent, preferPipelines, options);
 
         if (needsParens)
         {
@@ -1112,455 +1096,90 @@ public static class Formatter
 
     private static void WriteExprInline(StringBuilder sb, Expr e, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
     {
+        if (TryWriteAtomInline(sb, e))
+        {
+            return;
+        }
+
+        if (TryWriteArithmeticInline(sb, e, indent, parentPrec, preferPipelines, options))
+        {
+            return;
+        }
+
+        if (TryWriteComparisonOrPipeInline(sb, e, indent, parentPrec, preferPipelines, options))
+        {
+            return;
+        }
+
+        WriteStructuralExprInline(sb, e, indent, parentPrec, preferPipelines, options);
+    }
+
+    /// <summary>Writes leaf expressions that render without recursion: literals and variables.</summary>
+    private static bool TryWriteAtomInline(StringBuilder sb, Expr e)
+    {
         switch (e)
         {
             case Expr.IntLit i:
                 sb.Append(i.Value);
-                return;
+                return true;
 
             case Expr.UIntLit u:
                 sb.Append(u.Value);
                 sb.Append('u');
                 sb.Append(u.Bits);
-                return;
+                return true;
 
             case Expr.BigIntLit big:
                 sb.Append(big.Digits);
                 sb.Append('N');
-                return;
+                return true;
 
             case Expr.FloatLit f:
                 sb.Append(FormatFloatLiteral(f));
-                return;
+                return true;
 
             case Expr.StrLit s:
                 sb.Append('"');
                 sb.Append(EscapeString(s.Value));
                 sb.Append('"');
-                return;
+                return true;
 
             case Expr.BoolLit b:
                 sb.Append(b.Value ? "true" : "false");
-                return;
+                return true;
 
             case Expr.Var v:
                 sb.Append(v.Name);
-                return;
+                return true;
 
             case Expr.QualifiedVar qv:
                 sb.Append(qv.Module);
                 sb.Append('.');
                 sb.Append(qv.Name);
-                return;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Writes the remaining structured forms: collections, calls, records, and keyword prefixes.</summary>
+    private static void WriteStructuralExprInline(StringBuilder sb, Expr e, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        switch (e)
+        {
 
             case Expr.TupleLit tuple:
-                sb.Append('(');
-                for (int i = 0; i < tuple.Elements.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        sb.Append(", ");
-                    }
-                    WriteExprInline(sb, tuple.Elements[i], indent, 0, preferPipelines, options);
-                }
-                sb.Append(')');
+                WriteDelimitedElementsInline(sb, '(', tuple.Elements, ')', indent, preferPipelines, options);
                 return;
 
             case Expr.ListLit list:
-                sb.Append('[');
-                for (int i = 0; i < list.Elements.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        sb.Append(", ");
-                    }
-                    WriteExprInline(sb, list.Elements[i], indent, 0, preferPipelines, options);
-                }
-                sb.Append(']');
+                WriteDelimitedElementsInline(sb, '[', list.Elements, ']', indent, preferPipelines, options);
                 return;
-
-            case Expr.Cons cons:
-                {
-                    var needsParens = parentPrec > PrecCons;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-                    WriteExprInline(sb, cons.Head, indent, PrecCons + 1, preferPipelines, options);
-                    sb.Append(" :: ");
-                    WriteExprInline(sb, cons.Tail, indent, PrecCons, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-                    return;
-                }
-
-            case Expr.Add a:
-                {
-                    var needsParens = parentPrec > PrecAdd;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, a.Left, indent, PrecAdd, preferPipelines, options);
-                    sb.Append(" + ");
-                    WriteExprInline(sb, a.Right, indent, PrecAdd, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.Subtract sub:
-                {
-                    if (sub.Left is Expr.IntLit { Value: 0 })
-                    {
-                        var unaryNeedsParens = parentPrec > PrecUnary;
-                        if (unaryNeedsParens)
-                        {
-                            sb.Append('(');
-                        }
-
-                        sb.Append('-');
-                        WriteExprInline(sb, sub.Right, indent, PrecUnary, preferPipelines, options);
-
-                        if (unaryNeedsParens)
-                        {
-                            sb.Append(')');
-                        }
-
-                        return;
-                    }
-
-                    var needsParens = parentPrec > PrecAdd;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, sub.Left, indent, PrecAdd, preferPipelines, options);
-                    sb.Append(" - ");
-                    WriteExprInline(sb, sub.Right, indent, PrecAdd + 1, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.Multiply mul:
-                {
-                    var needsParens = parentPrec > PrecMul;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, mul.Left, indent, PrecMul, preferPipelines, options);
-                    sb.Append(" * ");
-                    WriteExprInline(sb, mul.Right, indent, PrecMul, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.Divide div:
-                {
-                    var needsParens = parentPrec > PrecMul;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, div.Left, indent, PrecMul, preferPipelines, options);
-                    sb.Append(" / ");
-                    WriteExprInline(sb, div.Right, indent, PrecMul + 1, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.Modulo modExpr:
-                {
-                    var needsParens = parentPrec > PrecMul;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, modExpr.Left, indent, PrecMul, preferPipelines, options);
-                    sb.Append(" % ");
-                    WriteExprInline(sb, modExpr.Right, indent, PrecMul + 1, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.BitwiseAnd bitAnd:
-                WriteLeftAssociativeBinary(sb, bitAnd.Left, "&", bitAnd.Right, PrecBitAnd, indent, parentPrec, preferPipelines, options);
-                return;
-
-            case Expr.BitwiseOr bitOr:
-                WriteLeftAssociativeBinary(sb, bitOr.Left, "|", bitOr.Right, PrecBitOr, indent, parentPrec, preferPipelines, options);
-                return;
-
-            case Expr.BitwiseXor bitXor:
-                WriteLeftAssociativeBinary(sb, bitXor.Left, "^", bitXor.Right, PrecBitXor, indent, parentPrec, preferPipelines, options);
-                return;
-
-            case Expr.ShiftLeft shiftLeft:
-                WriteLeftAssociativeBinary(sb, shiftLeft.Left, "<<", shiftLeft.Right, PrecShift, indent, parentPrec, preferPipelines, options);
-                return;
-
-            case Expr.ShiftRight shiftRight:
-                WriteLeftAssociativeBinary(sb, shiftRight.Left, ">>", shiftRight.Right, PrecShift, indent, parentPrec, preferPipelines, options);
-                return;
-
-            case Expr.BitwiseNot bitwiseNot:
-                {
-                    var needsParens = parentPrec > PrecUnary;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    sb.Append('~');
-                    WriteExprInline(sb, bitwiseNot.Operand, indent, PrecUnary, preferPipelines, options);
-
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.GreaterThan gt:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, gt.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" > ");
-                    WriteExprInline(sb, gt.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.GreaterOrEqual ge:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, ge.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" >= ");
-                    WriteExprInline(sb, ge.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.LessThan lt:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, lt.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" < ");
-                    WriteExprInline(sb, lt.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.LessOrEqual le:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, le.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" <= ");
-                    WriteExprInline(sb, le.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.Equal eq:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, eq.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" == ");
-                    WriteExprInline(sb, eq.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.NotEqual ne:
-                {
-                    var needsParens = parentPrec > PrecCmp;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, ne.Left, indent, PrecCmp, preferPipelines, options);
-                    sb.Append(" != ");
-                    WriteExprInline(sb, ne.Right, indent, PrecCmp, preferPipelines, options);
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.ResultPipe pipe:
-                {
-                    if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, pipe, indent, parentPrec, preferPipelines, options))
-                    {
-                        return;
-                    }
-
-                    var needsParens = parentPrec > PrecPipe;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, pipe.Left, indent, PrecPipe, preferPipelines, options);
-                    sb.Append(" |?> ");
-                    WriteExprInline(sb, pipe.Right, indent, PrecPipe + 1, preferPipelines, options);
-
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
-
-            case Expr.ResultMapErrorPipe pipe:
-                {
-                    if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, pipe, indent, parentPrec, preferPipelines, options))
-                    {
-                        return;
-                    }
-
-                    var needsParens = parentPrec > PrecPipe;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, pipe.Left, indent, PrecPipe, preferPipelines, options);
-                    sb.Append(" |!> ");
-                    WriteExprInline(sb, pipe.Right, indent, PrecPipe + 1, preferPipelines, options);
-
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
 
             case Expr.Call c:
-                {
-                    if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, c, indent, parentPrec, preferPipelines, options))
-                    {
-                        return;
-                    }
-
-                    var needsParens = parentPrec > PrecCall;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    // Function position: if it's a lambda/let/if/add, parenthesize
-                    var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
-                        or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
-                        or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-                        or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
-                    if (funcNeedsParens)
-                    {
-                        sb.Append('(');
-                    }
-
-                    WriteExprInline(sb, c.Func, indent, PrecCall, preferPipelines, options);
-                    if (funcNeedsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    if (c.IsWhitespaceApplication)
-                    {
-                        sb.Append(' ');
-                        WriteExprInline(sb, c.Arg, indent, PrecCall + 1, preferPipelines, options);
-                    }
-                    else
-                    {
-                        sb.Append('(');
-                        WriteExprInline(sb, c.Arg, indent, 0, preferPipelines, options);
-                        sb.Append(')');
-                    }
-
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-
-                    return;
-                }
+                WriteCallInline(sb, c, indent, parentPrec, preferPipelines, options);
+                return;
 
             case Expr.Match match:
                 WriteMatch(sb, match, indent, parentPrec, preferPipelines, options);
@@ -1581,60 +1200,290 @@ public static class Formatter
                 }
 
             case Expr.RecordLit rl:
-                {
-                    // Brace-free construction: TypeName(field = value, ...)
-                    sb.Append(rl.TypeName);
-                    sb.Append('(');
-                    for (int i = 0; i < rl.Fields.Count; i++)
-                    {
-                        if (i > 0)
-                        {
-                            sb.Append(", ");
-                        }
-                        sb.Append(rl.Fields[i].Name);
-                        sb.Append(" = ");
-                        WriteExprInline(sb, rl.Fields[i].Value, indent, 0, preferPipelines, options);
-                    }
-                    sb.Append(')');
-                    return;
-                }
+                WriteRecordLitInline(sb, rl, indent, preferPipelines, options);
+                return;
 
             case Expr.RecordUpdate ru:
-                {
-                    // Brace-free update: base with field = value, ...
-                    // `with` binds looser than application and the binary operators, so parenthesise
-                    // when the surrounding context binds tighter than a pipe.
-                    var needsParens = parentPrec > PrecWith;
-                    if (needsParens)
-                    {
-                        sb.Append('(');
-                    }
-                    // `with` is left-associative: a chained update in target position renders
-                    // without parentheses (PrecWith), while field values (right position) get
-                    // PrecWith + 1 so a nested update there is parenthesised.
-                    WriteExprInline(sb, ru.Target, indent, PrecWith, preferPipelines, options);
-                    sb.Append(" with ");
-                    for (int i = 0; i < ru.Updates.Count; i++)
-                    {
-                        if (i > 0)
-                        {
-                            sb.Append(", ");
-                        }
-                        sb.Append(ru.Updates[i].Name);
-                        sb.Append(" = ");
-                        WriteExprInline(sb, ru.Updates[i].Value, indent, PrecWith + 1, preferPipelines, options);
-                    }
-                    if (needsParens)
-                    {
-                        sb.Append(')');
-                    }
-                    return;
-                }
+                WriteRecordUpdateInline(sb, ru, indent, parentPrec, preferPipelines, options);
+                return;
 
             // Fallback to multiline writer (rare)
             default:
                 WriteExpr(sb, e, indent, parentPrec, preferPipelines, options);
                 return;
+        }
+    }
+
+    /// <summary>Writes the arithmetic, bitwise, and cons operator forms.</summary>
+    private static bool TryWriteArithmeticInline(StringBuilder sb, Expr e, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        switch (e)
+        {
+            case Expr.Cons cons:
+                WriteBinaryInline(sb, cons.Head, " :: ", cons.Tail, PrecCons, PrecCons + 1, PrecCons, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Add a:
+                WriteBinaryInline(sb, a.Left, " + ", a.Right, PrecAdd, PrecAdd, PrecAdd, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Subtract sub:
+                WriteSubtractInline(sb, sub, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Multiply mul:
+                WriteBinaryInline(sb, mul.Left, " * ", mul.Right, PrecMul, PrecMul, PrecMul, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Divide div:
+                WriteBinaryInline(sb, div.Left, " / ", div.Right, PrecMul, PrecMul, PrecMul + 1, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Modulo modExpr:
+                WriteBinaryInline(sb, modExpr.Left, " % ", modExpr.Right, PrecMul, PrecMul, PrecMul + 1, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.BitwiseAnd bitAnd:
+                WriteLeftAssociativeBinary(sb, bitAnd.Left, "&", bitAnd.Right, PrecBitAnd, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.BitwiseOr bitOr:
+                WriteLeftAssociativeBinary(sb, bitOr.Left, "|", bitOr.Right, PrecBitOr, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.BitwiseXor bitXor:
+                WriteLeftAssociativeBinary(sb, bitXor.Left, "^", bitXor.Right, PrecBitXor, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.ShiftLeft shiftLeft:
+                WriteLeftAssociativeBinary(sb, shiftLeft.Left, "<<", shiftLeft.Right, PrecShift, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.ShiftRight shiftRight:
+                WriteLeftAssociativeBinary(sb, shiftRight.Left, ">>", shiftRight.Right, PrecShift, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.BitwiseNot bitwiseNot:
+                WriteUnaryPrefixInline(sb, '~', bitwiseNot.Operand, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Writes the comparison operators and the result-pipe operators.</summary>
+    private static bool TryWriteComparisonOrPipeInline(StringBuilder sb, Expr e, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        switch (e)
+        {
+            case Expr.GreaterThan gt:
+                WriteBinaryInline(sb, gt.Left, " > ", gt.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.GreaterOrEqual ge:
+                WriteBinaryInline(sb, ge.Left, " >= ", ge.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.LessThan lt:
+                WriteBinaryInline(sb, lt.Left, " < ", lt.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.LessOrEqual le:
+                WriteBinaryInline(sb, le.Left, " <= ", le.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.Equal eq:
+                WriteBinaryInline(sb, eq.Left, " == ", eq.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.NotEqual ne:
+                WriteBinaryInline(sb, ne.Left, " != ", ne.Right, PrecCmp, PrecCmp, PrecCmp, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.ResultPipe pipe:
+                WritePipeOperatorInline(sb, pipe, pipe.Left, " |?> ", pipe.Right, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.ResultMapErrorPipe pipe:
+                WritePipeOperatorInline(sb, pipe, pipe.Left, " |!> ", pipe.Right, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Writes an infix operator expression, parenthesizing when the surrounding context binds
+    /// tighter than the operator itself. Left/right operand precedences are passed explicitly so
+    /// each operator keeps its exact associativity (e.g. cons is right-associative, subtract's
+    /// right operand binds one tighter).
+    /// </summary>
+    private static void WriteBinaryInline(StringBuilder sb, Expr left, string op, Expr right, int ownPrec, int leftPrec, int rightPrec, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        var needsParens = parentPrec > ownPrec;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        WriteExprInline(sb, left, indent, leftPrec, preferPipelines, options);
+        sb.Append(op);
+        WriteExprInline(sb, right, indent, rightPrec, preferPipelines, options);
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    // `0 - x` is the parser's encoding of unary minus; it renders back as `-x`.
+    private static void WriteSubtractInline(StringBuilder sb, Expr.Subtract sub, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        if (sub.Left is Expr.IntLit { Value: 0 })
+        {
+            WriteUnaryPrefixInline(sb, '-', sub.Right, indent, parentPrec, preferPipelines, options);
+            return;
+        }
+
+        WriteBinaryInline(sb, sub.Left, " - ", sub.Right, PrecAdd, PrecAdd, PrecAdd + 1, indent, parentPrec, preferPipelines, options);
+    }
+
+    private static void WriteUnaryPrefixInline(StringBuilder sb, char op, Expr operand, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        var needsParens = parentPrec > PrecUnary;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        sb.Append(op);
+        WriteExprInline(sb, operand, indent, PrecUnary, preferPipelines, options);
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    // A pipe chain at statement level prefers the multiline pipeline form when enabled.
+    private static void WritePipeOperatorInline(StringBuilder sb, Expr pipe, Expr left, string op, Expr right, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, pipe, indent, parentPrec, preferPipelines, options))
+        {
+            return;
+        }
+
+        WriteBinaryInline(sb, left, op, right, PrecPipe, PrecPipe, PrecPipe + 1, indent, parentPrec, preferPipelines, options);
+    }
+
+    private static void WriteCallInline(StringBuilder sb, Expr.Call c, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, c, indent, parentPrec, preferPipelines, options))
+        {
+            return;
+        }
+
+        var needsParens = parentPrec > PrecCall;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        // Function position: if it's a lambda/let/if/add, parenthesize
+        var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
+            or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
+            or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
+            or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
+        if (funcNeedsParens)
+        {
+            sb.Append('(');
+        }
+
+        WriteExprInline(sb, c.Func, indent, PrecCall, preferPipelines, options);
+        if (funcNeedsParens)
+        {
+            sb.Append(')');
+        }
+
+        if (c.IsWhitespaceApplication)
+        {
+            sb.Append(' ');
+            WriteExprInline(sb, c.Arg, indent, PrecCall + 1, preferPipelines, options);
+        }
+        else
+        {
+            sb.Append('(');
+            WriteExprInline(sb, c.Arg, indent, 0, preferPipelines, options);
+            sb.Append(')');
+        }
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    private static void WriteDelimitedElementsInline(StringBuilder sb, char open, IReadOnlyList<Expr> elements, char close, int indent, bool preferPipelines, FormattingOptions options)
+    {
+        sb.Append(open);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+            WriteExprInline(sb, elements[i], indent, 0, preferPipelines, options);
+        }
+        sb.Append(close);
+    }
+
+    private static void WriteRecordLitInline(StringBuilder sb, Expr.RecordLit rl, int indent, bool preferPipelines, FormattingOptions options)
+    {
+        // Brace-free construction: TypeName(field = value, ...)
+        sb.Append(rl.TypeName);
+        sb.Append('(');
+        for (int i = 0; i < rl.Fields.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+            sb.Append(rl.Fields[i].Name);
+            sb.Append(" = ");
+            WriteExprInline(sb, rl.Fields[i].Value, indent, 0, preferPipelines, options);
+        }
+        sb.Append(')');
+    }
+
+    private static void WriteRecordUpdateInline(StringBuilder sb, Expr.RecordUpdate ru, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        // Brace-free update: base with field = value, ...
+        // `with` binds looser than application and the binary operators, so parenthesise
+        // when the surrounding context binds tighter than a pipe.
+        var needsParens = parentPrec > PrecWith;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+        // `with` is left-associative: a chained update in target position renders
+        // without parentheses (PrecWith), while field values (right position) get
+        // PrecWith + 1 so a nested update there is parenthesised.
+        WriteExprInline(sb, ru.Target, indent, PrecWith, preferPipelines, options);
+        sb.Append(" with ");
+        for (int i = 0; i < ru.Updates.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+            sb.Append(ru.Updates[i].Name);
+            sb.Append(" = ");
+            WriteExprInline(sb, ru.Updates[i].Value, indent, PrecWith + 1, preferPipelines, options);
+        }
+        if (needsParens)
+        {
+            sb.Append(')');
         }
     }
 

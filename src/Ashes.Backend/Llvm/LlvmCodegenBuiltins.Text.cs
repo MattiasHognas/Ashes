@@ -54,11 +54,16 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_uncons_result_value");
     }
 
-    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef)
+    private readonly record struct IntParseSlots(LlvmValueHandle IndexSlot, LlvmValueHandle AccSlot, LlvmValueHandle NegativeSlot, LlvmValueHandle ResultSlot);
+
+    private readonly record struct IntParseBlocks(
+        LlvmBasicBlockHandle InvalidBlock, LlvmBasicBlockHandle SignCheckBlock, LlvmBasicBlockHandle MinusBlock,
+        LlvmBasicBlockHandle LoopCheckBlock, LlvmBasicBlockHandle LoopBodyBlock, LlvmBasicBlockHandle UpdateBlock,
+        LlvmBasicBlockHandle OverflowBlock, LlvmBasicBlockHandle FinishBlock, LlvmBasicBlockHandle ContinueBlock);
+
+    private static (IntParseSlots Slots, IntParseBlocks Blocks, LlvmValueHandle MaxPositive, LlvmValueHandle MaxNegativeMagnitude) EmitTextParseIntPrologue(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_int_len");
-        LlvmValueHandle bytesPtr = GetStringBytesPointer(state, textRef, "text_parse_int_bytes");
         LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "text_parse_int_index");
         LlvmValueHandle accSlot = LlvmApi.BuildAlloca(builder, state.I64, "text_parse_int_acc");
         LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, "text_parse_int_negative");
@@ -71,15 +76,27 @@ internal static partial class LlvmCodegen
         LlvmValueHandle maxPositive = LlvmApi.ConstInt(state.I64, (ulong)long.MaxValue, 0);
         LlvmValueHandle maxNegativeMagnitude = LlvmApi.ConstInt(state.I64, 1UL << 63, 0);
 
-        var invalidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_invalid");
-        var signCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_sign_check");
-        var minusBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_minus");
-        var loopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_loop_check");
-        var loopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_loop_body");
-        var updateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_update");
-        var overflowBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_overflow");
-        var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_finish");
-        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_continue");
+        var blocks = new IntParseBlocks(
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_invalid"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_sign_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_minus"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_loop_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_loop_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_update"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_overflow"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_finish"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_int_continue"));
+        return (new IntParseSlots(indexSlot, accSlot, negativeSlot, resultSlot), blocks, maxPositive, maxNegativeMagnitude);
+    }
+
+    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_int_len");
+        LlvmValueHandle bytesPtr = GetStringBytesPointer(state, textRef, "text_parse_int_bytes");
+        var (slots, blocks, maxPositive, maxNegativeMagnitude) = EmitTextParseIntPrologue(state);
+        var (indexSlot, accSlot, negativeSlot, resultSlot) = slots;
+        var (invalidBlock, signCheckBlock, minusBlock, loopCheckBlock, loopBodyBlock, updateBlock, overflowBlock, finishBlock, continueBlock) = blocks;
 
         LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_int_is_empty");
         LlvmApi.BuildCondBr(builder, isEmpty, invalidBlock, signCheckBlock);
@@ -105,6 +122,16 @@ internal static partial class LlvmCodegen
         LlvmValueHandle isDigit = BuildDecimalDigitCheck(state, currentByte, "text_parse_int_digit_check");
         LlvmApi.BuildCondBr(builder, isDigit, updateBlock, invalidBlock);
 
+        EmitTextParseIntUpdateBlock(state, index, currentByte, accSlot, negativeSlot, indexSlot, maxPositive, maxNegativeMagnitude, updateBlock, overflowBlock, loopCheckBlock);
+        EmitTextParseIntTerminalBlocks(state, accSlot, negativeSlot, resultSlot, finishBlock, invalidBlock, overflowBlock, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_parse_int_result_value");
+    }
+
+    private static void EmitTextParseIntUpdateBlock(LlvmCodegenState state, LlvmValueHandle index, LlvmValueHandle currentByte, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle indexSlot, LlvmValueHandle maxPositive, LlvmValueHandle maxNegativeMagnitude, LlvmBasicBlockHandle updateBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle loopCheckBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, updateBlock);
         LlvmValueHandle digit = BuildDecimalDigitValue(state, currentByte, "text_parse_int_digit");
         LlvmValueHandle acc = LlvmApi.BuildLoad2(builder, state.I64, accSlot, "text_parse_int_acc_value");
@@ -121,7 +148,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, nextAcc, accSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), "text_parse_int_next_index"), indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
 
+    private static void EmitTextParseIntTerminalBlocks(LlvmCodegenState state, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
         LlvmValueHandle magnitude = LlvmApi.BuildLoad2(builder, state.I64, accSlot, "text_parse_int_magnitude");
         LlvmValueHandle finalNegativeFlag = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "text_parse_int_final_negative_flag");
@@ -137,16 +168,52 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntOverflowMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_parse_int_result_value");
     }
+
+    private readonly record struct FloatParseSlots(
+        LlvmValueHandle IndexSlot, LlvmValueHandle ValueSlot, LlvmValueHandle FractionPlaceSlot,
+        LlvmValueHandle NegativeSlot, LlvmValueHandle ExponentSlot, LlvmValueHandle ExponentNegativeSlot,
+        LlvmValueHandle ResultSlot);
+
+    private readonly record struct FloatParseBlocks(
+        LlvmBasicBlockHandle InvalidBlock, LlvmBasicBlockHandle RangeBlock, LlvmBasicBlockHandle SignCheckBlock,
+        LlvmBasicBlockHandle MinusBlock, LlvmBasicBlockHandle IntegerFirstDigitBlock, LlvmBasicBlockHandle IntegerLoopCheckBlock,
+        LlvmBasicBlockHandle IntegerLoopBodyBlock, LlvmBasicBlockHandle IntegerAfterDigitBlock, LlvmBasicBlockHandle SuffixInspectBlock,
+        LlvmBasicBlockHandle FractionStartBlock, LlvmBasicBlockHandle FractionFirstDigitBlock, LlvmBasicBlockHandle FractionLoopBodyBlock,
+        LlvmBasicBlockHandle ExponentMarkerBlock, LlvmBasicBlockHandle ExponentSignInspectBlock, LlvmBasicBlockHandle ExponentMinusBlock,
+        LlvmBasicBlockHandle ExponentPlusBlock, LlvmBasicBlockHandle ExponentFirstDigitBlock, LlvmBasicBlockHandle ExponentLoopBodyBlock,
+        LlvmBasicBlockHandle ExponentDoneBlock, LlvmBasicBlockHandle ExponentMulCheckBlock, LlvmBasicBlockHandle ExponentMulBodyBlock,
+        LlvmBasicBlockHandle ExponentDivCheckBlock, LlvmBasicBlockHandle ExponentDivBodyBlock, LlvmBasicBlockHandle FinishBlock,
+        LlvmBasicBlockHandle ContinueBlock);
 
     private static LlvmValueHandle EmitTextParseFloat(LlvmCodegenState state, LlvmValueHandle textRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_float_len");
         LlvmValueHandle bytesPtr = GetStringBytesPointer(state, textRef, "text_parse_float_bytes");
+        var slots = EmitTextParseFloatAllocateSlots(state);
+        LlvmValueHandle maxFloat = LlvmApi.ConstReal(state.F64, double.MaxValue);
+        var blocks = EmitTextParseFloatCreateBlocks(state);
+
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_float_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, blocks.InvalidBlock, blocks.SignCheckBlock);
+
+        EmitTextParseFloatIntegerPhase(state, len, bytesPtr, maxFloat, slots, blocks);
+        EmitTextParseFloatIntegerLoopBody(state, len, bytesPtr, maxFloat, slots, blocks);
+        EmitTextParseFloatFractionPhase(state, len, bytesPtr, slots, blocks);
+        EmitTextParseFloatExponentParsePhase(state, len, bytesPtr, slots, blocks);
+        EmitTextParseFloatExponentFirstDigit(state, bytesPtr, slots, blocks);
+        EmitTextParseFloatExponentLoopPhase(state, len, bytesPtr, maxFloat, slots, blocks);
+        EmitTextParseFloatExponentApplyPhase(state, maxFloat, slots, blocks);
+        EmitTextParseFloatTerminals(state, slots, blocks);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.ContinueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, slots.ResultSlot, "text_parse_float_result_value");
+    }
+
+    private static FloatParseSlots EmitTextParseFloatAllocateSlots(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "text_parse_float_index");
         LlvmValueHandle valueSlot = LlvmApi.BuildAlloca(builder, state.F64, "text_parse_float_value");
         LlvmValueHandle fractionPlaceSlot = LlvmApi.BuildAlloca(builder, state.F64, "text_parse_float_fraction_place");
@@ -161,37 +228,44 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), exponentSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), exponentNegativeSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+        return new FloatParseSlots(indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot);
+    }
 
-        LlvmValueHandle maxFloat = LlvmApi.ConstReal(state.F64, double.MaxValue);
+    private static FloatParseBlocks EmitTextParseFloatCreateBlocks(LlvmCodegenState state)
+    {
+        return new FloatParseBlocks(
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_invalid"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_range"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_sign_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_minus"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_first_digit"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_loop_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_loop_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_after_digit"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_suffix_inspect"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_start"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_first_digit"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_loop_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_marker"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_sign_inspect"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_minus"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_plus"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_first_digit"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_loop_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_mul_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_mul_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_div_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_div_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_finish"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_continue"));
+    }
 
-        var invalidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_invalid");
-        var rangeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_range");
-        var signCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_sign_check");
-        var minusBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_minus");
-        var integerFirstDigitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_first_digit");
-        var integerLoopCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_loop_check");
-        var integerLoopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_loop_body");
-        var integerAfterDigitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_integer_after_digit");
-        var suffixInspectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_suffix_inspect");
-        var fractionStartBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_start");
-        var fractionFirstDigitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_first_digit");
-        var fractionLoopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_fraction_loop_body");
-        var exponentMarkerBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_marker");
-        var exponentSignInspectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_sign_inspect");
-        var exponentMinusBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_minus");
-        var exponentPlusBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_plus");
-        var exponentFirstDigitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_first_digit");
-        var exponentLoopBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_loop_body");
-        var exponentDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_done");
-        var exponentMulCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_mul_check");
-        var exponentMulBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_mul_body");
-        var exponentDivCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_div_check");
-        var exponentDivBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_exponent_div_body");
-        var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_finish");
-        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "text_parse_float_continue");
-
-        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_float_is_empty");
-        LlvmApi.BuildCondBr(builder, isEmpty, invalidBlock, signCheckBlock);
+    private static void EmitTextParseFloatIntegerPhase(LlvmCodegenState state, LlvmValueHandle len, LlvmValueHandle bytesPtr, LlvmValueHandle maxFloat, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, signCheckBlock);
         LlvmValueHandle firstByte = LoadByteAsI64(state, bytesPtr, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_float_first_byte");
@@ -214,6 +288,14 @@ internal static partial class LlvmCodegen
         LlvmValueHandle integerIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_integer_index");
         LlvmValueHandle integerDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, integerIndex, len, "text_parse_float_integer_done");
         LlvmApi.BuildCondBr(builder, integerDone, finishBlock, integerAfterDigitBlock);
+
+    }
+
+    private static void EmitTextParseFloatIntegerLoopBody(LlvmCodegenState state, LlvmValueHandle len, LlvmValueHandle bytesPtr, LlvmValueHandle maxFloat, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, integerLoopBodyBlock);
         LlvmValueHandle integerBodyIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_integer_body_index");
@@ -244,6 +326,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle suffixByte = LoadByteAsI64(state, bytesPtr, suffixIndex, "text_parse_float_suffix_byte");
         LlvmValueHandle isDot = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, suffixByte, LlvmApi.ConstInt(state.I64, (byte)'.', 0), "text_parse_float_is_dot");
         LlvmApi.BuildCondBr(builder, isDot, fractionStartBlock, suffixInspectBlock);
+    }
+
+    private static void EmitTextParseFloatFractionPhase(LlvmCodegenState state, LlvmValueHandle len, LlvmValueHandle bytesPtr, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, suffixInspectBlock);
         LlvmValueHandle suffixInspectByte = LoadByteAsI64(state, bytesPtr, LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_suffix_inspect_index"), "text_parse_float_suffix_inspect_byte");
@@ -284,6 +373,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fractionNextByte = LoadByteAsI64(state, bytesPtr, fractionNextIndex, "text_parse_float_fraction_next_byte");
         LlvmValueHandle fractionHasNextDigit = BuildDecimalDigitCheck(state, fractionNextByte, "text_parse_float_fraction_has_next_digit");
         LlvmApi.BuildCondBr(builder, fractionHasNextDigit, fractionLoopBodyBlock, suffixInspectBlock);
+    }
+
+    private static void EmitTextParseFloatExponentParsePhase(LlvmCodegenState state, LlvmValueHandle len, LlvmValueHandle bytesPtr, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, exponentMarkerBlock);
         LlvmValueHandle exponentMarkerIndex = LlvmApi.BuildAdd(builder, LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_exponent_marker_index"), LlvmApi.ConstInt(state.I64, 1, 0), "text_parse_float_exponent_start_index");
@@ -312,12 +408,23 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, exponentSignIndex, LlvmApi.ConstInt(state.I64, 1, 0), "text_parse_float_exponent_after_plus_index"), indexSlot);
         LlvmValueHandle exponentPlusPastEnd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_exponent_plus_index_value"), len, "text_parse_float_exponent_plus_past_end");
         LlvmApi.BuildCondBr(builder, exponentPlusPastEnd, invalidBlock, exponentFirstDigitBlock);
+    }
 
-        LlvmApi.PositionBuilderAtEnd(builder, exponentFirstDigitBlock);
-        LlvmValueHandle exponentFirstIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_exponent_first_index");
+    private static void EmitTextParseFloatExponentFirstDigit(LlvmCodegenState state, LlvmValueHandle bytesPtr, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.ExponentFirstDigitBlock);
+        LlvmValueHandle exponentFirstIndex = LlvmApi.BuildLoad2(builder, state.I64, slots.IndexSlot, "text_parse_float_exponent_first_index");
         LlvmValueHandle exponentFirstByte = LoadByteAsI64(state, bytesPtr, exponentFirstIndex, "text_parse_float_exponent_first_byte");
         LlvmValueHandle exponentStartsWithDigit = BuildDecimalDigitCheck(state, exponentFirstByte, "text_parse_float_exponent_first_digit_check");
-        LlvmApi.BuildCondBr(builder, exponentStartsWithDigit, exponentLoopBodyBlock, invalidBlock);
+        LlvmApi.BuildCondBr(builder, exponentStartsWithDigit, blocks.ExponentLoopBodyBlock, blocks.InvalidBlock);
+    }
+
+    private static void EmitTextParseFloatExponentLoopPhase(LlvmCodegenState state, LlvmValueHandle len, LlvmValueHandle bytesPtr, LlvmValueHandle maxFloat, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, exponentLoopBodyBlock);
         LlvmValueHandle exponentBodyIndex = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "text_parse_float_exponent_body_index");
@@ -342,6 +449,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle exponentNextByte = LoadByteAsI64(state, bytesPtr, exponentNextIndex, "text_parse_float_exponent_next_byte");
         LlvmValueHandle exponentHasNextDigit = BuildDecimalDigitCheck(state, exponentNextByte, "text_parse_float_exponent_has_next_digit");
         LlvmApi.BuildCondBr(builder, exponentHasNextDigit, exponentLoopBodyBlock, invalidBlock);
+    }
+
+    private static void EmitTextParseFloatExponentApplyPhase(LlvmCodegenState state, LlvmValueHandle maxFloat, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, exponentDoneBlock);
         LlvmValueHandle exponentNegativeFlag = LlvmApi.BuildLoad2(builder, state.I64, exponentNegativeSlot, "text_parse_float_exponent_negative_flag");
@@ -360,6 +474,15 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, exponentDispatchBlock);
         LlvmApi.BuildCondBr(builder, exponentIsNegative, exponentDivCheckBlock, exponentMulCheckBlock);
+
+        EmitTextParseFloatExponentScale(state, maxFloat, slots, blocks);
+    }
+
+    private static void EmitTextParseFloatExponentScale(LlvmCodegenState state, LlvmValueHandle maxFloat, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, exponentMulCheckBlock);
         LlvmValueHandle mulCounter = LlvmApi.BuildLoad2(builder, state.I64, exponentSlot, "text_parse_float_mul_counter");
@@ -388,6 +511,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildFDiv(builder, divValue, LlvmApi.ConstReal(state.F64, 10.0), "text_parse_float_div_next_value"), valueSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, divCounter, LlvmApi.ConstInt(state.I64, 1, 0), "text_parse_float_div_next_counter"), exponentSlot);
         LlvmApi.BuildBr(builder, exponentDivCheckBlock);
+    }
+
+    private static void EmitTextParseFloatTerminals(LlvmCodegenState state, FloatParseSlots slots, FloatParseBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
+        var (invalidBlock, rangeBlock, signCheckBlock, minusBlock, integerFirstDigitBlock, integerLoopCheckBlock, integerLoopBodyBlock, integerAfterDigitBlock, suffixInspectBlock, fractionStartBlock, fractionFirstDigitBlock, fractionLoopBodyBlock, exponentMarkerBlock, exponentSignInspectBlock, exponentMinusBlock, exponentPlusBlock, exponentFirstDigitBlock, exponentLoopBodyBlock, exponentDoneBlock, exponentMulCheckBlock, exponentMulBodyBlock, exponentDivCheckBlock, exponentDivBodyBlock, finishBlock, continueBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
         LlvmValueHandle signFlag = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "text_parse_float_sign_flag");
@@ -404,9 +534,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, rangeBlock);
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatRangeMessage)), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_parse_float_result_value");
     }
 
     private static LlvmValueHandle LoadByteAsI64(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle index, string prefix)
@@ -540,6 +667,23 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), compareIndexSlot);
         LlvmApi.BuildBr(builder, compareLoopBlock);
 
+        EmitFindByteSequenceCompareLoop(state, bytesPtr, patternPtr, patternLen, index, compareIndexSlot, foundBlock, compareLoopBlock, advanceBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, foundBlock);
+        LlvmApi.BuildStore(builder, index, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_index_next"), indexSlot);
+        LlvmApi.BuildBr(builder, loopCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    private static void EmitFindByteSequenceCompareLoop(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle patternPtr, LlvmValueHandle patternLen, LlvmValueHandle index, LlvmValueHandle compareIndexSlot, LlvmBasicBlockHandle foundBlock, LlvmBasicBlockHandle compareLoopBlock, LlvmBasicBlockHandle advanceBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, compareLoopBlock);
         LlvmValueHandle compareIndex = LlvmApi.BuildLoad2(builder, state.I64, compareIndexSlot, prefix + "_compare_index_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, compareIndex, patternLen, prefix + "_compare_done");
@@ -556,17 +700,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, compareAdvanceBlock);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, compareIndex, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_compare_index_next"), compareIndexSlot);
         LlvmApi.BuildBr(builder, compareLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, foundBlock);
-        LlvmApi.BuildStore(builder, index, resultSlot);
-        LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, advanceBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_index_next"), indexSlot);
-        LlvmApi.BuildBr(builder, loopCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
     private static LlvmValueHandle EmitByteSwap16(LlvmCodegenState state, LlvmValueHandle value, string prefix)

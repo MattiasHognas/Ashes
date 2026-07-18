@@ -86,94 +86,13 @@ public sealed partial class Lowering
             var (armCursorSlot, armEndSlot) = _arenaWatermarks.Peek();
             PushOwnershipScope();
 
-            var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
-            var patternType = InferPatternType(match.Cases[i].Pattern, patternBindings);
-            var hasTupleArityMismatch = ValidateTuplePatternArity(Prune(valueType), match.Cases[i].Pattern);
-            if (hasTupleArityMismatch)
-            {
-                RegisterPatternVariableBindings(patternBindings);
-            }
-            else
-            {
-                Unify(valueType, patternType);
-                EmitPattern(match.Cases[i].Pattern, valueTemp, armCleanupLabel, patternBindings);
-            }
+            EmitLinearArmPatternAndGuard(match, i, valueTemp, valueType, armCleanupLabel);
 
-            // Track owned bindings created by pattern matching
-            TrackOwnedBindingsInPattern(patternBindings);
+            int reuseTokensBefore = PublishLinearArmReuseToken(match, i, valueTemp, reuseScrutineeName);
 
-            // If the case has a guard, evaluate it and jump to cleanup label if false
-            if (match.Cases[i].Guard is { } guard)
-            {
-                if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
-                var (guardTemp, guardType) = LowerExpr(guard);
-                Unify(guardType, new TypeRef.TBool());
-                Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
-            }
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
 
-            // In-place reuse (#2): publish the dead accumulator node as a reuse token for a same-arity
-            // constructor in this arm's body. Only when the body doesn't reference the accumulator
-            // again and there is no guard re-test below (payload fields are bound into temps above).
-            int reuseTokensBefore = _reuseTokens.Count;
-            // A constructor pattern's matched cell is a reuse token. Includes nullary cells (e.g.
-            // Leaf), whose bare pattern parses as Pattern.Var of a known nullary constructor.
-            int? reuseArity = match.Cases[i].Pattern switch
-            {
-                Pattern.Constructor reuseCtorPat => reuseCtorPat.Patterns.Count,
-                Pattern.Var pv when _constructorSymbols.TryGetValue(pv.Name, out var nc) && nc.Arity == 0 => 0,
-                _ => null,
-            };
-            if (reuseScrutineeName is not null
-                && reuseArity is int reuseArityVal
-                && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
-            {
-                _reuseTokens.Add((valueTemp, reuseArityVal));
-                RecordReuseTokenFieldBindings(valueTemp, match.Cases[i].Pattern, match.Cases[i].Body);
-            }
-
-            // Each case body IS in tail position (if the match itself is)
-            if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-            var armCredits = BeginExclusiveBranch(match.Cases.Where((_, j) => j != i).Select(c => c.Body));
-            var (bodyTemp, bodyType) = LowerExpr(match.Cases[i].Body);
-            EndExclusiveBranch(armCredits);
-            if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
-
-            // Drop any reuse token this arm published that the body didn't consume.
-            if (_reuseTokens.Count > reuseTokensBefore)
-            {
-                _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
-            }
-
-            using (PushDiagnosticContext($"in match arm {i + 1}"))
-            {
-                using (PushDiagnosticCode(DiagnosticCodes.MatchBranchTypeMismatch))
-                {
-                    Unify(resultType, bodyType);
-                }
-            }
-            Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
-            if (armFinalTemp != bodyTemp)
-            {
-                // Copy-out occurred: update the result slot with the freshly allocated copy.
-                Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
-            }
-            Emit(new IrInst.Jump(endLabel));
-
-            // Arm cleanup path (Label → RestoreArenaState → ReclaimArenaChunks → Jump):
-            // when pattern/guard fails, restore the arena watermark to reclaim any heap
-            // allocations made during pattern matching or guard evaluation. This is always
-            // safe on the failure path because no result escapes from a failed arm — all
-            // allocations between the watermark and the current cursor are unreachable garbage.
-            int armCleanupPreRestoreEndSlot = NewLocal();
-            Emit(new IrInst.Label(armCleanupLabel));
-            // A guard expression can perform a one-shot capability operation; its pending post must
-            // survive the failed-arm cleanup.
-            var armCleanupSkipLabel = BeginLivePostsGuard();
-            Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot, armCleanupPreRestoreEndSlot));
-            Emit(new IrInst.ReclaimArenaChunks(armEndSlot, armCleanupPreRestoreEndSlot));
-            EndLivePostsGuard(armCleanupSkipLabel);
-            Emit(new IrInst.Jump(caseFailLabel));
+            EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
 
             _scopes.Pop();
             if (i < match.Cases.Count - 1)
@@ -181,6 +100,125 @@ public sealed partial class Lowering
                 Emit(new IrInst.Label(caseFailLabel));
             }
         }
+    }
+
+    /// <summary>
+    /// Infers and emits one linear arm's pattern tests and bindings, then evaluates its guard
+    /// (if any), jumping to the arm cleanup label when the pattern or guard fails.
+    /// </summary>
+    private void EmitLinearArmPatternAndGuard(Expr.Match match, int i, int valueTemp, TypeRef valueType, string armCleanupLabel)
+    {
+        var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+        var patternType = InferPatternType(match.Cases[i].Pattern, patternBindings);
+        var hasTupleArityMismatch = ValidateTuplePatternArity(Prune(valueType), match.Cases[i].Pattern);
+        if (hasTupleArityMismatch)
+        {
+            RegisterPatternVariableBindings(patternBindings);
+        }
+        else
+        {
+            Unify(valueType, patternType);
+            EmitPattern(match.Cases[i].Pattern, valueTemp, armCleanupLabel, patternBindings);
+        }
+
+        // Track owned bindings created by pattern matching
+        TrackOwnedBindingsInPattern(patternBindings);
+
+        // If the case has a guard, evaluate it and jump to cleanup label if false
+        if (match.Cases[i].Guard is { } guard)
+        {
+            if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+            var (guardTemp, guardType) = LowerExpr(guard);
+            Unify(guardType, new TypeRef.TBool());
+            Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
+        }
+    }
+
+    /// <summary>
+    /// Publishes one linear arm's dead accumulator node as a reuse token when eligible.
+    /// Returns the reuse-token count before publishing so the caller can drop any token
+    /// the arm body didn't consume.
+    /// </summary>
+    private int PublishLinearArmReuseToken(Expr.Match match, int i, int valueTemp, string? reuseScrutineeName)
+    {
+        // In-place reuse (#2): publish the dead accumulator node as a reuse token for a same-arity
+        // constructor in this arm's body. Only when the body doesn't reference the accumulator
+        // again and there is no guard re-test below (payload fields are bound into temps above).
+        int reuseTokensBefore = _reuseTokens.Count;
+        // A constructor pattern's matched cell is a reuse token. Includes nullary cells (e.g.
+        // Leaf), whose bare pattern parses as Pattern.Var of a known nullary constructor.
+        int? reuseArity = match.Cases[i].Pattern switch
+        {
+            Pattern.Constructor reuseCtorPat => reuseCtorPat.Patterns.Count,
+            Pattern.Var pv when _constructorSymbols.TryGetValue(pv.Name, out var nc) && nc.Arity == 0 => 0,
+            _ => null,
+        };
+        if (reuseScrutineeName is not null
+            && reuseArity is int reuseArityVal
+            && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
+        {
+            _reuseTokens.Add((valueTemp, reuseArityVal));
+            RecordReuseTokenFieldBindings(valueTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+        }
+
+        return reuseTokensBefore;
+    }
+
+    /// <summary>
+    /// Lowers one arm's body, unifies its type with the match result type, and stores the value
+    /// into the result slot before jumping to the match end label. Shared by the linear and
+    /// tag-switch arm lowerings.
+    /// </summary>
+    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, int reuseTokensBefore)
+    {
+        // Each case body IS in tail position (if the match itself is)
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
+        var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
+        EndExclusiveBranch(armCredits);
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+
+        // Drop any reuse token this arm published that the body didn't consume.
+        if (_reuseTokens.Count > reuseTokensBefore)
+        {
+            _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
+        }
+
+        using (PushDiagnosticContext($"in match arm {i + 1}"))
+        {
+            using (PushDiagnosticCode(DiagnosticCodes.MatchBranchTypeMismatch))
+            {
+                Unify(resultType, bodyType);
+            }
+        }
+        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
+        if (armFinalTemp != bodyTemp)
+        {
+            // Copy-out occurred: update the result slot with the freshly allocated copy.
+            Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
+        }
+        Emit(new IrInst.Jump(endLabel));
+    }
+
+    /// <summary>
+    /// Emits a linear arm's cleanup path (Label → RestoreArenaState → ReclaimArenaChunks → Jump):
+    /// when pattern/guard fails, restore the arena watermark to reclaim any heap
+    /// allocations made during pattern matching or guard evaluation. This is always
+    /// safe on the failure path because no result escapes from a failed arm — all
+    /// allocations between the watermark and the current cursor are unreachable garbage.
+    /// </summary>
+    private void EmitLinearArmCleanupPath(string armCleanupLabel, int armCursorSlot, int armEndSlot, string caseFailLabel)
+    {
+        int armCleanupPreRestoreEndSlot = NewLocal();
+        Emit(new IrInst.Label(armCleanupLabel));
+        // A guard expression can perform a one-shot capability operation; its pending post must
+        // survive the failed-arm cleanup.
+        var armCleanupSkipLabel = BeginLivePostsGuard();
+        Emit(new IrInst.RestoreArenaState(armCursorSlot, armEndSlot, armCleanupPreRestoreEndSlot));
+        Emit(new IrInst.ReclaimArenaChunks(armEndSlot, armCleanupPreRestoreEndSlot));
+        EndLivePostsGuard(armCleanupSkipLabel);
+        Emit(new IrInst.Jump(caseFailLabel));
     }
 
     /// <summary>
@@ -349,64 +387,57 @@ public sealed partial class Lowering
             EmitArenaWatermark();
             PushOwnershipScope();
 
-            var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
-            var patternType = InferPatternType(cases[i].Pattern, patternBindings);
-            Unify(valueType, patternType);
+            EmitTagSwitchArmPattern(cases, plan, i, valueTemp, valueType, noMatchLabel);
 
-            // The tag is already matched by the switch; only extract and bind payload fields.
-            if (cases[i].Pattern is Pattern.Constructor ctorPattern)
-            {
-                EmitConstructorFieldBindings(plan[i].Ctor, ctorPattern, valueTemp, noMatchLabel, patternBindings);
-            }
+            int reuseTokensBefore = PublishTagSwitchArmReuseToken(cases, plan, i, valueTemp, reuseScrutineeName);
 
-            TrackOwnedBindingsInPattern(patternBindings);
+            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
 
-            // In-place reuse (#2): make this arm's dead accumulator node available as a reuse token
-            // for a same-arity constructor in the body. Only when the body doesn't reference the
-            // accumulator again (cell is dead) — payload fields are already bound into temps above.
-            int reuseTokensBefore = _reuseTokens.Count;
-            // Every arm here matched a constructor by tag (plan[i].Ctor is authoritative — a bare
-            // nullary pattern like `Leaf` parses as Pattern.Var, so don't gate on Pattern.Constructor).
-            // Nullary cells (Arity 0, e.g. Leaf) are reusable too, which keeps a recursive rebuild's
-            // whole result below the watermark.
-            if (reuseScrutineeName is not null
-                && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
-            {
-                _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
-                RecordReuseTokenFieldBindings(valueTemp, cases[i].Pattern, cases[i].Body);
-            }
-
-            // Each case body IS in tail position (if the match itself is).
-            if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-            var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
-            var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
-            EndExclusiveBranch(armCredits);
-            if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
-
-            // Drop any reuse token this arm published that the body didn't consume.
-            if (_reuseTokens.Count > reuseTokensBefore)
-            {
-                _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
-            }
-
-            using (PushDiagnosticContext($"in match arm {i + 1}"))
-            {
-                using (PushDiagnosticCode(DiagnosticCodes.MatchBranchTypeMismatch))
-                {
-                    Unify(resultType, bodyType);
-                }
-            }
-
-            Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-            int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
-            if (armFinalTemp != bodyTemp)
-            {
-                Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
-            }
-
-            Emit(new IrInst.Jump(endLabel));
             _scopes.Pop();
         }
+    }
+
+    /// <summary>
+    /// Infers one tag-switch arm's pattern type and binds its payload fields into the arm scope.
+    /// </summary>
+    private void EmitTagSwitchArmPattern(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
+    {
+        var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+        var patternType = InferPatternType(cases[i].Pattern, patternBindings);
+        Unify(valueType, patternType);
+
+        // The tag is already matched by the switch; only extract and bind payload fields.
+        if (cases[i].Pattern is Pattern.Constructor ctorPattern)
+        {
+            EmitConstructorFieldBindings(plan[i].Ctor, ctorPattern, valueTemp, noMatchLabel, patternBindings);
+        }
+
+        TrackOwnedBindingsInPattern(patternBindings);
+    }
+
+    /// <summary>
+    /// Publishes one tag-switch arm's dead accumulator node as a reuse token when eligible.
+    /// Returns the reuse-token count before publishing so the caller can drop any token the
+    /// arm body didn't consume.
+    /// </summary>
+    private int PublishTagSwitchArmReuseToken(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, string? reuseScrutineeName)
+    {
+        // In-place reuse (#2): make this arm's dead accumulator node available as a reuse token
+        // for a same-arity constructor in the body. Only when the body doesn't reference the
+        // accumulator again (cell is dead) — payload fields are already bound into temps above.
+        int reuseTokensBefore = _reuseTokens.Count;
+        // Every arm here matched a constructor by tag (plan[i].Ctor is authoritative — a bare
+        // nullary pattern like `Leaf` parses as Pattern.Var, so don't gate on Pattern.Constructor).
+        // Nullary cells (Arity 0, e.g. Leaf) are reusable too, which keeps a recursive rebuild's
+        // whole result below the watermark.
+        if (reuseScrutineeName is not null
+            && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
+        {
+            _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
+            RecordReuseTokenFieldBindings(valueTemp, cases[i].Pattern, cases[i].Body);
+        }
+
+        return reuseTokensBefore;
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -561,17 +592,7 @@ public sealed partial class Lowering
                 return;
 
             case Pattern.Var v:
-                // If this is a known nullary constructor, emit a tag check instead of binding
-                if (_constructorSymbols.TryGetValue(v.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
-                {
-                    EmitRequireNonZero(valueTemp, failLabel);
-                    EmitRequireTagMatch(valueTemp, GetConstructorTag(nullaryCtor), failLabel);
-                    return;
-                }
-                int slot = NewLocal();
-                Emit(new IrInst.StoreLocal(slot, valueTemp));
-                RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
-                _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
+                EmitVarPattern(v, valueTemp, failLabel, bindingTypes);
                 return;
 
             case Pattern.Cons c:
@@ -612,6 +633,25 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(pattern.GetType().Name);
         }
+    }
+
+    /// <summary>
+    /// Emits a variable pattern: a variable naming a known nullary constructor is a tag test,
+    /// any other variable binds the matched value into a fresh local.
+    /// </summary>
+    private void EmitVarPattern(Pattern.Var v, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    {
+        // If this is a known nullary constructor, emit a tag check instead of binding
+        if (_constructorSymbols.TryGetValue(v.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
+        {
+            EmitRequireNonZero(valueTemp, failLabel);
+            EmitRequireTagMatch(valueTemp, GetConstructorTag(nullaryCtor), failLabel);
+            return;
+        }
+        int slot = NewLocal();
+        Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
+        _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
     }
 
     private void EmitConstructorPattern(Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
@@ -1328,32 +1368,9 @@ public sealed partial class Lowering
                 continue;
             }
 
-            switch (matchCase.Pattern)
+            if (ValidateLiteralArmReachability(matchCase, seenIntLiterals, seenStrLiterals, ref seenBoolTrue, ref seenBoolFalse))
             {
-                case Pattern.IntLit intLit:
-                    if (!seenIntLiterals.Add(intLit.Value))
-                    {
-                        ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: integer literal {intLit.Value} is already matched earlier.");
-                    }
-                    continue;
-                case Pattern.StrLit strLit:
-                    if (!seenStrLiterals.Add(strLit.Value))
-                    {
-                        ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: string literal \"{strLit.Value}\" is already matched earlier.");
-                    }
-                    continue;
-                case Pattern.BoolLit boolLit:
-                    if (boolLit.Value && seenBoolTrue)
-                    {
-                        ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'true' is already matched earlier.");
-                    }
-                    else if (!boolLit.Value && seenBoolFalse)
-                    {
-                        ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'false' is already matched earlier.");
-                    }
-                    if (boolLit.Value) seenBoolTrue = true;
-                    else seenBoolFalse = true;
-                    continue;
+                continue;
             }
 
             if (!TryGetConstructorSymbol(matchCase.Pattern, out var ctor))
@@ -1369,6 +1386,44 @@ public sealed partial class Lowering
             {
                 ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: constructor {ctor.Name} is already matched earlier.");
             }
+        }
+    }
+
+    /// <summary>
+    /// Checks one arm's literal pattern (int, string, or bool) for reachability against the
+    /// literals matched by earlier arms and records it as seen. Returns true when the arm was
+    /// a literal pattern (and has been fully handled), false otherwise.
+    /// </summary>
+    private bool ValidateLiteralArmReachability(MatchCase matchCase, HashSet<long> seenIntLiterals, HashSet<string> seenStrLiterals, ref bool seenBoolTrue, ref bool seenBoolFalse)
+    {
+        switch (matchCase.Pattern)
+        {
+            case Pattern.IntLit intLit:
+                if (!seenIntLiterals.Add(intLit.Value))
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: integer literal {intLit.Value} is already matched earlier.");
+                }
+                return true;
+            case Pattern.StrLit strLit:
+                if (!seenStrLiterals.Add(strLit.Value))
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: string literal \"{strLit.Value}\" is already matched earlier.");
+                }
+                return true;
+            case Pattern.BoolLit boolLit:
+                if (boolLit.Value && seenBoolTrue)
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'true' is already matched earlier.");
+                }
+                else if (!boolLit.Value && seenBoolFalse)
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), "Unreachable match arm: 'false' is already matched earlier.");
+                }
+                if (boolLit.Value) seenBoolTrue = true;
+                else seenBoolFalse = true;
+                return true;
+            default:
+                return false;
         }
     }
 

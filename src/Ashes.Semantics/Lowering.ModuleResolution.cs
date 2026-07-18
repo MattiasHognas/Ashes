@@ -13,25 +13,9 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
     {
-        // A bare (uncalled) capability operation reference. Direct application is handled in
-        // LowerCall; a first-class operation value eta-expands to a lambda performing the
-        // operation, so the perform happens where the value is eventually applied. The expansion
-        // needs the operation's arity, so an unsigned operation cannot be used as a value.
         if (_capabilitySymbols.TryGetValue(qv.Module, out var bareCapabilitySym))
         {
-            if (!bareCapabilitySym.Operations.TryGetValue(qv.Name, out var bareOperation))
-            {
-                ReportDiagnostic(GetSpan(qv), $"Capability '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
-                return ReturnNeverWithDummyTemp();
-            }
-
-            if (bareOperation.DeclaredSignature is null)
-            {
-                ReportDiagnostic(GetSpan(qv), $"Capability operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
-                return ReturnNeverWithDummyTemp();
-            }
-
-            return LowerExpr(BuildOperationEtaLambda(qv, CountArrows(bareOperation.DeclaredSignature)));
+            return LowerBareCapabilityOperationReference(qv, bareCapabilitySym);
         }
 
         var resolvedModule = ResolveModuleAlias(qv.Module);
@@ -68,8 +52,34 @@ public sealed partial class Lowering
             return ReturnNeverWithDummyTemp();
         }
 
-        // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.
-        // Let-bindings create Binding.Scheme; lambda params create Binding.Local.
+        return LowerRecordFieldAccessFallback(qv, binding);
+    }
+
+    // A bare (uncalled) capability operation reference. Direct application is handled in
+    // LowerCall; a first-class operation value eta-expands to a lambda performing the
+    // operation, so the perform happens where the value is eventually applied. The expansion
+    // needs the operation's arity, so an unsigned operation cannot be used as a value.
+    private (int, TypeRef) LowerBareCapabilityOperationReference(Expr.QualifiedVar qv, CapabilitySymbol capabilitySym)
+    {
+        if (!capabilitySym.Operations.TryGetValue(qv.Name, out var bareOperation))
+        {
+            ReportDiagnostic(GetSpan(qv), $"Capability '{qv.Module}' has no operation '{qv.Name}'.", UnknownCapabilityCode);
+            return ReturnNeverWithDummyTemp();
+        }
+
+        if (bareOperation.DeclaredSignature is null)
+        {
+            ReportDiagnostic(GetSpan(qv), $"Capability operation '{qv.Module}.{qv.Name}' needs an explicit signature to be used as a value.", UnknownCapabilityCode);
+            return ReturnNeverWithDummyTemp();
+        }
+
+        return LowerExpr(BuildOperationEtaLambda(qv, CountArrows(bareOperation.DeclaredSignature)));
+    }
+
+    // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.
+    // Let-bindings create Binding.Scheme; lambda params create Binding.Local.
+    private (int, TypeRef) LowerRecordFieldAccessFallback(Expr.QualifiedVar qv, Binding binding)
+    {
         int? recordFieldSlot = null;
         TypeRef? recordFieldType = null;
         if (binding is Binding.Local recordLocal)
@@ -83,57 +93,18 @@ public sealed partial class Lowering
             recordFieldType = Prune(Instantiate(recordScheme.S));
         }
 
-        // Single-pass inference: a parameter's type is often still an unbound type variable at its
-        // first use, so `param.field` reached here with an unresolved receiver and fell through to the
-        // misleading "does not export" error. Resolve it structurally by field name: if exactly one
-        // record type in scope declares a field named `qv.Name`, unify the receiver with a fresh
-        // instance of it and proceed. Ambiguous (two records share the field) or unknown falls through
-        // to require a type annotation. (A resolved non-record type is left alone — no false unify.)
         if (recordFieldSlot.HasValue && recordFieldType is TypeRef.TVar)
         {
-            var fieldRecordCandidates = _typeSymbols.Values
-                .Where(s => s.Constructors.Count == 1
-                    && s.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
-                    && s.Constructors[0].DeclaringSyntax.FieldNames.Contains(qv.Name, StringComparer.Ordinal))
-                .ToList();
-            if (fieldRecordCandidates.Count == 1)
-            {
-                var candidate = fieldRecordCandidates[0];
-                var freshRecordType = new TypeRef.TNamedType(
-                    candidate,
-                    candidate.TypeParameters.Select(_ => (TypeRef)NewTypeVar()).ToList());
-                Unify(recordFieldType, freshRecordType);
-                recordFieldType = Prune(freshRecordType);
-            }
+            recordFieldType = ResolveRecordReceiverByFieldName(qv, recordFieldType);
         }
 
         if (recordFieldSlot.HasValue
             && recordFieldType is TypeRef.TNamedType namedRecordType
             && namedRecordType.Symbol.Constructors.Count == 1
-            && namedRecordType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
+            && namedRecordType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
+            && TryLowerRecordFieldLoad(qv, recordFieldSlot.Value, namedRecordType) is { } fieldResult)
         {
-            var ctor = namedRecordType.Symbol.Constructors[0];
-            var fieldNames = ctor.DeclaringSyntax.FieldNames;
-            int fieldIdx = -1;
-            for (int fi = 0; fi < fieldNames.Count; fi++)
-            {
-                if (string.Equals(fieldNames[fi], qv.Name, StringComparison.Ordinal))
-                {
-                    fieldIdx = fi;
-                    break;
-                }
-            }
-
-            if (fieldIdx >= 0)
-            {
-                int baseTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(baseTemp, recordFieldSlot.Value));
-                int fieldTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
-                var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecordType);
-                RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
-                return (fieldTemp, fieldType);
-            }
+            return fieldResult;
         }
 
         // `qv.Module` resolved to a value binding (a local/param/let), not a module — this was a
@@ -154,10 +125,77 @@ public sealed partial class Lowering
         return ReturnNeverWithDummyTemp();
     }
 
+    // Single-pass inference: a parameter's type is often still an unbound type variable at its
+    // first use, so `param.field` reached here with an unresolved receiver and fell through to the
+    // misleading "does not export" error. Resolve it structurally by field name: if exactly one
+    // record type in scope declares a field named `qv.Name`, unify the receiver with a fresh
+    // instance of it and proceed. Ambiguous (two records share the field) or unknown falls through
+    // to require a type annotation. (A resolved non-record type is left alone — no false unify.)
+    private TypeRef ResolveRecordReceiverByFieldName(Expr.QualifiedVar qv, TypeRef recordFieldType)
+    {
+        var fieldRecordCandidates = _typeSymbols.Values
+            .Where(s => s.Constructors.Count == 1
+                && s.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
+                && s.Constructors[0].DeclaringSyntax.FieldNames.Contains(qv.Name, StringComparer.Ordinal))
+            .ToList();
+        if (fieldRecordCandidates.Count == 1)
+        {
+            var candidate = fieldRecordCandidates[0];
+            var freshRecordType = new TypeRef.TNamedType(
+                candidate,
+                candidate.TypeParameters.Select(_ => (TypeRef)NewTypeVar()).ToList());
+            Unify(recordFieldType, freshRecordType);
+            return Prune(freshRecordType);
+        }
+
+        return recordFieldType;
+    }
+
+    private (int, TypeRef)? TryLowerRecordFieldLoad(Expr.QualifiedVar qv, int recordSlot, TypeRef.TNamedType namedRecordType)
+    {
+        var ctor = namedRecordType.Symbol.Constructors[0];
+        var fieldNames = ctor.DeclaringSyntax.FieldNames;
+        int fieldIdx = -1;
+        for (int fi = 0; fi < fieldNames.Count; fi++)
+        {
+            if (string.Equals(fieldNames[fi], qv.Name, StringComparison.Ordinal))
+            {
+                fieldIdx = fi;
+                break;
+            }
+        }
+
+        if (fieldIdx < 0)
+        {
+            return null;
+        }
+
+        int baseTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(baseTemp, recordSlot));
+        int fieldTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
+        var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecordType);
+        RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
+        return (fieldTemp, fieldType);
+    }
+
     private (int, TypeRef) ResolveBuiltinModuleMember(BuiltinRegistry.BuiltinModule module, string name)
     {
+        // Members are grouped into three switches to keep each one small; the groups are
+        // disjoint and tried in declaration order.
         var member = module.Members[name];
-        return member.Kind switch
+        return ResolveIoTextAndBigIntBuiltinMember(name, member.Kind)
+            ?? ResolveNetworkBuiltinMember(name, member.Kind)
+            ?? ResolveAsyncBuiltinMember(name, member.Kind)
+            ?? ResolveBytesBuiltinMember(name, member.Kind)
+            ?? ResolveMathBuiltinMember(name, member.Kind)
+            ?? ResolveProcessBuiltinMember(name, member.Kind)
+            ?? StdMemberNotFound(module.Name, name);
+    }
+
+    private (int, TypeRef)? ResolveIoTextAndBigIntBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
         {
             BuiltinRegistry.BuiltinValueKind.Print => LowerQualifiedBuiltinFunctionReference(name, CreatePrintBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.Panic => LowerQualifiedBuiltinFunctionReference(name, CreatePanicBinding().S.Body),
@@ -202,6 +240,20 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.TextToHex => LowerQualifiedBuiltinFunctionReference(name, CreateTextToHexBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerQualifiedBuiltinFunctionReference(name, CreateTextAsciiCaseBinding(upper: true).S.Body),
             BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerQualifiedBuiltinFunctionReference(name, CreateTextAsciiCaseBinding(upper: false).S.Body),
+            BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntToIntBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntFromIntBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerQualifiedBuiltinFunctionReference(name, CreateLibmBinding(libmKind).S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
+            _ => null
+        };
+    }
+
+    private (int, TypeRef)? ResolveNetworkBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
+        {
             BuiltinRegistry.BuiltinValueKind.HttpGet => LowerQualifiedBuiltinFunctionReference(name, CreateHttpGetBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.HttpPost => LowerQualifiedBuiltinFunctionReference(name, CreateHttpPostBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerQualifiedBuiltinFunctionReference(name, CreateNetTcpConnectBinding().S.Body),
@@ -217,6 +269,14 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsReceiveBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerQualifiedBuiltinFunctionReference(name, CreateNetTlsServerHandshakeBinding().S.Body),
+            _ => null
+        };
+    }
+
+    private (int, TypeRef)? ResolveAsyncBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
+        {
             BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRunBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncTaskBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncFromResultBinding().S.Body),
@@ -224,6 +284,14 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSpawnBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
+            _ => null
+        };
+    }
+
+    private (int, TypeRef)? ResolveBytesBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
+        {
             BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerQualifiedBuiltinFunctionReference(name, CreateBytesEmptyBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSingletonBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesLength => LowerQualifiedBuiltinFunctionReference(name, CreateBytesLengthBinding().S.Body),
@@ -244,8 +312,14 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU16LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU32LeBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetU64LeBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntToIntBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntFromIntBinding().S.Body),
+            _ => null
+        };
+    }
+
+    private (int, TypeRef)? ResolveMathBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
+        {
             BuiltinRegistry.BuiltinValueKind.MathToFloat => LowerQualifiedBuiltinFunctionReference(name, CreateMathToFloatBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerQualifiedBuiltinFunctionReference(name, CreateMathSqrtBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.MathFloor => LowerQualifiedBuiltinFunctionReference(name, CreateMathFloorBinding().S.Body),
@@ -255,17 +329,21 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.MathFloorToInt => LowerQualifiedBuiltinFunctionReference(name, CreateMathFloorToIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.MathRoundToInt => LowerQualifiedBuiltinFunctionReference(name, CreateMathRoundToIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.MathTruncToInt => LowerQualifiedBuiltinFunctionReference(name, CreateMathTruncToIntBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerQualifiedBuiltinFunctionReference(name, CreateLibmBinding(libmKind).S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
+            _ => null
+        };
+    }
+
+    private (int, TypeRef)? ResolveProcessBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        return kind switch
+        {
             BuiltinRegistry.BuiltinValueKind.SpawnProcess => LowerQualifiedBuiltinFunctionReference(name, CreateSpawnProcessBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ProcessWriteStdin => LowerQualifiedBuiltinFunctionReference(name, CreateProcessWriteStdinBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ProcessReadStdoutLine => LowerQualifiedBuiltinFunctionReference(name, CreateProcessReadStdoutLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ProcessReadStderrLine => LowerQualifiedBuiltinFunctionReference(name, CreateProcessReadStderrLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ProcessWaitForExit => LowerQualifiedBuiltinFunctionReference(name, CreateProcessWaitForExitBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ProcessKill => LowerQualifiedBuiltinFunctionReference(name, CreateProcessKillBinding().S.Body),
-            _ => StdMemberNotFound(module.Name, name)
+            _ => null
         };
     }
 

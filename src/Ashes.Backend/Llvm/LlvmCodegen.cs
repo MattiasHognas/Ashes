@@ -443,29 +443,156 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
         LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
         LlvmTypeHandle f64 = LlvmApi.DoubleTypeInContext(target.Context);
-        LlvmTypeHandle f32 = LlvmApi.FloatTypeInContext(target.Context);
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(target.Context);
         LlvmTypeHandle i8Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
+
+        EmitProgramModuleFlags flags = EmitProgramModuleComputeFlags(program, flavor);
+        EmitProgramModuleArena arena = EmitProgramModuleArenaGlobals(target, program, flavor, i64, flags.Arm64UsesTlsArena);
+
+        var imports = new EmitProgramModuleImports();
+        EmitProgramModuleImportsStdio(target, flavor, flags, i32, i8Ptr, i32Ptr, i64, imports);
+        EmitProgramModuleImportsSocketsA(target, flavor, flags, i8Ptr, i32, i64, i64Ptr, imports);
+        EmitProgramModuleImportsSocketsB(target, flavor, flags, i64, imports);
+        EmitProgramModuleImportsCert(target, flavor, flags, imports);
+        EmitProgramModuleImportsMiscA(target, flavor, flags, voidType, i32, imports);
+        EmitProgramModuleImportsMiscB(target, flavor, flags, i32, i8Ptr, i32Ptr, imports);
+
+        // Emit a local memcpy implementation for the freestanding target.
+        // LLVM may lower llvm.memcpy intrinsics to calls to memcpy when the size is
+        // not a compile-time constant. Since we have no libc, we provide our own.
+        EmitBuiltinMemcpy(target, i8, i64, i8Ptr);
+        EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
+        EmitBuiltinBcmp(target, i8, i64, i8Ptr);
+
+        // Emit the Ashes.BigInt arbitrary-precision runtime helpers as LLVM IR (like the
+        // freestanding memcmp/strlen helpers) when the program uses BigInt.
+        if (ProgramUsesBigIntRuntimeAbi(program))
+        {
+            EmitBigIntRuntimeHelpers(target);
+        }
+
+        // Emit the malloc/free the linked PCRE2 payload calls (a bump allocator over the lazily
+        // OS-allocated regex region) when the program uses Ashes.Regex.
+        if (ProgramUsesRegexRuntimeAbi(program))
+        {
+            EmitPcre2Allocator(target, i64, i8Ptr);
+        }
+
+        // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
+        // point and lifted closures. The current runtime ABI layer does not unwind.
+        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
+        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
+
+        EmitProgramModuleWorkerCap(target, flavor, flags, nounwindAttr);
+        EmitProgramModuleNetworking(target, flavor, flags, arena, imports, i32, i32Ptr, usesTlsRuntime, nounwindAttr);
+        EmitProgramModuleParallel(target, program, flavor, flags, nounwindAttr);
+        EmitProgramModuleFunctions(target, program, entryFunctionName, flavor, options, flags, arena, imports, i32, i32Ptr, i64, voidType, closureFunctionType, stringLiterals, nounwindAttr);
+    }
+
+    private readonly record struct EmitProgramModuleFlags(
+        bool UsesProgramArgs,
+        bool UsesWindowsStdout,
+        bool UsesWindowsExitProcess,
+        bool UsesWindowsProgramArgs,
+        bool UsesWindowsReadLine,
+        bool UsesWindowsFileOps,
+        bool UsesNetworkingRuntimeAbi,
+        bool UseRunQueueScheduler,
+        bool Arm64UsesTlsArena,
+        bool UsesWindowsSockets,
+        bool UsesWindowsSleep,
+        bool UsesWindowsProcess,
+        bool UsesWindowsReadExact);
+
+    private readonly record struct EmitProgramModuleArena(
+        LlvmValueHandle HeapCursorGlobal,
+        LlvmValueHandle HeapEndGlobal,
+        LlvmValueHandle ToSpaceCursorGlobal,
+        LlvmValueHandle ToSpaceEndGlobal);
+
+    private sealed class EmitProgramModuleImports
+    {
+        public LlvmValueHandle WindowsGetStdHandleImport { get; set; }
+        public LlvmValueHandle WindowsWriteFileImport { get; set; }
+        public LlvmValueHandle WindowsReadFileImport { get; set; }
+        public LlvmValueHandle WindowsCreateFileImport { get; set; }
+        public LlvmValueHandle WindowsCloseHandleImport { get; set; }
+        public LlvmValueHandle WindowsGetFileAttributesImport { get; set; }
+        public LlvmValueHandle WindowsWsaStartupImport { get; set; }
+        public LlvmValueHandle WindowsSocketImport { get; set; }
+        public LlvmValueHandle WindowsConnectImport { get; set; }
+        public LlvmValueHandle WindowsSendImport { get; set; }
+        public LlvmValueHandle WindowsRecvImport { get; set; }
+        public LlvmValueHandle WindowsCloseSocketImport { get; set; }
+        public LlvmValueHandle WindowsIoctlSocketImport { get; set; }
+        public LlvmValueHandle WindowsWsaGetLastErrorImport { get; set; }
+        public LlvmValueHandle WindowsWsaPollImport { get; set; }
+        public LlvmValueHandle WindowsLoadLibraryImport { get; set; }
+        public LlvmValueHandle WindowsGetProcAddressImport { get; set; }
+        public LlvmValueHandle WindowsCertOpenSystemStoreImport { get; set; }
+        public LlvmValueHandle WindowsCertEnumCertificatesInStoreImport { get; set; }
+        public LlvmValueHandle WindowsCertCloseStoreImport { get; set; }
+        public LlvmValueHandle WindowsBindImport { get; set; }
+        public LlvmValueHandle WindowsSetSockOptImport { get; set; }
+        public LlvmValueHandle WindowsWsaIoctlImport { get; set; }
+        public LlvmValueHandle WindowsWsaSendImport { get; set; }
+        public LlvmValueHandle WindowsWsaRecvImport { get; set; }
+        public LlvmValueHandle WindowsCreateIoCompletionPortImport { get; set; }
+        public LlvmValueHandle WindowsGetQueuedCompletionStatusImport { get; set; }
+        public LlvmValueHandle WindowsIocpPortGlobal { get; set; }
+        public LlvmValueHandle WindowsExitProcessImport { get; set; }
+        public LlvmValueHandle WindowsGetCommandLineImport { get; set; }
+        public LlvmValueHandle WindowsWideCharToMultiByteImport { get; set; }
+        public LlvmValueHandle WindowsLocalFreeImport { get; set; }
+        public LlvmValueHandle WindowsCommandLineToArgvImport { get; set; }
+        public LlvmValueHandle WindowsSleepImport { get; set; }
+        public LlvmValueHandle WindowsVirtualAllocImport { get; set; }
+        public LlvmValueHandle WindowsVirtualFreeImport { get; set; }
+        public LlvmValueHandle WindowsCreatePipeImport { get; set; }
+        public LlvmValueHandle WindowsCreateProcessAImport { get; set; }
+        public LlvmValueHandle WindowsTerminateProcessImport { get; set; }
+        public LlvmValueHandle WindowsWaitForSingleObjectImport { get; set; }
+        public LlvmValueHandle WindowsGetExitCodeProcessImport { get; set; }
+    }
+
+    private static EmitProgramModuleFlags EmitProgramModuleComputeFlags(IrProgram program, LlvmCodegenFlavor flavor)
+    {
+        bool isWindows = flavor == LlvmCodegenFlavor.WindowsX64;
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
         bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
-        bool usesWindowsStdout = flavor == LlvmCodegenFlavor.WindowsX64
+        bool usesWindowsStdout = isWindows
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
                 || ProgramUsesInstruction<IrInst.PrintBool>(program)
                 || ProgramUsesInstruction<IrInst.PanicStr>(program)
                 || usesReadLine);
-        bool usesWindowsExitProcess = flavor == LlvmCodegenFlavor.WindowsX64;
-        bool usesWindowsProgramArgs = flavor == LlvmCodegenFlavor.WindowsX64
-            && usesProgramArgs;
-        bool usesWindowsReadLine = flavor == LlvmCodegenFlavor.WindowsX64
-            && usesReadLine;
-        bool usesWindowsFileOps = flavor == LlvmCodegenFlavor.WindowsX64
-            && (ProgramUsesInstruction<IrInst.FileReadText>(program)
+        bool usesWindowsFileOps = isWindows && EmitProgramModuleUsesFileOps(program);
+        bool usesNetworkingRuntimeAbi = EmitProgramModuleUsesNetworking(program);
+        bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program);
+        bool arm64UsesTlsArena = flavor == LlvmCodegenFlavor.LinuxArm64;
+        bool usesWindowsSockets = isWindows && usesNetworkingRuntimeAbi;
+        bool usesWindowsSleep = isWindows
+            && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+                || ProgramUsesInstruction<IrInst.RunTask>(program)
+                || ProgramUsesInstruction<IrInst.AsyncAll>(program)
+                || ProgramUsesInstruction<IrInst.AsyncRace>(program)
+                || usesNetworkingRuntimeAbi);
+        bool usesWindowsProcess = isWindows && EmitProgramModuleUsesProcess(program);
+        bool usesWindowsReadExact = isWindows && ProgramUsesInstruction<IrInst.ReadExact>(program);
+        return new EmitProgramModuleFlags(
+            usesProgramArgs, usesWindowsStdout, isWindows, isWindows && usesProgramArgs,
+            isWindows && usesReadLine, usesWindowsFileOps, usesNetworkingRuntimeAbi, useRunQueueScheduler,
+            arm64UsesTlsArena, usesWindowsSockets, usesWindowsSleep, usesWindowsProcess, usesWindowsReadExact);
+    }
+
+    private static bool EmitProgramModuleUsesFileOps(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.FileReadText>(program)
                 || ProgramUsesInstruction<IrInst.FileReadAllBytes>(program)
                 || ProgramUsesInstruction<IrInst.FileMmap>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
@@ -475,108 +602,55 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
                 || ProgramUsesInstruction<IrInst.FileReadLine>(program)
                 || ProgramUsesInstruction<IrInst.FileClose>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program));
-        bool usesNetworkingRuntimeAbi = ProgramUsesInstruction<IrInst.HttpGet>(program)
-            || ProgramUsesInstruction<IrInst.HttpPost>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpListen>(program)
-            || ProgramUsesInstruction<IrInst.NetTcpAccept>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpListenTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateForkWorkersTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTcpAcceptTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsServerHandshakeTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
-            || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
-            || ProgramUsesInstruction<IrInst.RunTask>(program)
-            || ProgramUsesInstruction<IrInst.SpawnTask>(program)
-            || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
-            || ProgramUsesInstruction<IrInst.AsyncAll>(program)
-            || ProgramUsesInstruction<IrInst.AsyncRace>(program)
-            || ProgramUsesInstruction<IrInst.Drop>(program);
-        // The run-queue scheduler covers every async program on all targets: coroutines + timer
-        // leaves, the socket/TLS/HTTP aggregate wait (persistent epoll on Linux, one WSAPoll over
-        // the parked set on Windows), and spawn with per-task arena install/reap.
-        bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program);
-        // arm64 always uses the real-ELF-TLS per-thread arena (PT_TLS + local-exec cursors), so a
-        // `both` worker can be handed its own arena. This coexists with networking: a networking
-        // program is dynamically linked (libc imports), and the loader's TLS/DTV is an independent
-        // mechanism from this image's local-exec PT_TLS, which the loader reserves in the
-        // static-TLS block at the same TPREL the linker baked in. The only link-kind
-        // difference is who sets up TPIDR_EL0, handled at runtime in the entry prologue
-        // (EmitArm64MainThreadTlsSetup): a static image self-initialises it, a dynamic image inherits
-        // the loader's (and must not clobber it).
-        bool arm64UsesTlsArena = flavor == LlvmCodegenFlavor.LinuxArm64;
+                || ProgramUsesInstruction<IrInst.Drop>(program);
+    }
 
-        bool usesWindowsSockets = flavor == LlvmCodegenFlavor.WindowsX64
-            && usesNetworkingRuntimeAbi;
-        bool usesWindowsSleep = flavor == LlvmCodegenFlavor.WindowsX64
-            && (ProgramUsesInstruction<IrInst.AsyncSleep>(program)
+    private static bool EmitProgramModuleUsesNetworking(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.HttpGet>(program)
+                || ProgramUsesInstruction<IrInst.HttpPost>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpConnect>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpSend>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpReceive>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpClose>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpListen>(program)
+                || ProgramUsesInstruction<IrInst.NetTcpAccept>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpConnectTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpSendTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpReceiveTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpCloseTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpListenTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateForkWorkersTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTcpAcceptTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateHttpGetTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateHttpPostTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsConnectTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsHandshakeTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsServerHandshakeTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsSendTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsReceiveTask>(program)
+                || ProgramUsesInstruction<IrInst.CreateTlsCloseTask>(program)
                 || ProgramUsesInstruction<IrInst.RunTask>(program)
+                || ProgramUsesInstruction<IrInst.SpawnTask>(program)
+                || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
                 || ProgramUsesInstruction<IrInst.AsyncRace>(program)
-                || usesNetworkingRuntimeAbi);
-        bool usesProcess = ProgramUsesInstruction<IrInst.SpawnProcess>(program)
-            || ProgramUsesInstruction<IrInst.ProcessWriteStdin>(program)
-            || ProgramUsesInstruction<IrInst.ProcessReadStdoutLine>(program)
-            || ProgramUsesInstruction<IrInst.ProcessReadStderrLine>(program)
-            || ProgramUsesInstruction<IrInst.ProcessWaitForExit>(program)
-            || ProgramUsesInstruction<IrInst.ProcessKill>(program);
-        bool usesWindowsProcess = flavor == LlvmCodegenFlavor.WindowsX64 && usesProcess;
-        bool usesWindowsReadExact = flavor == LlvmCodegenFlavor.WindowsX64
-            && ProgramUsesInstruction<IrInst.ReadExact>(program);
-        LlvmValueHandle windowsGetStdHandleImport = default;
-        LlvmValueHandle windowsWriteFileImport = default;
-        LlvmValueHandle windowsReadFileImport = default;
-        LlvmValueHandle windowsCreateFileImport = default;
-        LlvmValueHandle windowsCloseHandleImport = default;
-        LlvmValueHandle windowsGetFileAttributesImport = default;
-        LlvmValueHandle windowsWsaStartupImport = default;
-        LlvmValueHandle windowsSocketImport = default;
-        LlvmValueHandle windowsConnectImport = default;
-        LlvmValueHandle windowsSendImport = default;
-        LlvmValueHandle windowsRecvImport = default;
-        LlvmValueHandle windowsCloseSocketImport = default;
-        LlvmValueHandle windowsIoctlSocketImport = default;
-        LlvmValueHandle windowsWsaGetLastErrorImport = default;
-        LlvmValueHandle windowsWsaPollImport = default;
-        LlvmValueHandle windowsLoadLibraryImport = default;
-        LlvmValueHandle windowsGetProcAddressImport = default;
-        LlvmValueHandle windowsCertOpenSystemStoreImport = default;
-        LlvmValueHandle windowsCertEnumCertificatesInStoreImport = default;
-        LlvmValueHandle windowsCertCloseStoreImport = default;
-        LlvmValueHandle windowsBindImport = default;
-        LlvmValueHandle windowsSetSockOptImport = default;
-        LlvmValueHandle windowsWsaIoctlImport = default;
-        LlvmValueHandle windowsWsaSendImport = default;
-        LlvmValueHandle windowsWsaRecvImport = default;
-        LlvmValueHandle windowsCreateIoCompletionPortImport = default;
-        LlvmValueHandle windowsGetQueuedCompletionStatusImport = default;
-        LlvmValueHandle windowsExitProcessImport = default;
-        LlvmValueHandle windowsGetCommandLineImport = default;
-        LlvmValueHandle windowsWideCharToMultiByteImport = default;
-        LlvmValueHandle windowsLocalFreeImport = default;
-        LlvmValueHandle windowsCommandLineToArgvImport = default;
-        LlvmValueHandle windowsSleepImport = default;
-        LlvmValueHandle windowsVirtualAllocImport = default;
-        LlvmValueHandle windowsVirtualFreeImport = default;
-        LlvmValueHandle windowsCreatePipeImport = default;
-        LlvmValueHandle windowsCreateProcessAImport = default;
-        LlvmValueHandle windowsTerminateProcessImport = default;
-        LlvmValueHandle windowsWaitForSingleObjectImport = default;
-        LlvmValueHandle windowsGetExitCodeProcessImport = default;
-        LlvmValueHandle windowsIocpPortGlobal = default;
+                || ProgramUsesInstruction<IrInst.Drop>(program);
+    }
+
+    private static bool EmitProgramModuleUsesProcess(IrProgram program)
+    {
+        return ProgramUsesInstruction<IrInst.SpawnProcess>(program)
+                || ProgramUsesInstruction<IrInst.ProcessWriteStdin>(program)
+                || ProgramUsesInstruction<IrInst.ProcessReadStdoutLine>(program)
+                || ProgramUsesInstruction<IrInst.ProcessReadStderrLine>(program)
+                || ProgramUsesInstruction<IrInst.ProcessWaitForExit>(program)
+                || ProgramUsesInstruction<IrInst.ProcessKill>(program);
+    }
+
+    private static EmitProgramModuleArena EmitProgramModuleArenaGlobals(
+        LlvmTargetContext target, IrProgram program, LlvmCodegenFlavor flavor, LlvmTypeHandle i64, bool arm64UsesTlsArena)
+    {
         // Bump-arena cursor/end. On linux-x64 these live in a per-thread control block
         // reached through the GS segment base, so each worker thread gets its own arena with
         // no shared state and no atomics; the actual cursor/end pointers are built per
@@ -634,45 +708,56 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(capabilityGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(capabilityGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
+        return new EmitProgramModuleArena(heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal);
+    }
 
-        if (usesWindowsStdout || usesWindowsReadLine || usesWindowsReadExact)
+    private static void EmitProgramModuleImportsStdio(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
+        LlvmTypeHandle i32, LlvmTypeHandle i8Ptr, LlvmTypeHandle i32Ptr, LlvmTypeHandle i64, EmitProgramModuleImports imports)
+    {
+        if (flags.UsesWindowsStdout || flags.UsesWindowsReadLine || flags.UsesWindowsReadExact)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
-            windowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
-            LlvmApi.SetLinkage(windowsGetStdHandleImport, LlvmLinkage.External);
+            imports.WindowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
+            LlvmApi.SetLinkage(imports.WindowsGetStdHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsStdout || usesWindowsFileOps || usesNetworkingRuntimeAbi || usesWindowsProcess)
+        if (flags.UsesWindowsStdout || flags.UsesWindowsFileOps || flags.UsesNetworkingRuntimeAbi || flags.UsesWindowsProcess)
         {
             LlvmTypeHandle writeFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
-            windowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
-            LlvmApi.SetLinkage(windowsWriteFileImport, LlvmLinkage.External);
+            imports.WindowsWriteFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WriteFile");
+            LlvmApi.SetLinkage(imports.WindowsWriteFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsReadLine || usesWindowsFileOps || usesWindowsReadExact || usesWindowsProcess)
+        if (flags.UsesWindowsReadLine || flags.UsesWindowsFileOps || flags.UsesWindowsReadExact || flags.UsesWindowsProcess)
         {
             LlvmTypeHandle readFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
-            windowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
-            LlvmApi.SetLinkage(windowsReadFileImport, LlvmLinkage.External);
+            imports.WindowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
+            LlvmApi.SetLinkage(imports.WindowsReadFileImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps || usesWindowsSockets || usesWindowsProcess)
+        if (flags.UsesWindowsFileOps || flags.UsesWindowsSockets || flags.UsesWindowsProcess)
         {
-            windowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
-            LlvmApi.SetLinkage(windowsCloseHandleImport, LlvmLinkage.External);
+            imports.WindowsCloseHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CloseHandle");
+            LlvmApi.SetLinkage(imports.WindowsCloseHandleImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsFileOps || usesNetworkingRuntimeAbi)
+        if (flags.UsesWindowsFileOps || flags.UsesNetworkingRuntimeAbi)
         {
             LlvmTypeHandle createFileType = LlvmApi.FunctionType(i64, [i8Ptr, i32, i32, i8Ptr, i32, i32, i64]);
             LlvmTypeHandle getFileAttributesType = LlvmApi.FunctionType(i32, [i8Ptr]);
-            windowsCreateFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateFileA");
-            LlvmApi.SetLinkage(windowsCreateFileImport, LlvmLinkage.External);
-            windowsGetFileAttributesImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetFileAttributesA");
-            LlvmApi.SetLinkage(windowsGetFileAttributesImport, LlvmLinkage.External);
+            imports.WindowsCreateFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateFileA");
+            LlvmApi.SetLinkage(imports.WindowsCreateFileImport, LlvmLinkage.External);
+            imports.WindowsGetFileAttributesImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetFileAttributesA");
+            LlvmApi.SetLinkage(imports.WindowsGetFileAttributesImport, LlvmLinkage.External);
         }
+    }
 
-        if (usesWindowsSockets)
+    private static void EmitProgramModuleImportsSocketsA(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
+        LlvmTypeHandle i8Ptr, LlvmTypeHandle i32, LlvmTypeHandle i64, LlvmTypeHandle i64Ptr, EmitProgramModuleImports imports)
+    {
+        if (flags.UsesWindowsSockets)
         {
             LlvmTypeHandle wsaStartupType = LlvmApi.FunctionType(i32, [LlvmApi.Int16TypeInContext(target.Context), i8Ptr]);
             LlvmTypeHandle socketType = LlvmApi.FunctionType(i64, [i32, i32, i32]);
@@ -683,99 +768,121 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle ioctlSocketType = LlvmApi.FunctionType(i32, [i64, i32, i64Ptr]);
             LlvmTypeHandle wsaGetLastErrorType = LlvmApi.FunctionType(i32, []);
             LlvmTypeHandle wsaPollType = LlvmApi.FunctionType(i32, [i8Ptr, i32, i32]);
-            windowsWsaStartupImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAStartup");
-            LlvmApi.SetLinkage(windowsWsaStartupImport, LlvmLinkage.External);
-            windowsSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_socket");
-            LlvmApi.SetLinkage(windowsSocketImport, LlvmLinkage.External);
-            windowsConnectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_connect");
-            LlvmApi.SetLinkage(windowsConnectImport, LlvmLinkage.External);
-            windowsSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_send");
-            LlvmApi.SetLinkage(windowsSendImport, LlvmLinkage.External);
-            windowsRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_recv");
-            LlvmApi.SetLinkage(windowsRecvImport, LlvmLinkage.External);
-            windowsCloseSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_closesocket");
-            LlvmApi.SetLinkage(windowsCloseSocketImport, LlvmLinkage.External);
-            windowsIoctlSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ioctlsocket");
-            LlvmApi.SetLinkage(windowsIoctlSocketImport, LlvmLinkage.External);
-            windowsWsaGetLastErrorImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAGetLastError");
-            LlvmApi.SetLinkage(windowsWsaGetLastErrorImport, LlvmLinkage.External);
-            windowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
-            LlvmApi.SetLinkage(windowsWsaPollImport, LlvmLinkage.External);
+            imports.WindowsWsaStartupImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAStartup");
+            LlvmApi.SetLinkage(imports.WindowsWsaStartupImport, LlvmLinkage.External);
+            imports.WindowsSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_socket");
+            LlvmApi.SetLinkage(imports.WindowsSocketImport, LlvmLinkage.External);
+            imports.WindowsConnectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_connect");
+            LlvmApi.SetLinkage(imports.WindowsConnectImport, LlvmLinkage.External);
+            imports.WindowsSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_send");
+            LlvmApi.SetLinkage(imports.WindowsSendImport, LlvmLinkage.External);
+            imports.WindowsRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_recv");
+            LlvmApi.SetLinkage(imports.WindowsRecvImport, LlvmLinkage.External);
+            imports.WindowsCloseSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_closesocket");
+            LlvmApi.SetLinkage(imports.WindowsCloseSocketImport, LlvmLinkage.External);
+            imports.WindowsIoctlSocketImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ioctlsocket");
+            LlvmApi.SetLinkage(imports.WindowsIoctlSocketImport, LlvmLinkage.External);
+            imports.WindowsWsaGetLastErrorImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAGetLastError");
+            LlvmApi.SetLinkage(imports.WindowsWsaGetLastErrorImport, LlvmLinkage.External);
+            imports.WindowsWsaPollImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAPoll");
+            LlvmApi.SetLinkage(imports.WindowsWsaPollImport, LlvmLinkage.External);
+        }
+    }
+
+    private static void EmitProgramModuleImportsSocketsB(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, LlvmTypeHandle i64, EmitProgramModuleImports imports)
+    {
+        if (flags.UsesWindowsSockets)
+        {
             LlvmValueHandle windowsListenImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_listen");
             LlvmApi.SetLinkage(windowsListenImport, LlvmLinkage.External);
             LlvmValueHandle windowsAcceptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_accept");
             LlvmApi.SetLinkage(windowsAcceptImport, LlvmLinkage.External);
-            windowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
-            LlvmApi.SetLinkage(windowsLoadLibraryImport, LlvmLinkage.External);
-            windowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");
-            LlvmApi.SetLinkage(windowsGetProcAddressImport, LlvmLinkage.External);
-            windowsBindImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_bind");
-            LlvmApi.SetLinkage(windowsBindImport, LlvmLinkage.External);
-            windowsSetSockOptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_setsockopt");
-            LlvmApi.SetLinkage(windowsSetSockOptImport, LlvmLinkage.External);
-            windowsWsaIoctlImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAIoctl");
-            LlvmApi.SetLinkage(windowsWsaIoctlImport, LlvmLinkage.External);
-            windowsWsaSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSASend");
-            LlvmApi.SetLinkage(windowsWsaSendImport, LlvmLinkage.External);
-            windowsWsaRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSARecv");
-            LlvmApi.SetLinkage(windowsWsaRecvImport, LlvmLinkage.External);
-            windowsCreateIoCompletionPortImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateIoCompletionPort");
-            LlvmApi.SetLinkage(windowsCreateIoCompletionPortImport, LlvmLinkage.External);
-            windowsGetQueuedCompletionStatusImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetQueuedCompletionStatus");
-            LlvmApi.SetLinkage(windowsGetQueuedCompletionStatusImport, LlvmLinkage.External);
-            windowsIocpPortGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_windows_iocp_port");
-            LlvmApi.SetLinkage(windowsIocpPortGlobal, LlvmLinkage.Internal);
-            LlvmApi.SetInitializer(windowsIocpPortGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            imports.WindowsLoadLibraryImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LoadLibraryA");
+            LlvmApi.SetLinkage(imports.WindowsLoadLibraryImport, LlvmLinkage.External);
+            imports.WindowsGetProcAddressImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetProcAddress");
+            LlvmApi.SetLinkage(imports.WindowsGetProcAddressImport, LlvmLinkage.External);
+            imports.WindowsBindImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_bind");
+            LlvmApi.SetLinkage(imports.WindowsBindImport, LlvmLinkage.External);
+            imports.WindowsSetSockOptImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_setsockopt");
+            LlvmApi.SetLinkage(imports.WindowsSetSockOptImport, LlvmLinkage.External);
+            imports.WindowsWsaIoctlImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSAIoctl");
+            LlvmApi.SetLinkage(imports.WindowsWsaIoctlImport, LlvmLinkage.External);
+            imports.WindowsWsaSendImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSASend");
+            LlvmApi.SetLinkage(imports.WindowsWsaSendImport, LlvmLinkage.External);
+            imports.WindowsWsaRecvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WSARecv");
+            LlvmApi.SetLinkage(imports.WindowsWsaRecvImport, LlvmLinkage.External);
+            imports.WindowsCreateIoCompletionPortImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateIoCompletionPort");
+            LlvmApi.SetLinkage(imports.WindowsCreateIoCompletionPortImport, LlvmLinkage.External);
+            imports.WindowsGetQueuedCompletionStatusImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetQueuedCompletionStatus");
+            LlvmApi.SetLinkage(imports.WindowsGetQueuedCompletionStatusImport, LlvmLinkage.External);
+            imports.WindowsIocpPortGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_windows_iocp_port");
+            LlvmApi.SetLinkage(imports.WindowsIocpPortGlobal, LlvmLinkage.Internal);
+            LlvmApi.SetInitializer(imports.WindowsIocpPortGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
+    }
 
-        if (flavor == LlvmCodegenFlavor.WindowsX64 && usesNetworkingRuntimeAbi)
+    private static void EmitProgramModuleImportsCert(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, EmitProgramModuleImports imports)
+    {
+        if (flavor == LlvmCodegenFlavor.WindowsX64 && flags.UsesNetworkingRuntimeAbi)
         {
-            windowsCertOpenSystemStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertOpenSystemStoreA");
-            LlvmApi.SetLinkage(windowsCertOpenSystemStoreImport, LlvmLinkage.External);
-            windowsCertEnumCertificatesInStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertEnumCertificatesInStore");
-            LlvmApi.SetLinkage(windowsCertEnumCertificatesInStoreImport, LlvmLinkage.External);
-            windowsCertCloseStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertCloseStore");
-            LlvmApi.SetLinkage(windowsCertCloseStoreImport, LlvmLinkage.External);
+            imports.WindowsCertOpenSystemStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertOpenSystemStoreA");
+            LlvmApi.SetLinkage(imports.WindowsCertOpenSystemStoreImport, LlvmLinkage.External);
+            imports.WindowsCertEnumCertificatesInStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertEnumCertificatesInStore");
+            LlvmApi.SetLinkage(imports.WindowsCertEnumCertificatesInStoreImport, LlvmLinkage.External);
+            imports.WindowsCertCloseStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertCloseStore");
+            LlvmApi.SetLinkage(imports.WindowsCertCloseStoreImport, LlvmLinkage.External);
         }
+    }
 
-        if (usesWindowsExitProcess)
+    private static void EmitProgramModuleImportsMiscA(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
+        LlvmTypeHandle voidType, LlvmTypeHandle i32, EmitProgramModuleImports imports)
+    {
+        if (flags.UsesWindowsExitProcess)
         {
             LlvmTypeHandle exitProcessType = LlvmApi.FunctionType(voidType, [i32]);
-            windowsExitProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ExitProcess");
-            LlvmApi.SetLinkage(windowsExitProcessImport, LlvmLinkage.External);
+            imports.WindowsExitProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ExitProcess");
+            LlvmApi.SetLinkage(imports.WindowsExitProcessImport, LlvmLinkage.External);
         }
 
         if (flavor == LlvmCodegenFlavor.WindowsX64)
         {
-            windowsVirtualAllocImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualAlloc");
-            LlvmApi.SetLinkage(windowsVirtualAllocImport, LlvmLinkage.External);
-            windowsVirtualFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualFree");
-            LlvmApi.SetLinkage(windowsVirtualFreeImport, LlvmLinkage.External);
+            imports.WindowsVirtualAllocImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualAlloc");
+            LlvmApi.SetLinkage(imports.WindowsVirtualAllocImport, LlvmLinkage.External);
+            imports.WindowsVirtualFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualFree");
+            LlvmApi.SetLinkage(imports.WindowsVirtualFreeImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsSleep)
+        if (flags.UsesWindowsSleep)
         {
-            windowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
-            LlvmApi.SetLinkage(windowsSleepImport, LlvmLinkage.External);
+            imports.WindowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
+            LlvmApi.SetLinkage(imports.WindowsSleepImport, LlvmLinkage.External);
             LlvmValueHandle windowsGetTickCount64Import = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetTickCount64");
             LlvmApi.SetLinkage(windowsGetTickCount64Import, LlvmLinkage.External);
         }
+    }
 
-        if (usesWindowsProcess)
+    private static void EmitProgramModuleImportsMiscB(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
+        LlvmTypeHandle i32, LlvmTypeHandle i8Ptr, LlvmTypeHandle i32Ptr, EmitProgramModuleImports imports)
+    {
+        if (flags.UsesWindowsProcess)
         {
-            windowsCreatePipeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreatePipe");
-            LlvmApi.SetLinkage(windowsCreatePipeImport, LlvmLinkage.External);
-            windowsCreateProcessAImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateProcessA");
-            LlvmApi.SetLinkage(windowsCreateProcessAImport, LlvmLinkage.External);
-            windowsTerminateProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_TerminateProcess");
-            LlvmApi.SetLinkage(windowsTerminateProcessImport, LlvmLinkage.External);
-            windowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
-            LlvmApi.SetLinkage(windowsWaitForSingleObjectImport, LlvmLinkage.External);
-            windowsGetExitCodeProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetExitCodeProcess");
-            LlvmApi.SetLinkage(windowsGetExitCodeProcessImport, LlvmLinkage.External);
+            imports.WindowsCreatePipeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreatePipe");
+            LlvmApi.SetLinkage(imports.WindowsCreatePipeImport, LlvmLinkage.External);
+            imports.WindowsCreateProcessAImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CreateProcessA");
+            LlvmApi.SetLinkage(imports.WindowsCreateProcessAImport, LlvmLinkage.External);
+            imports.WindowsTerminateProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_TerminateProcess");
+            LlvmApi.SetLinkage(imports.WindowsTerminateProcessImport, LlvmLinkage.External);
+            imports.WindowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
+            LlvmApi.SetLinkage(imports.WindowsWaitForSingleObjectImport, LlvmLinkage.External);
+            imports.WindowsGetExitCodeProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetExitCodeProcess");
+            LlvmApi.SetLinkage(imports.WindowsGetExitCodeProcessImport, LlvmLinkage.External);
         }
 
-        if (usesWindowsProgramArgs)
+        if (flags.UsesWindowsProgramArgs)
         {
             LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(target.Context);
             LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
@@ -785,42 +892,33 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle localFreeType = LlvmApi.FunctionType(i8Ptr, [i8Ptr]);
             LlvmTypeHandle commandLineToArgvType = LlvmApi.FunctionType(i16PtrPtr, [i16Ptr, i32Ptr]);
 
-            windowsGetCommandLineImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetCommandLineW");
-            LlvmApi.SetLinkage(windowsGetCommandLineImport, LlvmLinkage.External);
-            windowsWideCharToMultiByteImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WideCharToMultiByte");
-            LlvmApi.SetLinkage(windowsWideCharToMultiByteImport, LlvmLinkage.External);
-            windowsLocalFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LocalFree");
-            LlvmApi.SetLinkage(windowsLocalFreeImport, LlvmLinkage.External);
-            windowsCommandLineToArgvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CommandLineToArgvW");
-            LlvmApi.SetLinkage(windowsCommandLineToArgvImport, LlvmLinkage.External);
+            imports.WindowsGetCommandLineImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetCommandLineW");
+            LlvmApi.SetLinkage(imports.WindowsGetCommandLineImport, LlvmLinkage.External);
+            imports.WindowsWideCharToMultiByteImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WideCharToMultiByte");
+            LlvmApi.SetLinkage(imports.WindowsWideCharToMultiByteImport, LlvmLinkage.External);
+            imports.WindowsLocalFreeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_LocalFree");
+            LlvmApi.SetLinkage(imports.WindowsLocalFreeImport, LlvmLinkage.External);
+            imports.WindowsCommandLineToArgvImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CommandLineToArgvW");
+            LlvmApi.SetLinkage(imports.WindowsCommandLineToArgvImport, LlvmLinkage.External);
         }
+    }
 
-        // Emit a local memcpy implementation for the freestanding target.
-        // LLVM may lower llvm.memcpy intrinsics to calls to memcpy when the size is
-        // not a compile-time constant. Since we have no libc, we provide our own.
-        EmitBuiltinMemcpy(target, i8, i64, i8Ptr);
-        EmitBuiltinMemcmp(target, i8, i64, i8Ptr);
-        EmitBuiltinBcmp(target, i8, i64, i8Ptr);
-
-        // Emit the Ashes.BigInt arbitrary-precision runtime helpers as LLVM IR (like the
-        // freestanding memcmp/strlen helpers) when the program uses BigInt.
-        if (ProgramUsesBigIntRuntimeAbi(program))
+    private static LlvmValueHandle EmitProgramModuleEnsureWindowsImport(LlvmTargetContext target, string name)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedGlobal(target.Module, name);
+        if (existing != default)
         {
-            EmitBigIntRuntimeHelpers(target);
+            return existing;
         }
 
-        // Emit the malloc/free the linked PCRE2 payload calls (a bump allocator over the lazily
-        // OS-allocated regex region) when the program uses Ashes.Regex.
-        if (ProgramUsesRegexRuntimeAbi(program))
-        {
-            EmitPcre2Allocator(target, i64, i8Ptr);
-        }
+        LlvmValueHandle g = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), name);
+        LlvmApi.SetLinkage(g, LlvmLinkage.External);
+        return g;
+    }
 
-        // Apply nounwind to all Ashes-defined runtime helpers as well as the entry
-        // point and lifted closures. The current runtime ABI layer does not unwind.
-        uint nounwindKind = LlvmApi.GetEnumAttributeKindForName("nounwind");
-        LlvmAttributeHandle nounwindAttr = LlvmApi.CreateEnumAttribute(target.Context, nounwindKind, 0);
-
+    private static void EmitProgramModuleWorkerCap(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, LlvmAttributeHandle nounwindAttr)
+    {
         // serve's fork-based multi-reactor (forkWorkers) resolves its worker count via the shared
         // effective-cap function, so it honors the same --parallel-workers cap and withWorkers
         // override as Ashes.Parallel. The fork step function is part of the always-emitted networking
@@ -829,60 +927,69 @@ internal static partial class LlvmCodegen
         // (idempotent — the parallel runtime below reuses them) before the networking runtime. Windows
         // needs nothing: there the fork step is a single process and never consults the cap.
         if ((flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.LinuxArm64)
-            && usesNetworkingRuntimeAbi)
+            && flags.UsesNetworkingRuntimeAbi)
         {
             EmitWorkerCapInfrastructure(target, flavor, nounwindAttr);
         }
+    }
 
-        if (usesNetworkingRuntimeAbi)
+    private static void EmitProgramModuleNetworking(
+        LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, EmitProgramModuleArena arena,
+        EmitProgramModuleImports imports, LlvmTypeHandle i32, LlvmTypeHandle i32Ptr, bool usesTlsRuntime, LlvmAttributeHandle nounwindAttr)
+    {
+        if (flags.UsesNetworkingRuntimeAbi)
         {
             EmitNetworkingRuntimeAbi(
                 target,
                 flavor,
                 i32,
                 i32Ptr,
-                heapCursorGlobal,
-                heapEndGlobal,
-                windowsGetStdHandleImport,
-                windowsWriteFileImport,
-                windowsReadFileImport,
-                windowsCreateFileImport,
-                windowsCloseHandleImport,
-                windowsGetFileAttributesImport,
-                windowsWsaStartupImport,
-                windowsSocketImport,
-                windowsConnectImport,
-                windowsSendImport,
-                windowsRecvImport,
-                windowsCloseSocketImport,
-                windowsIoctlSocketImport,
-                windowsWsaGetLastErrorImport,
-                windowsWsaPollImport,
-                windowsLoadLibraryImport,
-                windowsGetProcAddressImport,
-                windowsCertOpenSystemStoreImport,
-                windowsCertEnumCertificatesInStoreImport,
-                windowsCertCloseStoreImport,
-                windowsBindImport,
-                windowsSetSockOptImport,
-                windowsWsaIoctlImport,
-                windowsWsaSendImport,
-                windowsWsaRecvImport,
-                windowsCreateIoCompletionPortImport,
-                windowsGetQueuedCompletionStatusImport,
-                windowsIocpPortGlobal,
-                windowsExitProcessImport,
-                windowsGetCommandLineImport,
-                windowsWideCharToMultiByteImport,
-                windowsLocalFreeImport,
-                windowsCommandLineToArgvImport,
-                windowsSleepImport,
-                windowsVirtualAllocImport,
-                windowsVirtualFreeImport,
+                arena.HeapCursorGlobal,
+                arena.HeapEndGlobal,
+                imports.WindowsGetStdHandleImport,
+                imports.WindowsWriteFileImport,
+                imports.WindowsReadFileImport,
+                imports.WindowsCreateFileImport,
+                imports.WindowsCloseHandleImport,
+                imports.WindowsGetFileAttributesImport,
+                imports.WindowsWsaStartupImport,
+                imports.WindowsSocketImport,
+                imports.WindowsConnectImport,
+                imports.WindowsSendImport,
+                imports.WindowsRecvImport,
+                imports.WindowsCloseSocketImport,
+                imports.WindowsIoctlSocketImport,
+                imports.WindowsWsaGetLastErrorImport,
+                imports.WindowsWsaPollImport,
+                imports.WindowsLoadLibraryImport,
+                imports.WindowsGetProcAddressImport,
+                imports.WindowsCertOpenSystemStoreImport,
+                imports.WindowsCertEnumCertificatesInStoreImport,
+                imports.WindowsCertCloseStoreImport,
+                imports.WindowsBindImport,
+                imports.WindowsSetSockOptImport,
+                imports.WindowsWsaIoctlImport,
+                imports.WindowsWsaSendImport,
+                imports.WindowsWsaRecvImport,
+                imports.WindowsCreateIoCompletionPortImport,
+                imports.WindowsGetQueuedCompletionStatusImport,
+                imports.WindowsIocpPortGlobal,
+                imports.WindowsExitProcessImport,
+                imports.WindowsGetCommandLineImport,
+                imports.WindowsWideCharToMultiByteImport,
+                imports.WindowsLocalFreeImport,
+                imports.WindowsCommandLineToArgvImport,
+                imports.WindowsSleepImport,
+                imports.WindowsVirtualAllocImport,
+                imports.WindowsVirtualFreeImport,
                 usesTlsRuntime,
                 nounwindAttr);
         }
+    }
 
+    private static void EmitProgramModuleParallel(
+        LlvmTargetContext target, IrProgram program, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, LlvmAttributeHandle nounwindAttr)
+    {
         bool usesParallelQueue = ProgramUsesInstruction<IrInst.ParallelQueueStart>(program);
         // withWorkers around no actual fork still needs the runtime globals (the override slot);
         // its Load/Store override instructions gate the runtime in too.
@@ -895,31 +1002,18 @@ internal static partial class LlvmCodegen
                 // LlvmCodegenParallel). VirtualAlloc/VirtualFree are already created above for every
                 // win-x64 program; CreateThread is new, and WaitForSingleObject/CloseHandle may not
                 // exist yet if the program uses neither process nor file/socket IO.
-                LlvmValueHandle EnsureWindowsImport(string name)
-                {
-                    LlvmValueHandle existing = LlvmApi.GetNamedGlobal(target.Module, name);
-                    if (existing != default)
-                    {
-                        return existing;
-                    }
-
-                    LlvmValueHandle g = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), name);
-                    LlvmApi.SetLinkage(g, LlvmLinkage.External);
-                    return g;
-                }
-
-                EnsureWindowsImport("__imp_CreateThread");
-                EnsureWindowsImport("__imp_WaitForSingleObject");
-                EnsureWindowsImport("__imp_CloseHandle");
+                EmitProgramModuleEnsureWindowsImport(target, "__imp_CreateThread");
+                EmitProgramModuleEnsureWindowsImport(target, "__imp_WaitForSingleObject");
+                EmitProgramModuleEnsureWindowsImport(target, "__imp_CloseHandle");
                 // Worker-cap auto-detection reads the machine's processor count.
-                EnsureWindowsImport("__imp_GetSystemInfo");
+                EmitProgramModuleEnsureWindowsImport(target, "__imp_GetSystemInfo");
                 // The queued-reduce await polls with Sleep(1) (no futex on win-x64).
-                EnsureWindowsImport("__imp_Sleep");
+                EmitProgramModuleEnsureWindowsImport(target, "__imp_Sleep");
             }
 
             // arm64 workers need the TLS arena to get their own per-thread arena; it's now always
             // enabled on arm64 (networking coexists), so the parallel runtime is always emitted.
-            if (flavor != LlvmCodegenFlavor.LinuxArm64 || arm64UsesTlsArena)
+            if (flavor != LlvmCodegenFlavor.LinuxArm64 || flags.Arm64UsesTlsArena)
             {
                 EmitParallelRuntime(target, flavor, nounwindAttr);
                 if (usesParallelQueue)
@@ -928,7 +1022,15 @@ internal static partial class LlvmCodegen
                 }
             }
         }
+    }
 
+    private static void EmitProgramModuleFunctions(
+        LlvmTargetContext target, IrProgram program, string entryFunctionName, LlvmCodegenFlavor flavor,
+        Backends.BackendCompileOptions options, EmitProgramModuleFlags flags, EmitProgramModuleArena arena,
+        EmitProgramModuleImports imports, LlvmTypeHandle i32, LlvmTypeHandle i32Ptr, LlvmTypeHandle i64,
+        LlvmTypeHandle voidType, LlvmTypeHandle closureFunctionType,
+        IReadOnlyDictionary<string, string> stringLiterals, LlvmAttributeHandle nounwindAttr)
+    {
         LlvmValueHandle entryFunction = LlvmApi.AddFunction(target.Module,
             entryFunctionName,
             IsLinuxFlavor(flavor)
@@ -957,131 +1059,69 @@ internal static partial class LlvmCodegen
             }
         }
 
-        EmitFunctionBody(
-            target,
-            entryFunction,
-            program.EntryFunction,
-            stringLiterals,
-            liftedFunctions,
-            flavor,
-            usesProgramArgs,
-            useRunQueueScheduler,
-            i32,
-            f32,
-            i32Ptr,
-            heapCursorGlobal,
-            heapEndGlobal,
-            toSpaceCursorGlobal,
-            toSpaceEndGlobal,
-            windowsGetStdHandleImport,
-            windowsWriteFileImport,
-            windowsReadFileImport,
-            windowsCreateFileImport,
-            windowsCloseHandleImport,
-            windowsGetFileAttributesImport,
-            windowsWsaStartupImport,
-            windowsSocketImport,
-            windowsConnectImport,
-            windowsSendImport,
-            windowsRecvImport,
-            windowsCloseSocketImport,
-            windowsIoctlSocketImport,
-            windowsWsaGetLastErrorImport,
-            windowsWsaPollImport,
-            windowsLoadLibraryImport,
-            windowsGetProcAddressImport,
-            windowsCertOpenSystemStoreImport,
-            windowsCertEnumCertificatesInStoreImport,
-            windowsCertCloseStoreImport,
-            windowsBindImport,
-            windowsSetSockOptImport,
-            windowsWsaIoctlImport,
-            windowsWsaSendImport,
-            windowsWsaRecvImport,
-            windowsCreateIoCompletionPortImport,
-            windowsGetQueuedCompletionStatusImport,
-            windowsIocpPortGlobal,
-            windowsExitProcessImport,
-            windowsGetCommandLineImport,
-            windowsWideCharToMultiByteImport,
-            windowsLocalFreeImport,
-            windowsCommandLineToArgvImport,
-            windowsSleepImport,
-            windowsVirtualAllocImport,
-            windowsVirtualFreeImport,
-            windowsCreatePipeImport,
-            windowsCreateProcessAImport,
-            windowsTerminateProcessImport,
-            windowsWaitForSingleObjectImport,
-            windowsGetExitCodeProcessImport,
-            isEntry: true,
-            arm64UsesTlsArena: arm64UsesTlsArena,
-            debugContext: dbg);
+        EmitProgramModuleEmitEntry(target, program, entryFunction, flavor, flags, arena, imports, i32, i32Ptr, stringLiterals, liftedFunctions, dbg);
+        EmitProgramModuleEmitLifted(target, program, flavor, flags, arena, imports, i32, i32Ptr, stringLiterals, liftedFunctions, dbg);
+        dbg?.FinalizeDebugInfo();
+    }
 
+    private static void EmitProgramModuleEmitEntry(
+        LlvmTargetContext target, IrProgram program, LlvmValueHandle entryFunction, LlvmCodegenFlavor flavor,
+        EmitProgramModuleFlags flags, EmitProgramModuleArena arena, EmitProgramModuleImports imports,
+        LlvmTypeHandle i32, LlvmTypeHandle i32Ptr, IReadOnlyDictionary<string, string> stringLiterals,
+        IReadOnlyDictionary<string, LlvmValueHandle> liftedFunctions, DebugInfoContext? dbg)
+    {
+        EmitFunctionBody(
+            target, entryFunction, program.EntryFunction,
+            stringLiterals, liftedFunctions, flavor,
+            flags.UsesProgramArgs, flags.UseRunQueueScheduler, i32,
+            i32Ptr, arena.HeapCursorGlobal, arena.HeapEndGlobal,
+            arena.ToSpaceCursorGlobal, arena.ToSpaceEndGlobal, imports.WindowsGetStdHandleImport,
+            imports.WindowsWriteFileImport, imports.WindowsReadFileImport, imports.WindowsCreateFileImport,
+            imports.WindowsCloseHandleImport, imports.WindowsGetFileAttributesImport, imports.WindowsWsaStartupImport,
+            imports.WindowsSocketImport, imports.WindowsConnectImport, imports.WindowsSendImport,
+            imports.WindowsRecvImport, imports.WindowsCloseSocketImport, imports.WindowsIoctlSocketImport,
+            imports.WindowsWsaGetLastErrorImport, imports.WindowsWsaPollImport, imports.WindowsLoadLibraryImport,
+            imports.WindowsGetProcAddressImport, imports.WindowsCertOpenSystemStoreImport, imports.WindowsCertEnumCertificatesInStoreImport,
+            imports.WindowsCertCloseStoreImport, imports.WindowsBindImport, imports.WindowsSetSockOptImport,
+            imports.WindowsWsaIoctlImport, imports.WindowsWsaSendImport, imports.WindowsWsaRecvImport,
+            imports.WindowsCreateIoCompletionPortImport, imports.WindowsGetQueuedCompletionStatusImport, imports.WindowsIocpPortGlobal,
+            imports.WindowsExitProcessImport, imports.WindowsGetCommandLineImport, imports.WindowsWideCharToMultiByteImport,
+            imports.WindowsLocalFreeImport, imports.WindowsCommandLineToArgvImport, imports.WindowsSleepImport,
+            imports.WindowsVirtualAllocImport, imports.WindowsVirtualFreeImport, imports.WindowsCreatePipeImport,
+            imports.WindowsCreateProcessAImport, imports.WindowsTerminateProcessImport, imports.WindowsWaitForSingleObjectImport,
+            imports.WindowsGetExitCodeProcessImport,
+            isEntry: true, arm64UsesTlsArena: flags.Arm64UsesTlsArena, debugContext: dbg);
+    }
+
+    private static void EmitProgramModuleEmitLifted(
+        LlvmTargetContext target, IrProgram program, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
+        EmitProgramModuleArena arena, EmitProgramModuleImports imports, LlvmTypeHandle i32, LlvmTypeHandle i32Ptr,
+        IReadOnlyDictionary<string, string> stringLiterals, IReadOnlyDictionary<string, LlvmValueHandle> liftedFunctions, DebugInfoContext? dbg)
+    {
         foreach (IrFunction function in program.Functions)
         {
             EmitFunctionBody(
-                target,
-                liftedFunctions[function.Label],
-                function,
-                stringLiterals,
-                liftedFunctions,
-                flavor,
-                usesProgramArgs,
-                useRunQueueScheduler,
-                i32,
-                f32,
-                i32Ptr,
-                heapCursorGlobal,
-                heapEndGlobal,
-                toSpaceCursorGlobal,
-                toSpaceEndGlobal,
-                windowsGetStdHandleImport,
-                windowsWriteFileImport,
-                windowsReadFileImport,
-                windowsCreateFileImport,
-                windowsCloseHandleImport,
-                windowsGetFileAttributesImport,
-                windowsWsaStartupImport,
-                windowsSocketImport,
-                windowsConnectImport,
-                windowsSendImport,
-                windowsRecvImport,
-                windowsCloseSocketImport,
-                windowsIoctlSocketImport,
-                windowsWsaGetLastErrorImport,
-                windowsWsaPollImport,
-                windowsLoadLibraryImport,
-                windowsGetProcAddressImport,
-                windowsCertOpenSystemStoreImport,
-                windowsCertEnumCertificatesInStoreImport,
-                windowsCertCloseStoreImport,
-                windowsBindImport,
-                windowsSetSockOptImport,
-                windowsWsaIoctlImport,
-                windowsWsaSendImport,
-                windowsWsaRecvImport,
-                windowsCreateIoCompletionPortImport,
-                windowsGetQueuedCompletionStatusImport,
-                windowsIocpPortGlobal,
-                windowsExitProcessImport,
-                windowsGetCommandLineImport,
-                windowsWideCharToMultiByteImport,
-                windowsLocalFreeImport,
-                windowsCommandLineToArgvImport,
-                windowsSleepImport,
-                windowsVirtualAllocImport,
-                windowsVirtualFreeImport,
-                windowsCreatePipeImport,
-                windowsCreateProcessAImport,
-                windowsTerminateProcessImport,
-                windowsWaitForSingleObjectImport,
-                windowsGetExitCodeProcessImport,
-                isEntry: false,
-                debugContext: dbg);
+                target, liftedFunctions[function.Label], function,
+                stringLiterals, liftedFunctions, flavor,
+                flags.UsesProgramArgs, flags.UseRunQueueScheduler, i32,
+                i32Ptr, arena.HeapCursorGlobal, arena.HeapEndGlobal,
+                arena.ToSpaceCursorGlobal, arena.ToSpaceEndGlobal, imports.WindowsGetStdHandleImport,
+                imports.WindowsWriteFileImport, imports.WindowsReadFileImport, imports.WindowsCreateFileImport,
+                imports.WindowsCloseHandleImport, imports.WindowsGetFileAttributesImport, imports.WindowsWsaStartupImport,
+                imports.WindowsSocketImport, imports.WindowsConnectImport, imports.WindowsSendImport,
+                imports.WindowsRecvImport, imports.WindowsCloseSocketImport, imports.WindowsIoctlSocketImport,
+                imports.WindowsWsaGetLastErrorImport, imports.WindowsWsaPollImport, imports.WindowsLoadLibraryImport,
+                imports.WindowsGetProcAddressImport, imports.WindowsCertOpenSystemStoreImport, imports.WindowsCertEnumCertificatesInStoreImport,
+                imports.WindowsCertCloseStoreImport, imports.WindowsBindImport, imports.WindowsSetSockOptImport,
+                imports.WindowsWsaIoctlImport, imports.WindowsWsaSendImport, imports.WindowsWsaRecvImport,
+                imports.WindowsCreateIoCompletionPortImport, imports.WindowsGetQueuedCompletionStatusImport, imports.WindowsIocpPortGlobal,
+                imports.WindowsExitProcessImport, imports.WindowsGetCommandLineImport, imports.WindowsWideCharToMultiByteImport,
+                imports.WindowsLocalFreeImport, imports.WindowsCommandLineToArgvImport, imports.WindowsSleepImport,
+                imports.WindowsVirtualAllocImport, imports.WindowsVirtualFreeImport, imports.WindowsCreatePipeImport,
+                imports.WindowsCreateProcessAImport, imports.WindowsTerminateProcessImport, imports.WindowsWaitForSingleObjectImport,
+                imports.WindowsGetExitCodeProcessImport,
+                isEntry: false, debugContext: dbg);
         }
-
-        dbg?.FinalizeDebugInfo();
     }
 
     private static bool ProgramUsesInstruction<TInstruction>(IrProgram program)
@@ -1230,7 +1270,6 @@ internal static partial class LlvmCodegen
         bool usesProgramArgs,
         bool useRunQueueScheduler,
         LlvmTypeHandle i32,
-        LlvmTypeHandle f32,
         LlvmTypeHandle i32Ptr,
         LlvmValueHandle heapCursorGlobal,
         LlvmValueHandle heapEndGlobal,
@@ -1280,6 +1319,80 @@ internal static partial class LlvmCodegen
         bool isEntry,
         bool arm64UsesTlsArena = false,
         DebugInfoContext? debugContext = null)
+    {
+        EmitFunctionBodySlots slots = EmitFunctionBodyAllocateSlots(target, llvmFunction, function, flavor, isEntry, debugContext);
+
+        var state = new LlvmCodegenState(
+            target, llvmFunction, stringLiterals, liftedFunctions, slots.ProgramArgsSlot,
+            slots.TempSlots, slots.LocalSlots, heapCursorGlobal, heapEndGlobal, slots.LabelBlocks,
+            slots.FallthroughBlocks, slots.I64, i32, slots.I8, slots.F64, LlvmApi.FloatTypeInContext(target.Context), slots.I8Ptr, i32Ptr, slots.I64Ptr,
+            slots.EntryStackPointer, windowsGetStdHandleImport, windowsWriteFileImport, windowsReadFileImport,
+            windowsCreateFileImport, windowsCloseHandleImport, windowsGetFileAttributesImport, windowsWsaStartupImport,
+            windowsSocketImport, windowsConnectImport, windowsSendImport, windowsRecvImport, windowsCloseSocketImport,
+            windowsIoctlSocketImport, windowsWsaGetLastErrorImport, windowsWsaPollImport, windowsLoadLibraryImport,
+            windowsGetProcAddressImport, windowsCertOpenSystemStoreImport, windowsCertEnumCertificatesInStoreImport,
+            windowsCertCloseStoreImport, windowsBindImport, windowsSetSockOptImport, windowsWsaIoctlImport,
+            windowsWsaSendImport, windowsWsaRecvImport, windowsCreateIoCompletionPortImport,
+            windowsGetQueuedCompletionStatusImport, windowsIocpPortGlobal, windowsExitProcessImport,
+            windowsGetCommandLineImport, windowsWideCharToMultiByteImport, windowsLocalFreeImport,
+            windowsCommandLineToArgvImport, windowsSleepImport, windowsVirtualAllocImport, windowsVirtualFreeImport,
+            windowsCreatePipeImport, windowsCreateProcessAImport, windowsTerminateProcessImport,
+            windowsWaitForSingleObjectImport, windowsGetExitCodeProcessImport,
+            new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal), flavor, usesProgramArgs, isEntry) with
+        {
+            ToSpaceCursorSlot = toSpaceCursorGlobal,
+            ToSpaceEndSlot = toSpaceEndGlobal,
+            // Non-linux: the blob-region globals were created in module setup; look them up by name to
+            // avoid threading them through this (very large) parameter list. On linux they are repointed
+            // at the per-thread TCB just below, so the (null) lookup result here is overwritten.
+            BlobCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_cursor"),
+            BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
+            UseRunQueueScheduler = useRunQueueScheduler,
+        };
+
+        state = EmitFunctionBodyLinuxArenaSetup(state, flavor, isEntry);
+
+        if (isEntry && arm64UsesTlsArena)
+        {
+            // Must run before the first arena access (EmitHeapChunkInit below) so TPIDR_EL0 addresses
+            // the thread-local arena. Self-initialises it only when no loader did (static image); a
+            // dynamic image keeps the loader's thread pointer (its DTV backs libc's dynamic TLS).
+            EmitArm64MainThreadTlsSetup(state);
+        }
+
+        if (isEntry)
+        {
+            EmitHeapChunkInit(state);
+        }
+
+        if (isEntry && usesProgramArgs)
+        {
+            EmitEntryProgramArgsInitialization(state);
+        }
+
+        EmitFunctionBodyInstructionLoop(state, function, debugContext, slots.I64);
+    }
+
+    private readonly record struct EmitFunctionBodySlots(
+        LlvmValueHandle EntryStackPointer,
+        LlvmValueHandle[] TempSlots,
+        LlvmValueHandle[] LocalSlots,
+        LlvmValueHandle ProgramArgsSlot,
+        Dictionary<string, LlvmBasicBlockHandle> LabelBlocks,
+        Dictionary<int, LlvmBasicBlockHandle> FallthroughBlocks,
+        LlvmTypeHandle I64,
+        LlvmTypeHandle I8,
+        LlvmTypeHandle F64,
+        LlvmTypeHandle I8Ptr,
+        LlvmTypeHandle I64Ptr);
+
+    private static EmitFunctionBodySlots EmitFunctionBodyAllocateSlots(
+        LlvmTargetContext target,
+        LlvmValueHandle llvmFunction,
+        IrFunction function,
+        LlvmCodegenFlavor flavor,
+        bool isEntry,
+        DebugInfoContext? debugContext)
     {
         LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
         LlvmTypeHandle i8 = LlvmApi.Int8TypeInContext(target.Context);
@@ -1334,130 +1447,51 @@ internal static partial class LlvmCodegen
         }
 
         var fallthroughBlocks = new Dictionary<int, LlvmBasicBlockHandle>();
-        var state = new LlvmCodegenState(
-            target,
-            llvmFunction,
-            stringLiterals,
-            liftedFunctions,
-            programArgsSlot,
-            tempSlots,
-            localSlots,
-            heapCursorGlobal,
-            heapEndGlobal,
-            labelBlocks,
-            fallthroughBlocks,
-            i64,
-            i32,
-            i8,
-            f64,
-            f32,
-            i8Ptr,
-            i32Ptr,
-            i64Ptr,
-            entryStackPointer,
-            windowsGetStdHandleImport,
-            windowsWriteFileImport,
-            windowsReadFileImport,
-            windowsCreateFileImport,
-            windowsCloseHandleImport,
-            windowsGetFileAttributesImport,
-            windowsWsaStartupImport,
-            windowsSocketImport,
-            windowsConnectImport,
-            windowsSendImport,
-            windowsRecvImport,
-            windowsCloseSocketImport,
-            windowsIoctlSocketImport,
-            windowsWsaGetLastErrorImport,
-            windowsWsaPollImport,
-            windowsLoadLibraryImport,
-            windowsGetProcAddressImport,
-            windowsCertOpenSystemStoreImport,
-            windowsCertEnumCertificatesInStoreImport,
-            windowsCertCloseStoreImport,
-            windowsBindImport,
-            windowsSetSockOptImport,
-            windowsWsaIoctlImport,
-            windowsWsaSendImport,
-            windowsWsaRecvImport,
-            windowsCreateIoCompletionPortImport,
-            windowsGetQueuedCompletionStatusImport,
-            windowsIocpPortGlobal,
-            windowsExitProcessImport,
-            windowsGetCommandLineImport,
-            windowsWideCharToMultiByteImport,
-            windowsLocalFreeImport,
-            windowsCommandLineToArgvImport,
-            windowsSleepImport,
-            windowsVirtualAllocImport,
-            windowsVirtualFreeImport,
-            windowsCreatePipeImport,
-            windowsCreateProcessAImport,
-            windowsTerminateProcessImport,
-            windowsWaitForSingleObjectImport,
-            windowsGetExitCodeProcessImport,
-            new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
-            flavor,
-            usesProgramArgs,
-            isEntry) with
+        return new EmitFunctionBodySlots(
+            entryStackPointer, tempSlots, localSlots, programArgsSlot,
+            labelBlocks, fallthroughBlocks, i64, i8, f64, i8Ptr, i64Ptr);
+    }
+
+    private static LlvmCodegenState EmitFunctionBodyLinuxArenaSetup(
+        LlvmCodegenState state, LlvmCodegenFlavor flavor, bool isEntry)
+    {
+        if (flavor != LlvmCodegenFlavor.LinuxX64 && flavor != LlvmCodegenFlavor.WindowsX64)
         {
-            ToSpaceCursorSlot = toSpaceCursorGlobal,
-            ToSpaceEndSlot = toSpaceEndGlobal,
-            // Non-linux: the blob-region globals were created in module setup; look them up by name to
-            // avoid threading them through this (very large) parameter list. On linux they are repointed
-            // at the per-thread TCB just below, so the (null) lookup result here is overwritten.
-            BlobCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_cursor"),
-            BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
-            UseRunQueueScheduler = useRunQueueScheduler,
+            return state;
+        }
+
+        // Recover this thread's TCB base and address the arena cursor/end (and to-space/blob)
+        // through it as ordinary pointers, so worker threads get their own arenas. On linux the
+        // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on win-x64
+        // the TCB pointer lives in TEB+0x28 (the OS provides the GS-based TEB, so no arch_prctl).
+        LlvmValueHandle tcbBase;
+        if (flavor == LlvmCodegenFlavor.LinuxX64)
+        {
+            tcbBase = isEntry ? EmitMainThreadTlsInit(state) : EmitReadTcbBaseFromGs(state);
+        }
+        else
+        {
+            tcbBase = isEntry ? EmitMainThreadTlsInitWindows(state) : EmitReadTcbBaseFromTeb(state);
+        }
+
+        (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
+        (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
+        (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
+        return state with
+        {
+            HeapCursorSlot = cursorSlot,
+            HeapEndSlot = endSlot,
+            ToSpaceCursorSlot = toCursorSlot,
+            ToSpaceEndSlot = toEndSlot,
+            BlobCursorSlot = blobCursorSlot,
+            BlobEndSlot = blobEndSlot,
         };
+    }
 
-        if (flavor == LlvmCodegenFlavor.LinuxX64 || flavor == LlvmCodegenFlavor.WindowsX64)
-        {
-            // Recover this thread's TCB base and address the arena cursor/end (and to-space/blob)
-            // through it as ordinary pointers, so worker threads get their own arenas. On linux the
-            // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on win-x64
-            // the TCB pointer lives in TEB+0x28 (the OS provides the GS-based TEB, so no arch_prctl).
-            LlvmValueHandle tcbBase;
-            if (flavor == LlvmCodegenFlavor.LinuxX64)
-            {
-                tcbBase = isEntry ? EmitMainThreadTlsInit(state) : EmitReadTcbBaseFromGs(state);
-            }
-            else
-            {
-                tcbBase = isEntry ? EmitMainThreadTlsInitWindows(state) : EmitReadTcbBaseFromTeb(state);
-            }
-            (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
-            (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
-            (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
-            state = state with
-            {
-                HeapCursorSlot = cursorSlot,
-                HeapEndSlot = endSlot,
-                ToSpaceCursorSlot = toCursorSlot,
-                ToSpaceEndSlot = toEndSlot,
-                BlobCursorSlot = blobCursorSlot,
-                BlobEndSlot = blobEndSlot,
-            };
-        }
-
-        if (isEntry && arm64UsesTlsArena)
-        {
-            // Must run before the first arena access (EmitHeapChunkInit below) so TPIDR_EL0 addresses
-            // the thread-local arena. Self-initialises it only when no loader did (static image); a
-            // dynamic image keeps the loader's thread pointer (its DTV backs libc's dynamic TLS).
-            EmitArm64MainThreadTlsSetup(state);
-        }
-
-        if (isEntry)
-        {
-            EmitHeapChunkInit(state);
-        }
-
-        if (isEntry && usesProgramArgs)
-        {
-            EmitEntryProgramArgsInitialization(state);
-        }
-
+    private static void EmitFunctionBodyInstructionLoop(
+        LlvmCodegenState state, IrFunction function, DebugInfoContext? debugContext, LlvmTypeHandle i64)
+    {
+        LlvmTargetContext target = state.Target;
         bool terminated = false;
         for (int index = 0; index < function.Instructions.Count; index++)
         {
@@ -1515,6 +1549,18 @@ internal static partial class LlvmCodegen
 
     private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index, IReadOnlyList<IrInst> instructions)
     {
+        return EmitInstructionGroup1(state, instruction)
+            ?? EmitInstructionGroup2(state, instruction)
+            ?? EmitInstructionGroup3(state, instruction)
+            ?? EmitInstructionGroup4(state, instruction)
+            ?? EmitInstructionGroup5(state, instruction)
+            ?? EmitInstructionGroup6(state, instruction, index, instructions)
+            ?? EmitInstructionGroup7(state, instruction, index)
+            ?? throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.");
+    }
+
+    private static bool? EmitInstructionGroup1(LlvmCodegenState state, IrInst instruction)
+    {
         LlvmBuilderHandle builder = state.Target.Builder;
         return instruction switch
         {
@@ -1548,6 +1594,14 @@ internal static partial class LlvmCodegen
             IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
             IrInst.BigIntBinary bigIntBinary => StoreTemp(state, bigIntBinary.Target, EmitBigIntBinary(state, LoadTemp(state, bigIntBinary.Left), LoadTemp(state, bigIntBinary.Right), bigIntBinary.Op)),
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup2(LlvmCodegenState state, IrInst instruction)
+    {
+        return instruction switch
+        {
             IrInst.HttpGet httpGet => StoreTemp(state, httpGet.Target, EmitHttpGetAbiCall(state, LoadTemp(state, httpGet.UrlTemp))),
             IrInst.HttpPost httpPost => StoreTemp(state, httpPost.Target, EmitHttpPostAbiCall(state, LoadTemp(state, httpPost.UrlTemp), LoadTemp(state, httpPost.BodyTemp))),
             IrInst.NetTcpConnect tcpConnect => StoreTemp(state, tcpConnect.Target, EmitTcpConnectAbiCall(state, LoadTemp(state, tcpConnect.HostTemp), LoadTemp(state, tcpConnect.PortTemp))),
@@ -1585,6 +1639,15 @@ internal static partial class LlvmCodegen
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
             IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup3(LlvmCodegenState state, IrInst instruction)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return instruction switch
+        {
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
@@ -1627,6 +1690,14 @@ internal static partial class LlvmCodegen
                 EmitParallelQueueAwait(state, LoadTemp(state, parallelQueueAwait.DescTemp))),
             IrInst.ParallelQueueCleanup parallelQueueCleanup =>
                 EmitParallelQueueCleanup(state, LoadTemp(state, parallelQueueCleanup.DescTemp)),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup4(LlvmCodegenState state, IrInst instruction)
+    {
+        return instruction switch
+        {
             // AsyncSleep: create a sleep task with a timer deadline.
             IrInst.AsyncSleep asyncSleep => StoreTemp(state, asyncSleep.Target,
                 EmitAsyncSleep(state, LoadTemp(state, asyncSleep.MillisecondsTemp))),
@@ -1666,6 +1737,15 @@ internal static partial class LlvmCodegen
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsReceive, LoadTemp(state, tlsReceiveTask.SslTemp), LoadTemp(state, tlsReceiveTask.MaxBytesTemp), "tls_receive_task")),
             IrInst.CreateTlsCloseTask tlsCloseTask => StoreTemp(state, tlsCloseTask.Target,
                 EmitCreateLeafNetworkingTask(state, TaskStructLayout.StateTlsClose, LoadTemp(state, tlsCloseTask.SslTemp), LlvmApi.ConstInt(state.I64, 0, 0), "tls_close_task")),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup5(LlvmCodegenState state, IrInst instruction)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return instruction switch
+        {
             // AsyncAll: run all tasks in a list, collect results.
             IrInst.AsyncAll asyncAll => StoreTemp(state, asyncAll.Target,
                 EmitAsyncAll(state, LoadTemp(state, asyncAll.TaskListTemp))),
@@ -1707,6 +1787,14 @@ internal static partial class LlvmCodegen
             IrInst.AndInt andInt => StoreTemp(state, andInt.Target, LlvmApi.BuildAnd(builder, LoadTemp(state, andInt.Left), LoadTemp(state, andInt.Right), $"and_{andInt.Target}")),
             IrInst.OrInt orInt => StoreTemp(state, orInt.Target, LlvmApi.BuildOr(builder, LoadTemp(state, orInt.Left), LoadTemp(state, orInt.Right), $"or_{orInt.Target}")),
             IrInst.XorInt xorInt => StoreTemp(state, xorInt.Target, LlvmApi.BuildXor(builder, LoadTemp(state, xorInt.Left), LoadTemp(state, xorInt.Right), $"xor_{xorInt.Target}")),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup6(LlvmCodegenState state, IrInst instruction, int index, IReadOnlyList<IrInst> instructions)
+    {
+        return instruction switch
+        {
             IrInst.ShlInt shlInt => StoreTemp(state, shlInt.Target, EmitShiftInt(state, LoadTemp(state, shlInt.Left), LoadTemp(state, shlInt.Right), left: true, name: $"shl_{shlInt.Target}")),
             IrInst.ShrInt shrInt => StoreTemp(state, shrInt.Target, EmitShiftInt(state, LoadTemp(state, shrInt.Left), LoadTemp(state, shrInt.Right), left: false, name: $"shr_{shrInt.Target}")),
             IrInst.CmpIntGt cmpIntGt => StoreTemp(state, cmpIntGt.Target, EmitIntComparison(state, LlvmIntPredicate.Sgt, LoadTemp(state, cmpIntGt.Left), LoadTemp(state, cmpIntGt.Right), $"cmp_gt_{cmpIntGt.Target}")),
@@ -1743,6 +1831,14 @@ internal static partial class LlvmCodegen
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool? EmitInstructionGroup7(LlvmCodegenState state, IrInst instruction, int index)
+    {
+        return instruction switch
+        {
             IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
@@ -1769,7 +1865,7 @@ internal static partial class LlvmCodegen
             IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy)),
             IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
             IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
-            _ => throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.")
+            _ => (bool?)null,
         };
     }
 
@@ -1949,117 +2045,127 @@ internal static partial class LlvmCodegen
     private static void EmitBuiltinMemcpy(
         LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
     {
-        // ── memcpy(dest, src, n) → dest ──────────────────────────────────
-        {
-            LlvmTypeHandle memcpyType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i8Ptr, i64]);
-            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memcpy", memcpyType);
-            ApplyBuiltinAttributes(target, fn, isReadOnly: false, destSrcNoAlias: true, returnsPointer: true, pointerParamCount: 2);
+        EmitBuiltinMemcpyMemcpy(target, i8, i64, i8Ptr);
+        EmitBuiltinMemcpyMemset(target, i8, i64, i8Ptr);
+        EmitBuiltinMemcpyStrlen(target, i8, i64, i8Ptr);
+    }
 
-            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
-            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
-            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
-            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+    // ── memcpy(dest, src, n) → dest ──────────────────────────────────
+    private static void EmitBuiltinMemcpyMemcpy(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        LlvmTypeHandle memcpyType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i8Ptr, i64]);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memcpy", memcpyType);
+        ApplyBuiltinAttributes(target, fn, isReadOnly: false, destSrcNoAlias: true, returnsPointer: true, pointerParamCount: 2);
 
-            LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
-            LlvmValueHandle src = LlvmApi.GetParam(fn, 1);
-            LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
-            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
-            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle src = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
-            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
-            LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
-            LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
-            LlvmValueHandle srcPtr = LlvmApi.BuildGEP2(target.Builder, i8, src, [idx], "src_ptr");
-            LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
-            LlvmValueHandle val = LlvmApi.BuildLoad2(target.Builder, i8, srcPtr, "byte");
-            LlvmApi.BuildStore(target.Builder, val, dstPtr);
-            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
-            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+        LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
+        LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
-            LlvmApi.BuildRet(target.Builder, dest);
-        }
+        LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+        LlvmValueHandle srcPtr = LlvmApi.BuildGEP2(target.Builder, i8, src, [idx], "src_ptr");
+        LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
+        LlvmValueHandle val = LlvmApi.BuildLoad2(target.Builder, i8, srcPtr, "byte");
+        LlvmApi.BuildStore(target.Builder, val, dstPtr);
+        LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+        LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
 
-        // ── memset(dest, val, n) → dest ──────────────────────────────────
-        {
-            LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
-            LlvmTypeHandle memsetType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i32, i64]);
-            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memset", memsetType);
-            // memset writes to dest only; dest pointer is nonnull. Returns dest pointer.
-            ApplyBuiltinAttributes(target, fn, isReadOnly: false, returnsPointer: true, pointerParamCount: 1);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+        LlvmApi.BuildRet(target.Builder, dest);
+    }
 
-            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
-            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
-            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
-            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+    // ── memset(dest, val, n) → dest ──────────────────────────────────
+    private static void EmitBuiltinMemcpyMemset(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        LlvmTypeHandle i32 = LlvmApi.Int32TypeInContext(target.Context);
+        LlvmTypeHandle memsetType = LlvmApi.FunctionType(i8Ptr, [i8Ptr, i32, i64]);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "memset", memsetType);
+        // memset writes to dest only; dest pointer is nonnull. Returns dest pointer.
+        ApplyBuiltinAttributes(target, fn, isReadOnly: false, returnsPointer: true, pointerParamCount: 1);
 
-            LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
-            LlvmValueHandle fillVal = LlvmApi.GetParam(fn, 1);
-            LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
-            LlvmValueHandle fillByte = LlvmApi.BuildTrunc(target.Builder, fillVal, i8, "fill_byte");
-            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
-            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmValueHandle dest = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle fillVal = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle size = LlvmApi.GetParam(fn, 2);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
-            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
-            LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
-            LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+        LlvmValueHandle fillByte = LlvmApi.BuildTrunc(target.Builder, fillVal, i8, "fill_byte");
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
-            LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
-            LlvmApi.BuildStore(target.Builder, fillByte, dstPtr);
-            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
-            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+        LlvmValueHandle cond = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Ult, idx, size, "cmp");
+        LlvmApi.BuildCondBr(target.Builder, cond, bodyBlock, doneBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
-            LlvmApi.BuildRet(target.Builder, dest);
-        }
+        LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+        LlvmValueHandle dstPtr = LlvmApi.BuildGEP2(target.Builder, i8, dest, [idx], "dst_ptr");
+        LlvmApi.BuildStore(target.Builder, fillByte, dstPtr);
+        LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+        LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
 
-        // ── strlen(s) → length ───────────────────────────────────────────
-        {
-            LlvmTypeHandle strlenType = LlvmApi.FunctionType(i64, [i8Ptr]);
-            LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "strlen", strlenType);
-            ApplyBuiltinAttributes(target, fn, isReadOnly: true, pointerParamCount: 1);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+        LlvmApi.BuildRet(target.Builder, dest);
+    }
 
-            LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
-            LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
-            LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
-            LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
+    // ── strlen(s) → length ───────────────────────────────────────────
+    private static void EmitBuiltinMemcpyStrlen(
+        LlvmTargetContext target, LlvmTypeHandle i8, LlvmTypeHandle i64, LlvmTypeHandle i8Ptr)
+    {
+        LlvmTypeHandle strlenType = LlvmApi.FunctionType(i64, [i8Ptr]);
+        LlvmValueHandle fn = LlvmApi.AddFunction(target.Module, "strlen", strlenType);
+        ApplyBuiltinAttributes(target, fn, isReadOnly: true, pointerParamCount: 1);
 
-            LlvmValueHandle str = LlvmApi.GetParam(fn, 0);
+        LlvmBasicBlockHandle entry = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "entry");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "check");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "body");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(target.Context, fn, "done");
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
-            LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
-            LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmValueHandle str = LlvmApi.GetParam(fn, 0);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
-            LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
-            LlvmValueHandle charPtr = LlvmApi.BuildGEP2(target.Builder, i8, str, [idx], "char_ptr");
-            LlvmValueHandle ch = LlvmApi.BuildLoad2(target.Builder, i8, charPtr, "ch");
-            LlvmValueHandle isNull = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Eq, ch, LlvmApi.ConstInt(i8, 0, 0), "is_null");
-            LlvmApi.BuildCondBr(target.Builder, isNull, doneBlock, bodyBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, entry);
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(target.Builder, i64, "idx");
+        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
-            LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
-            LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
-            LlvmApi.BuildBr(target.Builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(target.Builder, checkBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "i");
+        LlvmValueHandle charPtr = LlvmApi.BuildGEP2(target.Builder, i8, str, [idx], "char_ptr");
+        LlvmValueHandle ch = LlvmApi.BuildLoad2(target.Builder, i8, charPtr, "ch");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(target.Builder, LlvmIntPredicate.Eq, ch, LlvmApi.ConstInt(i8, 0, 0), "is_null");
+        LlvmApi.BuildCondBr(target.Builder, isNull, doneBlock, bodyBlock);
 
-            LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
-            LlvmValueHandle finalIdx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "len");
-            LlvmApi.BuildRet(target.Builder, finalIdx);
-        }
+        LlvmApi.PositionBuilderAtEnd(target.Builder, bodyBlock);
+        LlvmValueHandle nextIdx = LlvmApi.BuildAdd(target.Builder, idx, LlvmApi.ConstInt(i64, 1, 0), "next");
+        LlvmApi.BuildStore(target.Builder, nextIdx, idxSlot);
+        LlvmApi.BuildBr(target.Builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(target.Builder, doneBlock);
+        LlvmValueHandle finalIdx = LlvmApi.BuildLoad2(target.Builder, i64, idxSlot, "len");
+        LlvmApi.BuildRet(target.Builder, finalIdx);
     }
 
     /// <summary>

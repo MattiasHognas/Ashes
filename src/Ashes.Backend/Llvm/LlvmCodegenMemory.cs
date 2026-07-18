@@ -929,138 +929,175 @@ internal static partial class LlvmCodegen
     /// </para>
     /// </summary>
     private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp, ListHeadCopyKind headCopy)
+        => EmitCopyOutListCore(state, LoadTemp(state, srcTemp), headCopy, "copy_list");
+
+    /// <summary>
+    /// Shared three-phase copy-out over a cons-cell chain given as a pointer value: nil guard,
+    /// then the count, cache, and build phases, all named under <paramref name="prefix"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutListCore(LlvmCodegenState state, LlvmValueHandle srcPtr, ListHeadCopyKind headCopy, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
-        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
 
         // Guard: if the source list is nil, return nil immediately.
         LlvmValueHandle srcIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            srcPtr, zero, "copy_list_src_nil");
-        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_overall_result");
+            srcPtr, zero, prefix + "_src_nil");
+        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_overall_result");
         LlvmApi.BuildStore(builder, zero, overallResultSlot);
-        var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_start");
-        var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_final");
+        var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_start");
+        var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_final");
         LlvmApi.BuildCondBr(builder, srcIsNil, copyListFinal, copyListStart);
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
 
-        // ── Count source cells ────────────────────────────────────────
-        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_count");
-        LlvmApi.BuildStore(builder, zero, countSlot);
-        LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_count_cur");
-        LlvmApi.BuildStore(builder, srcPtr, countCurSlot);
-
-        var countHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_count_head");
-        var countBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_count_body");
-        var countDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_count_done");
-        LlvmApi.BuildBr(builder, countHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countHead);
-        LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, "copy_list_count_cur_val");
-        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            countCur, zero, "copy_list_count_nil");
-        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countBody);
-        LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_list_count_old");
-        LlvmValueHandle newCount = LlvmApi.BuildAdd(builder, oldCount, one, "copy_list_count_inc");
-        LlvmApi.BuildStore(builder, newCount, countSlot);
-        LlvmValueHandle countTail = LoadMemory(state, countCur, 8, "copy_list_count_tail");
-        LlvmApi.BuildStore(builder, countTail, countCurSlot);
-        LlvmApi.BuildBr(builder, countHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countDone);
-        LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_list_total_cells");
-
-        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
-        var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, "copy_list_head_buf");
-        LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, "copy_list_head_buf_ptr");
-        LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cache_cur");
-        LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
-        LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_cache_idx");
-        LlvmApi.BuildStore(builder, zero, cacheIdxSlot);
-
-        var cacheHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_cache_head");
-        var cacheBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_cache_body");
-        var cacheDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_cache_done");
-        LlvmApi.BuildBr(builder, cacheHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheHead);
-        LlvmValueHandle cacheCur = LlvmApi.BuildLoad2(builder, state.I64, cacheCurSlot, "copy_list_cache_cur_val");
-        LlvmValueHandle cacheIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            cacheCur, zero, "copy_list_cache_nil");
-        LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
-        LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, "copy_list_cache_head_val");
-        LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, "copy_list_cache_idx_val");
-        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], "copy_list_buf_slot");
-        LlvmApi.BuildStore(builder, headVal, bufSlot);
-        LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, "copy_list_cache_idx_inc");
-        LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
-        LlvmValueHandle cacheTail = LoadMemory(state, cacheCur, 8, "copy_list_cache_tail");
-        LlvmApi.BuildStore(builder, cacheTail, cacheCurSlot);
-        LlvmApi.BuildBr(builder, cacheHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
-
-        // ── Build destination list from cached head values ──────────────
-        // Arena allocations happen here. Source cells are never read again.
-        LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_build_idx");
-        LlvmApi.BuildStore(builder, zero, buildIdxSlot);
-        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_list_prev");
-        LlvmApi.BuildStore(builder, zero, prevCellSlot);
-
-        // Eagerly allocate the first cell from headBuf[0].
-        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], "copy_list_first_head_slot");
-        LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_list_first_head_val");
-        LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
-        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, firstCell, 0, firstHeadCopied, "copy_list_store_first_head");
-        StoreMemory(state, firstCell, 8, zero, "copy_list_store_first_tail");
-        LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
-        LlvmApi.BuildStore(builder, one, buildIdxSlot);
-
-        var buildHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_build_head");
-        var buildBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_build_body");
-        var buildDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_list_build_done");
-        LlvmApi.BuildBr(builder, buildHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, buildHead);
-        LlvmValueHandle buildIdx = LlvmApi.BuildLoad2(builder, state.I64, buildIdxSlot, "copy_list_build_idx_val");
-        LlvmValueHandle buildDoneCheck = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge,
-            buildIdx, totalCells, "copy_list_build_done_check");
-        LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, buildBody);
-        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], "copy_list_build_head_slot");
-        LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_list_build_head_val");
-        LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
-        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, newCell, 0, buildHeadCopied, "copy_list_store_head");
-        StoreMemory(state, newCell, 8, zero, "copy_list_store_tail");
-
-        // Link: prevCell.tail = newCell
-        LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, "copy_list_prev_val");
-        StoreMemory(state, prevCell, 8, newCell, "copy_list_link_tail");
-
-        // Advance
-        LlvmApi.BuildStore(builder, newCell, prevCellSlot);
-        LlvmValueHandle nextBuildIdx = LlvmApi.BuildAdd(builder, buildIdx, one, "copy_list_build_idx_inc");
-        LlvmApi.BuildStore(builder, nextBuildIdx, buildIdxSlot);
-        LlvmApi.BuildBr(builder, buildHead);
+        LlvmValueHandle totalCells = EmitCopyOutListCoreCount(state, srcPtr, prefix);
+        var (headBufAddr, headBufBytes, headBufIsOsSlot, headBuf) = EmitCopyOutListCoreCacheHeads(state, srcPtr, totalCells, prefix);
+        LlvmValueHandle firstCell = EmitCopyOutListCoreBuild(state, headBuf, totalCells, headCopy, prefix);
 
         // Done
-        LlvmApi.PositionBuilderAtEnd(builder, buildDone);
-        EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, "copy_list_head_buf");
+        EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, prefix + "_head_buf");
         LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
         LlvmApi.BuildBr(builder, copyListFinal);
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
-        return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_list_result_val");
+        return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, prefix + "_result_val");
+    }
+
+    /// <summary>Count phase of <see cref="EmitCopyOutListCore"/>: walks the source chain and returns the cell count.</summary>
+    private static LlvmValueHandle EmitCopyOutListCoreCount(LlvmCodegenState state, LlvmValueHandle srcPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+
+        // ── Count source cells ────────────────────────────────────────
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count");
+        LlvmApi.BuildStore(builder, zero, countSlot);
+        LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_cur");
+        LlvmApi.BuildStore(builder, srcPtr, countCurSlot);
+
+        var countHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_head");
+        var countBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_body");
+        var countDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_done");
+        LlvmApi.BuildBr(builder, countHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countHead);
+        LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, prefix + "_count_cur_val");
+        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            countCur, zero, prefix + "_count_nil");
+        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countBody);
+        LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_count_old");
+        LlvmValueHandle newCount = LlvmApi.BuildAdd(builder, oldCount, one, prefix + "_count_inc");
+        LlvmApi.BuildStore(builder, newCount, countSlot);
+        LlvmValueHandle countTail = LoadMemory(state, countCur, 8, prefix + "_count_tail");
+        LlvmApi.BuildStore(builder, countTail, countCurSlot);
+        LlvmApi.BuildBr(builder, countHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, countDone);
+        return LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_total_cells");
+    }
+
+    /// <summary>Cache phase of <see cref="EmitCopyOutListCore"/>: snapshots every head value into a scratch buffer.</summary>
+    private static (LlvmValueHandle BufAddr, LlvmValueHandle TotalBytes, LlvmValueHandle IsOsSlot, LlvmValueHandle HeadBuf) EmitCopyOutListCoreCacheHeads(
+        LlvmCodegenState state, LlvmValueHandle srcPtr, LlvmValueHandle totalCells, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+
+        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
+        var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, prefix + "_head_buf");
+        LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, prefix + "_head_buf_ptr");
+        LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cache_cur");
+        LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
+        LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cache_idx");
+        LlvmApi.BuildStore(builder, zero, cacheIdxSlot);
+
+        var cacheHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cache_head");
+        var cacheBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cache_body");
+        var cacheDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cache_done");
+        LlvmApi.BuildBr(builder, cacheHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheHead);
+        LlvmValueHandle cacheCur = LlvmApi.BuildLoad2(builder, state.I64, cacheCurSlot, prefix + "_cache_cur_val");
+        LlvmValueHandle cacheIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            cacheCur, zero, prefix + "_cache_nil");
+        LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
+        LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, prefix + "_cache_head_val");
+        LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, prefix + "_cache_idx_val");
+        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], prefix + "_buf_slot");
+        LlvmApi.BuildStore(builder, headVal, bufSlot);
+        LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, prefix + "_cache_idx_inc");
+        LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
+        LlvmValueHandle cacheTail = LoadMemory(state, cacheCur, 8, prefix + "_cache_tail");
+        LlvmApi.BuildStore(builder, cacheTail, cacheCurSlot);
+        LlvmApi.BuildBr(builder, cacheHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
+        return (headBufAddr, headBufBytes, headBufIsOsSlot, headBuf);
+    }
+
+    /// <summary>Build phase of <see cref="EmitCopyOutListCore"/>: allocates and links the destination cells from the cached heads, returning the first cell.</summary>
+    private static LlvmValueHandle EmitCopyOutListCoreBuild(LlvmCodegenState state, LlvmValueHandle headBuf, LlvmValueHandle totalCells, ListHeadCopyKind headCopy, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+
+        // ── Build destination list from cached head values ──────────────
+        // Arena allocations happen here. Source cells are never read again.
+        LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_build_idx");
+        LlvmApi.BuildStore(builder, zero, buildIdxSlot);
+        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_prev");
+        LlvmApi.BuildStore(builder, zero, prevCellSlot);
+
+        // Eagerly allocate the first cell from headBuf[0].
+        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], prefix + "_first_head_slot");
+        LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, prefix + "_first_head_val");
+        LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
+        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
+        StoreMemory(state, firstCell, 0, firstHeadCopied, prefix + "_store_first_head");
+        StoreMemory(state, firstCell, 8, zero, prefix + "_store_first_tail");
+        LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
+        LlvmApi.BuildStore(builder, one, buildIdxSlot);
+
+        var buildHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_head");
+        var buildBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_body");
+        var buildDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_build_done");
+        LlvmApi.BuildBr(builder, buildHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildHead);
+        LlvmValueHandle buildIdx = LlvmApi.BuildLoad2(builder, state.I64, buildIdxSlot, prefix + "_build_idx_val");
+        LlvmValueHandle buildDoneCheck = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge,
+            buildIdx, totalCells, prefix + "_build_done_check");
+        LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildBody);
+        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], prefix + "_build_head_slot");
+        LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, prefix + "_build_head_val");
+        LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
+        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
+        StoreMemory(state, newCell, 0, buildHeadCopied, prefix + "_store_head");
+        StoreMemory(state, newCell, 8, zero, prefix + "_store_tail");
+
+        // Link: prevCell.tail = newCell
+        LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, prefix + "_prev_val");
+        StoreMemory(state, prevCell, 8, newCell, prefix + "_link_tail");
+
+        // Advance
+        LlvmApi.BuildStore(builder, newCell, prevCellSlot);
+        LlvmValueHandle nextBuildIdx = LlvmApi.BuildAdd(builder, buildIdx, one, prefix + "_build_idx_inc");
+        LlvmApi.BuildStore(builder, nextBuildIdx, buildIdxSlot);
+        LlvmApi.BuildBr(builder, buildHead);
+
+        LlvmApi.PositionBuilderAtEnd(builder, buildDone);
+        return firstCell;
     }
 
     /// <summary>
@@ -1161,131 +1198,7 @@ internal static partial class LlvmCodegen
     /// <see cref="ListHeadCopyKind.InnerList"/> copy-out.
     /// </summary>
     private static LlvmValueHandle EmitCopyOutListFromValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
-        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
-
-        // Guard: if the source list is nil, return nil immediately.
-        LlvmValueHandle srcIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            srcPtr, zero, "copy_inner_src_nil");
-        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_overall_result");
-        LlvmApi.BuildStore(builder, zero, overallResultSlot);
-        var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_start");
-        var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_final");
-        LlvmApi.BuildCondBr(builder, srcIsNil, copyListFinal, copyListStart);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
-
-        // ── Count source cells ────────────────────────────────────────
-        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count");
-        LlvmApi.BuildStore(builder, zero, countSlot);
-        LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_count_cur");
-        LlvmApi.BuildStore(builder, srcPtr, countCurSlot);
-
-        var countHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_head");
-        var countBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_body");
-        var countDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_count_done");
-        LlvmApi.BuildBr(builder, countHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countHead);
-        LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, "copy_inner_count_cur_val");
-        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            countCur, zero, "copy_inner_count_nil");
-        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countBody);
-        LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_count_old");
-        LlvmValueHandle newCount = LlvmApi.BuildAdd(builder, oldCount, one, "copy_inner_count_inc");
-        LlvmApi.BuildStore(builder, newCount, countSlot);
-        LlvmValueHandle countTail = LoadMemory(state, countCur, 8, "copy_inner_count_tail");
-        LlvmApi.BuildStore(builder, countTail, countCurSlot);
-        LlvmApi.BuildBr(builder, countHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, countDone);
-        LlvmValueHandle totalCells = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "copy_inner_total_cells");
-
-        // ── Cache head values into a scratch buffer (stack when small, OS memory when large) ──
-        var (headBufAddr, headBufBytes, headBufIsOsSlot) = EmitListHeadCacheAlloc(state, totalCells, "copy_inner_head_buf");
-        LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, "copy_inner_head_buf_ptr");
-        LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_cur");
-        LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
-        LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_cache_idx");
-        LlvmApi.BuildStore(builder, zero, cacheIdxSlot);
-
-        var cacheHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_head");
-        var cacheBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_body");
-        var cacheDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_cache_done");
-        LlvmApi.BuildBr(builder, cacheHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheHead);
-        LlvmValueHandle cacheCur = LlvmApi.BuildLoad2(builder, state.I64, cacheCurSlot, "copy_inner_cache_cur_val");
-        LlvmValueHandle cacheIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            cacheCur, zero, "copy_inner_cache_nil");
-        LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
-        LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, "copy_inner_cache_head_val");
-        LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, "copy_inner_cache_idx_val");
-        LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], "copy_inner_buf_slot");
-        LlvmApi.BuildStore(builder, headVal, bufSlot);
-        LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, "copy_inner_cache_idx_inc");
-        LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
-        LlvmValueHandle cacheTail = LoadMemory(state, cacheCur, 8, "copy_inner_cache_tail");
-        LlvmApi.BuildStore(builder, cacheTail, cacheCurSlot);
-        LlvmApi.BuildBr(builder, cacheHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, cacheDone);
-
-        // ── Build destination list from cached head values ──────────────
-        LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_build_idx");
-        LlvmApi.BuildStore(builder, zero, buildIdxSlot);
-        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_inner_prev");
-        LlvmApi.BuildStore(builder, zero, prevCellSlot);
-
-        LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], "copy_inner_first_head_slot");
-        LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, "copy_inner_first_head_val");
-        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, firstCell, 0, firstHeadVal, "copy_inner_store_first_head");
-        StoreMemory(state, firstCell, 8, zero, "copy_inner_store_first_tail");
-        LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
-        LlvmApi.BuildStore(builder, one, buildIdxSlot);
-
-        var buildHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_head");
-        var buildBody = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_body");
-        var buildDone = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_inner_build_done");
-        LlvmApi.BuildBr(builder, buildHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, buildHead);
-        LlvmValueHandle buildIdx = LlvmApi.BuildLoad2(builder, state.I64, buildIdxSlot, "copy_inner_build_idx_val");
-        LlvmValueHandle buildDoneCheck = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge,
-            buildIdx, totalCells, "copy_inner_build_done_check");
-        LlvmApi.BuildCondBr(builder, buildDoneCheck, buildDone, buildBody);
-
-        LlvmApi.PositionBuilderAtEnd(builder, buildBody);
-        LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], "copy_inner_build_head_slot");
-        LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, "copy_inner_build_head_val");
-        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, newCell, 0, buildHeadVal, "copy_inner_store_head");
-        StoreMemory(state, newCell, 8, zero, "copy_inner_store_tail");
-
-        LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, "copy_inner_prev_val");
-        StoreMemory(state, prevCell, 8, newCell, "copy_inner_link_tail");
-
-        LlvmApi.BuildStore(builder, newCell, prevCellSlot);
-        LlvmValueHandle nextBuildIdx = LlvmApi.BuildAdd(builder, buildIdx, one, "copy_inner_build_idx_inc");
-        LlvmApi.BuildStore(builder, nextBuildIdx, buildIdxSlot);
-        LlvmApi.BuildBr(builder, buildHead);
-
-        LlvmApi.PositionBuilderAtEnd(builder, buildDone);
-        EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, "copy_inner_head_buf");
-        LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
-        LlvmApi.BuildBr(builder, copyListFinal);
-
-        LlvmApi.PositionBuilderAtEnd(builder, copyListFinal);
-        return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, "copy_inner_result_val");
-    }
+        => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, "copy_inner");
 
     /// <summary>
     /// Copies a closure (24 bytes: {code, env, env_size}) and its environment
@@ -1739,6 +1652,50 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, loopBlock);
 
+        LlvmValueHandle index = EmitValidateUtf8LoopHead(state, bytesPtr, len, indexSlot, loopBlock, asciiBlock, validBlock, out LlvmValueHandle firstByte64, prefix);
+        EmitValidateUtf8ClassifyNonAscii(state, firstByte64, twoBlock, threeBlock, e0Block, edBlock, f0Block, fourBlock, f4Block, invalidBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, asciiBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_ascii_next"), indexSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 2, 0x80, 0xBF, prefix + "_two", twoBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0xBF, prefix + "_three", threeBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0xA0, 0xBF, prefix + "_e0", e0Block, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0x9F, prefix + "_ed", edBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x90, 0xBF, prefix + "_f0", f0Block, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0xBF, prefix + "_four", fourBlock, loopBlock, invalidBlock);
+        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0x8F, prefix + "_f4", f4Block, loopBlock, invalidBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, validBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    /// <summary>
+    /// Loop head of <see cref="EmitValidateUtf8"/>: checks for end-of-input, loads the lead byte,
+    /// and branches ASCII/non-ASCII. Leaves the builder in the non-ASCII block and returns the
+    /// current index (which dominates the ASCII block) plus the zero-extended lead byte.
+    /// </summary>
+    private static LlvmValueHandle EmitValidateUtf8LoopHead(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesPtr,
+        LlvmValueHandle len,
+        LlvmValueHandle indexSlot,
+        LlvmBasicBlockHandle loopBlock,
+        LlvmBasicBlockHandle asciiBlock,
+        LlvmBasicBlockHandle validBlock,
+        out LlvmValueHandle firstByte64,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_index_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, len, prefix + "_done");
@@ -1747,12 +1704,34 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, inspectBlock);
         LlvmValueHandle firstByte = LoadByteAt(state, bytesPtr, index, prefix + "_byte0");
-        LlvmValueHandle firstByte64 = LlvmApi.BuildZExt(builder, firstByte, state.I64, prefix + "_byte0_i64");
+        firstByte64 = LlvmApi.BuildZExt(builder, firstByte, state.I64, prefix + "_byte0_i64");
         LlvmValueHandle isAscii = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, firstByte64, LlvmApi.ConstInt(state.I64, 0x80, 0), prefix + "_is_ascii");
         var nonAsciiBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_non_ascii");
         LlvmApi.BuildCondBr(builder, isAscii, asciiBlock, nonAsciiBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, nonAsciiBlock);
+        return index;
+    }
+
+    /// <summary>
+    /// Lead-byte classification chain of <see cref="EmitValidateUtf8"/>: dispatches a non-ASCII
+    /// lead byte to the matching sequence-validation block (or the invalid block). The builder
+    /// must be positioned in the non-ASCII block on entry.
+    /// </summary>
+    private static void EmitValidateUtf8ClassifyNonAscii(
+        LlvmCodegenState state,
+        LlvmValueHandle firstByte64,
+        LlvmBasicBlockHandle twoBlock,
+        LlvmBasicBlockHandle threeBlock,
+        LlvmBasicBlockHandle e0Block,
+        LlvmBasicBlockHandle edBlock,
+        LlvmBasicBlockHandle f0Block,
+        LlvmBasicBlockHandle fourBlock,
+        LlvmBasicBlockHandle f4Block,
+        LlvmBasicBlockHandle invalidBlock,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle ltC2 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, firstByte64, LlvmApi.ConstInt(state.I64, 0xC2, 0), prefix + "_lt_c2");
         var geC2Block = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_ge_c2");
         LlvmApi.BuildCondBr(builder, ltC2, invalidBlock, geC2Block);
@@ -1795,29 +1774,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, afterF3Block);
         LlvmValueHandle isF4 = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, firstByte64, LlvmApi.ConstInt(state.I64, 0xF4, 0), prefix + "_is_f4");
         LlvmApi.BuildCondBr(builder, isF4, f4Block, invalidBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, asciiBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_ascii_next"), indexSlot);
-        LlvmApi.BuildBr(builder, loopBlock);
-
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 2, 0x80, 0xBF, prefix + "_two", twoBlock, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0xBF, prefix + "_three", threeBlock, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0xA0, 0xBF, prefix + "_e0", e0Block, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 3, 0x80, 0x9F, prefix + "_ed", edBlock, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x90, 0xBF, prefix + "_f0", f0Block, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0xBF, prefix + "_four", fourBlock, loopBlock, invalidBlock);
-        EmitUtf8SequenceValidation(state, bytesPtr, len, indexSlot, 4, 0x80, 0x8F, prefix + "_f4", f4Block, loopBlock, invalidBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, validBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), resultSlot);
-        LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
-        LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
     private static void EmitUtf8SequenceValidation(
@@ -1951,6 +1907,22 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
         LlvmApi.BuildBr(builder, finishBlock);
 
+        EmitSignedIntToStringDigits(state, buffer, workSlot, indexSlot, loopCheckBlock, loopBodyBlock, maybeSignBlock, prefix);
+        EmitSignedIntToStringSign(state, buffer, indexSlot, negativeSlot, maybeSignBlock, signBlock, finishBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    /// <summary>Digit loop of <see cref="EmitSignedIntToString"/>: writes the magnitude's decimal digits back-to-front.</summary>
+    private static void EmitSignedIntToStringDigits(LlvmCodegenState state, LlvmValueHandle buffer, LlvmValueHandle workSlot, LlvmValueHandle indexSlot, LlvmBasicBlockHandle loopCheckBlock, LlvmBasicBlockHandle loopBodyBlock, LlvmBasicBlockHandle maybeSignBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_work_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, prefix + "_done");
@@ -1963,6 +1935,13 @@ internal static partial class LlvmCodegen
         StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, prefix + "_write_idx"), LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ascii"));
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    /// <summary>Sign section of <see cref="EmitSignedIntToString"/>: prepends '-' when the value was negative.</summary>
+    private static void EmitSignedIntToStringSign(LlvmCodegenState state, LlvmValueHandle buffer, LlvmValueHandle indexSlot, LlvmValueHandle negativeSlot, LlvmBasicBlockHandle maybeSignBlock, LlvmBasicBlockHandle signBlock, LlvmBasicBlockHandle finishBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
 
         LlvmApi.PositionBuilderAtEnd(builder, maybeSignBlock);
         LlvmValueHandle negative = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, prefix + "_negative_value");
@@ -1974,12 +1953,6 @@ internal static partial class LlvmCodegen
         StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforeSign, prefix + "_sign_index"), (byte)'-');
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxBeforeSign, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_sign"), indexSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
-        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
-        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
-        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
     }
 
     private static LlvmValueHandle EmitIntToHexString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
@@ -2012,6 +1985,22 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), indexSlot);
         LlvmApi.BuildBr(builder, prefixBlock);
 
+        EmitIntToHexStringDigits(state, buffer, workSlot, indexSlot, loopCheckBlock, loopBodyBlock, prefixBlock, prefix);
+        EmitIntToHexStringPrefixAndSign(state, buffer, indexSlot, negativeSlot, prefixBlock, maybeSignBlock, signBlock, finishBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    /// <summary>Digit loop of <see cref="EmitIntToHexString"/>: writes the magnitude's hex digits back-to-front.</summary>
+    private static void EmitIntToHexStringDigits(LlvmCodegenState state, LlvmValueHandle buffer, LlvmValueHandle workSlot, LlvmValueHandle indexSlot, LlvmBasicBlockHandle loopCheckBlock, LlvmBasicBlockHandle loopBodyBlock, LlvmBasicBlockHandle prefixBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
         LlvmApi.PositionBuilderAtEnd(builder, loopCheckBlock);
         LlvmValueHandle work = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_work_value");
         LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, work, zero, prefix + "_done");
@@ -2031,6 +2020,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildLShr(builder, work, LlvmApi.ConstInt(state.I64, 4, 0), prefix + "_next_work"), workSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_next"), indexSlot);
         LlvmApi.BuildBr(builder, loopCheckBlock);
+    }
+
+    /// <summary>Prefix and sign sections of <see cref="EmitIntToHexString"/>: prepends "0x" (reversed) and '-' when negative.</summary>
+    private static void EmitIntToHexStringPrefixAndSign(LlvmCodegenState state, LlvmValueHandle buffer, LlvmValueHandle indexSlot, LlvmValueHandle negativeSlot, LlvmBasicBlockHandle prefixBlock, LlvmBasicBlockHandle maybeSignBlock, LlvmBasicBlockHandle signBlock, LlvmBasicBlockHandle finishBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
 
         LlvmApi.PositionBuilderAtEnd(builder, prefixBlock);
         LlvmValueHandle idxBeforePrefix = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_idx_before_prefix");
@@ -2050,12 +2046,6 @@ internal static partial class LlvmCodegen
         StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idxBeforeSign, prefix + "_sign_index"), (byte)'-');
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idxBeforeSign, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_idx_with_sign"), indexSlot);
         LlvmApi.BuildBr(builder, finishBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
-        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
-        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
-        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
     }
 
     private static LlvmValueHandle EmitFloatToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
@@ -2105,6 +2095,35 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned), resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
 
+        EmitFloatToDecimalStringScientific(state, absValue, decimals, trimTrailingZeros, signText, resultSlot, normalizedSlot, exponentSlot,
+            scientificInitBlock, scientificLoopCheckBlock, scientificLoopBodyBlock, scientificFinishBlock, mergeBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    /// <summary>
+    /// Scientific path of <see cref="EmitFloatToDecimalString"/>: normalizes the magnitude into
+    /// [0, 10) by repeated division, renders mantissa and exponent, and stores "m e+x" (with sign)
+    /// into the result slot.
+    /// </summary>
+    private static void EmitFloatToDecimalStringScientific(
+        LlvmCodegenState state,
+        LlvmValueHandle absValue,
+        LlvmValueHandle decimals,
+        bool trimTrailingZeros,
+        LlvmValueHandle signText,
+        LlvmValueHandle resultSlot,
+        LlvmValueHandle normalizedSlot,
+        LlvmValueHandle exponentSlot,
+        LlvmBasicBlockHandle scientificInitBlock,
+        LlvmBasicBlockHandle scientificLoopCheckBlock,
+        LlvmBasicBlockHandle scientificLoopBodyBlock,
+        LlvmBasicBlockHandle scientificFinishBlock,
+        LlvmBasicBlockHandle mergeBlock,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, scientificInitBlock);
         LlvmApi.BuildStore(builder, absValue, normalizedSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), exponentSlot);
@@ -2130,9 +2149,6 @@ internal static partial class LlvmCodegen
         scientificResult = EmitStringConcat(state, scientificResult, exponentText);
         LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, scientificResult), resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
     private static LlvmValueHandle EmitUnsignedFloatToDecimalString(LlvmCodegenState state, LlvmValueHandle absValue, LlvmValueHandle decimals, bool trimTrailingZeros, string prefix)
@@ -2158,6 +2174,17 @@ internal static partial class LlvmCodegen
 
         LlvmApi.BuildBr(builder, scaleCheckBlock);
 
+        EmitUnsignedFloatToDecimalStringScaleLoop(state, decimals, scaleSlot, scaleCounterSlot, scaleCheckBlock, scaleBodyBlock, scaleDoneBlock, prefix);
+        EmitUnsignedFloatToDecimalStringRender(state, integerPart, fractional, decimals, trimTrailingZeros, scaleSlot, resultSlot, scaleDoneBlock, fractionBlock, joinBlock, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, joinBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
+    }
+
+    /// <summary>Scale loop of <see cref="EmitUnsignedFloatToDecimalString"/>: computes 10^decimals into the scale slot.</summary>
+    private static void EmitUnsignedFloatToDecimalStringScaleLoop(LlvmCodegenState state, LlvmValueHandle decimals, LlvmValueHandle scaleSlot, LlvmValueHandle scaleCounterSlot, LlvmBasicBlockHandle scaleCheckBlock, LlvmBasicBlockHandle scaleBodyBlock, LlvmBasicBlockHandle scaleDoneBlock, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, scaleCheckBlock);
         LlvmValueHandle scaleCounter = LlvmApi.BuildLoad2(builder, state.I64, scaleCounterSlot, prefix + "_scale_counter_value");
         LlvmValueHandle scaleContinue = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, scaleCounter, decimals, prefix + "_scale_continue");
@@ -2168,7 +2195,27 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildMul(builder, scaleValue, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_scale_next"), scaleSlot);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, scaleCounter, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_scale_counter_next"), scaleCounterSlot);
         LlvmApi.BuildBr(builder, scaleCheckBlock);
+    }
 
+    /// <summary>
+    /// Render section of <see cref="EmitUnsignedFloatToDecimalString"/>: rounds the scaled
+    /// fraction (carrying into the integer part), renders the integer text, and appends the
+    /// fractional digits when decimals is positive.
+    /// </summary>
+    private static void EmitUnsignedFloatToDecimalStringRender(
+        LlvmCodegenState state,
+        LlvmValueHandle integerPart,
+        LlvmValueHandle fractional,
+        LlvmValueHandle decimals,
+        bool trimTrailingZeros,
+        LlvmValueHandle scaleSlot,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle scaleDoneBlock,
+        LlvmBasicBlockHandle fractionBlock,
+        LlvmBasicBlockHandle joinBlock,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, scaleDoneBlock);
         LlvmValueHandle scale = LlvmApi.BuildLoad2(builder, state.I64, scaleSlot, prefix + "_scale_final");
         LlvmValueHandle scaleAsFloat = LlvmApi.BuildSIToFP(builder, scale, state.F64, prefix + "_scale_f64");
@@ -2188,9 +2235,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fractionText = EmitFractionalDigitsToString(state, scaledFractional, decimals, trimTrailingZeros, prefix + "_fraction_text");
         LlvmApi.BuildStore(builder, EmitStringConcat(state, withDot, fractionText), resultSlot);
         LlvmApi.BuildBr(builder, joinBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, joinBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
     }
 
     private static LlvmValueHandle EmitFractionalDigitsToString(LlvmCodegenState state, LlvmValueHandle scaledValue, LlvmValueHandle digits, bool trimTrailingZeros, string prefix)
@@ -2210,6 +2254,36 @@ internal static partial class LlvmCodegen
         var emitBodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_emit_body");
         var finishBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish");
 
+        EmitFractionalDigitsToStringTrim(state, workSlot, widthSlot, emitCheckBlock, trimTrailingZeros, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emitCheckBlock);
+        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_emit_index");
+        LlvmValueHandle emitWidth = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_emit_width");
+        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, emitWidth, prefix + "_emit_done");
+        LlvmApi.BuildCondBr(builder, done, finishBlock, emitBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emitBodyBlock);
+        LlvmValueHandle emitWork = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_emit_work");
+        LlvmValueHandle digit = LlvmApi.BuildURem(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_digit");
+        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), index, prefix + "_write_index"), LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ascii"));
+        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_next_work"), workSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_next_index"), indexSlot);
+        LlvmApi.BuildBr(builder, emitCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
+        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
+        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+    }
+
+    /// <summary>
+    /// Trim section of <see cref="EmitFractionalDigitsToString"/>: when trimming, strips trailing
+    /// zero digits (keeping at least one) before the emit loop; otherwise falls straight through.
+    /// </summary>
+    private static void EmitFractionalDigitsToStringTrim(LlvmCodegenState state, LlvmValueHandle workSlot, LlvmValueHandle widthSlot, LlvmBasicBlockHandle emitCheckBlock, bool trimTrailingZeros, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         if (trimTrailingZeros)
         {
             var trimCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_trim_check");
@@ -2232,26 +2306,6 @@ internal static partial class LlvmCodegen
         {
             LlvmApi.BuildBr(builder, emitCheckBlock);
         }
-
-        LlvmApi.PositionBuilderAtEnd(builder, emitCheckBlock);
-        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_emit_index");
-        LlvmValueHandle emitWidth = LlvmApi.BuildLoad2(builder, state.I64, widthSlot, prefix + "_emit_width");
-        LlvmValueHandle done = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, index, emitWidth, prefix + "_emit_done");
-        LlvmApi.BuildCondBr(builder, done, finishBlock, emitBodyBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, emitBodyBlock);
-        LlvmValueHandle emitWork = LlvmApi.BuildLoad2(builder, state.I64, workSlot, prefix + "_emit_work");
-        LlvmValueHandle digit = LlvmApi.BuildURem(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_digit");
-        StoreBufferByte(state, buffer, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), index, prefix + "_write_index"), LlvmApi.BuildAdd(builder, digit, LlvmApi.ConstInt(state.I64, (byte)'0', 0), prefix + "_ascii"));
-        LlvmApi.BuildStore(builder, LlvmApi.BuildUDiv(builder, emitWork, LlvmApi.ConstInt(state.I64, 10, 0), prefix + "_next_work"), workSlot);
-        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_next_index"), indexSlot);
-        LlvmApi.BuildBr(builder, emitCheckBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
-        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
-        LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
-        LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
-        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
     }
 
     private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
@@ -2306,50 +2360,60 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, isOurs, fits, "csr_extendable"), extendBlock, fallbackBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, extendBlock);
-        {
-            // Destination [accEnd, accEnd+lb) is unused reservation space — disjoint from every
-            // live byte (the affine analysis keeps the accumulator out of the right operand, so
-            // right cannot be a view into it), hence a plain memcpy.
-            LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "csr_ext_rbytes");
-            LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, accEnd, state.I8Ptr, "csr_ext_dest");
-            EmitCopyBytes(state, destPtr, rightBytes, lb, "csr_ext_copy");
-            StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "csr_ext_len"), "csr_ext_hdr");
-            LlvmApi.BuildStore(builder, leftRef, resultSlot);
-            LlvmApi.BuildBr(builder, doneBlock);
-        }
+        EmitConcatStrTipExtend(state, leftRef, rightRef, la, lb, accEnd, resultSlot, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, fallbackBlock);
-        {
-            // Concatenate into a fresh allocation with doubling headroom and record the new
-            // reservation. Handles the caller seed (never matches the identity check), views, a
-            // filled reservation, and post-compaction re-reservation alike.
-            LlvmValueHandle total = LlvmApi.BuildAdd(builder, la, lb, "csr_fb_total");
-            LlvmValueHandle allocSize = LlvmApi.BuildAdd(builder,
-                LlvmApi.BuildMul(builder, total, LlvmApi.ConstInt(state.I64, 2, 0), "csr_fb_2x"),
-                LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
-            LlvmValueHandle dest = EmitAllocDynamic(state, allocSize);
-            StoreMemory(state, dest, 0, total, "csr_fb_hdr");
-            LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
-                LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");
-            LlvmValueHandle leftBytes = GetStringBytesPointer(state, leftRef, "csr_fb_lbytes");
-            EmitCopyBytes(state, destBytes, leftBytes, la, "csr_fb_lcopy");
-            LlvmValueHandle destTail = LlvmApi.BuildIntToPtr(builder,
-                LlvmApi.BuildAdd(builder,
-                    LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8b"), la, "csr_fb_dtail_i"),
-                state.I8Ptr, "csr_fb_dtail");
-            LlvmValueHandle rightBytesF = GetStringBytesPointer(state, rightRef, "csr_fb_rbytes");
-            EmitCopyBytes(state, destTail, rightBytesF, lb, "csr_fb_rcopy");
-            // Reservation bounds: EmitAllocDynamic reserved align8(allocSize) bytes at dest.
-            LlvmValueHandle reservedEnd = LlvmApi.BuildAdd(builder, dest,
-                AlignRuntimeSize(state, allocSize, "csr_fb_rsz"), "csr_fb_rend");
-            LlvmApi.BuildStore(builder, dest, state.LocalSlots[resvStartSlot]);
-            LlvmApi.BuildStore(builder, reservedEnd, state.LocalSlots[resvEndSlot]);
-            LlvmApi.BuildStore(builder, dest, resultSlot);
-            LlvmApi.BuildBr(builder, doneBlock);
-        }
+        EmitConcatStrTipFallback(state, leftRef, rightRef, la, lb, resvStartSlot, resvEndSlot, resultSlot, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "csr_final");
+    }
+
+    /// <summary>Extend path of <see cref="EmitConcatStrTip"/>: appends in place onto the reserved accumulator.</summary>
+    private static void EmitConcatStrTipExtend(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, LlvmValueHandle la, LlvmValueHandle lb, LlvmValueHandle accEnd, LlvmValueHandle resultSlot, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Destination [accEnd, accEnd+lb) is unused reservation space — disjoint from every
+        // live byte (the affine analysis keeps the accumulator out of the right operand, so
+        // right cannot be a view into it), hence a plain memcpy.
+        LlvmValueHandle rightBytes = GetStringBytesPointer(state, rightRef, "csr_ext_rbytes");
+        LlvmValueHandle destPtr = LlvmApi.BuildIntToPtr(builder, accEnd, state.I8Ptr, "csr_ext_dest");
+        EmitCopyBytes(state, destPtr, rightBytes, lb, "csr_ext_copy");
+        StoreMemory(state, leftRef, 0, LlvmApi.BuildAdd(builder, la, lb, "csr_ext_len"), "csr_ext_hdr");
+        LlvmApi.BuildStore(builder, leftRef, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+    }
+
+    /// <summary>Fallback path of <see cref="EmitConcatStrTip"/>: concatenates into a fresh doubling-headroom allocation and records the new reservation.</summary>
+    private static void EmitConcatStrTipFallback(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, LlvmValueHandle la, LlvmValueHandle lb, int resvStartSlot, int resvEndSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Concatenate into a fresh allocation with doubling headroom and record the new
+        // reservation. Handles the caller seed (never matches the identity check), views, a
+        // filled reservation, and post-compaction re-reservation alike.
+        LlvmValueHandle total = LlvmApi.BuildAdd(builder, la, lb, "csr_fb_total");
+        LlvmValueHandle allocSize = LlvmApi.BuildAdd(builder,
+            LlvmApi.BuildMul(builder, total, LlvmApi.ConstInt(state.I64, 2, 0), "csr_fb_2x"),
+            LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
+        LlvmValueHandle dest = EmitAllocDynamic(state, allocSize);
+        StoreMemory(state, dest, 0, total, "csr_fb_hdr");
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
+            LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");
+        LlvmValueHandle leftBytes = GetStringBytesPointer(state, leftRef, "csr_fb_lbytes");
+        EmitCopyBytes(state, destBytes, leftBytes, la, "csr_fb_lcopy");
+        LlvmValueHandle destTail = LlvmApi.BuildIntToPtr(builder,
+            LlvmApi.BuildAdd(builder,
+                LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8b"), la, "csr_fb_dtail_i"),
+            state.I8Ptr, "csr_fb_dtail");
+        LlvmValueHandle rightBytesF = GetStringBytesPointer(state, rightRef, "csr_fb_rbytes");
+        EmitCopyBytes(state, destTail, rightBytesF, lb, "csr_fb_rcopy");
+        // Reservation bounds: EmitAllocDynamic reserved align8(allocSize) bytes at dest.
+        LlvmValueHandle reservedEnd = LlvmApi.BuildAdd(builder, dest,
+            AlignRuntimeSize(state, allocSize, "csr_fb_rsz"), "csr_fb_rend");
+        LlvmApi.BuildStore(builder, dest, state.LocalSlots[resvStartSlot]);
+        LlvmApi.BuildStore(builder, reservedEnd, state.LocalSlots[resvEndSlot]);
+        LlvmApi.BuildStore(builder, dest, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
     }
 
     /// <summary>

@@ -236,64 +236,64 @@ public sealed partial class Lowering
     {
         var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
         bool sawSelfCall = false;
-
-        void Walk(Expr e, HashSet<string> shadowed)
-        {
-            switch (e)
-            {
-                case Expr.If iff:
-                    Walk(iff.Then, shadowed);
-                    Walk(iff.Else, shadowed);
-                    break;
-                case Expr.Match m:
-                    foreach (var c in m.Cases)
-                    {
-                        var caseShadow = shadowed;
-                        var binders = new HashSet<string>(StringComparer.Ordinal);
-                        CollectPatternBinders(c.Pattern, binders);
-                        if (binders.Count > 0)
-                        {
-                            caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
-                            caseShadow.UnionWith(binders);
-                        }
-
-                        Walk(c.Body, caseShadow);
-                    }
-
-                    break;
-                case Expr.Let let:
-                    var bodyShadow = shadowed.Contains(let.Name)
-                        ? shadowed
-                        : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
-                    Walk(let.Body, bodyShadow);
-                    break;
-                case Expr.Call:
-                    var args = new List<Expr>();
-                    var root = CollectCallArgs(e, args);
-                    if (root is Expr.Var f
-                        && string.Equals(f.Name, selfName, StringComparison.Ordinal)
-                        && !shadowed.Contains(selfName)
-                        && args.Count == paramNames.Count)
-                    {
-                        sawSelfCall = true;
-                        for (int i = 0; i < paramNames.Count; i++)
-                        {
-                            bool unchanged = args[i] is Expr.Var av
-                                && string.Equals(av.Name, paramNames[i], StringComparison.Ordinal)
-                                && !shadowed.Contains(paramNames[i]);
-                            if (!unchanged)
-                            {
-                                candidates.Remove(paramNames[i]);
-                            }
-                        }
-                    }
-
-                    break;
-            }
-        }
-
-        Walk(body, new HashSet<string>(StringComparer.Ordinal));
+        CollectLoopInvariantParamsWalk(body, new HashSet<string>(StringComparer.Ordinal), paramNames, selfName, candidates, ref sawSelfCall);
         return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    private static void CollectLoopInvariantParamsWalk(Expr e, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        switch (e)
+        {
+            case Expr.If iff:
+                CollectLoopInvariantParamsWalk(iff.Then, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+                CollectLoopInvariantParamsWalk(iff.Else, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+                break;
+            case Expr.Match m:
+                foreach (var c in m.Cases)
+                {
+                    var caseShadow = shadowed;
+                    var binders = new HashSet<string>(StringComparer.Ordinal);
+                    CollectPatternBinders(c.Pattern, binders);
+                    if (binders.Count > 0)
+                    {
+                        caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                        caseShadow.UnionWith(binders);
+                    }
+
+                    CollectLoopInvariantParamsWalk(c.Body, caseShadow, paramNames, selfName, candidates, ref sawSelfCall);
+                }
+
+                break;
+            case Expr.Let let:
+                var bodyShadow = shadowed.Contains(let.Name)
+                    ? shadowed
+                    : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+                CollectLoopInvariantParamsWalk(let.Body, bodyShadow, paramNames, selfName, candidates, ref sawSelfCall);
+                break;
+            case Expr.Call:
+                var args = new List<Expr>();
+                var root = CollectCallArgs(e, args);
+                if (root is Expr.Var f
+                    && string.Equals(f.Name, selfName, StringComparison.Ordinal)
+                    && !shadowed.Contains(selfName)
+                    && args.Count == paramNames.Count)
+                {
+                    sawSelfCall = true;
+                    for (int i = 0; i < paramNames.Count; i++)
+                    {
+                        bool unchanged = args[i] is Expr.Var av
+                            && string.Equals(av.Name, paramNames[i], StringComparison.Ordinal)
+                            && !shadowed.Contains(paramNames[i]);
+                        if (!unchanged)
+                        {
+                            candidates.Remove(paramNames[i]);
+                        }
+                    }
+                }
+
+                break;
+        }
     }
 
     /// <summary>
@@ -312,179 +312,202 @@ public sealed partial class Lowering
     {
         var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
         bool sawSelfCall = false;
-
-        void DisqualifyMentioned(Expr e, HashSet<string> shadowed)
-        {
-            if (candidates.Count == 0)
-            {
-                return;
-            }
-
-            var free = FreeVars(e, shadowed);
-            candidates.RemoveWhere(free.Contains);
-        }
-
-        // Returns whether the subtree contains a tail self-call (i.e. is loop-continuing).
-        bool Walk(Expr e, HashSet<string> shadowed)
-        {
-            switch (e)
-            {
-                case Expr.If iff:
-                    {
-                        bool t = Walk(iff.Then, shadowed);
-                        bool el = Walk(iff.Else, shadowed);
-                        if (t || el)
-                        {
-                            DisqualifyMentioned(iff.Cond, shadowed);
-                        }
-
-                        return t || el;
-                    }
-
-                case Expr.Match m:
-                    {
-                        bool any = false;
-                        foreach (var c in m.Cases)
-                        {
-                            var caseShadow = shadowed;
-                            var binders = new HashSet<string>(StringComparer.Ordinal);
-                            CollectPatternBinders(c.Pattern, binders);
-                            if (binders.Count > 0)
-                            {
-                                caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
-                                caseShadow.UnionWith(binders);
-                            }
-
-                            bool caseContinues = Walk(c.Body, caseShadow);
-                            if (caseContinues && c.Guard is not null)
-                            {
-                                DisqualifyMentioned(c.Guard, caseShadow);
-                            }
-
-                            any |= caseContinues;
-                        }
-
-                        if (any)
-                        {
-                            DisqualifyMentioned(m.Value, shadowed);
-                        }
-
-                        return any;
-                    }
-
-                case Expr.Let let:
-                    {
-                        var bodyShadow = shadowed.Contains(let.Name)
-                            ? shadowed
-                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
-                        bool b = Walk(let.Body, bodyShadow);
-                        if (b)
-                        {
-                            DisqualifyMentioned(let.Value, shadowed);
-                        }
-
-                        return b;
-                    }
-
-                case Expr.LetResult letResult:
-                    {
-                        var bodyShadow = shadowed.Contains(letResult.Name)
-                            ? shadowed
-                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letResult.Name };
-                        bool b = Walk(letResult.Body, bodyShadow);
-                        if (b)
-                        {
-                            DisqualifyMentioned(letResult.Value, shadowed);
-                        }
-
-                        return b;
-                    }
-
-                case Expr.LetRecursive letRecursive:
-                    {
-                        var bodyShadow = shadowed.Contains(letRecursive.Name)
-                            ? shadowed
-                            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letRecursive.Name };
-                        bool b = Walk(letRecursive.Body, bodyShadow);
-                        if (b)
-                        {
-                            // The nested function's captures alias whatever they close over.
-                            DisqualifyMentioned(letRecursive.Value, bodyShadow);
-                        }
-
-                        return b;
-                    }
-
-                case Expr.Call:
-                    {
-                        var args = new List<Expr>();
-                        var root = CollectCallArgs(e, args);
-                        if (root is not Expr.Var f
-                            || !string.Equals(f.Name, selfName, StringComparison.Ordinal)
-                            || shadowed.Contains(selfName)
-                            || args.Count != paramNames.Count)
-                        {
-                            // An exit leaf (or a non-tail self-call: a fresh invocation whose own
-                            // watermark sits above our values, so its appends fall back safely).
-                            return false;
-                        }
-
-                        sawSelfCall = true;
-                        for (int j = 0; j < args.Count; j++)
-                        {
-                            foreach (var p in candidates.ToArray())
-                            {
-                                if (shadowed.Contains(p))
-                                {
-                                    continue;
-                                }
-
-                                bool ownPosition = string.Equals(p, paramNames[j], StringComparison.Ordinal);
-                                if (ownPosition)
-                                {
-                                    // Sanctioned: the param itself, or a LEFT-NESTED `+` chain with
-                                    // the param as its leftmost leaf and no other occurrence in any
-                                    // right operand — e.g. `out + "\n" + ch`. Every step of the
-                                    // chain then appends onto the same uniquely-owned accumulator.
-                                    bool sanctioned;
-                                    var chain = args[j];
-                                    bool rhsClean = true;
-                                    while (chain is Expr.Add chainAdd)
-                                    {
-                                        if (FreeVars(chainAdd.Right, shadowed).Contains(p))
-                                        {
-                                            rhsClean = false;
-                                            break;
-                                        }
-
-                                        chain = chainAdd.Left;
-                                    }
-
-                                    sanctioned = rhsClean
-                                        && chain is Expr.Var pv
-                                        && string.Equals(pv.Name, p, StringComparison.Ordinal);
-                                    if (!sanctioned && FreeVars(args[j], shadowed).Contains(p))
-                                    {
-                                        candidates.Remove(p);
-                                    }
-                                }
-                                else if (FreeVars(args[j], shadowed).Contains(p))
-                                {
-                                    candidates.Remove(p);
-                                }
-                            }
-                        }
-
-                        return true;
-                    }
-
-                default:
-                    return false; // exit leaf: unrestricted uses
-            }
-        }
-
-        Walk(body, new HashSet<string>(StringComparer.Ordinal));
+        CollectAffineAccumulatorsWalk(body, new HashSet<string>(StringComparer.Ordinal), paramNames, selfName, candidates, ref sawSelfCall);
         return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    private void CollectAffineAccumulatorsDisqualifyMentioned(Expr e, HashSet<string> shadowed, HashSet<string> candidates)
+    {
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var free = FreeVars(e, shadowed);
+        candidates.RemoveWhere(free.Contains);
+    }
+
+    // Returns whether the subtree contains a tail self-call (i.e. is loop-continuing).
+    private bool CollectAffineAccumulatorsWalk(Expr e, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        switch (e)
+        {
+            case Expr.If iff:
+                {
+                    bool t = CollectAffineAccumulatorsWalk(iff.Then, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+                    bool el = CollectAffineAccumulatorsWalk(iff.Else, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+                    if (t || el)
+                    {
+                        CollectAffineAccumulatorsDisqualifyMentioned(iff.Cond, shadowed, candidates);
+                    }
+
+                    return t || el;
+                }
+
+            case Expr.Match m:
+                return CollectAffineAccumulatorsWalkMatch(m, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+
+            case Expr.Let let:
+                return CollectAffineAccumulatorsWalkLet(let, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+
+            case Expr.LetResult letResult:
+                return CollectAffineAccumulatorsWalkLetResult(letResult, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+
+            case Expr.LetRecursive letRecursive:
+                return CollectAffineAccumulatorsWalkLetRecursive(letRecursive, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+
+            case Expr.Call:
+                return CollectAffineAccumulatorsWalkCall(e, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
+
+            default:
+                return false; // exit leaf: unrestricted uses
+        }
+    }
+
+    private bool CollectAffineAccumulatorsWalkMatch(Expr.Match m, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        bool any = false;
+        foreach (var c in m.Cases)
+        {
+            var caseShadow = shadowed;
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(c.Pattern, binders);
+            if (binders.Count > 0)
+            {
+                caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
+                caseShadow.UnionWith(binders);
+            }
+
+            bool caseContinues = CollectAffineAccumulatorsWalk(c.Body, caseShadow, paramNames, selfName, candidates, ref sawSelfCall);
+            if (caseContinues && c.Guard is not null)
+            {
+                CollectAffineAccumulatorsDisqualifyMentioned(c.Guard, caseShadow, candidates);
+            }
+
+            any |= caseContinues;
+        }
+
+        if (any)
+        {
+            CollectAffineAccumulatorsDisqualifyMentioned(m.Value, shadowed, candidates);
+        }
+
+        return any;
+    }
+
+    private bool CollectAffineAccumulatorsWalkLet(Expr.Let let, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        var bodyShadow = shadowed.Contains(let.Name)
+            ? shadowed
+            : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
+        bool b = CollectAffineAccumulatorsWalk(let.Body, bodyShadow, paramNames, selfName, candidates, ref sawSelfCall);
+        if (b)
+        {
+            CollectAffineAccumulatorsDisqualifyMentioned(let.Value, shadowed, candidates);
+        }
+
+        return b;
+    }
+
+    private bool CollectAffineAccumulatorsWalkLetResult(Expr.LetResult letResult, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        var bodyShadow = shadowed.Contains(letResult.Name)
+            ? shadowed
+            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letResult.Name };
+        bool b = CollectAffineAccumulatorsWalk(letResult.Body, bodyShadow, paramNames, selfName, candidates, ref sawSelfCall);
+        if (b)
+        {
+            CollectAffineAccumulatorsDisqualifyMentioned(letResult.Value, shadowed, candidates);
+        }
+
+        return b;
+    }
+
+    private bool CollectAffineAccumulatorsWalkLetRecursive(Expr.LetRecursive letRecursive, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        var bodyShadow = shadowed.Contains(letRecursive.Name)
+            ? shadowed
+            : new HashSet<string>(shadowed, StringComparer.Ordinal) { letRecursive.Name };
+        bool b = CollectAffineAccumulatorsWalk(letRecursive.Body, bodyShadow, paramNames, selfName, candidates, ref sawSelfCall);
+        if (b)
+        {
+            // The nested function's captures alias whatever they close over.
+            CollectAffineAccumulatorsDisqualifyMentioned(letRecursive.Value, bodyShadow, candidates);
+        }
+
+        return b;
+    }
+
+    private bool CollectAffineAccumulatorsWalkCall(Expr e, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
+        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
+    {
+        var args = new List<Expr>();
+        var root = CollectCallArgs(e, args);
+        if (root is not Expr.Var f
+            || !string.Equals(f.Name, selfName, StringComparison.Ordinal)
+            || shadowed.Contains(selfName)
+            || args.Count != paramNames.Count)
+        {
+            // An exit leaf (or a non-tail self-call: a fresh invocation whose own
+            // watermark sits above our values, so its appends fall back safely).
+            return false;
+        }
+
+        sawSelfCall = true;
+        for (int j = 0; j < args.Count; j++)
+        {
+            foreach (var p in candidates.ToArray())
+            {
+                if (shadowed.Contains(p))
+                {
+                    continue;
+                }
+
+                bool ownPosition = string.Equals(p, paramNames[j], StringComparison.Ordinal);
+                if (ownPosition)
+                {
+                    bool sanctioned = CollectAffineAccumulatorsIsSanctionedOwnArg(args[j], p, shadowed);
+                    if (!sanctioned && FreeVars(args[j], shadowed).Contains(p))
+                    {
+                        candidates.Remove(p);
+                    }
+                }
+                else if (FreeVars(args[j], shadowed).Contains(p))
+                {
+                    candidates.Remove(p);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // Sanctioned: the param itself, or a LEFT-NESTED `+` chain with the param as its leftmost leaf
+    // and no other occurrence in any right operand — e.g. `out + "\n" + ch`. Every step of the
+    // chain then appends onto the same uniquely-owned accumulator.
+    private bool CollectAffineAccumulatorsIsSanctionedOwnArg(Expr arg, string p, HashSet<string> shadowed)
+    {
+        var chain = arg;
+        bool rhsClean = true;
+        while (chain is Expr.Add chainAdd)
+        {
+            if (FreeVars(chainAdd.Right, shadowed).Contains(p))
+            {
+                rhsClean = false;
+                break;
+            }
+
+            chain = chainAdd.Left;
+        }
+
+        return rhsClean
+            && chain is Expr.Var pv
+            && string.Equals(pv.Name, p, StringComparison.Ordinal);
     }
 
     private bool TailLeavesStable(Expr body, string accName, TextSpan selfSpan, int selfParamCount, HashSet<string> shadowed)
@@ -746,6 +769,12 @@ public sealed partial class Lowering
             _fullyReusingLabels.Add(label);
         }
 
+        GetOrCreateReuseSpecializationDebugDump(name, label, funcType, reuseLabel, fullyReusing, recursiveFunc);
+        return label;
+    }
+
+    private void GetOrCreateReuseSpecializationDebugDump(string name, string label, TypeRef funcType, string? reuseLabel, bool fullyReusing, IrFunction? recursiveFunc)
+    {
         if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
         {
             var rf = recursiveFunc;
@@ -759,8 +788,6 @@ public sealed partial class Lowering
                 Console.Error.WriteLine($"[reuse] dumped {rf.Instructions.Count} instrs of {rf.Label} to /tmp/spec_{rf.Label}.txt");
             }
         }
-
-        return label;
     }
 
     /// <summary>
@@ -774,6 +801,24 @@ public sealed partial class Lowering
     /// below the watermark — while the env/closure scaffolding is dead after the call and reclaimable.
     /// </summary>
     private static bool IsFullyReusing(IrFunction f, string selfLabel)
+    {
+        if (IsFullyReusingHasForbiddenAllocation(f))
+        {
+            return false;
+        }
+
+        // Build temp → reading instructions, then require every Alloc to feed only a MakeClosure env
+        // and every MakeClosure to feed only a CallClosure callee.
+        var readers = IsFullyReusingCollectReaders(f);
+
+        // Local-slot dataflow, for values that pass through a let/inlined-arg slot: slot → number
+        // of stores, and slot → the temps its loads produce.
+        var (slotStores, slotLoads) = IsFullyReusingCollectSlotDataflow(f);
+
+        return IsFullyReusingAllocationsConsumed(f, readers, slotStores, slotLoads);
+    }
+
+    private static bool IsFullyReusingHasForbiddenAllocation(IrFunction f)
     {
         foreach (var inst in f.Instructions)
         {
@@ -792,12 +837,15 @@ public sealed partial class Lowering
                         Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected by instruction kind: {inst}");
                     }
 
-                    return false;
+                    return true;
             }
         }
 
-        // Build temp → reading instructions, then require every Alloc to feed only a MakeClosure env
-        // and every MakeClosure to feed only a CallClosure callee.
+        return false;
+    }
+
+    private static Dictionary<int, List<IrInst>> IsFullyReusingCollectReaders(IrFunction f)
+    {
         var readers = new Dictionary<int, List<IrInst>>();
         var buf = new HashSet<int>();
         foreach (var inst in f.Instructions)
@@ -815,8 +863,11 @@ public sealed partial class Lowering
             }
         }
 
-        // Local-slot dataflow, for values that pass through a let/inlined-arg slot: slot → number
-        // of stores, and slot → the temps its loads produce.
+        return readers;
+    }
+
+    private static (Dictionary<int, int> SlotStores, Dictionary<int, List<int>> SlotLoads) IsFullyReusingCollectSlotDataflow(IrFunction f)
+    {
         var slotStores = new Dictionary<int, int>();
         var slotLoads = new Dictionary<int, List<int>>();
         foreach (var inst in f.Instructions)
@@ -837,108 +888,116 @@ public sealed partial class Lowering
             }
         }
 
-        // A fresh in-arm value (e.g. an upsert's stats tuple) is SAFELY consumed when every reader
-        // either writes INTO it, reads a field FROM it, materializes it into persistent storage
-        // (CopyFixedInto / CopyOutArenaToSpace), captures it in a closure env (the closure itself is
-        // checked below), or moves it through a single-store local slot whose every load is itself
-        // safely consumed. Anything else (a SetAdtField storing the raw pointer as a node field, a
-        // call, a return) means per-iteration scratch could escape, so the reset is disqualified.
-        bool SafelyConsumed(int temp, int depth)
+        return (slotStores, slotLoads);
+    }
+
+    // A fresh in-arm value (e.g. an upsert's stats tuple) is SAFELY consumed when every reader
+    // either writes INTO it, reads a field FROM it, materializes it into persistent storage
+    // (CopyFixedInto / CopyOutArenaToSpace), captures it in a closure env (the closure itself is
+    // checked separately), or moves it through a single-store local slot whose every load is itself
+    // safely consumed. Anything else (a SetAdtField storing the raw pointer as a node field, a
+    // call, a return) means per-iteration scratch could escape, so the reset is disqualified.
+    private static bool IsFullyReusingSafelyConsumed(int temp, int depth, Dictionary<int, List<IrInst>> readers,
+        Dictionary<int, int> slotStores, Dictionary<int, List<int>> slotLoads)
+    {
+        if (!readers.TryGetValue(temp, out var rs))
         {
-            if (!readers.TryGetValue(temp, out var rs))
-            {
-                return true;
-            }
-
-            foreach (var r in rs)
-            {
-                switch (r)
-                {
-                    case IrInst.MakeClosure:
-                    case IrInst.MakeClosureStack:
-                        continue;
-                    case IrInst.SetAdtField sa when sa.Ptr == temp:
-                        continue;
-                    case IrInst.GetAdtField gf when gf.Ptr == temp:
-                        continue;
-                    case IrInst.StoreMemOffset sm when sm.BasePtr == temp:
-                        continue;
-                    case IrInst.LoadMemOffset lm when lm.BasePtr == temp:
-                        continue;
-                    case IrInst.CopyFixedInto cfi when cfi.SrcTemp == temp:
-                        continue;
-                    case IrInst.CopyOutArenaToSpace co when co.SrcTemp == temp:
-                        continue;
-                    case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && SafelyConsumed(b.Target, depth + 1):
-                        continue;
-                    case IrInst.StoreLocal sl when depth < 4
-                        && slotStores.GetValueOrDefault(sl.Slot) == 1
-                        && (!slotLoads.TryGetValue(sl.Slot, out var loads)
-                            || loads.All(lt => SafelyConsumed(lt, depth + 1))):
-                        continue;
-                    default:
-                        return false;
-                }
-            }
-
             return true;
         }
 
-        // A closure temp is CONSUMED AS A CALL TARGET (so it never escapes into a returned cell) when
-        // every reader either calls it directly (a CallClosure with it as the CALLEE, not an argument)
-        // or moves it through a single-store local slot / Borrow whose loads are themselves consumed as
-        // call targets. This admits a `let rec go = … in go(x)` helper inlined per node (e.g.
-        // HashMap's strCompare on the composite-key descent): go's closure is MakeClosure'd, stored to
-        // a slot, loaded, and immediately called — transient scratch under an arena bracket that
-        // produces a scalar, never captured into the rebuilt tree. Passing the closure as an ARGUMENT
-        // (CallClosure.ArgTemp) is still rejected, since it could then be captured or returned.
-        bool ClosureConsumedAsCallTarget(int temp, int depth)
+        foreach (var r in rs)
         {
-            if (!readers.TryGetValue(temp, out var rs))
+            switch (r)
             {
-                return true;
+                case IrInst.MakeClosure:
+                case IrInst.MakeClosureStack:
+                    continue;
+                case IrInst.SetAdtField sa when sa.Ptr == temp:
+                    continue;
+                case IrInst.GetAdtField gf when gf.Ptr == temp:
+                    continue;
+                case IrInst.StoreMemOffset sm when sm.BasePtr == temp:
+                    continue;
+                case IrInst.LoadMemOffset lm when lm.BasePtr == temp:
+                    continue;
+                case IrInst.CopyFixedInto cfi when cfi.SrcTemp == temp:
+                    continue;
+                case IrInst.CopyOutArenaToSpace co when co.SrcTemp == temp:
+                    continue;
+                case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && IsFullyReusingSafelyConsumed(b.Target, depth + 1, readers, slotStores, slotLoads):
+                    continue;
+                case IrInst.StoreLocal sl when depth < 4
+                    && slotStores.GetValueOrDefault(sl.Slot) == 1
+                    && (!slotLoads.TryGetValue(sl.Slot, out var loads)
+                        || loads.All(lt => IsFullyReusingSafelyConsumed(lt, depth + 1, readers, slotStores, slotLoads))):
+                    continue;
+                default:
+                    return false;
             }
+        }
 
-            foreach (var r in rs)
-            {
-                switch (r)
-                {
-                    case IrInst.CallClosure cc when cc.ClosureTemp == temp:
-                        continue;
-                    case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && ClosureConsumedAsCallTarget(b.Target, depth + 1):
-                        continue;
-                    case IrInst.StoreLocal sl when depth < 4
-                        && slotStores.GetValueOrDefault(sl.Slot) == 1
-                        && (!slotLoads.TryGetValue(sl.Slot, out var loads)
-                            || loads.All(lt => ClosureConsumedAsCallTarget(lt, depth + 1))):
-                        continue;
-                    default:
-                        return false;
-                }
-            }
+        return true;
+    }
 
+    // A closure temp is CONSUMED AS A CALL TARGET (so it never escapes into a returned cell) when
+    // every reader either calls it directly (a CallClosure with it as the CALLEE, not an argument)
+    // or moves it through a single-store local slot / Borrow whose loads are themselves consumed as
+    // call targets. This admits a `let rec go = … in go(x)` helper inlined per node (e.g.
+    // HashMap's strCompare on the composite-key descent): go's closure is MakeClosure'd, stored to
+    // a slot, loaded, and immediately called — transient scratch under an arena bracket that
+    // produces a scalar, never captured into the rebuilt tree. Passing the closure as an ARGUMENT
+    // (CallClosure.ArgTemp) is still rejected, since it could then be captured or returned.
+    private static bool IsFullyReusingClosureConsumedAsCallTarget(int temp, int depth, Dictionary<int, List<IrInst>> readers,
+        Dictionary<int, int> slotStores, Dictionary<int, List<int>> slotLoads)
+    {
+        if (!readers.TryGetValue(temp, out var rs))
+        {
             return true;
         }
 
+        foreach (var r in rs)
+        {
+            switch (r)
+            {
+                case IrInst.CallClosure cc when cc.ClosureTemp == temp:
+                    continue;
+                case IrInst.Borrow b when b.SourceTemp == temp && depth < 4 && IsFullyReusingClosureConsumedAsCallTarget(b.Target, depth + 1, readers, slotStores, slotLoads):
+                    continue;
+                case IrInst.StoreLocal sl when depth < 4
+                    && slotStores.GetValueOrDefault(sl.Slot) == 1
+                    && (!slotLoads.TryGetValue(sl.Slot, out var loads)
+                        || loads.All(lt => IsFullyReusingClosureConsumedAsCallTarget(lt, depth + 1, readers, slotStores, slotLoads))):
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsFullyReusingAllocationsConsumed(IrFunction f, Dictionary<int, List<IrInst>> readers,
+        Dictionary<int, int> slotStores, Dictionary<int, List<int>> slotLoads)
+    {
         foreach (var inst in f.Instructions)
         {
             switch (inst)
             {
-                case IrInst.Alloc alloc when !SafelyConsumed(alloc.Target, 0):
+                case IrInst.Alloc alloc when !IsFullyReusingSafelyConsumed(alloc.Target, 0, readers, slotStores, slotLoads):
                     if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
                     {
                         Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected: {alloc} readers: {string.Join(" | ", readers.GetValueOrDefault(alloc.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
                     }
 
                     return false;
-                case IrInst.MakeClosure mk when !ClosureConsumedAsCallTarget(mk.Target, 0):
+                case IrInst.MakeClosure mk when !IsFullyReusingClosureConsumedAsCallTarget(mk.Target, 0, readers, slotStores, slotLoads):
                     if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
                     {
                         Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", readers.GetValueOrDefault(mk.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
                     }
 
                     return false;
-                case IrInst.MakeClosureStack mks when !ClosureConsumedAsCallTarget(mks.Target, 0):
+                case IrInst.MakeClosureStack mks when !IsFullyReusingClosureConsumedAsCallTarget(mks.Target, 0, readers, slotStores, slotLoads):
                     return false;
             }
         }
@@ -1258,10 +1317,6 @@ public sealed partial class Lowering
         }
 
         var resultType = Prune(acc);
-        int combineTemp = argTemps[0];
-        int identityTemp = argTemps[1];
-        int fTemp = argTemps[2];
-        int listTemp = argTemps[3];
 
         // The workers' raw results live in worker arenas, so the merge must deep-copy each one at
         // the concrete result type — unavailable for an abstract result, which (like `both`) degrades
@@ -1272,6 +1327,21 @@ public sealed partial class Lowering
             var (combinatorTemp, _) = LowerVar(new Expr.Var(ParallelReduceName));
             return ApplyLoweredArgs(combinatorTemp, argTemps, resultType);
         }
+
+        int resultTemp = LowerParallelReduceQueuedEmit(argTemps, resultType);
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        return (resultTemp, resultType);
+    }
+
+    // Emits the runtime chunk queue for an already-lowered, worker-liftable reduce: start the queue,
+    // await the merge root on the non-empty path (deep-copying it into the parent arena), take the
+    // identity on the empty path, and clean up the descriptor.
+    private int LowerParallelReduceQueuedEmit(int[] argTemps, TypeRef resultType)
+    {
+        int combineTemp = argTemps[0];
+        int identityTemp = argTemps[1];
+        int fTemp = argTemps[2];
+        int listTemp = argTemps[3];
 
         int descTemp = NewTemp();
         Emit(new IrInst.ParallelQueueStart(descTemp, fTemp, combineTemp, listTemp));
@@ -1303,9 +1373,7 @@ public sealed partial class Lowering
         Emit(new IrInst.ParallelQueueCleanup(descTemp));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, accSlot));
-
-        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-        return (resultTemp, resultType);
+        return resultTemp;
     }
 
     /// <summary>
@@ -1446,6 +1514,16 @@ public sealed partial class Lowering
                 return ExprReferencesName(eq.Left, targetName, shadowed) || ExprReferencesName(eq.Right, targetName, shadowed);
             case Expr.NotEqual ne:
                 return ExprReferencesName(ne.Left, targetName, shadowed) || ExprReferencesName(ne.Right, targetName, shadowed);
+            default:
+                return ExprReferencesNameStructured(expr, targetName, shadowed);
+        }
+    }
+
+    // Continuation of ExprReferencesName for the non-operator expression shapes.
+    private static bool ExprReferencesNameStructured(Expr expr, string targetName, bool shadowed)
+    {
+        switch (expr)
+        {
             case Expr.ResultPipe pipe:
                 return ExprReferencesName(pipe.Left, targetName, shadowed) || ExprReferencesName(pipe.Right, targetName, shadowed);
             case Expr.ResultMapErrorPipe pipe:
@@ -1477,44 +1555,13 @@ public sealed partial class Lowering
             case Expr.Lambda lam:
                 return ExprReferencesName(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
             case Expr.Match match:
-                if (ExprReferencesName(match.Value, targetName, shadowed))
-                {
-                    return true;
-                }
-
-                foreach (var matchCase in match.Cases)
-                {
-                    bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
-                    if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, targetName, caseShadowed))
-                        || ExprReferencesName(matchCase.Body, targetName, caseShadowed))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return ExprReferencesNameMatch(match, targetName, shadowed);
             case Expr.Await awaitExpr:
                 return ExprReferencesName(awaitExpr.Task, targetName, shadowed);
             case Expr.Perform perform:
                 return ExprReferencesName(perform.Operation, targetName, shadowed);
             case Expr.Handle handleExpr:
-                if (ExprReferencesName(handleExpr.Body, targetName, shadowed))
-                {
-                    return true;
-                }
-
-                foreach (var arm in handleExpr.Arms)
-                {
-                    bool armShadowed = shadowed
-                        || string.Equals("resume", targetName, StringComparison.Ordinal)
-                        || arm.Parameters.Any(p => PatternBindings(p).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal)));
-                    if (ExprReferencesName(arm.Body, targetName, armShadowed))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return ExprReferencesNameHandle(handleExpr, targetName, shadowed);
             case Expr.RecordLit rl:
                 return rl.Fields.Any(f => ExprReferencesName(f.Value, targetName, shadowed));
             case Expr.RecordUpdate ru:
@@ -1523,5 +1570,46 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(expr.GetType().Name);
         }
+    }
+
+    private static bool ExprReferencesNameMatch(Expr.Match match, string targetName, bool shadowed)
+    {
+        if (ExprReferencesName(match.Value, targetName, shadowed))
+        {
+            return true;
+        }
+
+        foreach (var matchCase in match.Cases)
+        {
+            bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
+            if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, targetName, caseShadowed))
+                || ExprReferencesName(matchCase.Body, targetName, caseShadowed))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ExprReferencesNameHandle(Expr.Handle handleExpr, string targetName, bool shadowed)
+    {
+        if (ExprReferencesName(handleExpr.Body, targetName, shadowed))
+        {
+            return true;
+        }
+
+        foreach (var arm in handleExpr.Arms)
+        {
+            bool armShadowed = shadowed
+                || string.Equals("resume", targetName, StringComparison.Ordinal)
+                || arm.Parameters.Any(p => PatternBindings(p).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal)));
+            if (ExprReferencesName(arm.Body, targetName, armShadowed))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

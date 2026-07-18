@@ -841,22 +841,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tls
-            import Ashes.Net.Tls.Server
-            import Ashes.Async
-            let onClient tls =
-                async(match await Ashes.Net.Tls.receive(tls)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_n) -> await Ashes.Net.Tls.close(tls))
-            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = TlsEchoServerSource(port);
 
         // One worker: on real Windows serve is a fork-based multi-reactor (CreateProcessA relaunch +
         // an inherited shared listener), but Wine's cross-process inherited-socket accept is
@@ -894,6 +879,23 @@ public sealed class WindowsBackendCoverageTests
             DeleteDirectoryIfExists(tmpDir);
         }
     }
+
+    private static string TlsEchoServerSource(int port) => $$"""
+            import Ashes.IO
+            import Ashes.Net.Tls
+            import Ashes.Net.Tls.Server
+            import Ashes.Async
+            let onClient tls =
+                async(match await Ashes.Net.Tls.receive(tls)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tls.close(tls))
+            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
 
     private static void WriteSelfSignedServerPems(string directory)
     {
@@ -1094,25 +1096,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Net.Tcp
-            import Ashes.Net.Tcp.Server
-            import Ashes.Async
-            let onClient client =
-                async(match await Ashes.Net.Tcp.receive(client)(4096) with
-                    | Error(e) -> Error(e)
-                    | Ok(msg) ->
-                        match await Ashes.Async.all([Ashes.Async.sleep(300), Ashes.Async.sleep(300)]) with
-                            | Error(e2) -> Error(e2)
-                            | Ok(_ts) ->
-                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
-                                    | Error(e3) -> Error(e3)
-                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = TcpAsyncAllEchoServerSource(port);
 
         var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1170,16 +1154,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         int port = GetFreeLoopbackPort();
-        var source = $$"""
-            import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
-            let route req =
-                async(Ashes.Http.Server.text(200)("ok"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
-                | Ok(_u) -> Ashes.IO.print("stopped")
-                | Error(e) -> Ashes.IO.print(e)
-            """;
+        var source = HttpConcurrentServerSource(port);
 
         var exeBytes = new WindowsX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
         var tmpDir = CreateTempDirectory();
@@ -1201,24 +1176,7 @@ public sealed class WindowsBackendCoverageTests
 
             // Fire many concurrent requests at once; every one must get a 200 and the server must stay up.
             const int total = 60;
-            var tasks = new List<Task<bool>>(total);
-            for (int i = 0; i < total; i++)
-            {
-                tasks.Add(Task.Run(async () =>
-                {
-                    var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
-                    return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
-                }));
-            }
-            bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            int ok = 0;
-            foreach (bool r in results)
-            {
-                if (r)
-                {
-                    ok++;
-                }
-            }
+            int ok = await CountOkConcurrentHttpGetsAsync(port, total).ConfigureAwait(false);
 
             ok.ShouldBe(total);
             proc.HasExited.ShouldBeFalse();
@@ -1232,6 +1190,61 @@ public sealed class WindowsBackendCoverageTests
             DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
         }
+    }
+
+    private static string TcpAsyncAllEchoServerSource(int port) => $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Async
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Async.all([Ashes.Async.sleep(300), Ashes.Async.sleep(300)]) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_ts) ->
+                                match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
+                                    | Error(e3) -> Error(e3)
+                                    | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+    private static string HttpConcurrentServerSource(int port) => $$"""
+            import Ashes.IO
+            import Ashes.Http.Server
+            import Ashes.Async
+            let route req =
+                async(Ashes.Http.Server.text(200)("ok"))
+            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+    private static async Task<int> CountOkConcurrentHttpGetsAsync(int port, int total)
+    {
+        var tasks = new List<Task<bool>>(total);
+        for (int i = 0; i < total; i++)
+        {
+            tasks.Add(Task.Run(async () =>
+            {
+                var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+                return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
+            }));
+        }
+        bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        int ok = 0;
+        foreach (bool r in results)
+        {
+            if (r)
+            {
+                ok++;
+            }
+        }
+
+        return ok;
     }
 
     private static IrProgram LowerProgramWithImports(string source)

@@ -293,6 +293,23 @@ public sealed partial class Lowering
     {
         switch (e)
         {
+            case Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
+                or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
+                or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot:
+                return EnumerateChildrenArithmetic(e);
+            case Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
+                or Expr.Equal or Expr.NotEqual or Expr.ResultPipe or Expr.ResultMapErrorPipe
+                or Expr.Cons or Expr.Await:
+                return EnumerateChildrenComparisons(e);
+            default:
+                return EnumerateChildrenAggregates(e);
+        }
+    }
+
+    private static IEnumerable<Expr> EnumerateChildrenArithmetic(Expr e)
+    {
+        switch (e)
+        {
             case Expr.Add x: yield return x.Left; yield return x.Right; break;
             case Expr.Subtract x: yield return x.Left; yield return x.Right; break;
             case Expr.Multiply x: yield return x.Left; yield return x.Right; break;
@@ -304,6 +321,15 @@ public sealed partial class Lowering
             case Expr.ShiftLeft x: yield return x.Left; yield return x.Right; break;
             case Expr.ShiftRight x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseNot x: yield return x.Operand; break;
+            default:
+                break;
+        }
+    }
+
+    private static IEnumerable<Expr> EnumerateChildrenComparisons(Expr e)
+    {
+        switch (e)
+        {
             case Expr.GreaterThan x: yield return x.Left; yield return x.Right; break;
             case Expr.LessThan x: yield return x.Left; yield return x.Right; break;
             case Expr.GreaterOrEqual x: yield return x.Left; yield return x.Right; break;
@@ -314,6 +340,15 @@ public sealed partial class Lowering
             case Expr.ResultMapErrorPipe x: yield return x.Left; yield return x.Right; break;
             case Expr.Cons x: yield return x.Head; yield return x.Tail; break;
             case Expr.Await x: yield return x.Task; break;
+            default:
+                break;
+        }
+    }
+
+    private static IEnumerable<Expr> EnumerateChildrenAggregates(Expr e)
+    {
+        switch (e)
+        {
             case Expr.TupleLit x:
                 foreach (var el in x.Elements) { yield return el; }
 
@@ -455,48 +490,60 @@ public sealed partial class Lowering
 
         if (arg is Expr.Var v)
         {
-            bool haveFunc = _maFuncs.TryGetValue(enclosing, out var encInfo);
+            return ArgIsMoveVar(v, enclosing);
+        }
 
-            // (i) A move-linear reference to a move-safe accumulator parameter of the enclosing
-            // function (the transitive, interprocedural step).
-            if (haveFunc
-                && encInfo.Params.Contains(v.Name)
-                && IsMoveLinear(v.Name, encInfo.Body)
-                && IsParamMoveSafe(enclosing, v.Name))
-            {
-                return true;
-            }
+        return false;
+    }
 
-            // (ii) Richer aliasing (CO-2 increment): a `Var` that is NOT syntactically fresh at the
-            // call site, but is bound by a `let` LOCAL to the enclosing scope to a fully-fresh
-            // construction, and is move-linear here (used at most once on any path, never captured).
-            // The `let` confines the name's scope to this body, so move-linearity there proves no
-            // other live reference exists anywhere; the fresh construction proves the bound value is
-            // unaliased and free of internal sharing. Together the value is uniquely owned and
-            // dead-after-this-use — a sound move — even though the freshness is at the binding site
-            // rather than at the call site. Only accepted when the name is unambiguous program-wide (a
-            // single binding), so the located RHS is definitive. At a top-level call site (no
-            // registered function frame) the enclosing body is the whole desugared program; a
-            // top-level `let seed = <fresh>` lives on its spine and move-linearity over the whole
-            // program is the stronger proof of unique ownership.
-            Expr? encBody = haveFunc ? encInfo.Body : (enclosing.Length == 0 ? _maBody : null);
-            if (encBody is not null
-                && !_maAmbiguous.Contains(v.Name)
-                && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
-                && boundRhs is not null
-                && boundScope is not null
-                // Fresh by construction, or (CO-2 result-alias) the result of a builder call that is a
-                // move here (result-reach not poisoned, and every reached parameter's argument is itself
-                // a move) — both give a uniquely-owned, internally-unshared bound value.
-                && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing))
-                // Move-linear within the binding's own scope (its `let` body): used at most once on
-                // any path there, never captured. Counting in the scope — not the whole enclosing
-                // body — is essential: the whole-body count would stop at this very definition
-                // (treating it as a shadow) and spuriously report zero uses.
-                && MaxPathOccurrences(v.Name, boundScope) <= 1)
-            {
-                return true;
-            }
+    /// <summary>
+    /// The <c>Var</c>-argument cases of <see cref="ArgIsMove"/>: a move-linear reference to a
+    /// move-safe accumulator parameter of the enclosing function, or a let-bound fresh construction
+    /// that is move-linear within its binding scope.
+    /// </summary>
+    private bool ArgIsMoveVar(Expr.Var v, string enclosing)
+    {
+        bool haveFunc = _maFuncs.TryGetValue(enclosing, out var encInfo);
+
+        // (i) A move-linear reference to a move-safe accumulator parameter of the enclosing
+        // function (the transitive, interprocedural step).
+        if (haveFunc
+            && encInfo.Params.Contains(v.Name)
+            && IsMoveLinear(v.Name, encInfo.Body)
+            && IsParamMoveSafe(enclosing, v.Name))
+        {
+            return true;
+        }
+
+        // (ii) Richer aliasing (CO-2 increment): a `Var` that is NOT syntactically fresh at the
+        // call site, but is bound by a `let` LOCAL to the enclosing scope to a fully-fresh
+        // construction, and is move-linear here (used at most once on any path, never captured).
+        // The `let` confines the name's scope to this body, so move-linearity there proves no
+        // other live reference exists anywhere; the fresh construction proves the bound value is
+        // unaliased and free of internal sharing. Together the value is uniquely owned and
+        // dead-after-this-use — a sound move — even though the freshness is at the binding site
+        // rather than at the call site. Only accepted when the name is unambiguous program-wide (a
+        // single binding), so the located RHS is definitive. At a top-level call site (no
+        // registered function frame) the enclosing body is the whole desugared program; a
+        // top-level `let seed = <fresh>` lives on its spine and move-linearity over the whole
+        // program is the stronger proof of unique ownership.
+        Expr? encBody = haveFunc ? encInfo.Body : (enclosing.Length == 0 ? _maBody : null);
+        if (encBody is not null
+            && !_maAmbiguous.Contains(v.Name)
+            && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
+            && boundRhs is not null
+            && boundScope is not null
+            // Fresh by construction, or (CO-2 result-alias) the result of a builder call that is a
+            // move here (result-reach not poisoned, and every reached parameter's argument is itself
+            // a move) — both give a uniquely-owned, internally-unshared bound value.
+            && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing))
+            // Move-linear within the binding's own scope (its `let` body): used at most once on
+            // any path there, never captured. Counting in the scope — not the whole enclosing
+            // body — is essential: the whole-body count would stop at this very definition
+            // (treating it as a shadow) and spuriously report zero uses.
+            && MaxPathOccurrences(v.Name, boundScope) <= 1)
+        {
+            return true;
         }
 
         return false;
@@ -548,39 +595,7 @@ public sealed partial class Lowering
                     () => FirstFound(TryFindLocalLet(name, i.Then), () => TryFindLocalLet(name, i.Else)));
 
             case Expr.Match m:
-                {
-                    var found = TryFindLocalLet(name, m.Value);
-                    if (found.Rhs is not null)
-                    {
-                        return found;
-                    }
-
-                    foreach (var c in m.Cases)
-                    {
-                        // A pattern binding of the same name shadows the let we are after in that arm.
-                        if (PatternBinds(c.Pattern, name))
-                        {
-                            continue;
-                        }
-
-                        found = TryFindLocalLet(name, c.Body);
-                        if (found.Rhs is not null)
-                        {
-                            return found;
-                        }
-
-                        if (c.Guard is not null)
-                        {
-                            found = TryFindLocalLet(name, c.Guard);
-                            if (found.Rhs is not null)
-                            {
-                                return found;
-                            }
-                        }
-                    }
-
-                    return (null, null);
-                }
+                return TryFindLocalLetInMatch(name, m);
 
             case Expr.Call c:
                 return FirstFound(TryFindLocalLet(name, c.Func), () => TryFindLocalLet(name, c.Arg));
@@ -591,17 +606,57 @@ public sealed partial class Lowering
                 return (null, null);
 
             default:
-                foreach (var child in EnumerateChildren(body))
-                {
-                    var found = TryFindLocalLet(name, child);
-                    if (found.Rhs is not null)
-                    {
-                        return found;
-                    }
-                }
-
-                return (null, null);
+                return TryFindLocalLetInChildren(name, body);
         }
+    }
+
+    private static (Expr? Rhs, Expr? Scope) TryFindLocalLetInMatch(string name, Expr.Match m)
+    {
+        var found = TryFindLocalLet(name, m.Value);
+        if (found.Rhs is not null)
+        {
+            return found;
+        }
+
+        foreach (var c in m.Cases)
+        {
+            // A pattern binding of the same name shadows the let we are after in that arm.
+            if (PatternBinds(c.Pattern, name))
+            {
+                continue;
+            }
+
+            found = TryFindLocalLet(name, c.Body);
+            if (found.Rhs is not null)
+            {
+                return found;
+            }
+
+            if (c.Guard is not null)
+            {
+                found = TryFindLocalLet(name, c.Guard);
+                if (found.Rhs is not null)
+                {
+                    return found;
+                }
+            }
+        }
+
+        return (null, null);
+    }
+
+    private static (Expr? Rhs, Expr? Scope) TryFindLocalLetInChildren(string name, Expr body)
+    {
+        foreach (var child in EnumerateChildren(body))
+        {
+            var found = TryFindLocalLet(name, child);
+            if (found.Rhs is not null)
+            {
+                return found;
+            }
+        }
+
+        return (null, null);
     }
 
     private static (Expr? Rhs, Expr? Scope) FirstFound((Expr? Rhs, Expr? Scope) first, System.Func<(Expr? Rhs, Expr? Scope)> second)
@@ -968,51 +1023,15 @@ public sealed partial class Lowering
         Expr e,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
+        if (ResultReachIsCopyScalar(e))
+        {
+            return ReachBottom();
+        }
+
         switch (e)
         {
-            case Expr.IntLit:
-            case Expr.UIntLit:
-            case Expr.BigIntLit:
-            case Expr.FloatLit:
-            case Expr.StrLit:
-            case Expr.BoolLit:
-            // Arithmetic/comparison/bitwise/shift results are copy-typed scalars — they reach no heap
-            // cell, so they are confined and reach no parameter.
-            case Expr.Add:
-            case Expr.Subtract:
-            case Expr.Multiply:
-            case Expr.Divide:
-            case Expr.Modulo:
-            case Expr.BitwiseAnd:
-            case Expr.BitwiseOr:
-            case Expr.BitwiseXor:
-            case Expr.ShiftLeft:
-            case Expr.ShiftRight:
-            case Expr.BitwiseNot:
-            case Expr.GreaterThan:
-            case Expr.LessThan:
-            case Expr.GreaterOrEqual:
-            case Expr.LessOrEqual:
-            case Expr.Equal:
-            case Expr.NotEqual:
-                return ReachBottom();
-
             case Expr.Var v:
-                if (env.TryGetValue(v.Name, out var bound))
-                {
-                    return bound;
-                }
-
-                if (_constructorSymbols.TryGetValue(v.Name, out var ctor))
-                {
-                    // A nullary constructor value reaches no parameter; it is confined only when it is
-                    // the sole nullary constructor of its type (a no-op-safe tag cell). Any other nullary
-                    // (a possibly-shared non-sole singleton) or a partially-applied constructor poisons.
-                    return ctor.Arity == 0 && IsSoleNullaryConstructor(ctor) ? ReachBottom() : ReachPoisoned();
-                }
-
-                // A free reference: a top-level/global binding or an unmodeled name — not confined.
-                return ReachPoisoned();
+                return ResultReachVar(v, env);
 
             case Expr.QualifiedVar:
                 return ReachPoisoned();
@@ -1040,15 +1059,7 @@ public sealed partial class Lowering
             case Expr.TupleLit t:
                 return SumReach(t.Elements, env);
             case Expr.RecordLit rec:
-                {
-                    var acc = ReachBottom();
-                    foreach (var (_, fv) in rec.Fields)
-                    {
-                        acc = ReachSum(acc, ResultReach(fv, env));
-                    }
-
-                    return acc;
-                }
+                return ResultReachRecordLit(rec, env);
 
             case Expr.Call:
                 return CallReach(e, env);
@@ -1057,6 +1068,53 @@ public sealed partial class Lowering
                 // Unmodeled node (Lambda, Await, RecordUpdate, Result pipes, …): not provably confined.
                 return ReachPoisoned();
         }
+    }
+
+    // Literal and arithmetic/comparison/bitwise/shift results are copy-typed scalars — they reach no
+    // heap cell, so they are confined and reach no parameter.
+    private static bool ResultReachIsCopyScalar(Expr e)
+    {
+        return e is Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit
+            or Expr.BoolLit
+            or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
+            or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
+            or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot
+            or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
+            or Expr.Equal or Expr.NotEqual;
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) ResultReachVar(
+        Expr.Var v,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        if (env.TryGetValue(v.Name, out var bound))
+        {
+            return bound;
+        }
+
+        if (_constructorSymbols.TryGetValue(v.Name, out var ctor))
+        {
+            // A nullary constructor value reaches no parameter; it is confined only when it is
+            // the sole nullary constructor of its type (a no-op-safe tag cell). Any other nullary
+            // (a possibly-shared non-sole singleton) or a partially-applied constructor poisons.
+            return ctor.Arity == 0 && IsSoleNullaryConstructor(ctor) ? ReachBottom() : ReachPoisoned();
+        }
+
+        // A free reference: a top-level/global binding or an unmodeled name — not confined.
+        return ReachPoisoned();
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) ResultReachRecordLit(
+        Expr.RecordLit rec,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var acc = ReachBottom();
+        foreach (var (_, fv) in rec.Fields)
+        {
+            acc = ReachSum(acc, ResultReach(fv, env));
+        }
+
+        return acc;
     }
 
     private (Dictionary<string, int> Counts, bool Poison) SumReach(
@@ -1194,55 +1252,12 @@ public sealed partial class Lowering
             && string.Equals(rv.Name, sr.RecursiveName, StringComparison.Ordinal)
             && args.Count == 1)
         {
-            if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
-            {
-                return selfSummary.Poison ? ReachPoisoned() : ReachBottom();
-            }
-
-            var selfResult = ReachBottom();
-            foreach (var (paramName, mult) in selfSummary.Counts)
-            {
-                (Dictionary<string, int> Counts, bool Poison) paramReach;
-                if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
-                {
-                    paramReach = ResultReach(args[0], env);
-                }
-                else if (env.TryGetValue(paramName, out var outerReach))
-                {
-                    paramReach = outerReach; // an outer parameter, held at identity
-                }
-                else
-                {
-                    return ReachPoisoned();
-                }
-
-                selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
-            }
-
-            return selfResult;
+            return CallReachSelfRecursive(sr, args, env);
         }
 
         if (head is Expr.Var hv && _constructorSymbols.TryGetValue(hv.Name, out var ctor))
         {
-            if (args.Count != ctor.Arity)
-            {
-                return ReachPoisoned(); // partial or over-applied constructor
-            }
-
-            var acc = ReachBottom();
-            for (int i = 0; i < args.Count; i++)
-            {
-                bool copyField = ctor.ParameterTypes.Count == ctor.Arity
-                    && BuiltinRegistry.IsCopyType(ctor.ParameterTypes[i]);
-                if (copyField)
-                {
-                    continue; // inline scalar — cannot alias a heap cell the fold overwrites
-                }
-
-                acc = ReachSum(acc, ResultReach(args[i], env));
-            }
-
-            return acc;
+            return CallReachConstructor(ctor, args, env);
         }
 
         string? name = head switch
@@ -1268,27 +1283,104 @@ public sealed partial class Lowering
         // over "@i" argument-position markers; substitute each marker's argument's reach and sum.
         if (args.Count > info.Params.Count)
         {
-            var over = OverApplicationReach(name, info, args);
-            if (over is not { } ov || ov.Poison)
+            return CallReachOverApplied(name, info, args, env);
+        }
+
+        return CallReachRegistered(name, info, args, env);
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) CallReachSelfRecursive(
+        (string Func, string RecursiveName, List<string> Outer, string Acc) sr,
+        List<Expr> args,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
+        {
+            return selfSummary.Poison ? ReachPoisoned() : ReachBottom();
+        }
+
+        var selfResult = ReachBottom();
+        foreach (var (paramName, mult) in selfSummary.Counts)
+        {
+            (Dictionary<string, int> Counts, bool Poison) paramReach;
+            if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
+            {
+                paramReach = ResultReach(args[0], env);
+            }
+            else if (env.TryGetValue(paramName, out var outerReach))
+            {
+                paramReach = outerReach; // an outer parameter, held at identity
+            }
+            else
             {
                 return ReachPoisoned();
             }
 
-            var acc = ReachBottom();
-            foreach (var (marker, mult) in ov.Counts)
-            {
-                int ai = ArgMarkerIndex(marker);
-                if (ai < 0 || ai >= args.Count)
-                {
-                    return ReachPoisoned();
-                }
-
-                acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env), mult));
-            }
-
-            return acc;
+            selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
         }
 
+        return selfResult;
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) CallReachConstructor(
+        ConstructorSymbol ctor,
+        List<Expr> args,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        if (args.Count != ctor.Arity)
+        {
+            return ReachPoisoned(); // partial or over-applied constructor
+        }
+
+        var acc = ReachBottom();
+        for (int i = 0; i < args.Count; i++)
+        {
+            bool copyField = ctor.ParameterTypes.Count == ctor.Arity
+                && BuiltinRegistry.IsCopyType(ctor.ParameterTypes[i]);
+            if (copyField)
+            {
+                continue; // inline scalar — cannot alias a heap cell the fold overwrites
+            }
+
+            acc = ReachSum(acc, ResultReach(args[i], env));
+        }
+
+        return acc;
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) CallReachOverApplied(
+        string name,
+        (List<string> Params, Expr Body) info,
+        List<Expr> args,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var over = OverApplicationReach(name, info, args);
+        if (over is not { } ov || ov.Poison)
+        {
+            return ReachPoisoned();
+        }
+
+        var acc = ReachBottom();
+        foreach (var (marker, mult) in ov.Counts)
+        {
+            int ai = ArgMarkerIndex(marker);
+            if (ai < 0 || ai >= args.Count)
+            {
+                return ReachPoisoned();
+            }
+
+            acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env), mult));
+        }
+
+        return acc;
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) CallReachRegistered(
+        string name,
+        (List<string> Params, Expr Body) info,
+        List<Expr> args,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
         if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(name, out var summary)
             || summary.Poison)
@@ -1358,22 +1450,7 @@ public sealed partial class Lowering
         // capturing a retained value or a global is declined (poison / non-move argument).
         if (args.Count > info.Params.Count)
         {
-            var over = OverApplicationReach(name, info, args);
-            if (over is not { } ov || ov.Poison)
-            {
-                return false;
-            }
-
-            foreach (var (marker, _) in ov.Counts)
-            {
-                int ai = ArgMarkerIndex(marker);
-                if (ai < 0 || ai >= args.Count || !ArgIsMove(args[ai], enclosing))
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return IsResultAliasMoveOverApplied(name, info, args, enclosing);
         }
 
         if (args.Count != info.Params.Count
@@ -1387,6 +1464,30 @@ public sealed partial class Lowering
         {
             int idx = info.Params.IndexOf(paramName);
             if (idx < 0 || idx >= args.Count || !ArgIsMove(args[idx], enclosing))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsResultAliasMoveOverApplied(
+        string name,
+        (List<string> Params, Expr Body) info,
+        List<Expr> args,
+        string enclosing)
+    {
+        var over = OverApplicationReach(name, info, args);
+        if (over is not { } ov || ov.Poison)
+        {
+            return false;
+        }
+
+        foreach (var (marker, _) in ov.Counts)
+        {
+            int ai = ArgMarkerIndex(marker);
+            if (ai < 0 || ai >= args.Count || !ArgIsMove(args[ai], enclosing))
             {
                 return false;
             }
@@ -1557,20 +1658,7 @@ public sealed partial class Lowering
                     + System.Math.Max(MaxPathOccurrences(name, i.Then), MaxPathOccurrences(name, i.Else));
 
             case Expr.Match m:
-                {
-                    int worst = 0;
-                    foreach (var c in m.Cases)
-                    {
-                        // A pattern binding of the same name shadows it inside that arm.
-                        int arm = PatternBinds(c.Pattern, name)
-                            ? 0
-                            : MaxPathOccurrences(name, c.Body)
-                                + (c.Guard is null ? 0 : MaxPathOccurrences(name, c.Guard));
-                        worst = System.Math.Max(worst, arm);
-                    }
-
-                    return MaxPathOccurrences(name, m.Value) + worst;
-                }
+                return MaxPathOccurrencesMatch(name, m);
 
             case Expr.Let l:
                 // The value is evaluated in the outer scope; the body sees the new binding, which
@@ -1600,6 +1688,31 @@ public sealed partial class Lowering
             case Expr.Call c:
                 return MaxPathOccurrences(name, c.Func) + MaxPathOccurrences(name, c.Arg);
 
+            default:
+                return MaxPathOccurrencesOperators(name, e);
+        }
+    }
+
+    private static int MaxPathOccurrencesMatch(string name, Expr.Match m)
+    {
+        int worst = 0;
+        foreach (var c in m.Cases)
+        {
+            // A pattern binding of the same name shadows it inside that arm.
+            int arm = PatternBinds(c.Pattern, name)
+                ? 0
+                : MaxPathOccurrences(name, c.Body)
+                    + (c.Guard is null ? 0 : MaxPathOccurrences(name, c.Guard));
+            worst = System.Math.Max(worst, arm);
+        }
+
+        return MaxPathOccurrences(name, m.Value) + worst;
+    }
+
+    private static int MaxPathOccurrencesOperators(string name, Expr e)
+    {
+        switch (e)
+        {
             case Expr.Add x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.Subtract x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.Multiply x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
@@ -1620,6 +1733,15 @@ public sealed partial class Lowering
             case Expr.ResultPipe x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.ResultMapErrorPipe x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
 
+            default:
+                return MaxPathOccurrencesAggregates(name, e);
+        }
+    }
+
+    private static int MaxPathOccurrencesAggregates(string name, Expr e)
+    {
+        switch (e)
+        {
             case Expr.Cons cons:
                 return MaxPathOccurrences(name, cons.Head) + MaxPathOccurrences(name, cons.Tail);
 
@@ -1712,44 +1834,8 @@ public sealed partial class Lowering
         switch (e)
         {
             case Expr.Call:
-                {
-                    var args = new List<Expr>();
-                    var root = CollectCallArgs(e, args);
-                    string? calleeName = root switch
-                    {
-                        Expr.Var v => v.Name,
-                        Expr.QualifiedVar qv => ResolveSpecializableCalleeName(qv),
-                        _ => null,
-                    };
-
-                    if (calleeName is not null
-                        && _maFuncs.TryGetValue(calleeName, out var callee)
-                        && args.Count == callee.Params.Count)
-                    {
-                        // A complete, saturated call to a known function: record it and recurse into
-                        // the arguments only (the head is accounted for, not an escape).
-                        if (!_maCallSites.TryGetValue(calleeName, out var list))
-                        {
-                            list = new List<(string, List<Expr>)>();
-                            _maCallSites[calleeName] = list;
-                        }
-
-                        list.Add((enclosing, args));
-                        foreach (var a in args)
-                        {
-                            CollectCallsAndEscapes(a, enclosing);
-                        }
-
-                        return;
-                    }
-
-                    // Not a complete saturated call to a known function: fall through to the generic
-                    // walk, which will surface any known-function name as an escape.
-                    var call = (Expr.Call)e;
-                    CollectCallsAndEscapes(call.Func, enclosing);
-                    CollectCallsAndEscapes(call.Arg, enclosing);
-                    return;
-                }
+                CollectCallsAndEscapesCall(e, enclosing);
+                return;
 
             case Expr.Var v:
                 if (_maFuncs.ContainsKey(v.Name))
@@ -1774,16 +1860,7 @@ public sealed partial class Lowering
                 return;
 
             case Expr.Match m:
-                CollectCallsAndEscapes(m.Value, enclosing);
-                foreach (var c in m.Cases)
-                {
-                    CollectCallsAndEscapes(c.Body, enclosing);
-                    if (c.Guard is not null)
-                    {
-                        CollectCallsAndEscapes(c.Guard, enclosing);
-                    }
-                }
-
+                CollectCallsAndEscapesMatch(m, enclosing);
                 return;
 
             case Expr.Let l:
@@ -1805,6 +1882,68 @@ public sealed partial class Lowering
                 CollectCallsAndEscapes(lam.Body, enclosing);
                 return;
 
+            default:
+                CollectCallsAndEscapesOperators(e, enclosing);
+                return;
+        }
+    }
+
+    private void CollectCallsAndEscapesCall(Expr e, string enclosing)
+    {
+        var args = new List<Expr>();
+        var root = CollectCallArgs(e, args);
+        string? calleeName = root switch
+        {
+            Expr.Var v => v.Name,
+            Expr.QualifiedVar qv => ResolveSpecializableCalleeName(qv),
+            _ => null,
+        };
+
+        if (calleeName is not null
+            && _maFuncs.TryGetValue(calleeName, out var callee)
+            && args.Count == callee.Params.Count)
+        {
+            // A complete, saturated call to a known function: record it and recurse into
+            // the arguments only (the head is accounted for, not an escape).
+            if (!_maCallSites.TryGetValue(calleeName, out var list))
+            {
+                list = new List<(string, List<Expr>)>();
+                _maCallSites[calleeName] = list;
+            }
+
+            list.Add((enclosing, args));
+            foreach (var a in args)
+            {
+                CollectCallsAndEscapes(a, enclosing);
+            }
+
+            return;
+        }
+
+        // Not a complete saturated call to a known function: fall through to the generic
+        // walk, which will surface any known-function name as an escape.
+        var call = (Expr.Call)e;
+        CollectCallsAndEscapes(call.Func, enclosing);
+        CollectCallsAndEscapes(call.Arg, enclosing);
+    }
+
+    private void CollectCallsAndEscapesMatch(Expr.Match m, string enclosing)
+    {
+        CollectCallsAndEscapes(m.Value, enclosing);
+        foreach (var c in m.Cases)
+        {
+            CollectCallsAndEscapes(c.Body, enclosing);
+            if (c.Guard is not null)
+            {
+                CollectCallsAndEscapes(c.Guard, enclosing);
+            }
+        }
+    }
+
+    private void CollectCallsAndEscapesOperators(Expr e, string enclosing)
+    {
+        switch (e)
+        {
             case Expr.Add x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.Subtract x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.Multiply x: CollectBinary(x.Left, x.Right, enclosing); return;
@@ -1822,6 +1961,17 @@ public sealed partial class Lowering
             case Expr.LessOrEqual x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.Equal x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.NotEqual x: CollectBinary(x.Left, x.Right, enclosing); return;
+
+            default:
+                CollectCallsAndEscapesAggregates(e, enclosing);
+                return;
+        }
+    }
+
+    private void CollectCallsAndEscapesAggregates(Expr e, string enclosing)
+    {
+        switch (e)
+        {
             case Expr.ResultPipe x: CollectBinary(x.Left, x.Right, enclosing); return;
             case Expr.ResultMapErrorPipe x: CollectBinary(x.Left, x.Right, enclosing); return;
 

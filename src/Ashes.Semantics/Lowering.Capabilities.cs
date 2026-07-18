@@ -279,81 +279,85 @@ public sealed partial class Lowering
     private bool BodyPerformsProvidedParameterizedCapability(Expr expr)
     {
         var found = false;
+        BodyPerformsProvidedParameterizedCapabilityVisit(expr, ref found);
+        return found;
+    }
 
-        void Visit(object? node)
+    private void BodyPerformsProvidedParameterizedCapabilityVisit(object? node, ref bool found)
+    {
+        if (found || node is null or string)
         {
-            if (found || node is null or string)
+            return;
+        }
+
+        if (node is Expr.QualifiedVar qv
+            && _capabilitySymbols.TryGetValue(qv.Module, out var cap)
+            && cap.TypeParameters.Count > 0
+            && cap.Operations.ContainsKey(qv.Name)
+            && HasAnyProvider(qv.Module))
+        {
+            found = true;
+            return;
+        }
+
+        // Walk records (Expr/Pattern/MatchCase) and their collections reflectively so every Expr
+        // shape is covered by default, mirroring CountBinders.
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length && !found; i++)
             {
-                return;
+                BodyPerformsProvidedParameterizedCapabilityVisit(tuple[i], ref found);
             }
 
-            if (node is Expr.QualifiedVar qv
-                && _capabilitySymbols.TryGetValue(qv.Module, out var cap)
-                && cap.TypeParameters.Count > 0
-                && cap.Operations.ContainsKey(qv.Name)
-                && HasAnyProvider(qv.Module))
+            return;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
             {
-                found = true;
-                return;
-            }
-
-            // Walk records (Expr/Pattern/MatchCase) and their collections reflectively so every Expr
-            // shape is covered by default, mirroring CountBinders.
-            if (node is System.Runtime.CompilerServices.ITuple tuple)
-            {
-                for (int i = 0; i < tuple.Length && !found; i++)
-                {
-                    Visit(tuple[i]);
-                }
-
-                return;
-            }
-
-            if (node is System.Collections.IEnumerable seq)
-            {
-                foreach (var item in seq)
-                {
-                    Visit(item);
-                    if (found)
-                    {
-                        return;
-                    }
-                }
-
-                return;
-            }
-
-            if (node is not (Expr or Pattern or MatchCase or HandlerArm))
-            {
-                return;
-            }
-
-            foreach (var prop in node.GetType().GetProperties())
-            {
+                BodyPerformsProvidedParameterizedCapabilityVisit(item, ref found);
                 if (found)
                 {
                     return;
                 }
-
-                if (prop.GetIndexParameters().Length > 0)
-                {
-                    continue;
-                }
-
-                var t = prop.PropertyType;
-                if (typeof(Expr).IsAssignableFrom(t)
-                    || typeof(Pattern).IsAssignableFrom(t)
-                    || typeof(MatchCase).IsAssignableFrom(t)
-                    || typeof(HandlerArm).IsAssignableFrom(t)
-                    || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
-                {
-                    Visit(prop.GetValue(node));
-                }
             }
+
+            return;
         }
 
-        Visit(expr);
-        return found;
+        if (node is not (Expr or Pattern or MatchCase or HandlerArm))
+        {
+            return;
+        }
+
+        BodyPerformsProvidedParameterizedCapabilityVisitProperties(node, ref found);
+    }
+
+    private void BodyPerformsProvidedParameterizedCapabilityVisitProperties(object node, ref bool found)
+    {
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (found)
+            {
+                return;
+            }
+
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || typeof(HandlerArm).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                BodyPerformsProvidedParameterizedCapabilityVisit(prop.GetValue(node), ref found);
+            }
+        }
     }
 
     /// <summary>Number of declared capabilities: the backend materializes one handler-evidence global per capability.</summary>
@@ -545,6 +549,43 @@ public sealed partial class Lowering
         var (capabilitiesA, tailA) = NormalizeRow(a);
         var (capabilitiesB, tailB) = NormalizeRow(b);
 
+        var onlyA = UnifyRowsMatchAndCollectSurplus(capabilitiesA, capabilitiesB);
+        var onlyB = capabilitiesB
+            .Where(capabilityB => !capabilitiesA.Any(capabilityA => string.Equals(capabilityA.Symbol.Name, capabilityB.Symbol.Name, StringComparison.Ordinal)))
+            .ToList();
+
+        if (onlyA.Count == 0 && onlyB.Count == 0)
+        {
+            UnifyRowsCloseEqualCapabilityTails(tailA, tailB);
+            return;
+        }
+
+        if (onlyB.Count > 0 && tailA is null)
+        {
+            ReportRowMissingCapabilities(onlyB, capabilitiesA);
+            return;
+        }
+
+        if (onlyA.Count > 0 && tailB is null)
+        {
+            ReportRowMissingCapabilities(onlyA, capabilitiesB);
+            return;
+        }
+
+        if (tailA is not null && tailB is not null && tailA.Id == tailB.Id)
+        {
+            // One tail cannot absorb different capability sets on both sides.
+            ReportRowMissingCapabilities(onlyA.Concat(onlyB).ToList(), []);
+            return;
+        }
+
+        UnifyRowsAbsorbSurplusIntoTails(onlyA, onlyB, tailA, tailB);
+    }
+
+    // Unifies the type arguments of capabilities present on both sides and returns the capabilities
+    // present only on side A.
+    private List<TypeRef.TCapability> UnifyRowsMatchAndCollectSurplus(List<TypeRef.TCapability> capabilitiesA, List<TypeRef.TCapability> capabilitiesB)
+    {
         var onlyA = new List<TypeRef.TCapability>();
         foreach (var capabilityA in capabilitiesA)
         {
@@ -571,52 +612,33 @@ public sealed partial class Lowering
             }
         }
 
-        var onlyB = capabilitiesB
-            .Where(capabilityB => !capabilitiesA.Any(capabilityA => string.Equals(capabilityA.Symbol.Name, capabilityB.Symbol.Name, StringComparison.Ordinal)))
-            .ToList();
+        return onlyA;
+    }
 
-        if (onlyA.Count == 0 && onlyB.Count == 0)
+    // Both sides carry the same capability set: link the open tails together (or close a lone tail).
+    private void UnifyRowsCloseEqualCapabilityTails(TypeRef.TVar? tailA, TypeRef.TVar? tailB)
+    {
+        if (tailA is not null && tailB is not null)
         {
-            if (tailA is not null && tailB is not null)
+            if (tailA.Id != tailB.Id)
             {
-                if (tailA.Id != tailB.Id)
-                {
-                    Unify(tailA, tailB);
-                }
+                Unify(tailA, tailB);
             }
-            else if (tailA is not null)
-            {
-                Unify(tailA, new TypeRef.TRow([], null));
-            }
-            else if (tailB is not null)
-            {
-                Unify(tailB, new TypeRef.TRow([], null));
-            }
-
-            return;
         }
-
-        if (onlyB.Count > 0 && tailA is null)
+        else if (tailA is not null)
         {
-            ReportRowMissingCapabilities(onlyB, capabilitiesA);
-            return;
+            Unify(tailA, new TypeRef.TRow([], null));
         }
-
-        if (onlyA.Count > 0 && tailB is null)
+        else if (tailB is not null)
         {
-            ReportRowMissingCapabilities(onlyA, capabilitiesB);
-            return;
+            Unify(tailB, new TypeRef.TRow([], null));
         }
+    }
 
-        if (tailA is not null && tailB is not null && tailA.Id == tailB.Id)
-        {
-            // One tail cannot absorb different capability sets on both sides.
-            ReportRowMissingCapabilities(onlyA.Concat(onlyB).ToList(), []);
-            return;
-        }
-
-        // Absorb each side's surplus into the other side's tail, sharing one fresh tail when both
-        // rows are open so the result stays a single open row.
+    // Absorb each side's surplus into the other side's tail, sharing one fresh tail when both
+    // rows are open so the result stays a single open row.
+    private void UnifyRowsAbsorbSurplusIntoTails(List<TypeRef.TCapability> onlyA, List<TypeRef.TCapability> onlyB, TypeRef.TVar? tailA, TypeRef.TVar? tailB)
+    {
         var sharedTail = tailA is not null && tailB is not null ? NewTypeVar() : null;
         if (tailA is not null && onlyB.Count > 0)
         {
@@ -797,9 +819,24 @@ public sealed partial class Lowering
 
         RecordHoverType(span, $"{capabilitySym.Name}.{qv.Name}", opType);
 
-        // Type the application like an ordinary curried call chain, collecting argument temps.
         var argTemps = new List<int>(args.Count);
         var currentType = opType;
+        if (LowerCapabilityOperationCallApplyArgs(capabilitySym, qv, args, span, argTemps, ref currentType) is { } earlyResult)
+        {
+            return earlyResult;
+        }
+
+        return LowerCapabilityOperationCallDispatch(capabilitySym, qv, span, capabilityArgs, argTemps, currentType);
+    }
+
+    /// <summary>
+    /// Types the application like an ordinary curried call chain, collecting argument temps into
+    /// <paramref name="argTemps"/> and advancing <paramref name="currentType"/>. Returns a non-null
+    /// early result when an argument's type forces bailing out, null to continue.
+    /// </summary>
+    private (int, TypeRef)? LowerCapabilityOperationCallApplyArgs(CapabilitySymbol capabilitySym, Expr.QualifiedVar qv,
+        List<Expr> args, TextSpan span, List<int> argTemps, ref TypeRef currentType)
+    {
         for (int i = 0; i < args.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
@@ -830,11 +867,17 @@ public sealed partial class Lowering
             currentType = Prune(funType.Ret);
         }
 
-        // Decide how the requirement is satisfied now that the instance's type arguments are pinned:
-        //  - lexically handled by an enclosing `handle`  -> dynamic evidence path (row-tracked)
-        //  - a matching static provider, not handled     -> direct call to the provider's impl
-        //  - both                                         -> ambiguity error (ASH027)
-        //  - neither / abstract instance                 -> dynamic path; residual row -> ASH017
+        return null;
+    }
+
+    // Decide how the requirement is satisfied now that the instance's type arguments are pinned:
+    //  - lexically handled by an enclosing `handle`  -> dynamic evidence path (row-tracked)
+    //  - a matching static provider, not handled     -> direct call to the provider's impl
+    //  - both                                         -> ambiguity error (ASH027)
+    //  - neither / abstract instance                 -> dynamic path; residual row -> ASH017
+    private (int, TypeRef) LowerCapabilityOperationCallDispatch(CapabilitySymbol capabilitySym, Expr.QualifiedVar qv,
+        TextSpan span, List<TypeRef> capabilityArgs, List<int> argTemps, TypeRef currentType)
+    {
         bool handled = _lexicallyHandledCapabilities.Contains(capabilitySym.Name);
         var provider = ResolveProvider(capabilitySym, capabilityArgs);
 
@@ -926,20 +969,7 @@ public sealed partial class Lowering
         Emit(new IrInst.CmpIntNe(installedTemp, frameTemp, zeroTemp));
         Emit(new IrInst.JumpIfFalse(installedTemp, unhandledLabel));
 
-        // Save the current evidence and switch to the handler frame's snapshot.
-        var savedTemps = new int[globalCount];
-        for (int k = 0; k < globalCount; k++)
-        {
-            savedTemps[k] = NewTemp();
-            Emit(new IrInst.LoadCapabilityHandler(savedTemps[k], k));
-        }
-
-        for (int k = 0; k < globalCount; k++)
-        {
-            int snapshotTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(snapshotTemp, frameTemp, k * 8));
-            Emit(new IrInst.StoreCapabilityHandler(k, snapshotTemp));
-        }
+        var savedTemps = EmitPerformSwapToFrameEvidence(frameTemp, globalCount);
 
         int closureTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(closureTemp, frameTemp, (globalCount + 1 + opIndex) * 8));
@@ -958,10 +988,52 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreCapabilityHandler(k, savedTemps[k]));
         }
 
-        // Collect a one-shot arm's post-resume continuation: consume-and-reset the pending-post
-        // register, and push a {closure, next} cell onto the handle's shared LIFO posts list
-        // (frame slot globalCount holds a pointer to the list head slot). Tail-resumptive arms
-        // never store the register, so this is a load-compare-skip for them.
+        EmitPerformCollectPost(frameTemp, globalCount, siteId);
+
+        int resultTemp = NewTemp();
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.Jump(doneLabel));
+
+        Emit(new IrInst.Label(unhandledLabel));
+        var panicLabelStr = InternString($"Unhandled capability operation '{capabilitySym.Name}.{opName}'.");
+        int panicMsgTemp = NewTemp();
+        Emit(new IrInst.LoadConstStr(panicMsgTemp, panicLabelStr));
+        Emit(new IrInst.PanicStr(panicMsgTemp));
+
+        Emit(new IrInst.Label(doneLabel));
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    /// <summary>Saves the current evidence and switches to the handler frame's snapshot. Returns the saved-evidence temps.</summary>
+    private int[] EmitPerformSwapToFrameEvidence(int frameTemp, int globalCount)
+    {
+        var savedTemps = new int[globalCount];
+        for (int k = 0; k < globalCount; k++)
+        {
+            savedTemps[k] = NewTemp();
+            Emit(new IrInst.LoadCapabilityHandler(savedTemps[k], k));
+        }
+
+        for (int k = 0; k < globalCount; k++)
+        {
+            int snapshotTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(snapshotTemp, frameTemp, k * 8));
+            Emit(new IrInst.StoreCapabilityHandler(k, snapshotTemp));
+        }
+
+        return savedTemps;
+    }
+
+    /// <summary>
+    /// Collects a one-shot arm's post-resume continuation: consume-and-reset the pending-post
+    /// register, and push a {closure, next} cell onto the handle's shared LIFO posts list
+    /// (frame slot globalCount holds a pointer to the list head slot). Tail-resumptive arms
+    /// never store the register, so this is a load-compare-skip for them.
+    /// </summary>
+    private void EmitPerformCollectPost(int frameTemp, int globalCount, int siteId)
+    {
         int postTemp = NewTemp();
         Emit(new IrInst.LoadCapabilityHandler(postTemp, PostRegisterIndex));
         int postZeroTemp = NewTemp();
@@ -982,21 +1054,6 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreMemOffset(postsHeadPtrTemp, 0, cellTemp));
         EmitLivePostsAdjust(1);
         Emit(new IrInst.Label(noPostLabel));
-
-        int resultTemp = NewTemp();
-        int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.Jump(doneLabel));
-
-        Emit(new IrInst.Label(unhandledLabel));
-        var panicLabelStr = InternString($"Unhandled capability operation '{capabilitySym.Name}.{opName}'.");
-        int panicMsgTemp = NewTemp();
-        Emit(new IrInst.LoadConstStr(panicMsgTemp, panicLabelStr));
-        Emit(new IrInst.PanicStr(panicMsgTemp));
-
-        Emit(new IrInst.Label(doneLabel));
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        return resultTemp;
     }
 
     /// <summary>Substitutes a capability's type parameters with fresh per-use variables in an operation signature.</summary>
@@ -1052,7 +1109,62 @@ public sealed partial class Lowering
 
         // 1. Validate and group the arms.
         var opArms = new List<(CapabilitySymbol Capability, string OpName, HandlerArm Arm)>();
-        HandlerArm? returnArm = null;
+        bool malformed = LowerHandleCollectArms(handle, opArms, out var returnArm);
+
+        // A handler discharges whole capabilities, so every operation of each handled capability needs an arm.
+        var handledCapabilities = opArms.Select(x => x.Capability).Distinct().ToList();
+        malformed |= LowerHandleCheckArmCompleteness(handle, handledCapabilities, opArms);
+
+        if (malformed || handledCapabilities.Count == 0)
+        {
+            if (handledCapabilities.Count == 0 && !malformed)
+            {
+                ReportDiagnostic(GetSpan(handle), "A handler must have at least one operation arm.", InvalidHandlerCode);
+            }
+
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // 2. One instance of each handled capability's type arguments, shared by the body's row entry
+        // and every arm's operation signature (`handle ... with | State.get ...` handles State(a)
+        // at one concrete-or-inferred `a`), plus the handle's result type — one-shot arms need it
+        // before the body is lowered, since their post-resume continuations have type R -> R.
+        var capabilityInstances = handledCapabilities.ToDictionary(
+            e => e.Name,
+            e => e.TypeParameters.Select(_ => NewTypeVar()).ToList(),
+            StringComparer.Ordinal);
+        var resultType = NewTypeVar();
+
+        // 3. Lower the operation arms to closures (in the enclosing context: an arm belongs
+        // lexically outside the handle and its capabilities flow to the enclosing row).
+        var armClosures = LowerHandleLowerArmClosures(handle, opArms, capabilityInstances, resultType);
+        if (armClosures is null)
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+
+        // 4. Build and install one handler frame per handled capability.
+        var frameTemps = LowerHandleInstallFrames(handledCapabilities, armClosures, out int postsHeadPtrTemp);
+
+        // 5. Lower the body under a row that has the handled capabilities discharged.
+        var (bodyTemp, bodyType) = LowerHandleLowerBody(handle, handledCapabilities, capabilityInstances);
+
+        // 6. Uninstall: restore each handled capability's global from this frame's own snapshot slot.
+        LowerHandleUninstallFrames(handledCapabilities, frameTemps);
+
+        // 7. The return arm transforms the body's final value; without one the value passes through.
+        int currentResultTemp = LowerHandleApplyReturnArm(handle, returnArm, bodyTemp, bodyType, resultType);
+
+        // 8. Fold the collected one-shot post-resume continuations over the result.
+        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp);
+        return (finalResultTemp, resultType);
+    }
+
+    // Validates and groups the handler's arms: operation arms into opArms, the single return arm out.
+    // Returns whether any arm was malformed (diagnostics already reported).
+    private bool LowerHandleCollectArms(Expr.Handle handle, List<(CapabilitySymbol Capability, string OpName, HandlerArm Arm)> opArms, out HandlerArm? returnArm)
+    {
+        returnArm = null;
         bool malformed = false;
         foreach (var arm in handle.Arms)
         {
@@ -1096,8 +1208,14 @@ public sealed partial class Lowering
             opArms.Add((armCapability, arm.OperationName, arm));
         }
 
-        // A handler discharges whole capabilities, so every operation of each handled capability needs an arm.
-        var handledCapabilities = opArms.Select(x => x.Capability).Distinct().ToList();
+        return malformed;
+    }
+
+    // Every operation of each handled capability needs an arm; reports the missing ones.
+    // Returns whether any operation was missing.
+    private bool LowerHandleCheckArmCompleteness(Expr.Handle handle, List<CapabilitySymbol> handledCapabilities, List<(CapabilitySymbol Capability, string OpName, HandlerArm Arm)> opArms)
+    {
+        bool malformed = false;
         foreach (var capability in handledCapabilities)
         {
             foreach (var operation in capability.DeclaringSyntax.Operations)
@@ -1110,36 +1228,24 @@ public sealed partial class Lowering
             }
         }
 
-        if (malformed || handledCapabilities.Count == 0)
-        {
-            if (handledCapabilities.Count == 0 && !malformed)
-            {
-                ReportDiagnostic(GetSpan(handle), "A handler must have at least one operation arm.", InvalidHandlerCode);
-            }
+        return malformed;
+    }
 
-            return ReturnNeverWithDummyTemp();
-        }
-
-        // 2. One instance of each handled capability's type arguments, shared by the body's row entry
-        // and every arm's operation signature (`handle ... with | State.get ...` handles State(a)
-        // at one concrete-or-inferred `a`), plus the handle's result type — one-shot arms need it
-        // before the body is lowered, since their post-resume continuations have type R -> R.
-        var capabilityInstances = handledCapabilities.ToDictionary(
-            e => e.Name,
-            e => e.TypeParameters.Select(_ => NewTypeVar()).ToList(),
-            StringComparer.Ordinal);
-        var resultType = NewTypeVar();
-
-        // 3. Lower the operation arms to closures (in the enclosing context: an arm belongs
-        // lexically outside the handle and its capabilities flow to the enclosing row).
-        int globalCount = CapabilityGlobalCount;
+    // Lowers each operation arm to a closure. Returns null when an arm's resume rewrite failed
+    // (the diagnostic has been reported and the caller bails out).
+    private List<(CapabilitySymbol Capability, int OpIndex, int ClosureTemp)>? LowerHandleLowerArmClosures(
+        Expr.Handle handle,
+        List<(CapabilitySymbol Capability, string OpName, HandlerArm Arm)> opArms,
+        Dictionary<string, List<TypeRef>> capabilityInstances,
+        TypeRef resultType)
+    {
         var armClosures = new List<(CapabilitySymbol Capability, int OpIndex, int ClosureTemp)>();
         foreach (var (capability, opName, arm) in opArms)
         {
             var armLambda = BuildOperationArmLambda(capability, opName, arm, resultType);
             if (armLambda is null)
             {
-                return ReturnNeverWithDummyTemp();
+                return null;
             }
 
             var (closureTemp, closureType) = LowerExpr(armLambda);
@@ -1148,13 +1254,22 @@ public sealed partial class Lowering
             armClosures.Add((capability, OperationDeclIndex(capability, opName), closureTemp));
         }
 
-        // 4. Build and install one handler frame per handled capability:
-        // [0 .. globals-1]              snapshot of every handler-evidence global (taken before
-        //                               any of this handle's frames install, so arms run under the
-        //                               evidence in scope at installation, minus this handler)
-        // [globals]                     pointer to the handle's shared posts-list head slot
-        // [globals + 1 + opDeclIndex]   the arm closure per operation.
-        int postsHeadPtrTemp = NewTemp();
+        return armClosures;
+    }
+
+    // Builds and installs one handler frame per handled capability:
+    // [0 .. globals-1]              snapshot of every handler-evidence global (taken before
+    //                               any of this handle's frames install, so arms run under the
+    //                               evidence in scope at installation, minus this handler)
+    // [globals]                     pointer to the handle's shared posts-list head slot
+    // [globals + 1 + opDeclIndex]   the arm closure per operation.
+    private Dictionary<string, int> LowerHandleInstallFrames(
+        List<CapabilitySymbol> handledCapabilities,
+        List<(CapabilitySymbol Capability, int OpIndex, int ClosureTemp)> armClosures,
+        out int postsHeadPtrTemp)
+    {
+        int globalCount = CapabilityGlobalCount;
+        postsHeadPtrTemp = NewTemp();
         Emit(new IrInst.AllocStack(postsHeadPtrTemp, 8));
         int postsInitZeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(postsInitZeroTemp, 0));
@@ -1189,8 +1304,13 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreCapabilityHandler(_capabilityIndices[capability.Name], frameTemps[capability.Name]));
         }
 
-        // 5. Lower the body under a row that has the handled capabilities discharged: anything else it
-        // performs flows through the fresh tail to the enclosing row.
+        return frameTemps;
+    }
+
+    // Lowers the body under a row that has the handled capabilities discharged: anything else it
+    // performs flows through the fresh tail to the enclosing row.
+    private (int BodyTemp, TypeRef BodyType) LowerHandleLowerBody(Expr.Handle handle, List<CapabilitySymbol> handledCapabilities, Dictionary<string, List<TypeRef>> capabilityInstances)
+    {
         var outerTail = NewTypeVar();
         var bodyRow = new TypeRef.TRow(
             handledCapabilities.Select(e => new TypeRef.TCapability(e, capabilityInstances[e.Name])).ToList(),
@@ -1208,8 +1328,12 @@ public sealed partial class Lowering
 
         _ambientRow = savedAmbientRow;
         UnifyRows(outerTail, AmbientRow);
+        return (bodyTemp, bodyType);
+    }
 
-        // 6. Uninstall: restore each handled capability's global from this frame's own snapshot slot.
+    // Restores each handled capability's global from this frame's own snapshot slot.
+    private void LowerHandleUninstallFrames(List<CapabilitySymbol> handledCapabilities, Dictionary<string, int> frameTemps)
+    {
         foreach (var capability in handledCapabilities)
         {
             int capabilityIndex = _capabilityIndices[capability.Name];
@@ -1217,37 +1341,40 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadMemOffset(previousTemp, frameTemps[capability.Name], capabilityIndex * 8));
             Emit(new IrInst.StoreCapabilityHandler(capabilityIndex, previousTemp));
         }
+    }
 
-        // 7. The return arm transforms the body's final value; without one the value passes through.
-        int currentResultTemp;
+    // The return arm transforms the body's final value; without one the value passes through.
+    private int LowerHandleApplyReturnArm(Expr.Handle handle, HandlerArm? returnArm, int bodyTemp, TypeRef bodyType, TypeRef resultType)
+    {
         if (returnArm is null)
         {
             Unify(resultType, bodyType);
-            currentResultTemp = bodyTemp;
-        }
-        else
-        {
-            int bodySlot = NewLocal();
-            Emit(new IrInst.StoreLocal(bodySlot, bodyTemp));
-            var resultName = $"__handle_result_{_nextCapabilitySiteId++}";
-            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
-            {
-                [resultName] = new Binding.Local(bodySlot, bodyType),
-            });
-            var scrutinee = new Expr.Var(resultName);
-            AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
-            var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);
-            AstSpans.Set(returnMatch, GetSpan(returnArm.Body));
-            var (returnTemp, returnType) = LowerExpr(returnMatch);
-            _scopes.Pop();
-            Unify(resultType, returnType);
-            currentResultTemp = returnTemp;
+            return bodyTemp;
         }
 
-        // 8. Fold the collected one-shot post-resume continuations over the result, LIFO (the
-        // most recent perform's continuation is innermost in the reduction), decrementing the
-        // live-posts counter as each is consumed. Posts run here — outside the handle — under the
-        // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h].
+        int bodySlot = NewLocal();
+        Emit(new IrInst.StoreLocal(bodySlot, bodyTemp));
+        var resultName = $"__handle_result_{_nextCapabilitySiteId++}";
+        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
+        {
+            [resultName] = new Binding.Local(bodySlot, bodyType),
+        });
+        var scrutinee = new Expr.Var(resultName);
+        AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
+        var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);
+        AstSpans.Set(returnMatch, GetSpan(returnArm.Body));
+        var (returnTemp, returnType) = LowerExpr(returnMatch);
+        _scopes.Pop();
+        Unify(resultType, returnType);
+        return returnTemp;
+    }
+
+    // Folds the collected one-shot post-resume continuations over the result, LIFO (the
+    // most recent perform's continuation is innermost in the reduction), decrementing the
+    // live-posts counter as each is consumed. Posts run here — outside the handle — under the
+    // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h].
+    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp)
+    {
         int foldId = _nextCapabilitySiteId++;
         string foldLoopLabel = $"posts_fold_{foldId}";
         string foldDoneLabel = $"posts_fold_done_{foldId}";
@@ -1280,7 +1407,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(foldDoneLabel));
         int finalResultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(finalResultTemp, foldResultSlot));
-        return (finalResultTemp, resultType);
+        return finalResultTemp;
     }
 
     /// <summary>
@@ -1365,100 +1492,22 @@ public sealed partial class Lowering
                 return true;
 
             case Expr.Let { Value: Expr.Call { Func: Expr.Var { Name: "resume" } } resumeCall } oneShotLet:
-                if (ExprReferencesName(resumeCall.Arg, "resume", shadowed: false)
-                    || ExprReferencesName(oneShotLet.Body, "resume", shadowed: false))
-                {
-                    error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
-                    return false;
-                }
-
-                rewritten = BuildCapabilityPost(oneShotLet.Name, oneShotLet.Body, resumeCall.Arg, handleResultType, oneShotLet);
-                return true;
+                return TryRewriteResumeOneShotLet(oneShotLet, resumeCall, handleResultType, out rewritten, out error);
 
             case Expr.Let let:
-                if (ExprReferencesName(let.Value, "resume", shadowed: false))
-                {
-                    error = UnsupportedResumePosition;
-                    return false;
-                }
-
-                if (!TryRewriteResume(let.Body, handleResultType, out var letBody, out error))
-                {
-                    return false;
-                }
-
-                rewritten = CopySpan(let, let with { Body = letBody });
-                return true;
+                return TryRewriteResumeLet(let, handleResultType, out rewritten, out error);
 
             case Expr.LetRecursive letRecursive:
-                if (ExprReferencesName(letRecursive.Value, "resume", shadowed: false))
-                {
-                    error = UnsupportedResumePosition;
-                    return false;
-                }
-
-                if (!TryRewriteResume(letRecursive.Body, handleResultType, out var letRecursiveBody, out error))
-                {
-                    return false;
-                }
-
-                rewritten = CopySpan(letRecursive, letRecursive with { Body = letRecursiveBody });
-                return true;
+                return TryRewriteResumeLetRecursive(letRecursive, handleResultType, out rewritten, out error);
 
             case Expr.If iff:
-                if (ExprReferencesName(iff.Cond, "resume", shadowed: false))
-                {
-                    error = UnsupportedResumePosition;
-                    return false;
-                }
-
-                if (!TryRewriteResume(iff.Then, handleResultType, out var thenBody, out error)
-                    || !TryRewriteResume(iff.Else, handleResultType, out var elseBody, out error))
-                {
-                    return false;
-                }
-
-                rewritten = CopySpan(iff, new Expr.If(iff.Cond, thenBody, elseBody));
-                return true;
+                return TryRewriteResumeIf(iff, handleResultType, out rewritten, out error);
 
             case Expr.Match { Value: Expr.Call { Func: Expr.Var { Name: "resume" } } scrutineeResume } oneShotMatch:
-                if (ExprReferencesName(scrutineeResume.Arg, "resume", shadowed: false)
-                    || oneShotMatch.Cases.Any(c => ExprReferencesName(c.Body, "resume", shadowed: false)
-                        || (c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false))))
-                {
-                    error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
-                    return false;
-                }
-
-                var postParam = $"__resume_result_{_nextCapabilitySiteId++}";
-                var postScrutinee = new Expr.Var(postParam);
-                AstSpans.Set(postScrutinee, GetSpan(oneShotMatch));
-                var postMatch = new Expr.Match(postScrutinee, oneShotMatch.Cases, oneShotMatch.Pos);
-                AstSpans.Set(postMatch, AstSpans.GetOrDefault(oneShotMatch));
-                rewritten = BuildCapabilityPost(postParam, postMatch, scrutineeResume.Arg, handleResultType, oneShotMatch);
-                return true;
+                return TryRewriteResumeOneShotMatch(oneShotMatch, scrutineeResume, handleResultType, out rewritten, out error);
 
             case Expr.Match match:
-                if (ExprReferencesName(match.Value, "resume", shadowed: false)
-                    || match.Cases.Any(c => c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false)))
-                {
-                    error = UnsupportedResumePosition;
-                    return false;
-                }
-
-                var cases = new List<MatchCase>(match.Cases.Count);
-                foreach (var matchCase in match.Cases)
-                {
-                    if (!TryRewriteResume(matchCase.Body, handleResultType, out var caseBody, out error))
-                    {
-                        return false;
-                    }
-
-                    cases.Add(new MatchCase(matchCase.Pattern, caseBody, matchCase.Guard));
-                }
-
-                rewritten = CopySpan(match, new Expr.Match(match.Value, cases, match.Pos));
-                return true;
+                return TryRewriteResumeMatchCases(match, handleResultType, out rewritten, out error);
 
             default:
                 error = ExprReferencesName(expr, "resume", shadowed: false)
@@ -1466,6 +1515,129 @@ public sealed partial class Lowering
                     : "every path of an operation arm must call resume(...) (aborting arms need unwinding and are not supported).";
                 return false;
         }
+    }
+
+    // One-shot let: `let x = resume(v) in B` splits into `v` plus post `given x -> B`.
+    private bool TryRewriteResumeOneShotLet(Expr.Let oneShotLet, Expr.Call resumeCall, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = oneShotLet;
+        error = "";
+        if (ExprReferencesName(resumeCall.Arg, "resume", shadowed: false)
+            || ExprReferencesName(oneShotLet.Body, "resume", shadowed: false))
+        {
+            error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
+            return false;
+        }
+
+        rewritten = BuildCapabilityPost(oneShotLet.Name, oneShotLet.Body, resumeCall.Arg, handleResultType, oneShotLet);
+        return true;
+    }
+
+    private bool TryRewriteResumeLet(Expr.Let let, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = let;
+        error = "";
+        if (ExprReferencesName(let.Value, "resume", shadowed: false))
+        {
+            error = UnsupportedResumePosition;
+            return false;
+        }
+
+        if (!TryRewriteResume(let.Body, handleResultType, out var letBody, out error))
+        {
+            return false;
+        }
+
+        rewritten = CopySpan(let, let with { Body = letBody });
+        return true;
+    }
+
+    private bool TryRewriteResumeLetRecursive(Expr.LetRecursive letRecursive, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = letRecursive;
+        error = "";
+        if (ExprReferencesName(letRecursive.Value, "resume", shadowed: false))
+        {
+            error = UnsupportedResumePosition;
+            return false;
+        }
+
+        if (!TryRewriteResume(letRecursive.Body, handleResultType, out var letRecursiveBody, out error))
+        {
+            return false;
+        }
+
+        rewritten = CopySpan(letRecursive, letRecursive with { Body = letRecursiveBody });
+        return true;
+    }
+
+    private bool TryRewriteResumeIf(Expr.If iff, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = iff;
+        error = "";
+        if (ExprReferencesName(iff.Cond, "resume", shadowed: false))
+        {
+            error = UnsupportedResumePosition;
+            return false;
+        }
+
+        if (!TryRewriteResume(iff.Then, handleResultType, out var thenBody, out error)
+            || !TryRewriteResume(iff.Else, handleResultType, out var elseBody, out error))
+        {
+            return false;
+        }
+
+        rewritten = CopySpan(iff, new Expr.If(iff.Cond, thenBody, elseBody));
+        return true;
+    }
+
+    // One-shot match scrutinee: `match resume(v) with cases` splits into `v` plus
+    // post `given r -> match r with cases`.
+    private bool TryRewriteResumeOneShotMatch(Expr.Match oneShotMatch, Expr.Call scrutineeResume, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = oneShotMatch;
+        error = "";
+        if (ExprReferencesName(scrutineeResume.Arg, "resume", shadowed: false)
+            || oneShotMatch.Cases.Any(c => ExprReferencesName(c.Body, "resume", shadowed: false)
+                || (c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false))))
+        {
+            error = "'resume' may run at most once per path (multi-shot handlers are out of scope).";
+            return false;
+        }
+
+        var postParam = $"__resume_result_{_nextCapabilitySiteId++}";
+        var postScrutinee = new Expr.Var(postParam);
+        AstSpans.Set(postScrutinee, GetSpan(oneShotMatch));
+        var postMatch = new Expr.Match(postScrutinee, oneShotMatch.Cases, oneShotMatch.Pos);
+        AstSpans.Set(postMatch, AstSpans.GetOrDefault(oneShotMatch));
+        rewritten = BuildCapabilityPost(postParam, postMatch, scrutineeResume.Arg, handleResultType, oneShotMatch);
+        return true;
+    }
+
+    private bool TryRewriteResumeMatchCases(Expr.Match match, TypeRef handleResultType, out Expr rewritten, out string error)
+    {
+        rewritten = match;
+        error = "";
+        if (ExprReferencesName(match.Value, "resume", shadowed: false)
+            || match.Cases.Any(c => c.Guard is not null && ExprReferencesName(c.Guard, "resume", shadowed: false)))
+        {
+            error = UnsupportedResumePosition;
+            return false;
+        }
+
+        var cases = new List<MatchCase>(match.Cases.Count);
+        foreach (var matchCase in match.Cases)
+        {
+            if (!TryRewriteResume(matchCase.Body, handleResultType, out var caseBody, out error))
+            {
+                return false;
+            }
+
+            cases.Add(new MatchCase(matchCase.Pattern, caseBody, matchCase.Guard));
+        }
+
+        rewritten = CopySpan(match, new Expr.Match(match.Value, cases, match.Pos));
+        return true;
     }
 
     /// <summary>

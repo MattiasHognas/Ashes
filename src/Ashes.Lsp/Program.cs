@@ -20,12 +20,7 @@ internal static class Program
     {
         if (args.Length > 0 && args[0] is "--version")
         {
-            var version = typeof(Program).Assembly
-                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
-                ?.InformationalVersion ?? "0.0.0";
-            var plusIndex = version.IndexOf('+');
-            if (plusIndex >= 0) version = version[..plusIndex];
-            Console.WriteLine(version);
+            PrintVersion();
             return 0;
         }
 
@@ -48,109 +43,136 @@ internal static class Program
             var hasId = root.TryGetProperty("id", out var id);
             root.TryGetProperty("params", out var parameters);
 
-            switch (method)
+            var exitCode = DispatchMessage(method, hasId, id, parameters, output, ref shutdownRequested);
+            if (exitCode is not null)
             {
-                case "initialize":
-                    if (hasId)
-                    {
-                        SendResponse(output, id, new
-                        {
-                            capabilities = new
-                            {
-                                textDocumentSync = 1,
-                                documentFormattingProvider = true,
-                                hoverProvider = true,
-                                definitionProvider = true,
-                                semanticTokensProvider = new
-                                {
-                                    legend = new
-                                    {
-                                        tokenTypes = DocumentService.SemanticTokenTypes,
-                                        tokenModifiers = Array.Empty<string>()
-                                    },
-                                    full = true
-                                },
-                                completionProvider = new { }
-                            }
-                        });
-                    }
-                    break;
-
-                case "shutdown":
-                    shutdownRequested = true;
-                    if (hasId)
-                    {
-                        SendResponse(output, id, (object?)null);
-                    }
-
-                    break;
-
-                case "exit":
-                    return shutdownRequested ? 0 : 1;
-
-                case "textDocument/didOpen":
-                    HandleDidOpen(parameters, output);
-                    break;
-
-                case "textDocument/didChange":
-                    HandleDidChange(parameters, output);
-                    break;
-
-                case "textDocument/didClose":
-                    HandleDidClose(parameters, output);
-                    break;
-
-                case "textDocument/formatting":
-                    if (hasId)
-                    {
-                        HandleFormatting(parameters, output, id);
-                    }
-
-                    break;
-
-                case "textDocument/semanticTokens/full":
-                    if (hasId)
-                    {
-                        HandleSemanticTokens(parameters, output, id);
-                    }
-
-                    break;
-
-                case "textDocument/completion":
-                    if (hasId)
-                    {
-                        HandleCompletion(parameters, output, id);
-                    }
-
-                    break;
-
-                case "textDocument/hover":
-                    if (hasId)
-                    {
-                        HandleHover(parameters, output, id);
-                    }
-
-                    break;
-
-                case "textDocument/definition":
-                    if (hasId)
-                    {
-                        HandleDefinition(parameters, output, id);
-                    }
-
-                    break;
-
-                default:
-                    if (hasId)
-                    {
-                        SendResponse(output, id, (object?)null);
-                    }
-
-                    break;
+                return exitCode.Value;
             }
         }
 
         return 0;
+    }
+
+    private static void PrintVersion()
+    {
+        var version = typeof(Program).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion ?? "0.0.0";
+        var plusIndex = version.IndexOf('+');
+        if (plusIndex >= 0) version = version[..plusIndex];
+        Console.WriteLine(version);
+    }
+
+    private static int? DispatchMessage(string method, bool hasId, JsonElement id, JsonElement parameters, Stream output, ref bool shutdownRequested)
+    {
+        switch (method)
+        {
+            case "initialize":
+                if (hasId)
+                {
+                    HandleInitialize(output, id);
+                }
+                break;
+
+            case "shutdown":
+                shutdownRequested = true;
+                if (hasId)
+                {
+                    SendResponse(output, id, (object?)null);
+                }
+
+                break;
+
+            case "exit":
+                return shutdownRequested ? 0 : 1;
+
+            default:
+                DispatchDocumentMessage(method, hasId, id, parameters, output);
+                break;
+        }
+
+        return null;
+    }
+
+    private static void DispatchDocumentMessage(string method, bool hasId, JsonElement id, JsonElement parameters, Stream output)
+    {
+        switch (method)
+        {
+            case "textDocument/didOpen":
+                HandleDidOpen(parameters, output);
+                break;
+
+            case "textDocument/didChange":
+                HandleDidChange(parameters, output);
+                break;
+
+            case "textDocument/didClose":
+                HandleDidClose(parameters, output);
+                break;
+
+            default:
+                DispatchDocumentRequest(method, hasId, id, parameters, output);
+                break;
+        }
+    }
+
+    private static void DispatchDocumentRequest(string method, bool hasId, JsonElement id, JsonElement parameters, Stream output)
+    {
+        if (!hasId)
+        {
+            return;
+        }
+
+        switch (method)
+        {
+            case "textDocument/formatting":
+                HandleFormatting(parameters, output, id);
+                break;
+
+            case "textDocument/semanticTokens/full":
+                HandleSemanticTokens(parameters, output, id);
+                break;
+
+            case "textDocument/completion":
+                HandleCompletion(parameters, output, id);
+                break;
+
+            case "textDocument/hover":
+                HandleHover(parameters, output, id);
+                break;
+
+            case "textDocument/definition":
+                HandleDefinition(parameters, output, id);
+                break;
+
+            default:
+                SendResponse(output, id, (object?)null);
+                break;
+        }
+    }
+
+    private static void HandleInitialize(Stream output, JsonElement id)
+    {
+        SendResponse(output, id, new
+        {
+            capabilities = new
+            {
+                textDocumentSync = 1,
+                documentFormattingProvider = true,
+                hoverProvider = true,
+                definitionProvider = true,
+                semanticTokensProvider = new
+                {
+                    legend = new
+                    {
+                        tokenTypes = DocumentService.SemanticTokenTypes,
+                        tokenModifiers = Array.Empty<string>()
+                    },
+                    full = true
+                },
+                completionProvider = new { }
+            }
+        });
     }
 
     private static void HandleDidOpen(JsonElement parameters, Stream output)

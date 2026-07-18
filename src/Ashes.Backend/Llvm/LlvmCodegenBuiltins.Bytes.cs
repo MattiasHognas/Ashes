@@ -110,26 +110,35 @@ internal static partial class LlvmCodegen
         // On Linux, delegate the scan to libc memchr — glibc's is SIMD-optimized (SSE2/AVX2), far faster
         // than a byte-at-a-time loop for the common delimiter scans (finding ';' / '\n' in bulk parsing).
         // memchr never reads past the given length, and we clamp `from` into [0, len] so the length passed
-        // is non-negative. Windows keeps the freestanding scalar loop below (no libc memchr wired there).
-        if (state.Target.TargetTriple.Contains("linux", StringComparison.Ordinal))
-        {
-            // Clamp fromStart up to len so `len - fromStart` (memchr's size_t length) can't underflow.
-            LlvmValueHandle fromPastEnd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, fromStart, len, "bytes_idx_from_pastend");
-            LlvmValueHandle scanStart = LlvmApi.BuildSelect(builder, fromPastEnd, len, fromStart, "bytes_idx_scan_start");
-            LlvmValueHandle scanPtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [scanStart], "bytes_idx_scan_ptr");
-            LlvmValueHandle scanLen = LlvmApi.BuildSub(builder, len, scanStart, "bytes_idx_scan_len");
-            // memchr's needle is an int whose low byte is compared; zero-extend our u8 to i32.
-            LlvmValueHandle needle32 = LlvmApi.BuildZExt(builder, needle8, state.I32, "bytes_idx_needle32");
-            LlvmTypeHandle memchrType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I32, state.I64]);
-            LlvmValueHandle found = EmitLinuxImportedCall(state, "memchr", memchrType, [scanPtr, needle32, scanLen], "bytes_idx_memchr");
-            LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, found, LlvmApi.ConstNull(state.I8Ptr), "bytes_idx_isnull");
-            LlvmValueHandle foundInt = LlvmApi.BuildPtrToInt(builder, found, state.I64, "bytes_idx_found_int");
-            LlvmValueHandle dataInt = LlvmApi.BuildPtrToInt(builder, dataPtr, state.I64, "bytes_idx_data_int");
-            LlvmValueHandle foundIdx = LlvmApi.BuildSub(builder, foundInt, dataInt, "bytes_idx_found_idx");
-            LlvmValueHandle negOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0);
-            return LlvmApi.BuildSelect(builder, isNull, negOne, foundIdx, "bytes_idx_result_val");
-        }
+        // is non-negative. Windows keeps the freestanding scalar loop (no libc memchr wired there).
+        return state.Target.TargetTriple.Contains("linux", StringComparison.Ordinal)
+            ? EmitBytesIndexOfMemchr(state, dataPtr, len, needle8, fromStart)
+            : EmitBytesIndexOfScalarScan(state, dataPtr, len, needle8, fromStart);
+    }
 
+    private static LlvmValueHandle EmitBytesIndexOfMemchr(LlvmCodegenState state, LlvmValueHandle dataPtr, LlvmValueHandle len, LlvmValueHandle needle8, LlvmValueHandle fromStart)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Clamp fromStart up to len so `len - fromStart` (memchr's size_t length) can't underflow.
+        LlvmValueHandle fromPastEnd = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, fromStart, len, "bytes_idx_from_pastend");
+        LlvmValueHandle scanStart = LlvmApi.BuildSelect(builder, fromPastEnd, len, fromStart, "bytes_idx_scan_start");
+        LlvmValueHandle scanPtr = LlvmApi.BuildGEP2(builder, state.I8, dataPtr, [scanStart], "bytes_idx_scan_ptr");
+        LlvmValueHandle scanLen = LlvmApi.BuildSub(builder, len, scanStart, "bytes_idx_scan_len");
+        // memchr's needle is an int whose low byte is compared; zero-extend our u8 to i32.
+        LlvmValueHandle needle32 = LlvmApi.BuildZExt(builder, needle8, state.I32, "bytes_idx_needle32");
+        LlvmTypeHandle memchrType = LlvmApi.FunctionType(state.I8Ptr, [state.I8Ptr, state.I32, state.I64]);
+        LlvmValueHandle found = EmitLinuxImportedCall(state, "memchr", memchrType, [scanPtr, needle32, scanLen], "bytes_idx_memchr");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, found, LlvmApi.ConstNull(state.I8Ptr), "bytes_idx_isnull");
+        LlvmValueHandle foundInt = LlvmApi.BuildPtrToInt(builder, found, state.I64, "bytes_idx_found_int");
+        LlvmValueHandle dataInt = LlvmApi.BuildPtrToInt(builder, dataPtr, state.I64, "bytes_idx_data_int");
+        LlvmValueHandle foundIdx = LlvmApi.BuildSub(builder, foundInt, dataInt, "bytes_idx_found_idx");
+        LlvmValueHandle negOne = LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0);
+        return LlvmApi.BuildSelect(builder, isNull, negOne, foundIdx, "bytes_idx_result_val");
+    }
+
+    private static LlvmValueHandle EmitBytesIndexOfScalarScan(LlvmCodegenState state, LlvmValueHandle dataPtr, LlvmValueHandle len, LlvmValueHandle needle8, LlvmValueHandle fromStart)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "bytes_idx_slot");
         LlvmApi.BuildStore(builder, fromStart, idxSlot);
 
@@ -192,6 +201,19 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 14695981039346656037UL, 0), hashSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0), foundSlot);
 
+        EmitBytesScanHashLoop(state, dataPtr, len, needle8, idxSlot, hashSlot, foundSlot);
+
+        LlvmValueHandle tuplePtr = EmitAlloc(state, 16);
+        StoreMemory(state, tuplePtr, 0, LlvmApi.BuildLoad2(builder, state.I64, foundSlot, "bytes_sh_found_v"), "bytes_sh_t0");
+        StoreMemory(state, tuplePtr, 8, LlvmApi.BuildLoad2(builder, state.I64, hashSlot, "bytes_sh_hash_v"), "bytes_sh_t1");
+        return tuplePtr;
+    }
+
+    private static void EmitBytesScanHashLoop(
+        LlvmCodegenState state, LlvmValueHandle dataPtr, LlvmValueHandle len, LlvmValueHandle needle8,
+        LlvmValueHandle idxSlot, LlvmValueHandle hashSlot, LlvmValueHandle foundSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_check");
         var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_body");
         var hitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "bytes_sh_hit");
@@ -224,10 +246,6 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, checkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        LlvmValueHandle tuplePtr = EmitAlloc(state, 16);
-        StoreMemory(state, tuplePtr, 0, LlvmApi.BuildLoad2(builder, state.I64, foundSlot, "bytes_sh_found_v"), "bytes_sh_t0");
-        StoreMemory(state, tuplePtr, 8, LlvmApi.BuildLoad2(builder, state.I64, hashSlot, "bytes_sh_hash_v"), "bytes_sh_t1");
-        return tuplePtr;
     }
 
     // Ashes.Bytes.compare(left)(right) : Int — three-way lexicographic byte order, normalized to
@@ -375,6 +393,19 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_result");
 
+        EmitBytesFromListCountPass(state, countSlot, curSlot, countLoopBlock, countBodyBlock, allocBlock);
+        EmitBytesFromListAllocAndFill(state, listRef, countSlot, curSlot, resultSlot, allocBlock, fillLoopBlock, fillBodyBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bfl_result_val");
+    }
+
+    private static void EmitBytesFromListCountPass(
+        LlvmCodegenState state, LlvmValueHandle countSlot, LlvmValueHandle curSlot,
+        LlvmBasicBlockHandle countLoopBlock, LlvmBasicBlockHandle countBodyBlock, LlvmBasicBlockHandle allocBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
         // Pass 1: count.
         LlvmApi.BuildBr(builder, countLoopBlock);
         LlvmApi.PositionBuilderAtEnd(builder, countLoopBlock);
@@ -388,6 +419,13 @@ internal static partial class LlvmCodegen
         LlvmValueHandle tailCount = LoadMemory(state, curCount, 8, "bfl_tail_count");
         LlvmApi.BuildStore(builder, tailCount, curSlot);
         LlvmApi.BuildBr(builder, countLoopBlock);
+    }
+
+    private static void EmitBytesFromListAllocAndFill(
+        LlvmCodegenState state, LlvmValueHandle listRef, LlvmValueHandle countSlot, LlvmValueHandle curSlot, LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle allocBlock, LlvmBasicBlockHandle fillLoopBlock, LlvmBasicBlockHandle fillBodyBlock, LlvmBasicBlockHandle doneBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
 
         // Allocate result.
         LlvmApi.PositionBuilderAtEnd(builder, allocBlock);
@@ -419,9 +457,6 @@ internal static partial class LlvmCodegen
         LlvmValueHandle tailFill = LoadMemory(state, curFill, 8, "bfl_tail_fill");
         LlvmApi.BuildStore(builder, tailFill, curSlot);
         LlvmApi.BuildBr(builder, fillLoopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bfl_result_val");
     }
 
     private static LlvmValueHandle EmitBytesU16Le(LlvmCodegenState state, LlvmValueHandle value)
