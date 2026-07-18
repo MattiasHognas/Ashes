@@ -132,15 +132,23 @@ internal static partial class LlvmImageLinker
         string entrySymbolName,
         LinkedImagePayload? linkedPayload = null,
         IReadOnlyDictionary<string, string>? externalLibraries = null)
+        => LinkWindowsImage(WindowsImageArch.X64, objectBytes, entrySymbolName, linkedPayload, externalLibraries);
+
+    private static byte[] LinkWindowsImage(
+        WindowsImageArch arch,
+        byte[] objectBytes,
+        string entrySymbolName,
+        LinkedImagePayload? linkedPayload,
+        IReadOnlyDictionary<string, string>? externalLibraries)
     {
         var parsed = ParseCoffObject(objectBytes, entrySymbolName);
         externalLibraries = CollectWindowsRuntimeImports(objectBytes, parsed.SymbolTableOffset, parsed.SymbolCount, externalLibraries);
 
         (byte[] rdataBytes, WindowsRdataLayout rdataLayout) = BuildWindowsRdataSection(
-            objectBytes, parsed, externalLibraries, linkedPayload);
-        WindowsSymbolResolution resolution = ResolveWindowsSymbols(rdataBytes, rdataLayout, parsed, linkedPayload);
-        byte[] codeBytes = ApplyWindowsRelocations(objectBytes, parsed, rdataBytes, rdataLayout, resolution);
-        return WriteWindowsImage(parsed, codeBytes, rdataBytes, rdataLayout, resolution);
+            arch, objectBytes, parsed, externalLibraries, linkedPayload);
+        WindowsSymbolResolution resolution = ResolveWindowsSymbols(arch, rdataBytes, rdataLayout, parsed, linkedPayload);
+        byte[] codeBytes = ApplyWindowsRelocations(arch, objectBytes, parsed, rdataBytes, rdataLayout, resolution);
+        return WriteWindowsImage(arch, parsed, codeBytes, rdataBytes, rdataLayout, resolution);
     }
 
     private readonly record struct WindowsExtraSectionsLayout(
@@ -197,6 +205,7 @@ internal static partial class LlvmImageLinker
         int ExternalThunkCount);
 
     private static (byte[] RdataBytes, WindowsRdataLayout Layout) BuildWindowsRdataSection(
+        WindowsImageArch arch,
         byte[] objectBytes,
         ParsedCoffObject parsed,
         IReadOnlyDictionary<string, string>? externalLibraries,
@@ -220,7 +229,7 @@ internal static partial class LlvmImageLinker
         // Import call thunks live at the end of .text (one per external import symbol), so the
         // .rdata base must account for them before any RVA-dependent content is written.
         int externalThunkCount = externalImports.Sum(static import => import.SymbolNames.Length);
-        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(WindowsTextPrefixLength + parsed.TextBytes.Length + externalThunkCount * WindowsImportThunkLength)), PeSectionAlignment);
+        uint rdataRva = AlignUp(checked(PeTextRva + (uint)(arch.TextPrefixLength + parsed.TextBytes.Length + externalThunkCount * arch.ImportThunkLength)), PeSectionAlignment);
 
         WindowsIatLayout iat = WriteWindowsIatIlt(rdataStream, kernel32Hints, shell32Hints, ws2Hints, crypt32Hints, externalImports, externalHintOffsets, rdataRva);
         (int importDirOffset, int importDirSize) = WriteWindowsImportDirectory(
@@ -527,6 +536,7 @@ internal static partial class LlvmImageLinker
         ulong ExitProcessIatVa);
 
     private static WindowsSymbolResolution ResolveWindowsSymbols(
+        WindowsImageArch arch,
         byte[] rdataBytes,
         WindowsRdataLayout layout,
         ParsedCoffObject parsed,
@@ -540,11 +550,11 @@ internal static partial class LlvmImageLinker
 
         WindowsKernel32IatVas kernelVas = ComputeWindowsKernel32IatVas(kernel32IatVa);
         WindowsNetIatVas netVas = ComputeWindowsNetIatVas(shell32IatVa, ws2IatVa, crypt32IatVa);
-        ulong chkstkStubVa = PeImageBase + PeTextRva + WindowsTrampolineLength;
+        ulong chkstkStubVa = PeImageBase + PeTextRva + (ulong)arch.TrampolineLength;
         var externalSymbolVas = BuildWindowsExternalSymbolVas(kernelVas, netVas, chkstkStubVa);
 
         (Dictionary<int, ulong> sectionBaseVas, uint bssRva) = BuildWindowsSectionBaseVas(layout, rdataBytes.Length);
-        byte[] externalThunkBytes = BuildWindowsExternalThunks(layout, externalSymbolVas, parsed, linkedPayload);
+        byte[] externalThunkBytes = BuildWindowsExternalThunks(arch, layout, externalSymbolVas, parsed, linkedPayload);
 
         return new WindowsSymbolResolution(externalSymbolVas, sectionBaseVas, bssRva, externalThunkBytes, kernel32IatVa);
     }
@@ -685,6 +695,7 @@ internal static partial class LlvmImageLinker
     }
 
     private static byte[] BuildWindowsExternalThunks(
+        WindowsImageArch arch,
         WindowsRdataLayout layout,
         Dictionary<string, ulong> externalSymbolVas,
         ParsedCoffObject parsed,
@@ -693,8 +704,8 @@ internal static partial class LlvmImageLinker
         // Each external import symbol gets its IAT slot exposed as `__imp_<name>` (indirect
         // references) plus a call thunk at the end of .text exposed as `<name>` (direct calls and
         // address-taken references from statically linked bitcode, e.g. Mbed TLS).
-        ulong externalThunkBaseVa = PeImageBase + PeTextRva + (ulong)(WindowsTextPrefixLength + parsed.TextBytes.Length);
-        byte[] externalThunkBytes = new byte[layout.ExternalThunkCount * WindowsImportThunkLength];
+        ulong externalThunkBaseVa = PeImageBase + PeTextRva + (ulong)(arch.TextPrefixLength + parsed.TextBytes.Length);
+        byte[] externalThunkBytes = new byte[layout.ExternalThunkCount * arch.ImportThunkLength];
         int externalThunkIndex = 0;
         foreach (var (import, offset) in layout.ExternalIatOffsets)
         {
@@ -703,15 +714,9 @@ internal static partial class LlvmImageLinker
                 ulong iatEntryVa = PeImageBase + layout.RdataRva + (ulong)offset + (ulong)i * 8UL;
                 externalSymbolVas["__imp_" + import.SymbolNames[i]] = iatEntryVa;
 
-                ulong thunkVa = externalThunkBaseVa + (ulong)(externalThunkIndex * WindowsImportThunkLength);
-                int thunkOffset = externalThunkIndex * WindowsImportThunkLength;
-                externalThunkBytes[thunkOffset] = 0xFF; // jmp qword ptr [rip+disp32]
-                externalThunkBytes[thunkOffset + 1] = 0x25;
-                BinaryPrimitives.WriteInt32LittleEndian(
-                    externalThunkBytes.AsSpan(thunkOffset + 2, 4),
-                    checked((int)((long)iatEntryVa - (long)(thunkVa + 6))));
-                externalThunkBytes[thunkOffset + 6] = 0xCC; // int3 padding
-                externalThunkBytes[thunkOffset + 7] = 0xCC;
+                ulong thunkVa = externalThunkBaseVa + (ulong)(externalThunkIndex * arch.ImportThunkLength);
+                int thunkOffset = externalThunkIndex * arch.ImportThunkLength;
+                WriteWindowsImportThunk(arch, externalThunkBytes, thunkOffset, thunkVa, iatEntryVa);
                 externalSymbolVas[import.SymbolNames[i]] = thunkVa;
                 externalThunkIndex++;
             }
@@ -727,6 +732,7 @@ internal static partial class LlvmImageLinker
     }
 
     private static byte[] ApplyWindowsRelocations(
+        WindowsImageArch arch,
         byte[] objectBytes,
         ParsedCoffObject parsed,
         byte[] rdataBytes,
@@ -734,6 +740,7 @@ internal static partial class LlvmImageLinker
         WindowsSymbolResolution resolution)
     {
         ApplyCoffTextRelocations(
+            arch,
             objectBytes,
             parsed.TextBytes,
             parsed.TextSection,
@@ -742,8 +749,8 @@ internal static partial class LlvmImageLinker
             parsed.TextSectionNumber,
             resolution.SectionBaseVas,
             resolution.ExternalSymbolVas);
-        byte[] codeBytes = BuildWindowsTrampoline(parsed.EntryOffsetInText, resolution.ExitProcessIatVa)
-            .Concat(BuildWindowsChkstkStub())
+        byte[] codeBytes = BuildWindowsTrampoline(arch, parsed.EntryOffsetInText, resolution.ExitProcessIatVa)
+            .Concat(BuildWindowsChkstkStub(arch))
             .Concat(parsed.TextBytes)
             .Concat(resolution.ExternalThunkBytes)
             .ToArray();
@@ -752,6 +759,7 @@ internal static partial class LlvmImageLinker
         // in `.rdata`, whose 8-byte entries are absolute `.text` block addresses
         // (IMAGE_REL_AMD64_ADDR64) that the static linker must fill in.
         ApplyCoffDataRelocations(
+            arch,
             objectBytes,
             rdataBytes,
             parsed.Sections,
@@ -763,6 +771,7 @@ internal static partial class LlvmImageLinker
             resolution.ExternalSymbolVas);
 
         ApplyCoffDebugRelocations(
+            arch,
             objectBytes,
             parsed.DebugSections,
             parsed.SymbolTableOffset,
@@ -800,6 +809,7 @@ internal static partial class LlvmImageLinker
         string[] DebugNameFields);
 
     private static byte[] WriteWindowsImage(
+        WindowsImageArch arch,
         ParsedCoffObject parsed,
         byte[] codeBytes,
         byte[] rdataBytes,
@@ -810,8 +820,8 @@ internal static partial class LlvmImageLinker
         WindowsDebugStringTable debugStr = BuildWindowsDebugStringTable(parsed, sections);
 
         var output = new byte[debugStr.TotalFileSize];
-        WriteWindowsDosAndCoffHeader(output, sections.SectionCount, debugStr.StringTableFileOffset);
-        WriteWindowsOptionalHeader(output, sections, layout.BssTotalSize, debugStr.SizeOfImage);
+        WriteWindowsDosAndCoffHeader(arch, output, sections.SectionCount, debugStr.StringTableFileOffset);
+        WriteWindowsOptionalHeader(arch, output, sections, layout.BssTotalSize, debugStr.SizeOfImage);
         WriteWindowsDataDirectories(output, layout);
         WriteWindowsSectionHeaders(output, parsed, sections, layout, debugStr, codeBytes.Length, rdataBytes.Length);
         WriteWindowsSectionData(output, parsed, codeBytes, rdataBytes, sections, debugStr);
@@ -918,7 +928,7 @@ internal static partial class LlvmImageLinker
         return new WindowsDebugStringTable(stringTableBytes, stringTableFileOffset, sizeOfImage, totalFileSize, debugNameFields);
     }
 
-    private static void WriteWindowsDosAndCoffHeader(byte[] output, int sectionCount, uint stringTableFileOffset)
+    private static void WriteWindowsDosAndCoffHeader(WindowsImageArch arch, byte[] output, int sectionCount, uint stringTableFileOffset)
     {
         // DOS header (minimal)
         output[0] = (byte)'M';
@@ -934,7 +944,7 @@ internal static partial class LlvmImageLinker
 
         // COFF header
         int coffOff = peOff + PeSignatureSize;
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff, 2), 0x8664);      // Machine: AMD64
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff, 2), arch.MachineType); // Machine: AMD64 (0x8664) / ARM64 (0xAA64)
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(coffOff + 2, 2), checked((ushort)sectionCount));
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(coffOff + 4, 4), 0);       // TimeDateStamp
         // With debug sections present, PointerToSymbolTable references the (empty) symbol table
@@ -946,6 +956,7 @@ internal static partial class LlvmImageLinker
     }
 
     private static void WriteWindowsOptionalHeader(
+        WindowsImageArch arch,
         byte[] output,
         WindowsSectionLayout sections,
         uint bssTotalSize,
@@ -966,11 +977,11 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(optOff + 24, 8), PeImageBase);            // ImageBase
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 32, 4), PeSectionAlignment);     // SectionAlignment
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 36, 4), PeFileAlignment);        // FileAlignment
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 40, 2), 6);  // MajorOperatingSystemVersion
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 40, 2), arch.MinOsVersion);  // MajorOperatingSystemVersion (6 x64 / 10 arm64)
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 42, 2), 0);  // MinorOperatingSystemVersion
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 44, 2), 0);  // MajorImageVersion
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 46, 2), 0);  // MinorImageVersion
-        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 48, 2), 6);  // MajorSubsystemVersion
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 48, 2), arch.MinOsVersion);  // MajorSubsystemVersion (6 x64 / 10 arm64)
         BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(optOff + 50, 2), 0);  // MinorSubsystemVersion
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 52, 4), 0);  // Win32VersionValue
         BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(optOff + 56, 4), sizeOfImage);      // SizeOfImage
@@ -1287,6 +1298,7 @@ internal static partial class LlvmImageLinker
     /// just the target symbol's offset within its section.
     /// </summary>
     private static void ApplyCoffDebugRelocations(
+        WindowsImageArch arch,
         ReadOnlySpan<byte> bytes,
         IReadOnlyList<CoffDebugSection> debugSections,
         uint symbolTableOffset,
@@ -1319,7 +1331,7 @@ internal static partial class LlvmImageLinker
                         {
                             Span<byte> patch = debugSection.Bytes.AsSpan(checked((int)relocationOffset), 8);
                             ulong addend = BinaryPrimitives.ReadUInt64LittleEndian(patch);
-                            ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+                            ulong targetVa = ResolveCoffTargetVa(arch, symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
                             BinaryPrimitives.WriteUInt64LittleEndian(patch, checked(targetVa + addend));
                         }
                         break;
@@ -1331,6 +1343,7 @@ internal static partial class LlvmImageLinker
     }
 
     private static void ApplyCoffTextRelocations(
+        WindowsImageArch arch,
         ReadOnlySpan<byte> bytes,
         byte[] textBytes,
         CoffSectionHeader textSection,
@@ -1347,7 +1360,14 @@ internal static partial class LlvmImageLinker
             int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
             ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
             CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
-            ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+            ulong targetVa = ResolveCoffTargetVa(arch, symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+
+            if (arch.IsArm64)
+            {
+                long placeVa = (long)(PeImageBase + PeTextRva + (uint)arch.TextPrefixLength + relocationOffset);
+                ApplyCoffArm64Relocation(relocationType, textBytes, checked((int)relocationOffset), (long)targetVa, placeVa);
+                continue;
+            }
 
             switch (relocationType)
             {
@@ -1373,7 +1393,7 @@ internal static partial class LlvmImageLinker
                     int rel32Addend = BinaryPrimitives.ReadInt32LittleEndian(rel32Patch);
                     // REL32_N: displacement is relative to (relocation offset + 4 + N) where N = type - REL32.
                     int extraDisplacement = relocationType - CoffRelocAmd64Rel32;
-                    long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + relocationOffset + 4 + (uint)extraDisplacement));
+                    long nextInstructionVa = checked((long)(PeImageBase + PeTextRva + (uint)arch.TextPrefixLength + relocationOffset + 4 + (uint)extraDisplacement));
                     long relativeTarget = checked((long)targetVa + rel32Addend - nextInstructionVa);
                     BinaryPrimitives.WriteInt32LittleEndian(rel32Patch, checked((int)relativeTarget));
                     break;
@@ -1390,6 +1410,7 @@ internal static partial class LlvmImageLinker
     /// <c>S + A</c>. The patched bytes live in the concatenated data blob at the section's offset.
     /// </summary>
     private static void ApplyCoffDataRelocations(
+        WindowsImageArch arch,
         ReadOnlySpan<byte> bytes,
         byte[] rdataBytes,
         CoffSectionHeader[] sections,
@@ -1417,8 +1438,16 @@ internal static partial class LlvmImageLinker
                 int symbolIndex = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 4, 4)));
                 ushort relocationType = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 8, 2));
                 CoffSymbol symbol = ReadCoffSymbol(bytes, symbolTableOffset, symbolCount, symbolIndex);
-                ulong targetVa = ResolveCoffTargetVa(symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
+                ulong targetVa = ResolveCoffTargetVa(arch, symbol, textSectionNumber, sectionBaseVas, importSymbolVas);
                 int patchOffset = checked((int)(sectionOffsetInRdata + relocationOffset));
+
+                if (arch.IsArm64)
+                {
+                    // Data-section relocations (e.g. a switch jump table) are ADDR64/ADDR32 only;
+                    // placeVa is unused for those.
+                    ApplyCoffArm64Relocation(relocationType, rdataBytes, patchOffset, (long)targetVa, placeVa: 0);
+                    continue;
+                }
 
                 switch (relocationType)
                 {
@@ -1440,6 +1469,7 @@ internal static partial class LlvmImageLinker
     }
 
     private static ulong ResolveCoffTargetVa(
+        WindowsImageArch arch,
         CoffSymbol symbol,
         int textSectionNumber,
         IReadOnlyDictionary<int, ulong> sectionBaseVas,
@@ -1447,7 +1477,7 @@ internal static partial class LlvmImageLinker
     {
         if (symbol.SectionNumber == textSectionNumber)
         {
-            return PeImageBase + PeTextRva + (uint)WindowsTextPrefixLength + symbol.Value;
+            return PeImageBase + PeTextRva + (uint)arch.TextPrefixLength + symbol.Value;
         }
 
         if (sectionBaseVas.TryGetValue(symbol.SectionNumber, out ulong sectionBaseVa))
@@ -1546,8 +1576,13 @@ internal static partial class LlvmImageLinker
         return Encoding.ASCII.GetString(fileBytes[start..end]);
     }
 
-    private static byte[] BuildWindowsTrampoline(int entryOffsetInText, ulong exitProcessIatVa)
+    private static byte[] BuildWindowsTrampoline(WindowsImageArch arch, int entryOffsetInText, ulong exitProcessIatVa)
     {
+        if (arch.IsArm64)
+        {
+            return BuildWindowsArm64Trampoline(arch, entryOffsetInText, exitProcessIatVa);
+        }
+
         var bytes = new byte[WindowsTrampolineLength];
         int index = 0;
         bytes[index++] = 0x48;
@@ -1570,8 +1605,13 @@ internal static partial class LlvmImageLinker
         return bytes;
     }
 
-    private static byte[] BuildWindowsChkstkStub()
+    private static byte[] BuildWindowsChkstkStub(WindowsImageArch arch)
     {
+        if (arch.IsArm64)
+        {
+            return BuildWindowsArm64ChkstkStub();
+        }
+
         // Windows x64 __chkstk: probes each 4KB page between the caller's stack
         // pointer and the new stack pointer to trigger guard-page expansion.
         // Input:  rax = number of bytes to allocate.
