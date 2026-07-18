@@ -911,45 +911,61 @@ Ashes supports two equivalent syntaxes for calling functions.
 
 The traditional syntax wraps arguments in parentheses:
 
+```ash
 f(x)
 f(x, y)
 f(x)(y)
 f()
 Ashes.IO.print(42)
+```
 
 Multiple parenthesized arguments are syntax sugar for curried application:
 
+```ash
 f(x, y)
+```
 
 is equivalent to:
 
+```ash
 f(x)(y)
+```
 
 This also extends to longer calls:
 
+```ash
 f(a, b, c)
+```
 
 is equivalent to:
 
+```ash
 f(a)(b)(c)
+```
 
 An empty argument list is sugar for passing the built-in `Unit` value:
 
+```ash
 f()
+```
 
 is equivalent to:
 
+```ash
 f(Unit)
+```
 
 #### ML-style (Whitespace) Application
 
 Arguments may also be passed using whitespace, without parentheses:
 
+```ash
 f x
 f x y
 Ashes.IO.print 42
 Ashes.IO.print "hello"
 Ashes.IO.print "hello"
+```
 
 This is pure syntax sugar. `f x y` is parsed identically to `f(x)(y)` — both
 produce the same call structure and semantics. The only AST difference is a
@@ -959,11 +975,15 @@ formatting-only flag that records whether whitespace application was used.
 
 Function application is left-associative:
 
+```ash
 f x y
+```
 
 parses as:
 
+```ash
 ((f x) y)
+```
 
 which is equivalent to `f(x)(y)`.
 
@@ -971,11 +991,15 @@ which is equivalent to `f(x)(y)`.
 
 Function application binds tighter than all binary operators:
 
+```ash
 f x + y
+```
 
 parses as:
 
+```ash
 (f x) + y
+```
 
 not `f (x + y)`.
 
@@ -991,25 +1015,27 @@ The following tokens may appear as whitespace arguments (without parentheses):
 
 Complex expressions must be parenthesized:
 
+```ash
 f (1 + 2)
 Ashes.IO.print (add 3 4)
+```
 
 Keywords such as `then`, `else`, `in`, `with`, `|` are never treated as
 whitespace arguments.
 
 #### Examples
 
-    let id x = x
-    in Ashes.IO.print (id 42)
-
-    let add x y = x + y
-    in Ashes.IO.print (add 3 4)
-
-    let recursive loop x y =
-        if x >= 100000
-        then y
-        else loop (x + 1) (y + 1)
-    in Ashes.IO.print (loop 0 0)
+```ash
+let id x = x
+in Ashes.IO.print (id 42)
+let add x y = x + y
+in Ashes.IO.print (add 3 4)
+let recursive loop x y =
+    if x >= 100000
+    then y
+    else loop (x + 1) (y + 1)
+in Ashes.IO.print (loop 0 0)
+```
 
 ### 7.2 Parameter Sugar
 
