@@ -1,0 +1,7 @@
+{
+  "name": "ping-pong-cannon-test",
+  "entry": "GameTest.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "target": "linux-x64"
+}
