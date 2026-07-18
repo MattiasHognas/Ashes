@@ -239,25 +239,32 @@ flowchart TD
     Linux["LinuxX64LlvmBackend"]
     LinuxArm64["LinuxArm64LlvmBackend"]
     Windows["WindowsX64LlvmBackend"]
+    WindowsArm64["WindowsArm64LlvmBackend"]
     Codegen["LlvmCodegen.Compile()"]
     Setup["LlvmTargetSetup\n(LLVM context, module, builder)"]
     LLVMIR["LLVM IR module"]
     ObjLinux[".o  (ELF relocatable)"]
     ObjLinuxArm64[".o  (ELF relocatable, AArch64)"]
     ObjWindows[".obj  (COFF relocatable)"]
+    ObjWindowsArm64[".obj  (COFF relocatable, AArch64)"]
     LinkerLinux["LlvmImageLinker\n.LinkLinuxExecutable()"]
     LinkerLinuxArm64["LlvmImageLinker\n.LinkLinuxArm64Executable()"]
     LinkerWindows["LlvmImageLinker\n.LinkWindowsExecutable()"]
+    LinkerWindowsArm64["LlvmImageLinker\n.LinkWindowsArm64Executable()"]
     ElfWriter["Hand-rolled\nELF64 writer (x86-64)"]
     ElfArm64Writer["Hand-rolled\nELF64 writer (AArch64)"]
     PeWriter["Hand-rolled\nPE32+ writer"]
+    PeArm64Writer["Hand-rolled\nPE32+ writer (AArch64)"]
     ELF["ELF64 executable"]
     ELFArm64["ELF64 executable (AArch64)"]
     PE["PE32+ executable"]
+    PEArm64["PE32+ executable (AArch64)"]
 
     Factory -->|"linux-x64"| Linux
     Factory -->|"linux-arm64"| LinuxArm64
     Factory -->|"win-x64"| Windows
+    Factory -->|"win-arm64"| WindowsArm64
+    WindowsArm64 --> Codegen
     Linux --> Codegen
     LinuxArm64 --> Codegen
     Windows --> Codegen
@@ -293,7 +300,7 @@ are used.
 
 #### Updating native runtime libraries
 
-The native payloads live in `runtimes/{linux-x64,linux-arm64,win-x64}/`
+The native payloads live in `runtimes/{linux-x64,linux-arm64,win-x64,win-arm64}/`
 and are provisioned for build/publish with the following scripts:
 
 | Dependency | Linux / WSL | Windows (run from WSL) |
@@ -514,7 +521,7 @@ Provisioning (`scripts/download-openlibm.sh`) builds the bitcode from openlibm's
 curated source set with `-fno-builtin -DNDEBUG -ffreestanding`, adds the float
 classifiers (`s_isinf`/`s_isnan`) and no-op `fenv` shims, `llvm-link`s them, and
 `opt internalize`/`globaldce`s to a minimal self-contained module. Bitcode is
-frontend-only, so all three targets build on one host with clang. The win-x64
+frontend-only, so all four targets build on one host with clang. The win-x64
 payload uses the MinGW (`windows-gnu`) triple — its datalayout is identical to
 `windows-msvc`, so the bitcode links into the compiler's MSVC-target module — plus
 win-only adjustments (neuter openlibm's long-double weak-alias macro; skip the
@@ -632,7 +639,7 @@ race on the shared heap-cursor globals:
 - The worker's arena cursor/end live in a small **thread-control block (TCB)**
   reached through a platform thread-pointer register instead of the module
   globals: `%gs`-segment TCB on linux-x64, the TEB `ArbitraryUserPointer` slot
-  on win-x64, and ELF `PT_TLS` local-exec cursors (via `TPIDR_EL0`) on
+  on win-x64 (and the reserved `x18` TEB base on win-arm64), and ELF `PT_TLS` local-exec cursors (via `TPIDR_EL0`) on
   linux-arm64. `EmitHeapChunkInit` gives each worker its first chunk
   (`LlvmCodegenParallel.cs`).
 - The right-hand thunk of `both` is a pure closure whose result type
@@ -964,3 +971,4 @@ Adding a new compile target requires:
 | `linux-x64` | `x86_64-unknown-linux-gnu` | ELF64 | ELF64 (x86-64) |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
 | `win-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
+| `win-arm64` | `aarch64-pc-windows-msvc` | COFF (AArch64) | PE32+ (AArch64) |

@@ -61,11 +61,12 @@ dotnet build Ashes.slnx --configuration Release
 The native backend requires LLVM libraries, and HTTPS/TLS workloads also
 require the Mbed TLS bitcode payload. LLVM must be provisioned before
 running backend or end-to-end tests; the Mbed TLS payloads are
-vendored under `runtimes/{linux-x64,linux-arm64,win-x64}/` and only need
+vendored under `runtimes/{linux-x64,linux-arm64,win-x64,win-arm64}/` and only need
 to be refreshed when bumping `MbedTlsVersion`:
 
 ```sh
 # LLVM: all platforms (linux-x64, linux-arm64, win-x64):
+#   (win-arm64 is a compile target only — no separate host LLVM needed)
 bash scripts/download-llvm-native.sh --all
 
 # LLVM: current architecture only:
@@ -99,7 +100,7 @@ bash scripts/download-mbedtls.sh --all
 ```
 
 The scripts stage LLVM payloads and refreshed Mbed TLS payloads under
-`runtimes/{linux-x64,linux-arm64,win-x64}/`. `Ashes.Backend.csproj`
+`runtimes/{linux-x64,linux-arm64,win-x64,win-arm64}/`. `Ashes.Backend.csproj`
 validates the vendored Mbed TLS version and copies both LLVM and
 Mbed TLS assets into build output.
 
@@ -143,6 +144,23 @@ For loopback TLS tests and other controlled overrides, the coverage
 helper passes `SSL_CERT_FILE` to the compiled PE program using a
 Wine-visible path so the embedded TLS runtime can load PEM roots
 without touching a host Windows certificate store.
+
+### win-arm64: compile-and-link only on x64 hosts
+
+`win-arm64` (Windows on ARM64) is a **compile-and-link-only** target on an x64
+host — a Windows-on-ARM PE cannot be executed there. Wine on x64 cannot load
+ARM64 PEs, and `qemu-aarch64` runs ELF, not PE. Chaining them
+(`x64 → qemu-aarch64 → an aarch64 Wine with the `aarch64-windows` PE builtins`)
+is *capable* but impractical: under single-core TCG emulation, Wine's first-boot
+(`wineboot`) does not complete in reasonable time.
+
+win-arm64 is therefore validated **structurally**: `WindowsArm64BackendTests`
+parses the emitted PE (machine `0xAA64`, imports, resolved relocations), and
+`scripts/verify.sh` / `ci/jobs.sh` cross-compile a program and assert the machine
+field. **Execution** validation requires a **native aarch64 host** — a real
+Windows-on-ARM machine, or a native ARM64 Linux box / cloud ARM runner with
+Wine ≥ 10 (which ships the `aarch64-windows` builtins), where `wine app.exe`
+runs the PE at native speed with no qemu tax.
 
 ---
 
