@@ -1267,17 +1267,27 @@ Errors:
 
 > **Note**
 >
-> In the current implementation all constructor values are heap-allocated tagged
-> cells. Each cell stores a constructor tag (its 0-based index in the declaring type)
-> at offset 0, followed by any payloads at subsequent 8-byte offsets.
+> In the current implementation, values of user-declared algebraic data types (and
+> the generic builtin ADTs `Maybe`, `Result`, and `Unit`) are tagged cells. Each cell
+> stores a constructor tag (its 0-based index in the declaring type) at offset 0,
+> followed by any payloads at subsequent 8-byte offsets.
 >
 > - Nullary constructors: 8-byte cell `[tag]`.
 > - Arity-`n` constructors: `8 * (1 + n)` byte cell `[tag, payload0, ..., payload(n-1)]`.
 >
-> Pattern matching reads the tag from the heap cell and compares it against the
-> expected tag for the matched constructor, so different constructors are always
-> distinguishable and payload values such as `0` or negative integers are safely
-> represented.
+> Pattern matching reads the tag from the cell and compares it against the expected
+> tag for the matched constructor, so different constructors are always distinguishable
+> and payload values such as `0` or negative integers are safely represented.
+>
+> Cells are arena-allocated by default; the optimizer may instead stack-allocate a
+> provably non-escaping cell or reuse a dead, uniquely-owned cell in place, but the
+> tagged layout is identical in every case.
+>
+> A few builtin types use dedicated unboxed representations rather than the tagged-cell
+> scheme: `Bool` is an immediate integer (`0`/`1`); the empty list is the immediate
+> integer `0` and a cons cell is an untagged 16-byte `[head, tail]` block; and tuples
+> are untagged, storing their elements at consecutive 8-byte offsets. Matching on these
+> uses value or null tests rather than a tag comparison.
 >
 
 ### 11.5 Integer Literal Patterns
@@ -2744,6 +2754,9 @@ and `ASH027` (a capability satisfied by both a provider and a handler) cover thi
 
 See [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 
-Note: project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
-(`ashes.json` + `PROJECT_SPEC.md`) and are resolved before expression parsing. Built-in
-`import Ashes.IO` is handled by the compiler directly.
+> **Note**
+>
+> project-mode `import Foo` / `import Foo.Bar` lines are supported by the project system
+> (`ashes.json`) and are resolved before expression parsing. Built-in
+> `import Ashes.IO` is handled by the compiler directly.
+>
