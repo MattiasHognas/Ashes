@@ -1,3 +1,4 @@
+using System.Linq;
 using Ashes.Backend.Backends;
 using Shouldly;
 
@@ -34,6 +35,7 @@ public sealed class BackendFactoryEdgeCaseTests
         TargetIds.LinuxX64.ShouldBe("linux-x64");
         TargetIds.LinuxArm64.ShouldBe("linux-arm64");
         TargetIds.WindowsX64.ShouldBe("win-x64");
+        TargetIds.WindowsArm64.ShouldBe("win-arm64");
     }
 
     [Test]
@@ -42,19 +44,15 @@ public sealed class BackendFactoryEdgeCaseTests
         var targetId = BackendFactory.DefaultForCurrentOS();
 
         // Should be one of the known target IDs
-        var knownIds = new[] { TargetIds.LinuxX64, TargetIds.LinuxArm64, TargetIds.WindowsX64 };
-        knownIds.ShouldContain(targetId);
+        TargetIds.All.ShouldContain(targetId);
     }
 
     [Test]
     public void Create_should_return_distinct_backends_for_all_targets()
     {
-        var linuxX64 = BackendFactory.Create(TargetIds.LinuxX64);
-        var linuxArm64 = BackendFactory.Create(TargetIds.LinuxArm64);
-        var windowsX64 = BackendFactory.Create(TargetIds.WindowsX64);
+        var backends = TargetIds.All.Select(BackendFactory.Create).ToList();
 
-        linuxX64.GetType().ShouldNotBe(linuxArm64.GetType());
-        linuxX64.GetType().ShouldNotBe(windowsX64.GetType());
-        linuxArm64.GetType().ShouldNotBe(windowsX64.GetType());
+        backends.Select(b => b.GetType()).Distinct().Count().ShouldBe(TargetIds.All.Length);
+        backends.Select(b => b.TargetId).ShouldBe(TargetIds.All, ignoreOrder: true);
     }
 }

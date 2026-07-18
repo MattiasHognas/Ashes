@@ -183,6 +183,28 @@ _matrix_one() {
   "
 }
 
+# win-arm64 is a compile-and-link-only target: a Windows-on-ARM PE cannot be executed on the x64 CI
+# host (Wine on x64 can't load ARM64 PEs; qemu-user runs ELF, not PE), so there is no run leg for it.
+# It is validated two ways instead: the C# suite (WindowsArm64BackendTests, run in build_and_test)
+# parses the emitted PE structurally, and here on the base runner we confirm the full source->PE
+# toolchain end-to-end and check the machine field is IMAGE_FILE_MACHINE_ARM64 (0xAA64). Execution
+# coverage awaits real Windows-on-ARM hardware or a qemu-aarch64 + ARM64-Wine chain.
+_matrix_win_arm64() {
+  run_in base "
+    set -euo pipefail
+    git config --global --add safe.directory /work
+    CLI='./artifacts/ashes/linux-x64/ashes'
+    echo '--- Verifying win-arm64 cross-compilation...'
+    src=\$(mktemp --suffix=.ash); out=\$(mktemp --suffix=.exe)
+    printf 'Ashes.IO.print(\"win-arm64 ok\")\n' > \"\$src\"
+    \$CLI compile --target win-arm64 \"\$src\" -o \"\$out\"
+    peOff=\$(od -An -tu4 -j60 -N4 \"\$out\" | tr -d ' ')
+    machine=\$(od -An -tx1 -j\$((peOff + 4)) -N2 \"\$out\" | tr -d ' ')
+    [ \"\$machine\" = 64aa ] || { echo \"win-arm64 PE machine mismatch: \$machine != 64aa\" >&2; exit 1; }
+    echo 'win-arm64 PE (machine 0xAA64) linked OK'
+  "
+}
+
 # Verify fmt stability once, on the base runner. The formatter is pure
 # Ashes.Formatter C# with no arch dependence — running it under qemu/wine would
 # produce byte-identical output — so there's no value in repeating it per arch,
@@ -203,26 +225,28 @@ _matrix_fmt() {
   "
 }
 
-# Run the example/test matrix across all three runners, then verify fmt once.
+# Run the example/test matrix across all four legs, then verify fmt once.
 #
-# The three legs are independent containers over the same read-only-ish /work
-# mount (their per-example output goes to /tmp inside each container), so they
-# run in parallel — mirroring the GitHub matrix (fail-fast: false) and cutting
-# wall-clock to the slowest leg. Each leg's output is captured to a log and
-# replayed grouped afterwards so the interleaved streams stay readable. fmt is
-# verified afterwards, sequentially, by _matrix_fmt (writes the shared tree in
-# place, so it must not race the legs).
+# The legs are independent containers over the same read-only-ish /work mount
+# (their per-example output goes to /tmp inside each container), so they run in
+# parallel — mirroring the GitHub matrix (fail-fast: false) and cutting wall-clock
+# to the slowest leg. Each leg's output is captured to a log and replayed grouped
+# afterwards so the interleaved streams stay readable. fmt is verified afterwards,
+# sequentially, by _matrix_fmt (writes the shared tree in place, so it must not
+# race the legs).
 matrix() {
-  # All three legs run the full suite. The arm64 leg executes its binaries inside a
-  # genuine aarch64 container (ashes-ci-arm64), emulated transparently by the host's
-  # qemu-user-static binfmt_misc handler — which must be registered with the F
-  # (fix-binary) flag so emulation crosses into the container and survives the
-  # compiler's nested exec of its output. `scripts/init-local-ci.sh` sets this up;
-  # see docs/md/guide/local-ci.md. If the handler is missing, the arm64 leg fails with
-  # "Exec format error".
+  # Three legs (linux-x64, linux-arm64, win-x64) run the full suite; the fourth
+  # (win-arm64) is compile-and-link only — a Windows-on-ARM PE cannot be executed on
+  # the x64 CI host, so it just cross-compiles and checks the PE machine field. The
+  # arm64 leg executes its binaries inside a genuine aarch64 container
+  # (ashes-ci-arm64), emulated transparently by the host's qemu-user-static
+  # binfmt_misc handler — which must be registered with the F (fix-binary) flag so
+  # emulation crosses into the container and survives the compiler's nested exec of
+  # its output. `scripts/init-local-ci.sh` sets this up; see docs/md/guide/local-ci.md.
+  # If the handler is missing, the arm64 leg fails with "Exec format error".
   local logdir
   logdir="$(mktemp -d)"
-  local -a names=(linux-x64 linux-arm64 win-x64)
+  local -a names=(linux-x64 linux-arm64 win-x64 win-arm64)
   local -a pids=()
 
   _matrix_one base "./artifacts/ashes/linux-x64/ashes" \
@@ -233,6 +257,12 @@ matrix() {
   pids+=("$!")
   _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" \
     >"$logdir/win-x64.log" 2>&1 &
+  pids+=("$!")
+  # win-arm64 is a compile-and-link-only leg (no run leg; see _matrix_win_arm64's
+  # comment). It only cross-compiles with the linux-x64 host CLI and never writes the
+  # shared /work tree, so — unlike fmt — it runs in parallel with the other legs.
+  _matrix_win_arm64 \
+    >"$logdir/win-arm64.log" 2>&1 &
   pids+=("$!")
 
   local failed=() i
@@ -246,7 +276,8 @@ matrix() {
   done
   rm -rf "$logdir"
 
-  # fmt stability — once, sequentially (writes the shared /work tree in place).
+  # fmt stability — once, sequentially (writes the shared /work tree in place, so it
+  # must not race the legs above).
   _matrix_fmt || failed+=("fmt")
 
   if (( ${#failed[@]} )); then
@@ -256,20 +287,36 @@ matrix() {
 }
 
 # Run the example/test matrix for a SINGLE arch — the single-leg inner loop for
-# iterating on one target without paying for all three. $1 is the RID:
-# linux-x64 | linux-arm64 | win-x64. Publishes only that RID (the full `matrix`
-# relies on `publish_cli` for all three), then runs the same per-leg body as the
-# full matrix (`_matrix_one`), including the arm64 emulation env. fmt stability is
-# arch-independent, so it is verified only by the full `matrix`, not here.
+# iterating on one target without paying for all four. $1 is the RID:
+# linux-x64 | linux-arm64 | win-x64 | win-arm64. Publishes only that RID (the full
+# `matrix` relies on `publish_cli` for the three host RIDs), then runs the same
+# per-leg body as the full matrix (`_matrix_one`), including the arm64 emulation
+# env. win-arm64 is a compile-and-link-only target with no run leg, so it dispatches
+# to the same `_matrix_win_arm64` smoke the full matrix uses (see its comment) and
+# needs no publish of its own — it cross-compiles with the linux-x64 host CLI. fmt
+# stability is arch-independent, so it is verified only by the full `matrix`, not here.
 matrix_one() {
-  local rid="${1:?usage: jobs.sh matrix_one <linux-x64|linux-arm64|win-x64>}"
+  local rid="${1:?usage: jobs.sh matrix_one <linux-x64|linux-arm64|win-x64|win-arm64>}"
+
+  if [[ "$rid" == "win-arm64" ]]; then
+    # No run leg and no win-arm64 host CLI: cross-compile with the linux-x64 host
+    # binary, which _matrix_win_arm64 invokes. Publish it first so this leg is
+    # self-contained (the full matrix gets it from publish_cli).
+    run_in base "
+      set -e
+      dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/linux-x64
+    "
+    _matrix_win_arm64
+    return
+  fi
+
   local runner cli
   case "$rid" in
     linux-x64)   runner=base;  cli="./artifacts/ashes/linux-x64/ashes" ;;
     linux-arm64) runner=arm64; cli="./artifacts/ashes/linux-arm64/ashes" ;;
     win-x64)     runner=win;   cli="wine ./artifacts/ashes/win-x64/ashes.exe" ;;
     *)
-      echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64)" >&2
+      echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64|win-arm64)" >&2
       return 1
       ;;
   esac
@@ -322,7 +369,7 @@ release_build() {
     OUT=artifacts/release
     rm -rf \$OUT publish && mkdir -p \$OUT
 
-    for rid in linux-x64 linux-arm64 win-x64; do
+    for rid in linux-x64 linux-arm64 win-x64 win-arm64; do
       dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/cli/\$rid
       dotnet publish src/Ashes.Lsp/Ashes.Lsp.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/lsp/\$rid
       dotnet publish src/Ashes.Dap/Ashes.Dap.csproj --configuration Release --runtime \$rid --self-contained true -p:PublishSingleFile=true -p:Version=\$VERSION -o publish/dap/\$rid
@@ -355,13 +402,16 @@ release_build() {
     stage_compiler linux-x64   ashes     libLLVM.so
     stage_compiler linux-arm64 ashes     libLLVM.so
     stage_compiler win-x64     ashes.exe libLLVM.dll
+    stage_compiler win-arm64   ashes.exe libLLVM.dll
 
     stage_tool lsp linux-x64   ashes-lsp     ashes-lsp-linux-x64
     stage_tool lsp linux-arm64 ashes-lsp     ashes-lsp-linux-arm64
     stage_tool lsp win-x64     ashes-lsp.exe ashes-lsp-win-x64
+    stage_tool lsp win-arm64   ashes-lsp.exe ashes-lsp-win-arm64
     stage_tool dap linux-x64   ashes-dap     ashes-dap-linux-x64
     stage_tool dap linux-arm64 ashes-dap     ashes-dap-linux-arm64
     stage_tool dap win-x64     ashes-dap.exe ashes-dap-win-x64
+    stage_tool dap win-arm64   ashes-dap.exe ashes-dap-win-arm64
 
     cd vscode-extension
     corepack enable
@@ -554,12 +604,15 @@ release_github() {
   # The exact artifact set published by release.yml (filenames match release_build).
   local artifacts=(
     "$out/ashes-win-x64.zip"
+    "$out/ashes-win-arm64.zip"
     "$out/ashes-linux-x64.zip"
     "$out/ashes-linux-arm64.zip"
     "$out/ashes-lsp-win-x64.zip"
+    "$out/ashes-lsp-win-arm64.zip"
     "$out/ashes-lsp-linux-x64.zip"
     "$out/ashes-lsp-linux-arm64.zip"
     "$out/ashes-dap-win-x64.zip"
+    "$out/ashes-dap-win-arm64.zip"
     "$out/ashes-dap-linux-x64.zip"
     "$out/ashes-dap-linux-arm64.zip"
     "$out/ashes-language-$version.vsix"

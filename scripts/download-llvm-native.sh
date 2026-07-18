@@ -18,8 +18,10 @@
 #   ./scripts/download-llvm-native.sh 22 x64        # cross-download x64 .so on arm64 host
 #   ./scripts/download-llvm-native.sh --win-x64     # download Windows x64 DLL only
 #   ./scripts/download-llvm-native.sh --win-x64 22.1.2
-#   ./scripts/download-llvm-native.sh --all         # download all three: linux-x64, linux-arm64, win-x64
-#   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for Windows DLL
+#   ./scripts/download-llvm-native.sh --win-arm64   # download Windows ARM64 DLL only
+#   ./scripts/download-llvm-native.sh --win-arm64 22.1.2
+#   ./scripts/download-llvm-native.sh --all         # download all four: linux-x64, linux-arm64, win-x64, win-arm64
+#   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for the Windows DLLs
 #
 # Prerequisites: apt, root access (directly or via sudo), wget (for LLVM apt repo key), tar (for Windows DLL)
 
@@ -27,6 +29,7 @@ set -euo pipefail
 
 ALL_MODE=false
 WIN_X64_MODE=false
+WIN_ARM64_MODE=false
 LLVM_MAJOR="22"
 LLVM_FULL_VERSION="22.1.2"
 TARGET_ARCH=""
@@ -39,6 +42,12 @@ if [ "${1:-}" = "--all" ] || [ "${1:-}" = "-a" ]; then
     fi
 elif [ "${1:-}" = "--win-x64" ]; then
     WIN_X64_MODE=true
+    if [ -n "${2:-}" ]; then
+        LLVM_FULL_VERSION="$2"
+        LLVM_MAJOR="${LLVM_FULL_VERSION%%.*}"
+    fi
+elif [ "${1:-}" = "--win-arm64" ]; then
+    WIN_ARM64_MODE=true
     if [ -n "${2:-}" ]; then
         LLVM_FULL_VERSION="$2"
         LLVM_MAJOR="${LLVM_FULL_VERSION%%.*}"
@@ -475,17 +484,18 @@ download_linux() {
     fi
 }
 
-# Helper: download Windows DLL from GitHub release
-download_windows_dll() {
-    local llvm_version="$1"
+# Helper: download a Windows LLVM-C.dll from the GitHub release.
+# $1 = full LLVM version, $2 = LLVM host triple arch (x86_64 | aarch64), $3 = Ashes rid (win-x64 | win-arm64).
+download_windows_dll_arch() {
+    local llvm_version="$1" llvm_arch="$2" rid="$3"
 
     echo ""
-    echo "=== Downloading LLVM ${llvm_version} Windows x64 DLL ==="
+    echo "=== Downloading LLVM ${llvm_version} ${rid} DLL ==="
 
     ensure_command xz xz-utils
 
-    local win_url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${llvm_version}/clang+llvm-${llvm_version}-x86_64-pc-windows-msvc.tar.xz"
-    local win_out="$LIB_DIR/win-x64"
+    local win_url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${llvm_version}/clang+llvm-${llvm_version}-${llvm_arch}-pc-windows-msvc.tar.xz"
+    local win_out="$LIB_DIR/${rid}"
     mkdir -p "$win_out"
 
     local tmpdir
@@ -501,7 +511,7 @@ download_windows_dll() {
     local llvm_c_dll
     llvm_c_dll=$(find "$tmpdir/win" -name 'LLVM-C.dll' -print -quit)
     if [ -z "$llvm_c_dll" ]; then
-        echo "ERROR: Could not find LLVM-C.dll in Windows archive" >&2
+        echo "ERROR: Could not find LLVM-C.dll in ${rid} archive" >&2
         rm -rf "$tmpdir"
         exit 1
     fi
@@ -514,20 +524,36 @@ download_windows_dll() {
     rm -rf "$tmpdir"
 }
 
+# Helper: download Windows x64 DLL from GitHub release.
+download_windows_dll() {
+    download_windows_dll_arch "$1" "x86_64" "win-x64"
+}
+
+# Helper: download Windows ARM64 DLL from GitHub release.
+download_windows_arm64_dll() {
+    download_windows_dll_arch "$1" "aarch64" "win-arm64"
+}
+
 # Main
 if [ "$ALL_MODE" = true ]; then
-    # Download all three runtimes: linux-x64, linux-arm64, win-x64
+    # Download all four runtimes: linux-x64, linux-arm64, win-x64, win-arm64
     download_linux "$LLVM_MAJOR" "x64"
     download_linux "$LLVM_MAJOR" "arm64"
     download_windows_dll "$LLVM_FULL_VERSION"
+    download_windows_arm64_dll "$LLVM_FULL_VERSION"
 
     echo ""
-    echo "=== Done (LLVM ${LLVM_MAJOR}, all runtimes: linux-x64, linux-arm64, win-x64) ==="
+    echo "=== Done (LLVM ${LLVM_MAJOR}, all runtimes: linux-x64, linux-arm64, win-x64, win-arm64) ==="
 elif [ "$WIN_X64_MODE" = true ]; then
     download_windows_dll "$LLVM_FULL_VERSION"
 
     echo ""
     echo "=== Done (LLVM ${LLVM_FULL_VERSION}, win-x64) ==="
+elif [ "$WIN_ARM64_MODE" = true ]; then
+    download_windows_arm64_dll "$LLVM_FULL_VERSION"
+
+    echo ""
+    echo "=== Done (LLVM ${LLVM_FULL_VERSION}, win-arm64) ==="
 else
     # Single-target mode (original behavior)
     if [ -n "$TARGET_ARCH" ]; then

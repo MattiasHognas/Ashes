@@ -148,7 +148,7 @@ get_target_rids() {
   fi
 
   if [[ "$allRids" == "true" ]]; then
-    printf '%s\n' win-x64 linux-x64 linux-arm64
+    printf '%s\n' win-x64 win-arm64 linux-x64 linux-arm64
     return
   fi
 

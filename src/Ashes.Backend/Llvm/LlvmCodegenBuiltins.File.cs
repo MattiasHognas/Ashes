@@ -1226,7 +1226,7 @@ internal static partial class LlvmCodegen
         EmitFileReadLineFdGuard(state, handleVal, ffdSlot, fposSlot, flenSlot);
 
         LlvmValueHandle bytesReadSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             bytesReadSlot = ReadLineScratchGlobal(state, "__ashes_fileline_bytes_read", state.I32);
         }

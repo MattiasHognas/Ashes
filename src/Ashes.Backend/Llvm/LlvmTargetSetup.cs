@@ -42,6 +42,7 @@ internal static class LlvmTargetSetup
             Backends.TargetIds.LinuxX64 => "x86_64-unknown-linux-gnu",
             Backends.TargetIds.LinuxArm64 => "aarch64-unknown-linux-gnu",
             Backends.TargetIds.WindowsX64 => "x86_64-pc-windows-msvc",
+            Backends.TargetIds.WindowsArm64 => "aarch64-pc-windows-msvc",
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
     }
@@ -86,7 +87,9 @@ internal static class LlvmTargetSetup
             return (targetCpu, string.Empty);
         }
 
-        string cpu = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal) ? "generic" : "x86-64";
+        bool isArm64 = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal)
+            || string.Equals(targetId, Backends.TargetIds.WindowsArm64, StringComparison.Ordinal);
+        string cpu = isArm64 ? "generic" : "x86-64";
         return (cpu, string.Empty);
     }
 

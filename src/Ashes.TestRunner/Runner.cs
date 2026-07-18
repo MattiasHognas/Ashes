@@ -867,7 +867,7 @@ public static class Runner
                 MaterializeTestFixtures(workDir, fileFixtures);
             }
 
-            var exeName = string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? "program.exe" : "program";
+            var exeName = TargetIds.IsWindows(targetId) ? "program.exe" : "program";
             var exePath = Path.Combine(workDir, exeName);
             using (var fs = new FileStream(exePath, FileMode.Create, FileAccess.Write, FileShare.None))
             {

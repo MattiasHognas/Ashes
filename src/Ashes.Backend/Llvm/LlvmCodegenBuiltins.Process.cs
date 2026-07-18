@@ -469,7 +469,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle stdinHandle = default;
         LlvmValueHandle bytesWrittenSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             stdinHandle = stdinFd;
             bytesWrittenSlot = LlvmApi.BuildAlloca(builder, state.I32, "proc_bytes_written");
@@ -540,7 +540,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle fileHandle = default;
         LlvmValueHandle bytesReadSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             fileHandle = fd;
             bytesReadSlot = LlvmApi.BuildAlloca(builder, state.I32, prefix + "_bytes_read");

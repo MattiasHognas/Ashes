@@ -9,26 +9,24 @@ public static class BackendFactory
             TargetIds.LinuxX64 => new LinuxX64LlvmBackend(),
             TargetIds.LinuxArm64 => new LinuxArm64LlvmBackend(),
             TargetIds.WindowsX64 => new WindowsX64LlvmBackend(),
+            TargetIds.WindowsArm64 => new WindowsArm64LlvmBackend(),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'.")
         };
     }
 
     public static string DefaultForCurrentOS()
     {
+        bool isArm64 = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
+            == System.Runtime.InteropServices.Architecture.Arm64;
+
         if (OperatingSystem.IsWindows())
         {
-            return TargetIds.WindowsX64;
+            return isArm64 ? TargetIds.WindowsArm64 : TargetIds.WindowsX64;
         }
 
         if (OperatingSystem.IsLinux())
         {
-            if (System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
-                    == System.Runtime.InteropServices.Architecture.Arm64)
-            {
-                return TargetIds.LinuxArm64;
-            }
-
-            return TargetIds.LinuxX64;
+            return isArm64 ? TargetIds.LinuxArm64 : TargetIds.LinuxX64;
         }
 
         throw new PlatformNotSupportedException(

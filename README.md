@@ -300,6 +300,7 @@ Ashes is split into focused phases:
 | `linux-x64` | ELF64 | x86-64 |
 | `linux-arm64` | ELF64 | AArch64 |
 | `win-x64` | PE32+ | x86-64 |
+| `win-arm64` | PE32+ | AArch64 (host + target; runs only on native ARM64 Windows, not x64 hosts) |
 
 ```sh
 dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello
@@ -377,7 +378,9 @@ The full CI/CD pipeline runs locally in rootless **Podman** containers — no
 GitHub required. Jobs are driven by a `justfile` and reproduce the
 `.github/workflows/{pull-request,push-to-main,release}` steps, with each
 architecture in its own image: **linux-x64** natively, **linux-arm64** under
-`qemu`, **win-x64** under `wine`.
+`qemu`, **win-x64** under `wine`, and **win-arm64** compile-and-link-only (a
+Windows-on-ARM image cannot execute on an x64 host, so its leg cross-compiles
+and structurally checks the PE rather than running it).
 
 ```sh
 ./scripts/init-local-ci.sh   # one-command bootstrap (deps + images + LLVM libs)

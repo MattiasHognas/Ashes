@@ -12,16 +12,18 @@ Usage:
   scripts/download-mbedtls.sh --linux-x64
   scripts/download-mbedtls.sh --linux-arm64
   scripts/download-mbedtls.sh --win-x64
+  scripts/download-mbedtls.sh --win-arm64
 USAGE
 }
 
 targets=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --all) targets=(linux-x64 linux-arm64 win-x64) ;;
+    --all) targets=(linux-x64 linux-arm64 win-x64 win-arm64) ;;
     --linux-x64) targets+=(linux-x64) ;;
     --linux-arm64) targets+=(linux-arm64) ;;
     --win-x64) targets+=(win-x64) ;;
+    --win-arm64) targets+=(win-arm64) ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -53,6 +55,7 @@ triple_for() {
     # and yields the same datalayout as windows-msvc (LinkModules2 gates on datalayout, not the
     # triple string), so the payload still matches the backend's win-x64 program module.
     win-x64) echo "x86_64-w64-windows-gnu" ;;
+    win-arm64) echo "aarch64-w64-windows-gnu" ;;
     *) echo "unknown target: $1" >&2; exit 2 ;;
   esac
 }
@@ -279,7 +282,7 @@ build_target() {
 
   # Windows has no MinGW sysroot here: parse against declaration-only stubs (freestanding, no builtin
   # libc), same as the PCRE2 payload. Compiler builtins (memcpy/memset/...) still come from clang.
-  if [ "$rid" = "win-x64" ]; then
+  if [ "$rid" = "win-x64" ] || [ "$rid" = "win-arm64" ]; then
     write_win_stub_headers "$tmp/winstub"
     cflags+=(-ffreestanding -fno-builtin -isystem "$tmp/winstub")
     # Without this, LLVM instruction selection lowers bignum's double-width division to a

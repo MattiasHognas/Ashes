@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Ashes is a **compiler** (not an application) for a pure functional ML-family language, written in
 C#/.NET 10. It compiles `.ash` source to **standalone native executables** (ELF on Linux, PE on
 Windows) via LLVM, with zero runtime dependencies — no GC, no runtime. Targets: `linux-x64`,
-`linux-arm64`, `win-x64`.
+`linux-arm64`, `win-x64`, `win-arm64`. All four are both compile targets and host RIDs (a released
+compiler runs on each); win-arm64 binaries and the win-arm64 host toolchain run only on native ARM64
+Windows — they are built and structurally validated on x64 hosts but not executed there.
 
 `docs/md/` is the source of truth (also published as the documentation site; the VitePress app
 lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
@@ -59,7 +61,7 @@ normally don't need fetching. Refresh them only when `<Pcre2Version>` changes:
 bash scripts/download-pcre2.sh --all          # builds libpcre2.bc (8-bit, Unicode, JIT off) for all targets on one host (needs clang, llvm-link, opt, llvm-nm)
 ```
 
-All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`) instead of
+All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`, `--win-arm64`) instead of
 `--all`. Mbed TLS, openlibm, and PCRE2 are compiled to LLVM bitcode by the clang frontend, so every
 target builds on one host with no cross toolchain.
 
@@ -109,6 +111,19 @@ Backend/runtime validation for the other targets can run on a Linux x64 host via
 - **linux-arm64**: executed through `qemu-aarch64` / `qemu-aarch64-static` with an arm64 sysroot
   (e.g. `/usr/aarch64-linux-gnu`). The linux-arm64 coverage helper looks for qemu on `PATH` and at
   the rootless Arch-style location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+- **win-arm64**: a compile target **and** a host RID (the release ships a win-arm64 compiler/LSP/DAP
+  bundle with an aarch64-windows `libLLVM.dll`), but **neither the emitted PE nor the WoA compiler
+  executes on an x64 host** — Wine on x64 can't load ARM64 PEs, and `qemu-aarch64` runs ELF, not PE.
+  Chaining them (x64 → `qemu-aarch64` → an aarch64 Wine that *does* have `aarch64-windows` PE
+  builtins, e.g. Debian trixie's Wine 10) is *capable* but impractical: under single-core TCG
+  emulation Wine's first-boot (`wineboot`) does not complete in reasonable time (observed: wedged in
+  the `start.exe` phase after 90 min). win-arm64 is therefore validated **structurally** on x64 — the
+  C# suite (`WindowsArm64BackendTests`) parses the emitted PE (machine `0xAA64`, imports, resolved
+  relocations), and `verify.sh`/`ci/jobs.sh` cross-compile a program and check the machine field; the
+  host bundle is likewise built (`dotnet publish --runtime win-arm64`) and checked for an ARM64
+  `ashes.exe` + `libLLVM.dll`. **Execution validation requires a native aarch64 host** (a real
+  Windows-on-ARM machine, or a native ARM64 Linux box / cloud ARM instance running Wine ≥ 10 with
+  `aarch64-windows`, where there is no qemu tax and `wine app.exe` runs the PE at native speed).
 
 ## CLI entry points
 
