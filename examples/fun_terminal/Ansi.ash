@@ -1,6 +1,6 @@
 import Ashes.Bytes as bytes
-import Ashes.String as str
 import Ashes.UInt as uint
+
 let esc = bytes.subText(bytes.appendByte(bytes.empty(Unit))(uint.fromInt(27)))(0)(1)
 
 let reset = esc + "[0m"
@@ -23,13 +23,16 @@ let dim s = paint("2")(s)
 
 let clearScreen _ = esc + "[2J" + esc + "[H"
 
-let recursive stripe colors block =
-    match colors with
-        | [] -> ""
-        | c :: rest -> paint(c)(block) + stripe(rest)(block)
+let home = esc + "[H"
 
-let logo _ =
-    (let bar = stripe(["1;31", "1;33", "1;32", "1;36", "1;34", "1;35"])("██████")
-    in
-        let pad = "  "
-        in bar + "\n" + pad + paint("1;36")("█▀▀▄ ▀█▀ █▀▀▄ █▀▀▀   █▀▀▄ █▀▀█ █▀▀▄ █▀▀▀") + "\n" + pad + paint("1;36")("█▀▀   █  █  █ █ ▀█   █▀▀  █  █ █  █ █ ▀█") + "\n" + pad + paint("1;34")("▀    ▀▀▀ ▀  ▀ ▀▀▀▀   ▀    ▀▀▀▀ ▀  ▀ ▀▀▀▀") + "\n" + pad + dim("cannon rally over the net  -  first to 3 points") + "\n" + bar)
+let hideCursor = esc + "[?25l"
+
+let showCursor = esc + "[?25h"
+
+let altScreenOn = esc + "[?1049h"
+
+let altScreenOff = esc + "[?1049l"
+
+let mouseOn = esc + "[?1003h" + esc + "[?1006h"
+
+let mouseOff = esc + "[?1006l" + esc + "[?1003l"

@@ -32,6 +32,41 @@ These types are always available without imports:
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
 
+### `Ashes.Console`
+
+Interactive terminal input for real-time programs (games, TUIs): raw keyboard/mouse byte
+streams and a monotonic clock for frame pacing. Rendering needs no dedicated support —
+ANSI escape output through `Ashes.IO.write` already works; this module is about *input*,
+which is line-buffered and blocking without it.
+
+- `enableRawInput()` returning `Bool` — switch stdin to raw mode: no line buffering, no echo,
+  no signal keys (press-by-press delivery; `Ctrl-C` arrives as byte `0x03` for the program to
+  handle). On Linux this saves and rewrites the termios state; on Windows it saves and rewrites
+  the console input mode and enables VT input sequences (arrow keys and mouse arrive as the same
+  escape bytes as on Linux), and enables VT processing on stdout so ANSI rendering works in the
+  classic console host. Returns `false` (and changes nothing) when stdin is not a terminal —
+  for example when input is piped, as in tests and CI — so programs can fall back or exit
+  cleanly.
+- `restoreInput()` returning `Unit` — restore the mode saved by `enableRawInput`. A no-op if
+  raw mode was never enabled. Programs must call this before exiting; the runtime does not
+  restore the terminal on its own.
+- `pollInput(timeoutMs)` returning `Maybe(Str)` — wait up to `timeoutMs` milliseconds for
+  input and return whatever bytes are pending: `Some(bytes)` when input arrived (possibly
+  several keys, or a partial escape sequence — accumulate and decode in the program),
+  `Some("")` when the timeout elapsed with no input, `None` when stdin is closed (end of
+  input on a pipe). A `timeoutMs` of `0` is a non-blocking check. In raw mode each keypress
+  arrives immediately; arrow keys arrive as `ESC [ A` … `ESC [ D`, and mouse reporting
+  (opted into by writing the standard `ESC [ ? 1003 h` / `ESC [ ? 1006 h` sequences) arrives
+  as SGR `ESC [ < b ; x ; y M/m` sequences. Decoding is ordinary string processing. On
+  Windows, when stdin is a pipe rather than a console, the timeout is not honored: the call
+  reads directly and blocks until bytes or end of input arrive (pipes are not waitable
+  objects; on Linux `ppoll` covers pipes and ttys alike).
+- `monotonicMillis()` returning `Int` — milliseconds on a monotonic clock (unaffected by wall
+  clock changes; `CLOCK_MONOTONIC` on Linux, `GetTickCount64` on Windows). The zero point is
+  arbitrary; use differences for frame pacing and timeouts.
+
+Supported on Linux x64, Linux arm64, and Windows x64.
+
 ### `Ashes.File`
 
 - `readText(path)` returning `Result(Str, Str)` — UTF-8-validated; caps at 1 MiB.

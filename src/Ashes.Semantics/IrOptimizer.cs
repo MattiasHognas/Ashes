@@ -524,6 +524,7 @@ public static class IrOptimizer
             IrInst.TextAsciiCase t => t with { SourceTemp = R(t.SourceTemp) },
             IrInst.TextByteLength t => t with { TextTemp = R(t.TextTemp) },
             IrInst.ReadExact r => r with { CountTemp = R(r.CountTemp) },
+            IrInst.ConsolePoll cp => cp with { TimeoutTemp = R(cp.TimeoutTemp) },
             IrInst.FileReadAllBytes f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileMmap f => f with { PathTemp = R(f.PathTemp) },
             IrInst.SpawnProcess s => s with { ExeTemp = R(s.ExeTemp), ArgsTemp = R(s.ArgsTemp) },
@@ -1748,6 +1749,7 @@ public static class IrOptimizer
         switch (inst)
         {
             case IrInst.ReadExact r: usedTemps.Add(r.CountTemp); break;
+            case IrInst.ConsolePoll cp: usedTemps.Add(cp.TimeoutTemp); break;
             case IrInst.FileReadAllBytes f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileMmap f: usedTemps.Add(f.PathTemp); break;
             case IrInst.SpawnProcess s: usedTemps.Add(s.ExeTemp); usedTemps.Add(s.ArgsTemp); break;

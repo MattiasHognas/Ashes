@@ -239,6 +239,10 @@ public abstract record IrInst
     public sealed record WriteStr(int Source) : IrInst;
     public sealed record ReadLine(int Target) : IrInst;
     public sealed record ReadExact(int Target, int CountTemp) : IrInst;
+    public sealed record ConsoleEnableRaw(int Target) : IrInst;
+    public sealed record ConsoleRestore(int Target) : IrInst;
+    public sealed record ConsolePoll(int Target, int TimeoutTemp) : IrInst;
+    public sealed record MonotonicMillis(int Target) : IrInst;
     public sealed record TextByteLength(int Target, int TextTemp) : IrInst;
     public sealed record FileReadText(int Target, int PathTemp) : IrInst;
 

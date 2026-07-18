@@ -4330,6 +4330,114 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TStr()));
     }
 
+    // Ashes.Console.enableRawInput : Unit -> Bool
+    private Binding.Intrinsic CreateConsoleEnableRawBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ConsoleEnableRaw,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TBool()))
+        );
+    }
+
+    private (int, TypeRef) LowerConsoleEnableRaw(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (unitTemp, unitType) = LowerExpr(arg);
+        var loweredType = Prune(unitType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (unitTemp, loweredType);
+        }
+
+        Unify(loweredType, _resolvedTypes["Unit"]);
+
+        var target = NewTemp();
+        Emit(new IrInst.ConsoleEnableRaw(target));
+        return (target, new TypeRef.TBool());
+    }
+
+    // Ashes.Console.restoreInput : Unit -> Unit
+    private Binding.Intrinsic CreateConsoleRestoreBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ConsoleRestore,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], _resolvedTypes["Unit"]))
+        );
+    }
+
+    private (int, TypeRef) LowerConsoleRestore(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (unitTemp, unitType) = LowerExpr(arg);
+        var loweredType = Prune(unitType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (unitTemp, loweredType);
+        }
+
+        Unify(loweredType, _resolvedTypes["Unit"]);
+
+        var target = NewTemp();
+        Emit(new IrInst.ConsoleRestore(target));
+        return (target, _resolvedTypes["Unit"]);
+    }
+
+    // Ashes.Console.pollInput : Int -> Maybe(Str)
+    private Binding.Intrinsic CreateConsolePollBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ConsolePoll,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TStr())))
+        );
+    }
+
+    private (int, TypeRef) LowerConsolePoll(Expr timeoutArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(timeoutArg);
+        var (timeoutTemp, timeoutType) = LowerExpr(timeoutArg);
+        var prunedTimeoutType = Prune(timeoutType);
+
+        if (prunedTimeoutType is TypeRef.TNever)
+        {
+            return (timeoutTemp, prunedTimeoutType);
+        }
+
+        Unify(prunedTimeoutType, new TypeRef.TInt());
+
+        var target = NewTemp();
+        Emit(new IrInst.ConsolePoll(target, timeoutTemp));
+        return (target, CreateMaybeType(new TypeRef.TStr()));
+    }
+
+    // Ashes.Console.monotonicMillis : Unit -> Int
+    private Binding.Intrinsic CreateConsoleMonotonicMillisBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.ConsoleMonotonicMillis,
+            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TInt()))
+        );
+    }
+
+    private (int, TypeRef) LowerConsoleMonotonicMillis(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (unitTemp, unitType) = LowerExpr(arg);
+        var loweredType = Prune(unitType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (unitTemp, loweredType);
+        }
+
+        Unify(loweredType, _resolvedTypes["Unit"]);
+
+        var target = NewTemp();
+        Emit(new IrInst.MonotonicMillis(target));
+        return (target, new TypeRef.TInt());
+    }
+
     // Ashes.Text.byteLength : Str -> Int
     private Binding.Intrinsic CreateTextByteLengthBinding()
     {

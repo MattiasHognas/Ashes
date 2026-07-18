@@ -1,49 +1,51 @@
-# Ping Pong Cannon
+# Terminal Pong
 
-A colorful turn-based terminal duel: you and the computer sit at opposite ends
-of a table and lob a ball over the net with a cannon. Type an angle and a power,
-watch the ANSI-rendered arc, and land the ball in the opponent's paddle zone to
-score. First to 3 points wins. Real-time Pong needs raw-mode keyboard input the
-runtime does not expose, so this is the turn-based artillery cousin — with the
-net kept firmly in the middle.
+Real-time Pong against the computer, drawn with ANSI escapes in an ordinary
+terminal. The left paddle is yours; the right paddle tracks the ball with a
+capped speed and can be beaten. First to 5 points wins, `q` (or `Ctrl-C`)
+quits.
 
-The example leans on three stdlib pillars:
+The example is built on `Ashes.Console`, the raw terminal-input module:
 
-- `Ashes.Math` — the whole flight is `sin`/`cos`/gravity integration
-  (`Physics.ash`), the per-round wind is a deterministic pseudo-random value
-  built from `sin`-hash fractions, and the computer aims by inverting the
-  projectile range formula (`idealPower`) with an error that shrinks each round.
-- `Ashes.Regex` — player input is parsed with a compiled PCRE2 pattern
-  (`^\s*(\d{1,2})\s+(\d{1,3})\s*$`) via `captures`, then range-checked.
-- ANSI art — `Ansi.ash` builds the escape character from byte 27 with
-  `Ashes.Bytes` (string literals have no `\x1b` escape), and everything from the
-  rainbow logo to the trajectory trail is colored with it.
+- `enableRawInput` / `restoreInput` switch stdin to raw mode (press-by-press
+  delivery, no echo) and back. When stdin is not a terminal — a pipe, a test
+  harness — `enableRawInput` returns `false` and the game exits with a hint
+  instead of fighting the pipe.
+- `pollInput(timeoutMs)` waits up to one frame budget for input and returns
+  whatever bytes arrived. Arrow keys arrive as `ESC [ A`/`ESC [ B`, mouse
+  motion arrives as SGR `ESC [ < b ; x ; y M` sequences (opted into by
+  printing `ESC [ ? 1003 h` and `ESC [ ? 1006 h`), and decoding both is
+  ordinary pure string processing in `Input.ash` — including carrying a
+  partial escape sequence over to the next frame.
+- `monotonicMillis` paces the loop: each frame collects input until the 33 ms
+  deadline, then steps the simulation with a fixed timestep.
 
-The screen state is pure: `Game.renderBoard` folds the trajectory trail, net,
-and paddles into a string, and the game loop threads scores and round number
-through recursion, reading one line per turn with `Ashes.IO.readLine`.
+The game state is a record threaded through a pure step function
+(`Physics.ash`): ball integration, wall bounces, paddle english, deterministic
+serve angles from a `sin`-hash, and the chasing computer paddle. `Game.ash`
+folds the state into one ANSI frame string that `Main.ash` writes over the
+previous frame with a home-cursor escape — no per-cell cursor movement, no
+flicker. The alternate screen buffer keeps your shell scrollback clean.
 
 ## Play
 
 ```sh
 cd examples/fun_terminal
 dotnet run --project ../../src/Ashes.Cli -- compile --project ashes.json
-./out/ping-pong-cannon
+./out/terminal-pong
 ```
 
-Enter shots as `angle power`, for example `45 70`. Angles run 10-80 degrees,
-power 10-99, `q` quits. Wind pushes the ball mid-flight and changes every
-round — the score line tells you which way it blows. The computer's aim starts
-sloppy and sharpens as the rally goes on, and it ignores the wind, which is
-sometimes fatal for it.
+Move with `w`/`s`, the arrow keys, or the mouse. The score line is at the top;
+the game announces the winner on exit and restores your terminal mode.
 
 ## Run the tests
 
 ```sh
 cd examples/fun_terminal
-dotnet run --project ../../src/Ashes.Cli -- run --project ashes-test.json
+dotnet run --project ../../src/Ashes.Cli -- test --project ashes-test.json
 ```
 
-The tests are pure: regex parsing and range validation, net clearance and net
-collisions at known shots, wind determinism, late-round computer accuracy, and
+The tests are pure: escape-sequence decoding (keys, mouse, partial and unknown
+sequences), paddle movement from key and mouse events, wall bounces, paddle
+returns, scoring on a miss, computer-paddle tracking, the win condition, and
 board rendering.

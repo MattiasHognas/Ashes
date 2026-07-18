@@ -48,6 +48,8 @@ internal static partial class LlvmCodegen
     private const long SyscallArchPrctl = 158;
     private const long SyscallPrctl = 157;
     private const long SyscallRtSigaction = 13;
+    private const long SyscallIoctl = 16;
+    private const long SyscallPpoll = 271;
     private const long SyscallSchedGetaffinity = 204;
     // ARCH_SET_GS, not ARCH_SET_FS: glibc (networking images are dynamically linked) owns the
     // FS base for its thread-local storage on x86-64. GS is unused by userspace on Linux, so
@@ -117,6 +119,8 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallSchedGetaffinity = 123;
     private const long Arm64SyscallPrctl = 167;
     private const long Arm64SyscallRtSigaction = 134;
+    private const long Arm64SyscallIoctl = 29;
+    private const long Arm64SyscallPpoll = 73;
     private const uint WindowsFionBio = 0x8004667E;
     private const uint WindowsSioGetExtensionFunctionPointer = 0xC8000006;
     private const int WindowsWsaErrorWouldBlock = 10035;
@@ -506,7 +510,8 @@ internal static partial class LlvmCodegen
         bool UsesWindowsSockets,
         bool UsesWindowsSleep,
         bool UsesWindowsProcess,
-        bool UsesWindowsReadExact);
+        bool UsesWindowsReadExact,
+        bool UsesWindowsConsole);
 
     private readonly record struct EmitProgramModuleArena(
         LlvmValueHandle HeapCursorGlobal,
@@ -584,10 +589,16 @@ internal static partial class LlvmCodegen
                 || usesNetworkingRuntimeAbi);
         bool usesWindowsProcess = isWindows && EmitProgramModuleUsesProcess(program);
         bool usesWindowsReadExact = isWindows && ProgramUsesInstruction<IrInst.ReadExact>(program);
+        bool usesWindowsConsole = isWindows
+            && (ProgramUsesInstruction<IrInst.ConsoleEnableRaw>(program)
+                || ProgramUsesInstruction<IrInst.ConsoleRestore>(program)
+                || ProgramUsesInstruction<IrInst.ConsolePoll>(program)
+                || ProgramUsesInstruction<IrInst.MonotonicMillis>(program));
         return new EmitProgramModuleFlags(
             usesProgramArgs, usesWindowsStdout, isWindows, isWindows && usesProgramArgs,
             isWindows && usesReadLine, usesWindowsFileOps, usesNetworkingRuntimeAbi, useRunQueueScheduler,
-            arm64UsesTlsArena, usesWindowsSockets, usesWindowsSleep, usesWindowsProcess, usesWindowsReadExact);
+            arm64UsesTlsArena, usesWindowsSockets, usesWindowsSleep, usesWindowsProcess, usesWindowsReadExact,
+            usesWindowsConsole);
     }
 
     private static bool EmitProgramModuleUsesFileOps(IrProgram program)
@@ -715,7 +726,7 @@ internal static partial class LlvmCodegen
         LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
         LlvmTypeHandle i32, LlvmTypeHandle i8Ptr, LlvmTypeHandle i32Ptr, LlvmTypeHandle i64, EmitProgramModuleImports imports)
     {
-        if (flags.UsesWindowsStdout || flags.UsesWindowsReadLine || flags.UsesWindowsReadExact)
+        if (flags.UsesWindowsStdout || flags.UsesWindowsReadLine || flags.UsesWindowsReadExact || flags.UsesWindowsConsole)
         {
             LlvmTypeHandle getStdHandleType = LlvmApi.FunctionType(i64, [i32]);
             imports.WindowsGetStdHandleImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetStdHandle");
@@ -729,7 +740,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(imports.WindowsWriteFileImport, LlvmLinkage.External);
         }
 
-        if (flags.UsesWindowsReadLine || flags.UsesWindowsFileOps || flags.UsesWindowsReadExact || flags.UsesWindowsProcess)
+        if (flags.UsesWindowsReadLine || flags.UsesWindowsFileOps || flags.UsesWindowsReadExact || flags.UsesWindowsProcess || flags.UsesWindowsConsole)
         {
             LlvmTypeHandle readFileType = LlvmApi.FunctionType(i32, [i64, i8Ptr, i32, i32Ptr, i8Ptr]);
             imports.WindowsReadFileImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_ReadFile");
@@ -859,8 +870,20 @@ internal static partial class LlvmCodegen
         {
             imports.WindowsSleepImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_Sleep");
             LlvmApi.SetLinkage(imports.WindowsSleepImport, LlvmLinkage.External);
+        }
+
+        if (flags.UsesWindowsSleep || flags.UsesWindowsConsole)
+        {
             LlvmValueHandle windowsGetTickCount64Import = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetTickCount64");
             LlvmApi.SetLinkage(windowsGetTickCount64Import, LlvmLinkage.External);
+        }
+
+        if (flags.UsesWindowsConsole)
+        {
+            LlvmValueHandle windowsGetConsoleModeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetConsoleMode");
+            LlvmApi.SetLinkage(windowsGetConsoleModeImport, LlvmLinkage.External);
+            LlvmValueHandle windowsSetConsoleModeImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_SetConsoleMode");
+            LlvmApi.SetLinkage(windowsSetConsoleModeImport, LlvmLinkage.External);
         }
     }
 
@@ -876,10 +899,14 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(imports.WindowsCreateProcessAImport, LlvmLinkage.External);
             imports.WindowsTerminateProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_TerminateProcess");
             LlvmApi.SetLinkage(imports.WindowsTerminateProcessImport, LlvmLinkage.External);
-            imports.WindowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
-            LlvmApi.SetLinkage(imports.WindowsWaitForSingleObjectImport, LlvmLinkage.External);
             imports.WindowsGetExitCodeProcessImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_GetExitCodeProcess");
             LlvmApi.SetLinkage(imports.WindowsGetExitCodeProcessImport, LlvmLinkage.External);
+        }
+
+        if (flags.UsesWindowsProcess || flags.UsesWindowsConsole)
+        {
+            imports.WindowsWaitForSingleObjectImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_WaitForSingleObject");
+            LlvmApi.SetLinkage(imports.WindowsWaitForSingleObjectImport, LlvmLinkage.External);
         }
 
         if (flags.UsesWindowsProgramArgs)
@@ -1571,6 +1598,10 @@ internal static partial class LlvmCodegen
             IrInst.LoadConstStr loadConstStr => StoreTemp(state, loadConstStr.Target, EmitHeapStringLiteral(state, state.StringLiterals[loadConstStr.StrLabel])),
             IrInst.LoadProgramArgs loadProgramArgs => StoreTemp(state, loadProgramArgs.Target, LlvmApi.BuildLoad2(builder, state.I64, state.ProgramArgsSlot, "program_args")),
             IrInst.ReadLine readLine => StoreTemp(state, readLine.Target, EmitReadLine(state)),
+            IrInst.ConsoleEnableRaw consoleEnableRaw => StoreTemp(state, consoleEnableRaw.Target, EmitConsoleEnableRaw(state)),
+            IrInst.ConsoleRestore consoleRestore => StoreTemp(state, consoleRestore.Target, EmitConsoleRestore(state)),
+            IrInst.ConsolePoll consolePoll => StoreTemp(state, consolePoll.Target, EmitConsolePoll(state, LoadTemp(state, consolePoll.TimeoutTemp))),
+            IrInst.MonotonicMillis monotonicMillis => StoreTemp(state, monotonicMillis.Target, EmitMonotonicNowMs(state, "monotonic_millis")),
             IrInst.FileReadText fileReadText => StoreTemp(state, fileReadText.Target, EmitFileReadText(state, LoadTemp(state, fileReadText.PathTemp))),
             IrInst.FileReadAllBytes fileReadAllBytes => StoreTemp(state, fileReadAllBytes.Target, EmitFileReadText(state, LoadTemp(state, fileReadAllBytes.PathTemp), rawBytes: true)),
             IrInst.FileMmap fileMmap => StoreTemp(state, fileMmap.Target, EmitFileMmap(state, LoadTemp(state, fileMmap.PathTemp))),
@@ -2360,6 +2391,8 @@ internal static partial class LlvmCodegen
             SyscallSchedGetaffinity => Arm64SyscallSchedGetaffinity,
             SyscallPrctl => Arm64SyscallPrctl,
             SyscallRtSigaction => Arm64SyscallRtSigaction,
+            SyscallIoctl => Arm64SyscallIoctl,
+            SyscallPpoll => Arm64SyscallPpoll,
             _ => throw new ArgumentOutOfRangeException(nameof(x86Nr), $"No AArch64 mapping for x86-64 syscall {x86Nr}.")
         };
     }

@@ -77,20 +77,33 @@ public sealed partial class Lowering
     }
 
     // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.
-    // Let-bindings create Binding.Scheme; lambda params create Binding.Local.
+    // Let-bindings create Binding.Scheme; lambda params create Binding.Local; a receiver
+    // captured from an enclosing scope arrives as Binding.Env / Binding.EnvScheme.
     private (int, TypeRef) LowerRecordFieldAccessFallback(Expr.QualifiedVar qv, Binding binding)
     {
         int? recordFieldSlot = null;
+        bool receiverIsCaptured = false;
         TypeRef? recordFieldType = null;
-        if (binding is Binding.Local recordLocal)
+        switch (binding)
         {
-            recordFieldSlot = recordLocal.Slot;
-            recordFieldType = Prune(recordLocal.Type);
-        }
-        else if (binding is Binding.Scheme recordScheme)
-        {
-            recordFieldSlot = recordScheme.Slot;
-            recordFieldType = Prune(Instantiate(recordScheme.S));
+            case Binding.Local recordLocal:
+                recordFieldSlot = recordLocal.Slot;
+                recordFieldType = Prune(recordLocal.Type);
+                break;
+            case Binding.Scheme recordScheme:
+                recordFieldSlot = recordScheme.Slot;
+                recordFieldType = Prune(Instantiate(recordScheme.S));
+                break;
+            case Binding.Env recordEnv:
+                recordFieldSlot = recordEnv.Index;
+                receiverIsCaptured = true;
+                recordFieldType = Prune(recordEnv.Type);
+                break;
+            case Binding.EnvScheme recordEnvScheme:
+                recordFieldSlot = recordEnvScheme.Index;
+                receiverIsCaptured = true;
+                recordFieldType = Prune(Instantiate(recordEnvScheme.S));
+                break;
         }
 
         if (recordFieldSlot.HasValue && recordFieldType is TypeRef.TVar)
@@ -102,7 +115,7 @@ public sealed partial class Lowering
             && recordFieldType is TypeRef.TNamedType namedRecordType
             && namedRecordType.Symbol.Constructors.Count == 1
             && namedRecordType.Symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
-            && TryLowerRecordFieldLoad(qv, recordFieldSlot.Value, namedRecordType) is { } fieldResult)
+            && TryLowerRecordFieldLoad(qv, recordFieldSlot.Value, receiverIsCaptured, namedRecordType) is { } fieldResult)
         {
             return fieldResult;
         }
@@ -112,7 +125,7 @@ public sealed partial class Lowering
         // than the misleading "does not export": either the receiver's record type is known but lacks
         // the field, or its type is not yet determined here (single-pass inference) and needs an
         // annotation (also the ambiguous case, where more than one record declares this field).
-        if (binding is Binding.Local or Binding.Scheme)
+        if (binding is Binding.Local or Binding.Scheme or Binding.Env or Binding.EnvScheme)
         {
             var message = recordFieldType is TypeRef.TNamedType resolvedRecord
                 ? $"Record type '{resolvedRecord.Symbol.Name}' has no field '{qv.Name}'."
@@ -151,7 +164,7 @@ public sealed partial class Lowering
         return recordFieldType;
     }
 
-    private (int, TypeRef)? TryLowerRecordFieldLoad(Expr.QualifiedVar qv, int recordSlot, TypeRef.TNamedType namedRecordType)
+    private (int, TypeRef)? TryLowerRecordFieldLoad(Expr.QualifiedVar qv, int recordSlot, bool receiverIsCaptured, TypeRef.TNamedType namedRecordType)
     {
         var ctor = namedRecordType.Symbol.Constructors[0];
         var fieldNames = ctor.DeclaringSyntax.FieldNames;
@@ -171,7 +184,14 @@ public sealed partial class Lowering
         }
 
         int baseTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(baseTemp, recordSlot));
+        if (receiverIsCaptured)
+        {
+            Emit(new IrInst.LoadEnv(baseTemp, recordSlot));
+        }
+        else
+        {
+            Emit(new IrInst.LoadLocal(baseTemp, recordSlot));
+        }
         int fieldTemp = NewTemp();
         Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
         var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecordType);
@@ -245,6 +265,10 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerQualifiedBuiltinFunctionReference(name, CreateLibmBinding(libmKind).S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleEnableRawBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ConsoleRestore => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleRestoreBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ConsolePoll => LowerQualifiedBuiltinFunctionReference(name, CreateConsolePollBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleMonotonicMillisBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
             _ => null
         };
