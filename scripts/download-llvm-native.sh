@@ -169,7 +169,7 @@ detect_package_manager() {
     exit 1
 }
 
-# ── Resolve target architecture ──────────────────────────────────────────
+# Resolve target architecture
 resolve_arch() {
     local arch="$1"
     case "$arch" in
@@ -190,7 +190,7 @@ HOST_ARCH="$(uname -m)"
 HOST_NORMALIZED=$(resolve_arch "$HOST_ARCH")
 PACKAGE_MANAGER="$(detect_package_manager)"
 
-# ── Helper: install native Linux .so via apt ─────────────────────────────
+# Helper: install native Linux .so via apt
 install_linux_native() {
     local llvm_major="$1"
     local target_normalized="$2"
@@ -264,7 +264,7 @@ install_linux_native() {
     fi
 }
 
-# ── Helper: cross-download Linux .so via apt multiarch ───────────────────
+# Helper: cross-download Linux .so via apt multiarch
 download_linux_cross() {
     local llvm_major="$1"
     local target_normalized="$2"
@@ -351,7 +351,7 @@ download_linux_cross() {
     rm -rf "$tmpdir"
 }
 
-# ── Helper: cross-download Linux .so from apt.llvm.org packages (pacman hosts) ──
+# Helper: cross-download Linux .so from apt.llvm.org packages (pacman hosts)
 download_linux_cross_from_llvm_release() {
     local llvm_major="$1"
     local target_normalized="$2"
@@ -463,7 +463,7 @@ download_linux_cross_from_llvm_release() {
     rm -rf "$tmpdir"
 }
 
-# ── Helper: download a single Linux .so (native or cross as needed) ──────
+# Helper: download a single Linux .so (native or cross as needed)
 download_linux() {
     local llvm_major="$1"
     local target_normalized="$2"
@@ -475,7 +475,7 @@ download_linux() {
     fi
 }
 
-# ── Helper: download Windows DLL from GitHub release ─────────────────────
+# Helper: download Windows DLL from GitHub release
 download_windows_dll() {
     local llvm_version="$1"
 
@@ -514,7 +514,7 @@ download_windows_dll() {
     rm -rf "$tmpdir"
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────
+# Main
 if [ "$ALL_MODE" = true ]; then
     # Download all three runtimes: linux-x64, linux-arm64, win-x64
     download_linux "$LLVM_MAJOR" "x64"

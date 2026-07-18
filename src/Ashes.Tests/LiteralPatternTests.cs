@@ -7,7 +7,7 @@ namespace Ashes.Tests;
 
 public sealed class LiteralPatternTests
 {
-    // ────── Parser tests ──────
+    // Parser tests
 
     [Test]
     public void Parse_should_support_integer_literal_pattern()
@@ -82,7 +82,7 @@ public sealed class LiteralPatternTests
         tuple.Elements[1].ShouldBeOfType<Pattern.Var>().Name.ShouldBe("b");
     }
 
-    // ────── Semantic tests ──────
+    // Semantic tests
 
     [Test]
     public void Integer_literal_pattern_should_type_check()
@@ -166,7 +166,7 @@ public sealed class LiteralPatternTests
         diag.Errors.Count.ShouldBeGreaterThan(0);
     }
 
-    // ────── End-to-end tests ──────
+    // End-to-end tests
 
     [Test]
     public async Task Integer_literal_pattern_match_runs_correctly()
@@ -317,7 +317,7 @@ public sealed class LiteralPatternTests
         (await CompileRunCaptureAsync(src).ConfigureAwait(false)).ShouldBe("hello world\n");
     }
 
-    // ────── Helpers ──────
+    // Helpers
 
     private static Expr Parse(string source)
     {

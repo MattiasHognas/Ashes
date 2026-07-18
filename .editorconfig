@@ -13,7 +13,8 @@ tab_width = 4
 end_of_line = lf
 insert_final_newline = true
 
-# ── Third-party analyzer severities ──────────────────────────────────────────
+# Third-party analyzer severities
+
 # These must live under [*.cs] to apply. (NOTE: the dotnet_style_*/csharp_style_*
 # and MA-severity block further down is mis-scoped under [*.{csproj,props,targets}]
 # and has never applied to C# — a separate pre-existing fix.)
@@ -25,7 +26,8 @@ dotnet_diagnostic.MA0051.severity = warning
 # Defer to Meziantou MA0051 on the method-length overlap (S138 is Sonar's version).
 dotnet_diagnostic.S138.severity = none
 
-# ── Rules disabled as inappropriate for a performance-sensitive compiler ──────
+# Rules disabled as inappropriate for a performance-sensitive compiler
+
 # Loop -> LINQ: LINQ allocates; hot-path loops are deliberate.
 dotnet_diagnostic.S3267.severity = none
 # `unsafe` is intentional (LLVM / P-Invoke interop), not a defect to review.
@@ -34,7 +36,8 @@ dotnet_diagnostic.S6640.severity = none
 # (namespace Ashes.Formatter + class Formatter); renaming is disruptive.
 dotnet_diagnostic.MA0049.severity = none
 
-# ── Deferred (visible as suggestions; ratchet to warning over time) ───────────
+# Deferred (visible as suggestions; ratchet to warning over time)
+
 dotnet_diagnostic.S1871.severity = suggestion  # identical branches (often intentional match arms)
 dotnet_diagnostic.S2325.severity = suggestion  # make method static
 dotnet_diagnostic.S1481.severity = suggestion  # unused local

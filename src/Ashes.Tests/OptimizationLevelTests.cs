@@ -13,7 +13,7 @@ namespace Ashes.Tests;
 /// </summary>
 public sealed class OptimizationLevelTests
 {
-    // ── Arithmetic ──────────────────────────────────────────────────────
+    // Arithmetic
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -28,7 +28,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("42");
     }
 
-    // ── String concatenation ────────────────────────────────────────────
+    // String concatenation
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -43,7 +43,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("hello world");
     }
 
-    // ── Pattern matching / ADT ──────────────────────────────────────────
+    // Pattern matching / ADT
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -63,7 +63,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("8");
     }
 
-    // ── Recursion (fibonacci) ───────────────────────────────────────────
+    // Recursion (fibonacci)
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -79,7 +79,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("55");
     }
 
-    // ── Closure / lambda ────────────────────────────────────────────────
+    // Closure / lambda
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -95,7 +95,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("42");
     }
 
-    // ── Tail-recursive loop ─────────────────────────────────────────────
+    // Tail-recursive loop
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -111,7 +111,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("5050");
     }
 
-    // ── Float arithmetic ────────────────────────────────────────────────
+    // Float arithmetic
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -127,7 +127,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("42");
     }
 
-    // ── String equality ─────────────────────────────────────────────────
+    // String equality
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -143,7 +143,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("42");
     }
 
-    // ── Windows target: compile-only (no execution on Linux) ────────────
+    // Windows target: compile-only (no execution on Linux)
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -161,7 +161,7 @@ public sealed class OptimizationLevelTests
         bytes[1].ShouldBe((byte)'Z');
     }
 
-    // ── Debug info at every optimization level (CO-21) ──────────────────
+    // Debug info at every optimization level (CO-21)
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -186,7 +186,7 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("6765");
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────
+    // Helpers
 
     private static IrProgram LowerExpression(string source)
     {

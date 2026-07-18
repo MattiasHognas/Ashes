@@ -5,7 +5,7 @@ namespace Ashes.Tests;
 
 public sealed class PackageManagementCliTests
 {
-    // ──────────────── ashes init ────────────────
+    // ashes init
 
     [Test]
     public async Task Init_should_create_ashes_json_and_main_ash()
@@ -99,7 +99,7 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    // ──────────────── ashes add ────────────────
+    // ashes add
 
     [Test]
     public async Task Add_should_add_package_to_dependencies()
@@ -201,7 +201,7 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    // ──────────────── ashes remove ────────────────
+    // ashes remove
 
     [Test]
     public async Task Remove_should_remove_package_from_dependencies()
@@ -322,7 +322,7 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    // ──────────────── ashes restore ────────────────
+    // ashes restore
 
     [Test]
     public async Task Restore_reports_no_dependencies_when_empty()
@@ -417,7 +417,7 @@ public sealed class PackageManagementCliTests
         result.Stderr.ShouldContain("retired");
     }
 
-    // ──────────────── --help and unexpected args ────────────────
+    // --help and unexpected args
 
     [Test]
     public async Task Init_help_should_show_usage()
@@ -515,7 +515,7 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    // ──────────────── helpers ────────────────
+    // helpers
 
     private static async Task<CliCommandResult> RunCliAsync(string[] args, string? workingDirectory = null)
     {

@@ -16,7 +16,7 @@ namespace Ashes.Tests;
 /// </summary>
 public sealed class LspDocumentServiceCoverageTests
 {
-    // ── .Span property accessors ────────────────────────────────────────
+    // .Span property accessors
 
     [Test]
     public void DiagnosticItem_Span_should_equal_TextSpan_from_Start_and_End()
@@ -62,7 +62,7 @@ public sealed class LspDocumentServiceCoverageTests
         }
     }
 
-    // ── GetCompletions inside binary expressions ────────────────────────
+    // GetCompletions inside binary expressions
 
     [Test]
     public void GetCompletions_at_position_inside_add_expression_should_include_bound_variable()
@@ -152,7 +152,7 @@ public sealed class LspDocumentServiceCoverageTests
         completions.ShouldContain("n");
     }
 
-    // ── GetDefinition inside binary expressions ─────────────────────────
+    // GetDefinition inside binary expressions
 
     [Test]
     public void GetDefinition_should_resolve_variable_in_add_expression()
@@ -333,7 +333,7 @@ public sealed class LspDocumentServiceCoverageTests
         }
     }
 
-    // ── ResolveDefinitionInPattern: Cons and Tuple branches ────────────
+    // ResolveDefinitionInPattern: Cons and Tuple branches
 
     [Test]
     public void GetDefinition_should_resolve_variable_in_cons_pattern_tail_position()
@@ -401,7 +401,7 @@ public sealed class LspDocumentServiceCoverageTests
         }
     }
 
-    // ── ValidateStandaloneImports unknown Ashes module ──────────────────
+    // ValidateStandaloneImports unknown Ashes module
 
     [Test]
     public void Analyze_should_report_unknown_ashes_standard_module()
@@ -415,7 +415,7 @@ public sealed class LspDocumentServiceCoverageTests
         diagnostics[0].Message.ShouldContain("Ashes.UnknownModule");
     }
 
-    // ── GetHover null return paths ──────────────────────────────────────
+    // GetHover null return paths
 
     [Test]
     public void GetHover_should_return_null_when_source_has_import_errors()
@@ -439,7 +439,7 @@ public sealed class LspDocumentServiceCoverageTests
         hover.ShouldBeNull();
     }
 
-    // ── GetDefinition null return paths ────────────────────────────────
+    // GetDefinition null return paths
 
     [Test]
     public void GetDefinition_should_return_null_for_source_with_parse_errors()
@@ -462,7 +462,7 @@ public sealed class LspDocumentServiceCoverageTests
         definition.ShouldBeNull();
     }
 
-    // ── Nested let binding resolution in imported module ────────────────
+    // Nested let binding resolution in imported module
 
     [Test]
     public void GetDefinition_should_resolve_nested_let_binding_in_imported_module()
@@ -491,7 +491,7 @@ public sealed class LspDocumentServiceCoverageTests
         }
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────
+    // Helpers
 
     private static string CreateTempDir()
     {
