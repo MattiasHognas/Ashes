@@ -65,8 +65,7 @@ vendored under `runtimes/{linux-x64,linux-arm64,win-x64,win-arm64}/` and only ne
 to be refreshed when bumping `MbedTlsVersion`:
 
 ```sh
-# LLVM: all platforms (linux-x64, linux-arm64, win-x64):
-#   (win-arm64 is a compile target only — no separate host LLVM needed)
+# LLVM: all host RIDs (linux-x64, linux-arm64, win-x64, win-arm64):
 bash scripts/download-llvm-native.sh --all
 
 # LLVM: current architecture only:
@@ -75,7 +74,7 @@ bash scripts/download-llvm-native.sh
 # LLVM: specific architecture:
 bash scripts/download-llvm-native.sh 22 arm64
 
-# Mbed TLS: refresh all vendored payloads (linux-x64, linux-arm64, win-x64):
+# Mbed TLS: refresh all vendored payloads (linux-x64, linux-arm64, win-x64, win-arm64):
 bash scripts/download-mbedtls.sh --all
 
 # Mbed TLS: refresh selected vendored payloads:
@@ -145,22 +144,28 @@ helper passes `SSL_CERT_FILE` to the compiled PE program using a
 Wine-visible path so the embedded TLS runtime can load PEM roots
 without touching a host Windows certificate store.
 
-### win-arm64: compile-and-link only on x64 hosts
+### win-arm64: host + target, but not executable on x64 hosts
 
-`win-arm64` (Windows on ARM64) is a **compile-and-link-only** target on an x64
-host — a Windows-on-ARM PE cannot be executed there. Wine on x64 cannot load
-ARM64 PEs, and `qemu-aarch64` runs ELF, not PE. Chaining them
-(`x64 → qemu-aarch64 → an aarch64 Wine with the `aarch64-windows` PE builtins`)
+`win-arm64` (Windows on ARM64) is both a **compile target** and a **host RID**:
+the release ships a win-arm64 compiler/LSP/DAP bundle (with an aarch64-windows
+`libLLVM.dll`, provisioned by `download-llvm-native.sh --win-arm64` / `--all`),
+so a Windows-on-ARM machine can both run the Ashes compiler and be targeted by
+it. Everything is **built and structurally validated on an x64 host**, but
+**neither the emitted PE nor the WoA compiler executes there** — Wine on x64
+cannot load ARM64 PEs, and `qemu-aarch64` runs ELF, not PE. Chaining them
+(`x64 → qemu-aarch64 → an aarch64 Wine with the aarch64-windows PE builtins`)
 is *capable* but impractical: under single-core TCG emulation, Wine's first-boot
 (`wineboot`) does not complete in reasonable time.
 
-win-arm64 is therefore validated **structurally**: `WindowsArm64BackendTests`
-parses the emitted PE (machine `0xAA64`, imports, resolved relocations), and
-`scripts/verify.sh` / `ci/jobs.sh` cross-compile a program and assert the machine
-field. **Execution** validation requires a **native aarch64 host** — a real
-Windows-on-ARM machine, or a native ARM64 Linux box / cloud ARM runner with
-Wine ≥ 10 (which ships the `aarch64-windows` builtins), where `wine app.exe`
-runs the PE at native speed with no qemu tax.
+win-arm64 is therefore validated **structurally** on x64:
+`WindowsArm64BackendTests` parses the emitted PE (machine `0xAA64`, imports,
+resolved relocations); `scripts/verify.sh` / `ci/jobs.sh` cross-compile a program
+and assert the machine field; and the host bundle is produced with
+`dotnet publish --runtime win-arm64` and checked for an ARM64 `ashes.exe` +
+`libLLVM.dll`. **Execution** validation requires a **native aarch64 host** — a
+real Windows-on-ARM machine, or a native ARM64 Linux box / cloud ARM runner with
+Wine ≥ 10 (which ships the `aarch64-windows` builtins), where `wine app.exe` runs
+the PE at native speed with no qemu tax.
 
 ---
 
@@ -267,7 +272,7 @@ bash scripts/install-vscode-extension-local.sh --skip-install
 Useful options:
 
 ```sh
-# Publish all supported bundled RIDs (win-x64, linux-x64, linux-arm64):
+# Publish all supported bundled RIDs (win-x64, win-arm64, linux-x64, linux-arm64):
 bash scripts/install-vscode-extension-local.sh --all-rids
 
 # Force a clean pnpm dependency reinstall before building:

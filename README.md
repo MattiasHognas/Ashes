@@ -300,7 +300,7 @@ Ashes is split into focused phases:
 | `linux-x64` | ELF64 | x86-64 |
 | `linux-arm64` | ELF64 | AArch64 |
 | `win-x64` | PE32+ | x86-64 |
-| `win-arm64` | PE32+ | AArch64 (compile+link only; no execution on x64 hosts) |
+| `win-arm64` | PE32+ | AArch64 (host + target; runs only on native ARM64 Windows, not x64 hosts) |
 
 ```sh
 dotnet run --project src/Ashes.Cli -- compile --target linux-x64 hello.ash -o hello

@@ -112,7 +112,7 @@ The following option is accepted by **compile** and **run** only:
 | `linux-x64` | Linux x86-64 — emits a native ELF64 binary |
 | `linux-arm64` | Linux AArch64 — emits a native ELF64 binary |
 | `win-x64` | Windows x86-64 — emits a native PE32+ binary |
-| `win-arm64` | Windows on ARM64 — emits a native PE32+ (AArch64) binary; a compile-and-link-only target (Windows-on-ARM images are not executable on x64 hosts) |
+| `win-arm64` | Windows on ARM64 — emits a native PE32+ (AArch64) binary, and is also a host RID (a released compiler runs on Windows-on-ARM). Neither the emitted image nor the WoA compiler executes on an x64 host — both run only on native ARM64 Windows |
 
 Any other value is rejected with an error message and exit code **1**.
 
