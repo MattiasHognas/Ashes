@@ -11,9 +11,9 @@ suites — nothing here is discovered or run by CI (`ci/jobs.sh`, `scripts/verif
 [`brc.ash`](brc.ash) processes the full billion rows in **~8.3 s** on a 32-thread desktop, with
 output byte-identical to a straightforward sequential fold. It:
 
-- `mmap`s the whole file (`Ashes.File.mmap`, zero-copy) and splits it into per-core chunks at
+- `mmap`s the whole file (`Ashes.IO.File.mmap`, zero-copy) and splits it into per-core chunks at
   newline boundaries,
-- folds each chunk on a worker thread (`Ashes.Parallel`) into a purpose-built **16-ary hash trie**
+- folds each chunk on a worker thread (`Ashes.Task.Parallel`) into a purpose-built **16-ary hash trie**
   whose leaf holds the min/max/sum/count aggregate **inline** (four Ints, no value-tuple pointer,
   no `onHit` closure on the hot path) — the "custom table with inline aggregates" that fast 1BRC
   entries use, kept at constant memory per worker by the compiler's reuse specialization,

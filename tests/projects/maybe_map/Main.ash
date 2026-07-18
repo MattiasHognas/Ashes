@@ -1,5 +1,5 @@
 // expect: 2
-import Ashes.Maybe
+import Ashes.Core.Maybe
 let inc =
     given (x) -> x + 1
 in

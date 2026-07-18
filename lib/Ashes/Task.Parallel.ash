@@ -34,8 +34,8 @@
 // The `reduce` call stays at the caller's concrete result type, so it monomorphizes and genuinely
 // forks — splitChunks itself is pure and does no parallel work, only the boundary-aligned splitting.
 //
-// Uses core language features plus `Ashes.Bytes` (indexOf/length) for the chunker.
-import Ashes.Bytes
+// Uses core language features plus `Ashes.Byte` (indexOf/length) for the chunker.
+import Ashes.Byte
 let recursive plLength xs =
     match xs with
         | [] -> 0
@@ -83,7 +83,7 @@ let recursive mapGrained grain f xs =
             else
                 let half = plLength(xs) / 2
                 in
-                    match Ashes.Parallel.both(given (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(given (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
+                    match Ashes.Task.Parallel.both(given (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(given (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> plAppend(leftRes)(rightRes)
 
 let recursive reduceGrained grain combine identity f xs =
@@ -96,7 +96,7 @@ let recursive reduceGrained grain combine identity f xs =
             else
                 let half = plLength(xs) / 2
                 in
-                    match Ashes.Parallel.both(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
+                    match Ashes.Task.Parallel.both(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
                         | (leftRes, rightRes) -> combine(leftRes)(rightRes)
 
 let map f xs = mapGrained(1)(f)(xs)
@@ -104,19 +104,19 @@ let map f xs = mapGrained(1)(f)(xs)
 let reduce combine identity f xs = reduceGrained(1)(combine)(identity)(f)(xs)
 
 let bothWithWorkers count left right =
-    Ashes.Parallel.withWorkers(count)(given (_u) -> Ashes.Parallel.both(left)(right))
+    Ashes.Task.Parallel.withWorkers(count)(given (_u) -> Ashes.Task.Parallel.both(left)(right))
 
 let mapWithWorkers count f xs =
-    Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(1)(f)(xs))
+    Ashes.Task.Parallel.withWorkers(count)(given (_u) -> mapGrained(1)(f)(xs))
 
 let mapGrainedWithWorkers count grain f xs =
-    Ashes.Parallel.withWorkers(count)(given (_u) -> mapGrained(grain)(f)(xs))
+    Ashes.Task.Parallel.withWorkers(count)(given (_u) -> mapGrained(grain)(f)(xs))
 
 let reduceWithWorkers count combine identity f xs =
-    Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(1)(combine)(identity)(f)(xs))
+    Ashes.Task.Parallel.withWorkers(count)(given (_u) -> reduceGrained(1)(combine)(identity)(f)(xs))
 
 let reduceGrainedWithWorkers count grain combine identity f xs =
-    Ashes.Parallel.withWorkers(count)(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(xs))
+    Ashes.Task.Parallel.withWorkers(count)(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(xs))
 
 let recursive splitChunksGo bytes len sep lo n acc =
     if n <= 1
@@ -124,7 +124,7 @@ let recursive splitChunksGo bytes len sep lo n acc =
     else
         let target = lo + (len - lo) / n
         in
-            let nl = Ashes.Bytes.indexOf(bytes)(sep)(target)
+            let nl = Ashes.Byte.indexOf(bytes)(sep)(target)
             in
                 if nl < 0
                 then (bytes, lo, len) :: acc
@@ -133,4 +133,4 @@ let recursive splitChunksGo bytes len sep lo n acc =
                     then (bytes, lo, len) :: acc
                     else splitChunksGo(bytes)(len)(sep)(nl + 1)(n - 1)((bytes, lo, nl + 1) :: acc)
 
-let splitChunks bytes sep n = splitChunksGo(bytes)(Ashes.Bytes.length(bytes))(sep)(0)(n)([])
+let splitChunks bytes sep n = splitChunksGo(bytes)(Ashes.Byte.length(bytes))(sep)(0)(n)([])

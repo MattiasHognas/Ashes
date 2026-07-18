@@ -9,7 +9,7 @@
 // expect: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1099511627776 780
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let recursive go i n s pow acc =
     if i == n
     then s + " " + text.fromBigInt(pow) + " " + text.fromInt(acc)

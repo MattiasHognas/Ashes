@@ -1,6 +1,6 @@
 // expect: 50|124999750000|500000
 // CO-22: a user fold in the entry file whose rebuild helpers are its OWN local functions (not
-// Ashes.Map.makeNode) is now reuse-specialized to constant memory. The entry-body registration
+// Ashes.Collection.Map.makeNode) is now reuse-specialized to constant memory. The entry-body registration
 // computes a transitive free-variable closure: upd is registerable because its only non-stitched
 // free var is mkNode, which is registerable because its only free var is hgt (registerable: its free
 // vars are constructors), so all three register (upd + hgt/mkNode inlinable) and upd$reuse folds the
@@ -9,10 +9,10 @@
 // bounded 50-key space (each key updated on hit) and reads back every key: totalSum = n(n-1)/2 and
 // totalCt = n are shape-independent invariants, so a reuse use-after-free would change them.
 import Ashes.IO
-import Ashes.Map
-import Ashes.Map.MapTree
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import Ashes.Text
-import Ashes.String
+import Ashes.Text
 let hgt t =
     match t with
         | Empty -> 0
@@ -34,7 +34,7 @@ let upd newKey tenths =
         match map with
             | Empty -> mkNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
                 in
                     if ordering == 0
                     then
@@ -67,7 +67,7 @@ let recursive readAll j m sumAcc ctAcc =
     if j >= 50
     then (sumAcc, ctAcc)
     else
-        match Ashes.Map.getStr("k" + Ashes.Text.fromInt(j))(m) with
+        match Ashes.Collection.Map.getStr("k" + Ashes.Text.fromInt(j))(m) with
             | Some((_mn, _mx, sm, ct)) -> readAll(j + 1)(m)(sumAcc + sm)(ctAcc + ct)
             | None -> readAll(j + 1)(m)(sumAcc)(ctAcc)
 
@@ -76,4 +76,4 @@ let n = 500000
 let final = loop(0)(n)(Empty)
 in
     match readAll(0)(final)(0)(0) with
-        | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))
+        | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))

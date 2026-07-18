@@ -1,5 +1,5 @@
 // expect: 234
-import Ashes.List
+import Ashes.Collection.List
 let inc =
     given (x) -> x + 1
 in

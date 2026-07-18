@@ -46,25 +46,25 @@ public sealed class BuiltinExportTableTests
     [Test]
     public void Resource_backed_modules_expose_their_top_level_bindings()
     {
-        BuiltinRegistry.TryGetModuleExports("Ashes.List", out var listExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Collection.List", out var listExports).ShouldBeTrue();
         foreach (var name in new[] { "foldLeft", "map", "filter", "reverse" })
         {
             listExports.ShouldContain(name);
         }
 
-        BuiltinRegistry.TryGetModuleExports("Ashes.String", out var stringExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Text", out var stringExports).ShouldBeTrue();
         foreach (var name in new[] { "length", "contains", "split" })
         {
             stringExports.ShouldContain(name);
         }
 
-        BuiltinRegistry.TryGetModuleExports("Ashes.Result", out var resultExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Core.Result", out var resultExports).ShouldBeTrue();
         foreach (var name in new[] { "map", "flatMap", "getOrElse" })
         {
             resultExports.ShouldContain(name);
         }
 
-        BuiltinRegistry.TryGetModuleExports("Ashes.Maybe", out var maybeExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Core.Maybe", out var maybeExports).ShouldBeTrue();
         foreach (var name in new[] { "map", "isSome", "isNone" })
         {
             maybeExports.ShouldContain(name);
@@ -74,10 +74,10 @@ public sealed class BuiltinExportTableTests
     [Test]
     public void Resource_backed_modules_expose_their_top_level_types()
     {
-        BuiltinRegistry.TryGetModuleExports("Ashes.Array", out var arrayExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Collection.Array", out var arrayExports).ShouldBeTrue();
         arrayExports.ShouldContain("ArrayTree");
 
-        BuiltinRegistry.TryGetModuleExports("Ashes.Map", out var mapExports).ShouldBeTrue();
+        BuiltinRegistry.TryGetModuleExports("Ashes.Collection.Map", out var mapExports).ShouldBeTrue();
         mapExports.ShouldContain("MapTree");
     }
 
@@ -92,8 +92,8 @@ public sealed class BuiltinExportTableTests
     [Test]
     public void Resource_backed_module_does_not_export_an_unknown_name()
     {
-        BuiltinRegistry.ModuleExportsName("Ashes.List", "foldLeft").ShouldBeTrue();
-        BuiltinRegistry.ModuleExportsName("Ashes.List", "thisBindingDoesNotExist").ShouldBeFalse();
+        BuiltinRegistry.ModuleExportsName("Ashes.Collection.List", "foldLeft").ShouldBeTrue();
+        BuiltinRegistry.ModuleExportsName("Ashes.Collection.List", "thisBindingDoesNotExist").ShouldBeFalse();
     }
 
     [Test]

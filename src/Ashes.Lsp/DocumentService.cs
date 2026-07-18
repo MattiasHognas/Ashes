@@ -1031,17 +1031,9 @@ public static partial class DocumentService
             }
         }
 
-        if (string.Equals(qualifier, "Ashes", StringComparison.Ordinal))
-        {
-            return "Ashes";
-        }
-
-        if (string.Equals(qualifier, "Ashes.Net", StringComparison.Ordinal))
-        {
-            return qualifier;
-        }
-
-        if (BuiltinRegistry.TryGetModule(qualifier, out _))
+        // A real module, or a pure namespace prefix of one (Ashes, Ashes.Net, Ashes.Number, ...):
+        // both complete — modules with their exports, prefixes with their child segments.
+        if (BuiltinRegistry.TryGetModule(qualifier, out _) || IsModuleNamespacePrefix(qualifier))
         {
             return qualifier;
         }
@@ -1061,20 +1053,40 @@ public static partial class DocumentService
         return lastDot < 0 ? moduleName : moduleName[(lastDot + 1)..];
     }
 
+    private static bool IsModuleNamespacePrefix(string qualifier)
+    {
+        var prefix = qualifier + ".";
+        return BuiltinRegistry.StandardModuleNames.Any(name => name.StartsWith(prefix, StringComparison.Ordinal));
+    }
+
     private static IReadOnlyList<string> GetModuleCompletionItems(string moduleName)
     {
-        return moduleName switch
+        // Everything is registry-derived: a module completes to its exports (intrinsic members
+        // plus shipped-overlay bindings), and any name that prefixes deeper modules also offers
+        // the next path segment (so Ashes.Text suggests Json/Regex alongside its functions).
+        var items = new SortedSet<string>(StringComparer.Ordinal);
+        if (BuiltinRegistry.TryGetModuleExports(moduleName, out var exports))
         {
-            "Ashes" => ["File", "Http", "IO", "List", "Maybe", "Net", "Result", "String", "Test"],
-            "Ashes.Net" => ["Tcp"],
-            "Ashes.List" => ["append", "filter", "fold", "foldLeft", "head", "isEmpty", "length", "map", "reverse", "tail"],
-            "Ashes.Maybe" => ["default", "flatMap", "getOrElse", "isNone", "isSome", "map", "unwrapOr"],
-            "Ashes.Result" => ["bind", "default", "flatMap", "getOrElse", "isError", "isOk", "map", "mapError"],
-            "Ashes.String" => ["contains", "indexOf", "isDigit", "isLetter", "isWhiteSpace", "length", "split", "startsWith", "substring", "trim"],
-            "Ashes.Test" => ["assertEqual", "fail"],
-            _ when BuiltinRegistry.TryGetModule(moduleName, out var module) => module.Members.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
-            _ => Array.Empty<string>()
-        };
+            items.UnionWith(exports);
+        }
+
+        var prefix = moduleName + ".";
+        foreach (var name in BuiltinRegistry.StandardModuleNames)
+        {
+            if (string.Equals(name, "Ashes.Internal", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (name.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var rest = name[prefix.Length..];
+                var dot = rest.IndexOf('.', StringComparison.Ordinal);
+                items.Add(dot < 0 ? rest : rest[..dot]);
+            }
+        }
+
+        return items.ToArray();
     }
 
     public static HoverItem? GetHover(string source, int position, string? filePath = null)

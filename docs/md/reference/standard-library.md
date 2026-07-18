@@ -17,7 +17,17 @@ These types are always available without imports:
 - `Process`
 - `FileHandle`
 
-## Built-in Modules
+## Module Overview
+
+The standard library is organized under ten top-level namespaces: `Ashes.IO` (console, file, and
+process I/O), `Ashes.Net` (networking and wire protocols), `Ashes.Number` (numeric helpers),
+`Ashes.Collection` (containers), `Ashes.Text` (strings and text formats), `Ashes.Byte` (binary
+data), `Ashes.Task` (concurrency), `Ashes.Core` (core value helpers), `Ashes.Test` (assertions),
+and the internal-only `Ashes.Internal`. Some modules are compiler intrinsics, some are shipped
+Ashes code from `lib/Ashes/`, and some are both; that distinction is an implementation detail —
+imports work identically for all of them.
+
+## `Ashes.IO` — console, file, and process I/O
 
 ### `Ashes.IO`
 
@@ -32,7 +42,7 @@ These types are always available without imports:
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
 
-### `Ashes.Console`
+### `Ashes.IO.Console`
 
 Interactive terminal input for real-time programs (games, TUIs): raw keyboard/mouse byte
 streams and a monotonic clock for frame pacing. Rendering needs no dedicated support —
@@ -67,7 +77,7 @@ which is line-buffered and blocking without it.
 
 Supported on Linux x64, Linux arm64, and Windows x64.
 
-### `Ashes.File`
+### `Ashes.IO.File`
 
 - `readText(path)` returning `Result(Str, Str)` — UTF-8-validated; caps at 1 MiB.
 - `readAllBytes(path)` returning `Result(Str, Bytes)` — read a whole file into a `Bytes` with no UTF-8
@@ -97,78 +107,7 @@ Supported on Linux x64, Linux arm64, and Windows x64.
   discarded), so it is for reading one file to completion, not interleaving line-reads across handles.
 - `close(fh)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
 
-### `Ashes.Bytes`
-
-An immutable byte sequence with O(1) indexed access and O(1) length.
-
-- `empty()` returning `Bytes` — empty byte sequence
-- `singleton(byte)` returning `Bytes` — one-byte sequence
-- `length(bytes)` returning `Int`
-- `get(bytes, index)` returning `u8` — panics if index out of bounds
-- `indexOf(bytes)(needle)(from)` returning `Int` — index of the first byte equal to `needle` (an
-  `Int` byte value) at or after `from`, or `-1` if none. O(len − from), no allocation — a memchr for
-  scanning a buffer by integer position without materializing views.
-- `compare(left)(right)` returning `Int` — three-way lexicographic byte order, normalized to
-  `-1`/`0`/`1`. One `memcmp` over the common prefix plus a length tie-break — far faster than a
-  byte-at-a-time loop. With `fromText` this underlies `Ashes.String.compare`.
-- `subText(bytes)(start)(len)` returning `Str` — copy `len` bytes starting at `start` into a fresh
-  `Str`. O(len); the range is clamped into the source so it never reads out of bounds. The caller
-  must ensure the range lies on valid UTF-8 boundaries (slicing at ASCII delimiters like `;`/`\n`
-  always does). With `indexOf` this lets a buffer be scanned by integer index instead of a shrinking
-  `Str` view.
-- `subView(bytes)(start)(len)` returning `Str` — a zero-copy VIEW over the same range `subText`
-  would copy (O(1), no byte copy; same clamping and UTF-8 caveat). The backing bytes must outlive
-  the view: a view over an `Ashes.File.mmap` mapping is valid for the program's lifetime, and a
-  view stored into a structure (e.g. a `Map` key) is materialized by the copy-out/blob paths.
-  Prefer it for transient per-record slices in hot scan loops.
-- `append(left, right)` returning `Bytes` — concatenate two sequences
-- `appendByte(bytes, byte)` returning `Bytes` — append one byte
-- `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
-- `fromText(text)` returning `Bytes` — expose a `Str`'s UTF-8 bytes (O(1); `Str` and `Bytes`
-  share an in-memory layout). Byte order over the result equals Unicode codepoint order, so this is
-  the basis for a correct string ordering (see `Ashes.String.compare`).
-- `hash(bytes)` returning `Int` — 64-bit FNV-1a hash of the byte payload. With `fromText` this
-  gives string hashing; it underlies `Ashes.HashMap`.
-- `u16Le(value)` returning `Bytes` — encode `u16` little-endian (2 bytes)
-- `u32Le(value)` returning `Bytes` — encode `u32` little-endian (4 bytes)
-- `u64Le(value)` returning `Bytes` — encode `u64` little-endian (8 bytes)
-- `getU16Le(bytes, offset)` returning `u16` — decode little-endian `u16` at offset
-- `getU32Le(bytes, offset)` returning `u32` — decode little-endian `u32` at offset
-- `getU64Le(bytes, offset)` returning `u64` — decode little-endian `u64` at offset
-
-### `Ashes.UInt`
-
-- `toInt(value)` returning `Int` — widen an unsigned integer (`u8`/`u16`/`u32`/`u64`) to a signed
-  `Int`. Value-preserving for `u8`/`u16`/`u32` (and a bit-reinterpret for `u64`); it is the bridge that
-  lets a byte from `Ashes.Bytes.get` be used in `Int` arithmetic, enabling byte-level integer parsing
-  without routing through strings.
-- `fromInt(value)` returning `u8` — narrow an `Int` to an unsigned byte, wrapping modulo 256 (the low
-  8 bits). The inverse of `toInt`; lets a computed byte value be written with `Ashes.Bytes.appendByte`
-  / `Ashes.Bytes.singleton` (e.g. building a percent-decoded string byte by byte).
-
-### `Ashes.Text`
-
-- `uncons(text)` returning `Maybe((Str, Str))`
-- `parseInt(text)` returning `Result(Str, Int)`
-- `parseFloat(text)` returning `Result(Str, Float)`
-- `parseBigInt(text)` returning `Result(Str, BigInt)` — decimal parse into a [`BigInt`](#ashesbigint)
-- `fromInt(value)` returning `Str`
-- `fromFloat(value)` returning `Str`
-- `fromBigInt(value)` returning `Str` — decimal rendering of a [`BigInt`](#ashesbigint)
-- `formatFloat(value)(decimals)` returning `Str` — fixed-precision decimal formatting: exactly
-  `decimals` fractional digits, trailing zeros kept (`formatFloat(1.5)(9)` is `1.500000000`,
-  `formatFloat(2.5)(0)` is `3`). `decimals` is clamped to the range 0–18. Rounding is
-  half-away-from-zero on the magnitude. Magnitudes too large for the fixed path fall back to the
-  same scientific notation as `fromFloat`.
-- `toHex(value)` returning `Str`
-- `byteLength(text)` returning `Int` — UTF-8 byte length of a string
-- `asciiUpper(text)` returning `Str` — ASCII-only uppercase: `a`–`z` map to `A`–`Z` in a single
-  O(N) byte pass; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through
-  byte-identical, so non-ASCII text is untouched (no Unicode case folding — the ASCII scope is in
-  the name, following OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`)
-- `asciiLower(text)` returning `Str` — ASCII-only lowercase, the inverse of `asciiUpper`
- 
-### `Ashes.Process`
+### `Ashes.IO.Process`
 
 Synchronous subprocess control with piped stdin/stdout/stderr.
 `Process` is a resource type; it is automatically closed when it goes out of scope.
@@ -182,7 +121,9 @@ Synchronous subprocess control with piped stdin/stdout/stderr.
 
 Supported on Linux x64, Linux arm64, and Windows x64.
 
-### `Ashes.Http`
+## `Ashes.Net` — networking and wire protocols
+
+### `Ashes.Net.Http`
 
 - `get(url)` returning `Task(Str, Str)`
 - `post(url, body)` returning `Task(Str, Str)`
@@ -200,123 +141,7 @@ Current HTTP support is intentionally small:
 - Responses are expected to be plain HTTP/1.1 responses terminated by connection close.
 - `Transfer-Encoding: chunked` currently returns `Error("unsupported transfer encoding")`.
 
-### `Ashes.Net.Tcp`
-
-- `connect(host)(port)` returning `Task(Str, Socket)`
-- `send(socket)(text)` returning `Task(Str, Int)`
-- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
-- `close(socket)` returning `Task(Str, Unit)`
-
-### `Ashes.Net.Tcp.Server`
-
-TCP server support. `listen`/`accept` are the primitives; `serve` is the combinator built on them.
-
-- `listen(port)` returning `Task(Str, Socket)` — bind `INADDR_ANY:port`, `listen`, and return the
-  listening socket (non-blocking).
-- `accept(listener)` returning `Task(Str, Socket)` — accept one connection, returning the client
-  socket. Suspends (parks on the listener) until a connection is ready, so it is used inside `async`.
-- `serve(port)(handler)` returning `Task(Str, Unit)` — the server lifecycle. Binds the port, then
-  loops accepting connections, spawning `handler` on each (`Ashes.Async.spawn`), so connections are
-  served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
-  owns its connection and runs detached — it must close the socket itself, its result is dropped, and
-  its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
-  server with `Error`. Consumed with `await` inside `Ashes.Async.run(async ...)`. **`serve` is
-  parallel by default**: it runs one independent reactor per online CPU (see below), so an endpoint
-  scales across cores without the program choosing a worker count.
-- `serveParallel(port)(workers)(handler)` — the same as `serve` with an explicit worker count
-  (`serve` is `serveParallel(port)(0)(handler)`; a count `<= 0` means one worker per online CPU).
-- `serveWithDrainTimeout(port)(drainMs)(handler)` — the same as `serve` with an explicit
-  graceful-shutdown drain bound. On the first `SIGINT`/`SIGTERM` (console-ctrl on Windows) the
-  server stops accepting and lets in-flight handlers finish for up to `drainMs` milliseconds
-  (default 10000 for `serve`), then returns `Ok(())`; a second signal exits immediately. A
-  multi-reactor parent forwards the signal to its workers and reaps them before returning.
-- `setDrainTimeout(ms)` returning `Unit` — sets the drain bound for this process (the primitive
-  under `serveWithDrainTimeout`; call before `serve` so forked workers inherit it).
-
-Programmatic shutdown is the built-in `Stop.stop(Unit)` capability operation (not a
-`Ashes.Net.Tcp.Server` function): performing it from inside a handler requests graceful shutdown
-of the whole server through the same drain path as a signal, and the server's `serve` lifecycle
-completes with `Ok(())`. See the language reference, section 20.8.
-
-`serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
-binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
-and each worker serves its connections concurrently on its own thread (cooperative scheduling via
-`Ashes.Async.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
-stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
-connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
-aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
-compile cap. Multi-core on all three targets: Linux (x64/arm64) forks the workers with a
-`SO_REUSEPORT` listener each; Windows relaunches itself with `CreateProcessA` sharing one inherited
-listener. `send` / `receive` / `close` from `Ashes.Net.Tcp` operate on the accepted client socket.
-Supported on Linux x64, Linux arm64, and
-Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
-
-```ash
-import Ashes.Net.Tcp
-import Ashes.Net.Tcp.Server
-let onClient client =
-    async(match await Ashes.Net.Tcp.receive(client)(4096) with
-        | Error(e) -> Error(e)
-        | Ok(msg) ->
-            match await Ashes.Net.Tcp.send(client)(msg) with
-                | Error(e2) -> Error(e2)
-                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve(8080)(onClient)) with
-    | Ok(_u) -> Ashes.IO.print("server stopped")
-    | Error(e) -> Ashes.IO.print(e)
-```
-
-### `Ashes.Net.Tls`
-
-- `connect(host)(port)` returning `Task(Str, TlsSocket)`
-- `send(socket)(text)` returning `Task(Str, Int)`
-- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
-- `close(socket)` returning `Task(Str, Unit)`
-
-`Ashes.Net.Tls` uses the same TLS runtime path as `https://` in `Ashes.Http`.
-On Linux x64, Linux arm64, and Windows x64 that currently means the
-hermetic Mbed TLS runtime linked into each TLS-using executable. No
-external OpenSSL installation is required. Hostname verification and
-system-trust validation are mandatory for successful TLS connections.
-
-### `Ashes.Net.Tls.Server`
-
-Server-side TLS termination, layered on `Ashes.Net.Tcp.Server`.
-
-- `handshake(socket)(certPem)(keyPem)` returning `Task(Str, TlsSocket)` — runs the server half of a
-  TLS handshake over an accepted TCP socket. `certPem` / `keyPem` are the certificate-chain and
-  private-key PEM **contents** (not paths). The TLS server config is built once from these and
-  cached for the process; the accepted socket is consumed into the returned `TlsSocket`, on which the
-  ordinary `Ashes.Net.Tls.send` / `receive` / `close` operate.
-- `serveTls(port)(certPath)(keyPath)(handler)` returning `Task(Str, Unit)` — the TLS server
-  lifecycle. Reads the certificate and key PEM files up front (a read failure ends the server with a
-  readable `Error`), then serves like `Ashes.Net.Tcp.Server.serve` — concurrently, one spawned
-  handler per connection — running the handshake in front of each handler. `handler : TlsSocket ->
-  Task(E, A)` owns its connection and must close it (the socket auto-drops otherwise). Consumed with
-  `Ashes.Async.run`.
-
-The handshake reuses the scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking, so a TLS server
-serves concurrently on a single thread exactly as the plaintext server does. Same three targets and
-hermetic Mbed TLS runtime as the TLS client.
-
-```ash
-import Ashes.IO
-import Ashes.Net.Tls
-import Ashes.Net.Tls.Server
-import Ashes.Async
-let onClient tls =
-    async(match await Ashes.Net.Tls.receive(tls)(4096) with
-        | Error(e) -> Error(e)
-        | Ok(msg) ->
-            match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
-                | Error(e2) -> Error(e2)
-                | Ok(_n) -> await Ashes.Net.Tls.close(tls))
-in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls(8443)("cert.pem")("key.pem")(onClient)) with
-    | Ok(_u) -> Ashes.IO.print("stopped")
-    | Error(e) -> Ashes.IO.print(e)
-```
-
-### `Ashes.Http.Server`
+### `Ashes.Net.Http.Server`
 
 A minimal HTTP/1.1 server layered over `Ashes.Net.Tcp.Server`. Pure Ashes over the TCP layer, so it
 runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
@@ -351,7 +176,7 @@ runs on every target the TCP server does (Linux x64, Linux arm64, Windows x64).
   the port and, per request, reads it, parses request line + headers + body, runs the handler (which
   may `await` async work), and writes the response. The connection is kept alive (HTTP/1.1 default),
   closing on `Connection: close`, on handler failure, or when the peer disconnects. A handler that
-  completes with `Error` yields a plain `500`. Consumed with `Ashes.Async.run`; serves connections
+  completes with `Error` yields a plain `500`. Consumed with `Ashes.Task.run`; serves connections
   concurrently like the plaintext TCP server.
 
 Reads are **buffered** until a full request has arrived — the header block plus the body (framed by
@@ -364,42 +189,145 @@ that would check the reader's non-escape guarantee.
 
 ```ash
 import Ashes.IO
-import Ashes.Http.Server
-import Ashes.Async
+import Ashes.Net.Http.Server
+import Ashes.Task
 let route req =
-    async(match Ashes.Http.Server.path(req) with
-        | "/health" -> Ashes.Http.Server.text(200)("ok")
-        | "/echo" -> Ashes.Http.Server.text(200)(Ashes.Http.Server.body(req))
-        | "/data" -> Ashes.Http.Server.json(200)("{\"ok\":true}")
-        | _p -> Ashes.Http.Server.text(404)("not found"))
-in match Ashes.Async.run(Ashes.Http.Server.serve(8080)(route)) with
+    async(match Ashes.Net.Http.Server.path(req) with
+        | "/health" -> Ashes.Net.Http.Server.text(200)("ok")
+        | "/echo" -> Ashes.Net.Http.Server.text(200)(Ashes.Net.Http.Server.body(req))
+        | "/data" -> Ashes.Net.Http.Server.json(200)("{\"ok\":true}")
+        | _p -> Ashes.Net.Http.Server.text(404)("not found"))
+in match Ashes.Task.run(Ashes.Net.Http.Server.serve(8080)(route)) with
     | Ok(_u) -> Ashes.IO.print("stopped")
     | Error(e) -> Ashes.IO.print(e)
 ```
 
-## Shipped Helper Modules
+### `Ashes.Net.Tcp`
 
-These modules are compiler-shipped and live under the reserved `Ashes.*`
-namespace. They are not overridable by project-local modules.
+- `connect(host)(port)` returning `Task(Str, Socket)`
+- `send(socket)(text)` returning `Task(Str, Int)`
+- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `close(socket)` returning `Task(Str, Unit)`
 
-### `Ashes.List`
+### `Ashes.Net.Tcp.Server`
 
-- `append` — `List(a) -> List(a) -> List(a)`, the elements of `left` followed by those of `right`
-- `filter` — `(a -> Bool) -> List(a) -> List(a)`, the elements satisfying `predicate`, in order
-- `foldLeft` — `(b -> a -> b) -> b -> List(a) -> b`, left fold from `initial` over the list
-- `fold` — alias for `foldLeft`
-- `head` — `List(a) -> Maybe(a)`, the first element, or `None` if empty
-- `isEmpty` — `List(a) -> Bool`, whether the list has no elements
-- `length` — `List(a) -> Int`, number of elements
-- `map` — `(a -> b) -> List(a) -> List(b)`, apply `f` to each element
-- `reverse` — `List(a) -> List(a)`, the elements in reverse order
-- `sortBy` — `(a -> a -> Bool) -> List(a) -> List(a)`, a stable `O(n log n)` merge sort ordered by the
-  comparator `before`: `before(x)(y)` is `true` when `x` should not come after `y` (e.g. `given (a) ->
-  given (b) -> a <= b` for ascending). Provide your own comparator since the language has no built-in
-  ordering typeclass
-- `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
+TCP server support. `listen`/`accept` are the primitives; `serve` is the combinator built on them.
 
-### `Ashes.Math`
+- `listen(port)` returning `Task(Str, Socket)` — bind `INADDR_ANY:port`, `listen`, and return the
+  listening socket (non-blocking).
+- `accept(listener)` returning `Task(Str, Socket)` — accept one connection, returning the client
+  socket. Suspends (parks on the listener) until a connection is ready, so it is used inside `async`.
+- `serve(port)(handler)` returning `Task(Str, Unit)` — the server lifecycle. Binds the port, then
+  loops accepting connections, spawning `handler` on each (`Ashes.Task.spawn`), so connections are
+  served concurrently: a slow handler never blocks the accept loop. `handler : Socket -> Task(E, A)`
+  owns its connection and runs detached — it must close the socket itself, its result is dropped, and
+  its failure is isolated to its connection, never stopping the loop. A bind/listener failure ends the
+  server with `Error`. Consumed with `await` inside `Ashes.Task.run(async ...)`. **`serve` is
+  parallel by default**: it runs one independent reactor per online CPU (see below), so an endpoint
+  scales across cores without the program choosing a worker count.
+- `serveParallel(port)(workers)(handler)` — the same as `serve` with an explicit worker count
+  (`serve` is `serveParallel(port)(0)(handler)`; a count `<= 0` means one worker per online CPU).
+- `serveWithDrainTimeout(port)(drainMs)(handler)` — the same as `serve` with an explicit
+  graceful-shutdown drain bound. On the first `SIGINT`/`SIGTERM` (console-ctrl on Windows) the
+  server stops accepting and lets in-flight handlers finish for up to `drainMs` milliseconds
+  (default 10000 for `serve`), then returns `Ok(())`; a second signal exits immediately. A
+  multi-reactor parent forwards the signal to its workers and reaps them before returning.
+- `setDrainTimeout(ms)` returning `Unit` — sets the drain bound for this process (the primitive
+  under `serveWithDrainTimeout`; call before `serve` so forked workers inherit it).
+
+Programmatic shutdown is the built-in `Stop.stop(Unit)` capability operation (not a
+`Ashes.Net.Tcp.Server` function): performing it from inside a handler requests graceful shutdown
+of the whole server through the same drain path as a signal, and the server's `serve` lifecycle
+completes with `Ok(())`. See the language reference, section 20.8.
+
+`serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
+binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
+and each worker serves its connections concurrently on its own thread (cooperative scheduling via
+`Ashes.Task.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
+stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
+connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
+aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
+compile cap. Multi-core on all three targets: Linux (x64/arm64) forks the workers with a
+`SO_REUSEPORT` listener each; Windows relaunches itself with `CreateProcessA` sharing one inherited
+listener. `send` / `receive` / `close` from `Ashes.Net.Tcp` operate on the accepted client socket.
+Supported on Linux x64, Linux arm64, and
+Windows x64 (the accept path uses `WSAPoll` on Windows, matching the client).
+
+```ash
+import Ashes.Net.Tcp
+import Ashes.Net.Tcp.Server
+let onClient client =
+    async(match await Ashes.Net.Tcp.receive(client)(4096) with
+        | Error(e) -> Error(e)
+        | Ok(msg) ->
+            match await Ashes.Net.Tcp.send(client)(msg) with
+                | Error(e2) -> Error(e2)
+                | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve(8080)(onClient)) with
+    | Ok(_u) -> Ashes.IO.print("server stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
+### `Ashes.Net.Tls`
+
+- `connect(host)(port)` returning `Task(Str, TlsSocket)`
+- `send(socket)(text)` returning `Task(Str, Int)`
+- `receive(socket)(maxBytes)` returning `Task(Str, Str)`
+- `close(socket)` returning `Task(Str, Unit)`
+
+`Ashes.Net.Tls` uses the same TLS runtime path as `https://` in `Ashes.Net.Http`.
+On Linux x64, Linux arm64, and Windows x64 that currently means the
+hermetic Mbed TLS runtime linked into each TLS-using executable. No
+external OpenSSL installation is required. Hostname verification and
+system-trust validation are mandatory for successful TLS connections.
+
+### `Ashes.Net.Tls.Server`
+
+Server-side TLS termination, layered on `Ashes.Net.Tcp.Server`.
+
+- `handshake(socket)(certPem)(keyPem)` returning `Task(Str, TlsSocket)` — runs the server half of a
+  TLS handshake over an accepted TCP socket. `certPem` / `keyPem` are the certificate-chain and
+  private-key PEM **contents** (not paths). The TLS server config is built once from these and
+  cached for the process; the accepted socket is consumed into the returned `TlsSocket`, on which the
+  ordinary `Ashes.Net.Tls.send` / `receive` / `close` operate.
+- `serveTls(port)(certPath)(keyPath)(handler)` returning `Task(Str, Unit)` — the TLS server
+  lifecycle. Reads the certificate and key PEM files up front (a read failure ends the server with a
+  readable `Error`), then serves like `Ashes.Net.Tcp.Server.serve` — concurrently, one spawned
+  handler per connection — running the handshake in front of each handler. `handler : TlsSocket ->
+  Task(E, A)` owns its connection and must close it (the socket auto-drops otherwise). Consumed with
+  `Ashes.Task.run`.
+
+The handshake reuses the scheduler's `WaitTlsWantRead` / `WaitTlsWantWrite` parking, so a TLS server
+serves concurrently on a single thread exactly as the plaintext server does. Same three targets and
+hermetic Mbed TLS runtime as the TLS client.
+
+```ash
+import Ashes.IO
+import Ashes.Net.Tls
+import Ashes.Net.Tls.Server
+import Ashes.Task
+let onClient tls =
+    async(match await Ashes.Net.Tls.receive(tls)(4096) with
+        | Error(e) -> Error(e)
+        | Ok(msg) ->
+            match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
+                | Error(e2) -> Error(e2)
+                | Ok(_n) -> await Ashes.Net.Tls.close(tls))
+in match Ashes.Task.run(Ashes.Net.Tls.Server.serveTls(8443)("cert.pem")("key.pem")(onClient)) with
+    | Ok(_u) -> Ashes.IO.print("stopped")
+    | Error(e) -> Ashes.IO.print(e)
+```
+
+### `Ashes.Net.Rpc`
+
+Stdio JSON-RPC 2.0 Content-Length framing for LSP/DAP transports.
+
+- `readMessage()` returning `Result(Str, Str)` — read one framed message from stdin (reads the `Content-Length:` header, then exactly that many bytes via `Ashes.IO.readExact`)
+- `writeMessage(msg)` returning `Unit` — write a framed message to stdout with a `Content-Length:` header
+
+## `Ashes.Number` — numbers
+
+### `Ashes.Number.Math`
 
 All functions are curried. Layer 1 is hermetic (no native payload). Layer 2
 transcendentals are backed by a vendored openlibm compiled to LLVM bitcode and
@@ -444,7 +372,7 @@ Transcendentals (Layer 2, openlibm-backed):
 Domain errors follow IEEE-754 (`sqrt(-1.0)` is `NaN`), so the Float functions
 stay total.
 
-### `Ashes.BigInt`
+### `Ashes.Number.BigInt`
 
 Native **arbitrary-precision signed integers** (`BigInt`). Values are immutable and
 arena-allocated; each operation returns a fresh, normalized value. The arithmetic is emitted
@@ -465,13 +393,42 @@ the named functions above are rarely needed directly. Decimal string conversions
 `fromInt`/`parseInt`.
 
 ```
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let squared = 1000000000000N * 1000000000000N
 Ashes.IO.print(Ashes.Text.fromBigInt(squared))
 // 1000000000000000000000000
 ```
 
-### `Ashes.Array`
+### `Ashes.Number.UInt`
+
+- `toInt(value)` returning `Int` — widen an unsigned integer (`u8`/`u16`/`u32`/`u64`) to a signed
+  `Int`. Value-preserving for `u8`/`u16`/`u32` (and a bit-reinterpret for `u64`); it is the bridge that
+  lets a byte from `Ashes.Byte.get` be used in `Int` arithmetic, enabling byte-level integer parsing
+  without routing through strings.
+- `fromInt(value)` returning `u8` — narrow an `Int` to an unsigned byte, wrapping modulo 256 (the low
+  8 bits). The inverse of `toInt`; lets a computed byte value be written with `Ashes.Byte.appendByte`
+  / `Ashes.Byte.singleton` (e.g. building a percent-decoded string byte by byte).
+
+## `Ashes.Collection` — containers
+
+### `Ashes.Collection.List`
+
+- `append` — `List(a) -> List(a) -> List(a)`, the elements of `left` followed by those of `right`
+- `filter` — `(a -> Bool) -> List(a) -> List(a)`, the elements satisfying `predicate`, in order
+- `foldLeft` — `(b -> a -> b) -> b -> List(a) -> b`, left fold from `initial` over the list
+- `fold` — alias for `foldLeft`
+- `head` — `List(a) -> Maybe(a)`, the first element, or `None` if empty
+- `isEmpty` — `List(a) -> Bool`, whether the list has no elements
+- `length` — `List(a) -> Int`, number of elements
+- `map` — `(a -> b) -> List(a) -> List(b)`, apply `f` to each element
+- `reverse` — `List(a) -> List(a)`, the elements in reverse order
+- `sortBy` — `(a -> a -> Bool) -> List(a) -> List(a)`, a stable `O(n log n)` merge sort ordered by the
+  comparator `before`: `before(x)(y)` is `true` when `x` should not come after `y` (e.g. `given (a) ->
+  given (b) -> a <= b` for ascending). Provide your own comparator since the language has no built-in
+  ordering typeclass
+- `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
+
+### `Ashes.Collection.Array`
 
 Immutable indexed array backed by a persistent balanced tree.
 
@@ -484,14 +441,14 @@ Immutable indexed array backed by a persistent balanced tree.
 - `toList(array)` returning `List(T)` in index order
 - `fromList(list)` returning a new array preserving input order
 
-### `Ashes.Map`
+### `Ashes.Collection.Map`
 
 - `empty` — empty immutable map
 - `isEmpty(map)` returning `Bool` — whether the map has no entries
 - `get(compare)(key)(map)` returning `Maybe(V)`
 - `getStr(key)(map)` returning `Maybe(V)` — `Str`-keyed lookup ordered by UTF-8 byte order
-  (`Ashes.Bytes.compare` inline; no comparator closure, so it is markedly faster than
-  `get(Ashes.String.compare)`)
+  (`Ashes.Byte.compare` inline; no comparator closure, so it is markedly faster than
+  `get(Ashes.Text.compare)`)
 - `contains(compare)(key)(map)` returning `Bool`
 - `set(compare)(key)(value)(map)` returning a new map value
 - `setStr(key)(value)(map)` returning a new map value — `Str`-keyed `set`, same ordering and
@@ -505,22 +462,37 @@ Immutable indexed array backed by a persistent balanced tree.
 - `toList(map)` returning `List((K, V))` in key order
 - `fromList(compare)(entries)` returning a new map value
 
-`Ashes.Map` is implemented as a persistent AVL tree. Because Ashes does not yet
+`Ashes.Collection.Map` is implemented as a persistent AVL tree. Because Ashes does not yet
 have a built-in ordering abstraction, callers supply a total ordering function
 `(K -> K -> Int)` to lookup and update helpers.
 
-### `Ashes.HashTrie`
+### `Ashes.Collection.HashMap`
 
-A persistent 16-ary hash trie keyed by `Str` — the constant-factor alternative to `Ashes.Map`
+A persistent map keyed by `Str` that needs **no caller-supplied ordering**. Internally an
+AVL tree ordered by the composite key `(FNV-1a hash, key)`, so navigation is dominated by
+cheap 64-bit integer comparisons and only falls back to string comparison on a hash
+collision. Same persistent-structure cost model as `Ashes.Collection.Map` (O(log K) nodes per update).
+
+- `empty` — empty hash map
+- `get(key)(map)` returning `Maybe(V)`
+- `contains(key)(map)` returning `Bool`
+- `set(key)(value)(map)` returning a new map
+- `insert` — alias of `set`
+- `size(map)` returning `Int`
+- `foldLeft(folder)(state)(map)` returning the folded state (key order is by hash, not lexical)
+
+### `Ashes.Collection.HashTrie`
+
+A persistent 16-ary hash trie keyed by `Str` — the constant-factor alternative to `Ashes.Collection.Map`
 for large keyed accumulations. Each internal node carries its own nibble shift, so a lookup or
 upsert costs ~4-5 dependent node loads at tens of thousands of keys (vs ~17 for the AVL
-`Ashes.Map`), at the price of hash iteration order (re-sort at the end when ordered output is
+`Ashes.Collection.Map`), at the price of hash iteration order (re-sort at the end when ordered output is
 needed). Keys compare by UTF-8 bytes at the leaf; equal-hash collisions chain through the leaf.
 Update loops get the same in-place reuse specialization as `Map.set`, so hot folds are
 constant-memory.
 
 - `empty` — empty trie
-- `hashText(text)` returning `Int` — the key hash (`Ashes.Bytes.hash` of the UTF-8 bytes);
+- `hashText(text)` returning `Int` — the key hash (`Ashes.Byte.hash` of the UTF-8 bytes);
   compute once per key and pass to the operations below
 - `upsertHashed(hash)(key)(missValue)(onHit)(trie)` returning a new trie — single-traversal
   insert-or-update: inserts `missValue` when absent, else replaces the stored value with
@@ -530,7 +502,168 @@ constant-memory.
 - `toList(trie)` returning `List((K, V))` in hash order
 - `size(trie)` returning `Int`
 
-### `Ashes.Parallel`
+## `Ashes.Text` — strings and text formats
+
+### `Ashes.Text`
+
+The single string module: character/codepoint helpers, search and slicing, parsing and
+formatting. The conversion and case functions are compiler intrinsics; the search/slice/split
+layer is shipped Ashes code built on `Ashes.Byte`.
+
+- `uncons(text)` returning `Maybe((Str, Str))`
+- `parseInt(text)` returning `Result(Str, Int)`
+- `parseFloat(text)` returning `Result(Str, Float)`
+- `parseBigInt(text)` returning `Result(Str, BigInt)` — decimal parse into a [`BigInt`](#ashesnumberbigint)
+- `fromInt(value)` returning `Str`
+- `fromFloat(value)` returning `Str`
+- `fromBigInt(value)` returning `Str` — decimal rendering of a [`BigInt`](#ashesnumberbigint)
+- `formatFloat(value)(decimals)` returning `Str` — fixed-precision decimal formatting: exactly
+  `decimals` fractional digits, trailing zeros kept (`formatFloat(1.5)(9)` is `1.500000000`,
+  `formatFloat(2.5)(0)` is `3`). `decimals` is clamped to the range 0–18. Rounding is
+  half-away-from-zero on the magnitude. Magnitudes too large for the fixed path fall back to the
+  same scientific notation as `fromFloat`.
+- `toHex(value)` returning `Str`
+- `byteLength(text)` returning `Int` — UTF-8 byte length of a string
+- `asciiUpper(text)` returning `Str` — ASCII-only uppercase: `a`–`z` map to `A`–`Z` in a single
+  O(N) byte pass; every byte of a multibyte UTF-8 sequence is `>= 0x80` and passes through
+  byte-identical, so non-ASCII text is untouched (no Unicode case folding — the ASCII scope is in
+  the name, following OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`)
+- `asciiLower(text)` returning `Str` — ASCII-only lowercase, the inverse of `asciiUpper`
+ 
+- `length` — `Str -> Int`, number of characters
+- `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`. Codepoint-
+  indexed, so it walks the string to the `start`-th codepoint — `O(start + count)`. For repeated
+  indexed slicing of the same buffer (e.g. a sliding k-mer window), materialize it once with
+  `Ashes.Byte.fromText` and use the byte-indexed `Ashes.Byte.subText` (`O(count)` per slice)
+- `take` — `Str -> Int -> Str`, the first `count` characters
+- `drop` — `Str -> Int -> Str`, all but the first `count` characters
+- `indexOf` — `Str -> Str -> Int`, index of the first occurrence of `needle`, or `-1` if absent
+- `startsWith` — `Str -> Str -> Bool`, whether `text` begins with `prefix`
+- `contains` — `Str -> Str -> Bool`, whether `needle` occurs anywhere in `text`
+- `split` — `Str -> Str -> List(Str)`, split `text` on each occurrence of `separator`
+- `join` — `Str -> List(Str) -> Str`, concatenate `parts` with `separator` between them
+- `trim` — `Str -> Str`, strip leading and trailing whitespace
+- `trimStart` — `Str -> Str`, strip leading whitespace
+- `trimEnd` — `Str -> Str`, strip trailing whitespace
+- `isLetter` — `Str -> Bool`, whether the single character `text` is an ASCII letter (`a`–`z`, `A`–`Z`)
+- `isDigit` — `Str -> Bool`, whether the single character `text` is a decimal digit (`0`–`9`)
+- `isWhiteSpace` — `Str -> Bool`, whether the single character `text` is space, tab, newline, or carriage return
+- `compare` — `Str -> Str -> Int` total order returning `-1`/`0`/`1`. Compares by UTF-8 bytes (via
+  `Ashes.Byte.fromText`), which equals Unicode codepoint order, so it is a correct total order over
+  all strings — suitable directly as the ordering function for `Ashes.Collection.Map`/`Ashes.Collection.Array`.
+
+### `Ashes.Text.Regex`
+
+Regular expressions backed by [PCRE2](https://www.pcre.org/) (Perl-compatible syntax). The 8-bit
+PCRE2 library is compiled to LLVM bitcode and linked directly into the executable when a program
+uses this module — everything unreachable from the exposed API is stripped, and there is no runtime
+dependency, exactly like the rest of Ashes. Pattern and subject are treated as **UTF-8 with Unicode
+property support** (`\d`, `\w`, `\p{L}`, Unicode-aware case handling). Offsets are **byte offsets**
+into the subject.
+
+- **Type**: `Regex` — an opaque compiled pattern.
+- `compile(pattern)` returning `Result(Str, Regex)` — compile a pattern once. `Error` carries the
+  PCRE2 diagnostic for an invalid pattern; `Ok` wraps a reusable compiled `Regex`.
+- `isMatch(regex)(text)` returning `Bool` — true if the pattern matches anywhere in `text`.
+- `find(regex)(text)` returning `Maybe((Int, Int))` — the first match as `Some((start, end))` byte
+  offsets, or `None`.
+- `findAll(regex)(text)` returning `List((Int, Int))` — every non-overlapping match as `(start, end)`
+  byte offsets.
+- `captures(regex)(text)` returning `Maybe(List(Maybe(Str)))` — the first match's capture groups.
+  Group 0 is the whole match; each group is `Some(text)` or `None` if it did not participate.
+- `replace(regex)(text)(replacement)` returning `Str` — replace every match. The replacement string
+  uses PCRE2 substitution syntax (`$1`, `${name}` group references).
+
+```ash
+import Ashes.Text.Regex
+
+match Ashes.Text.Regex.compile("([a-z]+)=([0-9]+)") with
+    | Error(message) -> Ashes.IO.print("bad pattern: " + message)
+    | Ok(re) ->
+        match Ashes.Text.Regex.captures(re)("port=8080") with
+            | None -> Ashes.IO.print("no match")
+            | Some(_groups) -> Ashes.IO.print("matched")
+```
+
+Compile a pattern once and reuse the `Regex` across many subjects; compilation is the expensive
+step. Matching is memory-bounded even in a tight recursion over many subjects.
+
+### `Ashes.Text.Json`
+
+Full JSON value type with a recursive-descent parser and serializer. Objects and arrays are
+represented as their own cons-style ADT (no dependency on `Ashes.Collection.Map`).
+
+- **Type**: `Json` — ADT with constructors `JsonNull`, `JsonBool(Bool)`, `JsonInt(Int)`,
+  `JsonFloat(Float)`, `JsonStr(Str)`, `JsonArray(Json, Json)` / `JsonArrayEnd` (head/tail list),
+  `JsonObject(Str, Json, Json)` / `JsonObjectEnd` (key/value/rest list)
+- `parse(text)` returning `Result(Str, Json)` — parse a JSON document
+- `stringify(value)` returning `Str` — serialize a JSON value
+- `get(key)(json)` returning `Json` — object field lookup (`JsonNull` when absent)
+- `index(i)(json)` returning `Json` — array element lookup (`JsonNull` when out of range)
+- `asStr` / `asInt` / `asFloat` / `asBool` — extract a scalar with a sensible default
+- `isNull(json)` returning `Bool`
+
+## `Ashes.Byte` — binary data
+
+### `Ashes.Byte`
+
+An immutable byte sequence with O(1) indexed access and O(1) length.
+
+- `empty()` returning `Bytes` — empty byte sequence
+- `singleton(byte)` returning `Bytes` — one-byte sequence
+- `length(bytes)` returning `Int`
+- `get(bytes, index)` returning `u8` — panics if index out of bounds
+- `indexOf(bytes)(needle)(from)` returning `Int` — index of the first byte equal to `needle` (an
+  `Int` byte value) at or after `from`, or `-1` if none. O(len − from), no allocation — a memchr for
+  scanning a buffer by integer position without materializing views.
+- `compare(left)(right)` returning `Int` — three-way lexicographic byte order, normalized to
+  `-1`/`0`/`1`. One `memcmp` over the common prefix plus a length tie-break — far faster than a
+  byte-at-a-time loop. With `fromText` this underlies `Ashes.Text.compare`.
+- `subText(bytes)(start)(len)` returning `Str` — copy `len` bytes starting at `start` into a fresh
+  `Str`. O(len); the range is clamped into the source so it never reads out of bounds. The caller
+  must ensure the range lies on valid UTF-8 boundaries (slicing at ASCII delimiters like `;`/`\n`
+  always does). With `indexOf` this lets a buffer be scanned by integer index instead of a shrinking
+  `Str` view.
+- `subView(bytes)(start)(len)` returning `Str` — a zero-copy VIEW over the same range `subText`
+  would copy (O(1), no byte copy; same clamping and UTF-8 caveat). The backing bytes must outlive
+  the view: a view over an `Ashes.IO.File.mmap` mapping is valid for the program's lifetime, and a
+  view stored into a structure (e.g. a `Map` key) is materialized by the copy-out/blob paths.
+  Prefer it for transient per-record slices in hot scan loops.
+- `append(left, right)` returning `Bytes` — concatenate two sequences
+- `appendByte(bytes, byte)` returning `Bytes` — append one byte
+- `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
+- `fromText(text)` returning `Bytes` — expose a `Str`'s UTF-8 bytes (O(1); `Str` and `Bytes`
+  share an in-memory layout). Byte order over the result equals Unicode codepoint order, so this is
+  the basis for a correct string ordering (see `Ashes.Text.compare`).
+- `hash(bytes)` returning `Int` — 64-bit FNV-1a hash of the byte payload. With `fromText` this
+  gives string hashing; it underlies `Ashes.Collection.HashMap`.
+- `u16Le(value)` returning `Bytes` — encode `u16` little-endian (2 bytes)
+- `u32Le(value)` returning `Bytes` — encode `u32` little-endian (4 bytes)
+- `u64Le(value)` returning `Bytes` — encode `u64` little-endian (8 bytes)
+- `getU16Le(bytes, offset)` returning `u16` — decode little-endian `u16` at offset
+- `getU32Le(bytes, offset)` returning `u32` — decode little-endian `u32` at offset
+- `getU64Le(bytes, offset)` returning `u64` — decode little-endian `u64` at offset
+
+## `Ashes.Task` — concurrency
+
+### `Ashes.Task`
+
+Asynchronous tasks: the `Task(E, A)` values consumed with `await` inside `async(...)` blocks
+(or the `let!` sugar). All networking APIs return tasks; this module creates and drives them.
+
+- `run(task)` returning `Result(E, A)` — drive a task to completion on the scheduler (program
+  entry point for async code)
+- `task(value)` returning `Task(E, A)` — wrap a pure value as an immediately-completed task
+- `fromResult(result)` returning `Task(E, A)` — lift a `Result` into a task
+- `sleep(ms)` returning `Task(Str, Int)` — complete after `ms` milliseconds
+- `all(tasks)` returning `Task(E, List(A))` — run all tasks, collect results in order
+- `race(tasks)` returning `Task(E, A)` — first task to complete wins
+- `spawn(task)` returning `Unit` — fire-and-forget a task on the scheduler (used by the
+  socket servers to run one handler per connection)
+
+Supported on Linux x64, Linux arm64, and Windows x64 (run-queue scheduler on all three).
+
+### `Ashes.Task.Parallel`
 
 Structured, deterministic parallelism over **pure** functions (see
 the [compiler changelog](../internals/changelog.md)). Every result is identical to the sequential
@@ -578,30 +711,9 @@ when the scope returns.
   `reduceGrainedWithWorkers(count)(grain)(combine)(identity)(f)(list)` — convenience wrappers, each
   equal to `withWorkers(count)` around the corresponding operation.
 
-### `Ashes.Internal`
+## `Ashes.Core` — core value helpers
 
-Compiler-foundation primitives (not intended for everyday use).
-
-- `deepCopy(value)` returning the same type — an independent deep copy of any value (strings,
-  tuples, lists, closures, and recursive ADTs such as `Map`/`HashMap`). Semantically the identity
-  for immutable values; it underlies arena reclamation and parallel result copy-out.
-
-### `Ashes.HashMap`
-
-A persistent map keyed by `Str` that needs **no caller-supplied ordering**. Internally an
-AVL tree ordered by the composite key `(FNV-1a hash, key)`, so navigation is dominated by
-cheap 64-bit integer comparisons and only falls back to string comparison on a hash
-collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes per update).
-
-- `empty` — empty hash map
-- `get(key)(map)` returning `Maybe(V)`
-- `contains(key)(map)` returning `Bool`
-- `set(key)(value)(map)` returning a new map
-- `insert` — alias of `set`
-- `size(map)` returning `Int`
-- `foldLeft(folder)(state)(map)` returning the folded state (key order is by hash, not lexical)
-
-### `Ashes.Maybe`
+### `Ashes.Core.Maybe`
 
 - `map` — `(a -> b) -> Maybe(a) -> Maybe(b)`, apply `f` to the contained value if `Some`
 - `flatMap` — `(a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`, apply `f` to the contained value, flattening
@@ -611,7 +723,7 @@ collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes p
 - `isSome` — `Maybe(a) -> Bool`, whether the value is `Some`
 - `isNone` — `Maybe(a) -> Bool`, whether the value is `None`
 
-### `Ashes.Result`
+### `Ashes.Core.Result`
 
 - `map` — `(a -> b) -> Result(e, a) -> Result(e, b)`, apply `f` to the `Ok` value
 - `flatMap` — `(a -> Result(e, b)) -> Result(e, a) -> Result(e, b)`, apply `f` to the `Ok` value, flattening
@@ -622,81 +734,7 @@ collision. Same persistent-structure cost model as `Ashes.Map` (O(log K) nodes p
 - `isOk` — `Result(e, a) -> Bool`, whether the value is `Ok`
 - `isError` — `Result(e, a) -> Bool`, whether the value is `Error`
 
-### `Ashes.String`
-
-- `length` — `Str -> Int`, number of characters
-- `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`. Codepoint-
-  indexed, so it walks the string to the `start`-th codepoint — `O(start + count)`. For repeated
-  indexed slicing of the same buffer (e.g. a sliding k-mer window), materialize it once with
-  `Ashes.Bytes.fromText` and use the byte-indexed `Ashes.Bytes.subText` (`O(count)` per slice)
-- `take` — `Str -> Int -> Str`, the first `count` characters
-- `drop` — `Str -> Int -> Str`, all but the first `count` characters
-- `indexOf` — `Str -> Str -> Int`, index of the first occurrence of `needle`, or `-1` if absent
-- `startsWith` — `Str -> Str -> Bool`, whether `text` begins with `prefix`
-- `contains` — `Str -> Str -> Bool`, whether `needle` occurs anywhere in `text`
-- `split` — `Str -> Str -> List(Str)`, split `text` on each occurrence of `separator`
-- `join` — `Str -> List(Str) -> Str`, concatenate `parts` with `separator` between them
-- `trim` — `Str -> Str`, strip leading and trailing whitespace
-- `trimStart` — `Str -> Str`, strip leading whitespace
-- `trimEnd` — `Str -> Str`, strip trailing whitespace
-- `isLetter` — `Str -> Bool`, whether the single character `text` is an ASCII letter (`a`–`z`, `A`–`Z`)
-- `isDigit` — `Str -> Bool`, whether the single character `text` is a decimal digit (`0`–`9`)
-- `isWhiteSpace` — `Str -> Bool`, whether the single character `text` is space, tab, newline, or carriage return
-- `compare` — `Str -> Str -> Int` total order returning `-1`/`0`/`1`. Compares by UTF-8 bytes (via
-  `Ashes.Bytes.fromText`), which equals Unicode codepoint order, so it is a correct total order over
-  all strings — suitable directly as the ordering function for `Ashes.Map`/`Ashes.Array`.
-
-### `Ashes.Json`
-
-Full JSON value type and recursive-descent parser/serializer.
-
-- **Type**: `Json` — ADT with constructors `JsonNull`, `JsonBool(Bool)`, `JsonNumber(Float)`, `JsonString(Str)`, `JsonArray(Json, Json)` (head/tail list), `JsonObject(Str, Json, Json)` (key/value/rest list)
-- `parse(text)` returning `Result(Str, Json)` — parse a JSON string
-- `stringify(value)` returning `Str` — serialize a JSON value to a string
-- Accessor helpers: `getBool`, `getNumber`, `getString`, `getArray`, `getField`, `isNull`, `isBool`, `isNumber`, `isString`, `isArray`, `isObject`
-
-### `Ashes.Rpc`
-
-Stdio JSON-RPC 2.0 Content-Length framing for LSP/DAP transports.
-
-- `readMessage()` returning `Result(Str, Str)` — read one framed message from stdin (reads the `Content-Length:` header, then exactly that many bytes via `Ashes.IO.readExact`)
-- `writeMessage(msg)` returning `Unit` — write a framed message to stdout with a `Content-Length:` header
-
-### `Ashes.Regex`
-
-Regular expressions backed by [PCRE2](https://www.pcre.org/) (Perl-compatible syntax). The 8-bit
-PCRE2 library is compiled to LLVM bitcode and linked directly into the executable when a program
-uses this module — everything unreachable from the exposed API is stripped, and there is no runtime
-dependency, exactly like the rest of Ashes. Pattern and subject are treated as **UTF-8 with Unicode
-property support** (`\d`, `\w`, `\p{L}`, Unicode-aware case handling). Offsets are **byte offsets**
-into the subject.
-
-- **Type**: `Regex` — an opaque compiled pattern.
-- `compile(pattern)` returning `Result(Str, Regex)` — compile a pattern once. `Error` carries the
-  PCRE2 diagnostic for an invalid pattern; `Ok` wraps a reusable compiled `Regex`.
-- `isMatch(regex)(text)` returning `Bool` — true if the pattern matches anywhere in `text`.
-- `find(regex)(text)` returning `Maybe((Int, Int))` — the first match as `Some((start, end))` byte
-  offsets, or `None`.
-- `findAll(regex)(text)` returning `List((Int, Int))` — every non-overlapping match as `(start, end)`
-  byte offsets.
-- `captures(regex)(text)` returning `Maybe(List(Maybe(Str)))` — the first match's capture groups.
-  Group 0 is the whole match; each group is `Some(text)` or `None` if it did not participate.
-- `replace(regex)(text)(replacement)` returning `Str` — replace every match. The replacement string
-  uses PCRE2 substitution syntax (`$1`, `${name}` group references).
-
-```ash
-import Ashes.Regex
-
-match Ashes.Regex.compile("([a-z]+)=([0-9]+)") with
-    | Error(message) -> Ashes.IO.print("bad pattern: " + message)
-    | Ok(re) ->
-        match Ashes.Regex.captures(re)("port=8080") with
-            | None -> Ashes.IO.print("no match")
-            | Some(_groups) -> Ashes.IO.print("matched")
-```
-
-Compile a pattern once and reuse the `Regex` across many subjects; compilation is the expensive
-step. Matching is memory-bounded even in a tight recursion over many subjects.
+## Testing and internals
 
 ### `Ashes.Test`
 
@@ -716,3 +754,11 @@ in Ashes.IO.print("ok")
 ```
 
 `Ashes.Test` is ordinary shipped library code, not a special compiler intrinsic.
+
+### `Ashes.Internal`
+
+Compiler-foundation primitives (not intended for everyday use).
+
+- `deepCopy(value)` returning the same type — an independent deep copy of any value (strings,
+  tuples, lists, closures, and recursive ADTs such as `Map`/`HashMap`). Semantically the identity
+  for immutable values; it underlies arena reclamation and parallel result copy-out.

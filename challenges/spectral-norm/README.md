@@ -15,25 +15,25 @@ inner loops, repeated 20 times (each power step is `A·u` then `Aᵀ·v`).
 
 ## Intended Ashes approach
 
-Vectors `u`, `v` as `Ashes.Array` (persistent) or `List(Float)`; the matrix entry is
+Vectors `u`, `v` as `Ashes.Collection.Array` (persistent) or `List(Float)`; the matrix entry is
 computed on the fly (no storage). The inner loops are float multiply-accumulate folds; the
 final result needs a single `sqrt`.
 
 ## What it probes (expected flaws)
 
 - **Float throughput** across the `N×N` multiply-accumulate inner loops; the final norm uses
-  `Ashes.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so a correct result is computable.
+  `Ashes.Number.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so a correct result is computable.
 - **No flat mutable array.** `A·u` is the canonical indexed multiply-accumulate; with only a
-  persistent `Ashes.Array` (O(log N) access, per-update allocation) or `List` (O(N) index),
+  persistent `Ashes.Collection.Array` (O(log N) access, per-update allocation) or `List` (O(N) index),
   the `N×N` inner loop is heavily penalised and generates per-iteration garbage (arena leak
   #2). A strong probe of the persistent-array cost model under a numeric hot loop.
 - Fixed-precision (9 dp) formatting via `Ashes.Text.formatFloat(value)(9)` (shipped).
 
 ## Dependencies / blockers
 
-**No hard blocker.** `Ashes.Math.sqrt` (final norm) and `Ashes.Text.formatFloat` (9-dp
+**No hard blocker.** `Ashes.Number.Math.sqrt` (final norm) and `Ashes.Text.formatFloat` (9-dp
 formatting) have shipped, so a correct version is implementable now. **Perf caveat (not a
-blocker):** with only a persistent `Ashes.Array` (no flat mutable array), the `N×N` inner
+blocker):** with only a persistent `Ashes.Collection.Array` (no flat mutable array), the `N×N` inner
 loop pays O(log N) access and per-update allocation — that cost is itself what this
 benchmark is meant to probe.
 

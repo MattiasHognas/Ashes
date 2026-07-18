@@ -1,4 +1,4 @@
-// Ashes.Regex — regular expressions backed by PCRE2.
+// Ashes.Text.Regex — regular expressions backed by PCRE2.
 //
 // A pattern is compiled once into an opaque Regex value and then matched against subject strings.
 // Pattern and subject are treated as UTF-8 with Unicode property support (\d, \w, \p{...}). Offsets
@@ -11,32 +11,32 @@ type Regex =
     | Regex(Int)
 
 let compile pattern =
-    (let code = Ashes.Regex.compileRaw(pattern)
+    (let code = Ashes.Text.Regex.compileRaw(pattern)
     in
         if code == 0
-        then Error(Ashes.Regex.compileError(pattern))
+        then Error(Ashes.Text.Regex.compileError(pattern))
         else Ok(Regex(code)))
 
 let isMatch regex text =
     match regex with
         | Regex(code) ->
-            match Ashes.Regex.findFrom(code)(text)(0) with
+            match Ashes.Text.Regex.findFrom(code)(text)(0) with
                 | Some(_span) -> true
                 | None -> false
 
 let find regex text =
     match regex with
-        | Regex(code) -> Ashes.Regex.findFrom(code)(text)(0)
+        | Regex(code) -> Ashes.Text.Regex.findFrom(code)(text)(0)
 
 let captures regex text =
     match regex with
-        | Regex(code) -> Ashes.Regex.capturesFrom(code)(text)(0)
+        | Regex(code) -> Ashes.Text.Regex.capturesFrom(code)(text)(0)
 
 let findAll regex text =
     match regex with
         | Regex(code) ->
             let recursive go start =
-                match Ashes.Regex.findFrom(code)(text)(start) with
+                match Ashes.Text.Regex.findFrom(code)(text)(start) with
                     | None -> []
                     | Some((s, e)) ->
                         (s, e) :: go(if e > s
@@ -46,4 +46,4 @@ let findAll regex text =
 
 let replace regex text replacement =
     match regex with
-        | Regex(code) -> Ashes.Regex.substituteAll(code)(text)(replacement)
+        | Regex(code) -> Ashes.Text.Regex.substituteAll(code)(text)(replacement)

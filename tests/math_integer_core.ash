@@ -1,6 +1,6 @@
 // expect: 6 -1 3 9 5 12 84 243 12 (5, 2)
 import Ashes.IO as io
-import Ashes.Math as math
+import Ashes.Number.Math as math
 let intToStr n = Ashes.Text.fromInt(n)
 
 let space = " "

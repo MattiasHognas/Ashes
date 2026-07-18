@@ -1,5 +1,5 @@
 // expect: 1|124750|249500|0,1,2,3,4,5,6,7,8,9,
-import Ashes.Parallel
+import Ashes.Task.Parallel
 import Ashes.Text
 import Ashes.IO
 let recursive range lo hi =
@@ -29,21 +29,21 @@ let recursive eq xs ys =
                     else 0
 
 let mapPar =
-    Ashes.Parallel.map(given (x) -> x * 2)(nums)
+    Ashes.Task.Parallel.map(given (x) -> x * 2)(nums)
 
 let mapSeq =
     seqMap(given (x) -> x * 2)(nums)
 
 let sumPar =
-    Ashes.Parallel.reduce(given (a) ->
+    Ashes.Task.Parallel.reduce(given (a) ->
         given (b) -> a + b)(0)(given (x) -> x)(nums)
 
 let sumDoublePar =
-    Ashes.Parallel.reduce(given (a) ->
+    Ashes.Task.Parallel.reduce(given (a) ->
         given (b) -> a + b)(0)(given (x) -> x * 2)(nums)
 
 let strsPar =
-    Ashes.Parallel.map(given (x) -> Ashes.Text.fromInt(x))(range(0)(10))
+    Ashes.Task.Parallel.map(given (x) -> Ashes.Text.fromInt(x))(range(0)(10))
 
 let recursive joinStr xs =
     match xs with

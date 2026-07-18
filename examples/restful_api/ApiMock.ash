@@ -1,8 +1,7 @@
 import Api
-import Ashes.Http.Server as http
+import Ashes.Net.Http.Server as http
 import Ashes.IO as io
 import Ashes.Test as test
-
 let seeded = "[{\"id\":1,\"title\":\"write spec\",\"done\":true},{\"id\":2,\"title\":\"ship API\",\"done\":false}]"
 
 let request m target bodyText = http.requestFromLine(m + " " + target + " HTTP/1.1")("")(bodyText)

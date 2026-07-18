@@ -45,7 +45,7 @@ internal static partial class LlvmCodegen
         return EmitAllocDynamic(state, LlvmApi.ConstInt(state.I64, 32, 0));
     }
 
-    // Ashes.Process.spawn(exe)(args): Result(Str, Process)
+    // Ashes.IO.Process.spawn(exe)(args): Result(Str, Process)
     private static LlvmValueHandle EmitSpawnProcess(LlvmCodegenState state, LlvmValueHandle exeRef, LlvmValueHandle argsRef)
     {
         return IsLinuxFlavor(state.Flavor)
@@ -457,7 +457,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cmdLen, strLen, "acb_new_len"), cmdLenSlot);
     }
 
-    // Ashes.Process.writeStdin(proc)(text): Unit
+    // Ashes.IO.Process.writeStdin(proc)(text): Unit
     private static LlvmValueHandle EmitProcessWriteStdin(LlvmCodegenState state, LlvmValueHandle processRef, LlvmValueHandle textRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -520,7 +520,7 @@ internal static partial class LlvmCodegen
         return EmitUnitValue(state);
     }
 
-    // Ashes.Process.readStdoutLine / readStderrLine: Process -> Maybe(Str)
+    // Ashes.IO.Process.readStdoutLine / readStderrLine: Process -> Maybe(Str)
     private static LlvmValueHandle EmitProcessReadLine(LlvmCodegenState state, LlvmValueHandle processRef, bool stdoutFd)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -639,7 +639,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
     }
 
-    // Ashes.Process.waitForExit(proc): Int (exit code)
+    // Ashes.IO.Process.waitForExit(proc): Int (exit code)
     private static LlvmValueHandle EmitProcessWaitForExit(LlvmCodegenState state, LlvmValueHandle processRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -683,7 +683,7 @@ internal static partial class LlvmCodegen
         }
     }
 
-    // Ashes.Process.kill(proc): Unit
+    // Ashes.IO.Process.kill(proc): Unit
     private static LlvmValueHandle EmitProcessKill(LlvmCodegenState state, LlvmValueHandle processRef)
     {
         LlvmValueHandle pid = LoadProcessField(state, processRef, 24, "proc_kill_pid");

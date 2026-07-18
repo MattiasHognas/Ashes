@@ -93,7 +93,7 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildZExt(builder, byteVal, state.I64, "bytes_get_result");
     }
 
-    // Ashes.Bytes.indexOf(bytes)(needle)(from) : Int — index of the first byte equal to `needle`
+    // Ashes.Byte.indexOf(bytes)(needle)(from) : Int — index of the first byte equal to `needle`
     // at or after `from`, or -1. A memchr over [max(from,0), len). No allocation.
     private static LlvmValueHandle EmitBytesIndexOf(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle needleVal, LlvmValueHandle fromVal)
     {
@@ -107,12 +107,21 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fromNeg = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, fromVal, zero, "bytes_idx_from_neg");
         LlvmValueHandle fromStart = LlvmApi.BuildSelect(builder, fromNeg, zero, fromVal, "bytes_idx_from_start");
 
-        // On Linux, delegate the scan to libc memchr — glibc's is SIMD-optimized (SSE2/AVX2), far faster
-        // than a byte-at-a-time loop for the common delimiter scans (finding ';' / '\n' in bulk parsing).
-        // memchr never reads past the given length, and we clamp `from` into [0, len] so the length passed
-        // is non-negative. Windows keeps the freestanding scalar loop (no libc memchr wired there).
+        // Linkage-aware scan selection. When the image is already dynamically linked against glibc
+        // (TLS runtime present — see the __ashes_glibc_runtime marker), delegate to libc memchr:
+        // glibc's is SIMD-optimized (SSE2/AVX2), and the dependency is already paid for. Otherwise
+        // use the freestanding SWAR word scan so the image stays fully static — importing memchr
+        // was the only thing forcing otherwise-hermetic binaries onto the dynamic loader. Windows
+        // keeps the freestanding scalar loop (no libc memchr wired there).
+        bool glibcAlreadyLinked = state.Target.TargetTriple.Contains("linux", StringComparison.Ordinal)
+            && LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_glibc_runtime").Ptr != 0;
+        if (glibcAlreadyLinked)
+        {
+            return EmitBytesIndexOfMemchr(state, dataPtr, len, needle8, fromStart);
+        }
+
         return state.Target.TargetTriple.Contains("linux", StringComparison.Ordinal)
-            ? EmitBytesIndexOfMemchr(state, dataPtr, len, needle8, fromStart)
+            ? EmitBytesIndexOfSwar(state, dataPtr, len, needle8, fromStart)
             : EmitBytesIndexOfScalarScan(state, dataPtr, len, needle8, fromStart);
     }
 
@@ -179,9 +188,136 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bytes_idx_result_val");
     }
 
-    // Ashes.Bytes.scanHash(bytes)(needle)(from) : (Int, Int) — one fused pass: index of the first
+    private const string MemchrSwarHelperName = "__ashes_memchr_swar";
+
+    // Freestanding word-at-a-time byte search: index of the first `needle` byte in
+    // data[start, len), or -1. Shared per-module helper so static images never import libc
+    // memchr. The loop scans single bytes until the absolute address is 8-aligned, then tests
+    // whole words with the Hacker's-Delight zero-byte mask ((x - 0x01…) & ~x & 0x80…), dropping
+    // back to the byte path on a word hit (the hit byte is located within at most eight scalar
+    // steps, after which alignment is reached again). Handles unaligned Bytes views because
+    // alignment is computed from the absolute address, not the index.
+    private static LlvmValueHandle EmitBytesIndexOfSwar(LlvmCodegenState state, LlvmValueHandle dataPtr, LlvmValueHandle len, LlvmValueHandle needle8, LlvmValueHandle fromStart)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle helper = GetOrEmitMemchrSwarHelper(state);
+        LlvmTypeHandle helperType = MemchrSwarHelperType(state);
+        return LlvmApi.BuildCall2(builder, helperType, helper, [dataPtr, len, needle8, fromStart], "bytes_idx_swar");
+    }
+
+    private static LlvmTypeHandle MemchrSwarHelperType(LlvmCodegenState state) =>
+        LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I64, state.I8, state.I64]);
+
+    private static LlvmValueHandle GetOrEmitMemchrSwarHelper(LlvmCodegenState state)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, MemchrSwarHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, MemchrSwarHelperName, MemchrSwarHelperType(state));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+        EmitMemchrSwarHelperBody(state, fn);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
+    }
+
+    private static void EmitMemchrSwarHelperBody(LlvmCodegenState state, LlvmValueHandle fn)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle data = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle len = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle needle = LlvmApi.GetParam(fn, 2);
+        LlvmValueHandle start = LlvmApi.GetParam(fn, 3);
+
+        var entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        var headBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "head");
+        var alignBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "align_check");
+        var wordBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "word");
+        var byteBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "byte");
+        var missBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "miss");
+        var hitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "hit");
+
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, "swar_idx");
+        LlvmApi.BuildStore(builder, start, idxSlot);
+        LlvmValueHandle needleWord = LlvmApi.BuildMul(builder,
+            LlvmApi.BuildZExt(builder, needle, state.I64, "swar_needle64"),
+            LlvmApi.ConstInt(state.I64, 0x0101010101010101UL, 0), "swar_broadcast");
+        LlvmValueHandle dataAddr = LlvmApi.BuildPtrToInt(builder, data, state.I64, "swar_data_addr");
+        LlvmApi.BuildBr(builder, headBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, headBlock);
+        LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "swar_i");
+        LlvmValueHandle inRange = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, idx, len, "swar_in_range");
+        LlvmApi.BuildCondBr(builder, inRange, alignBlock, missBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, alignBlock);
+        LlvmValueHandle addr = LlvmApi.BuildAdd(builder, dataAddr, idx, "swar_addr");
+        LlvmValueHandle aligned = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            LlvmApi.BuildAnd(builder, addr, LlvmApi.ConstInt(state.I64, 7, 0), "swar_addr_low"),
+            LlvmApi.ConstInt(state.I64, 0, 0), "swar_aligned");
+        LlvmValueHandle wordFits = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle,
+            LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 8, 0), "swar_word_end"), len, "swar_word_fits");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, aligned, wordFits, "swar_take_word"), wordBlock, byteBlock);
+
+        EmitMemchrSwarWordAndByteBlocks(state, fn, idxSlot, data, needle, needleWord, wordBlock, byteBlock, headBlock, hitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, missBlock);
+        LlvmApi.BuildRet(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 0));
+
+        LlvmApi.PositionBuilderAtEnd(builder, hitBlock);
+        LlvmApi.BuildRet(builder, LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "swar_hit_idx"));
+    }
+
+    private static void EmitMemchrSwarWordAndByteBlocks(
+        LlvmCodegenState state, LlvmValueHandle fn, LlvmValueHandle idxSlot, LlvmValueHandle data, LlvmValueHandle needle, LlvmValueHandle needleWord,
+        LlvmBasicBlockHandle wordBlock, LlvmBasicBlockHandle byteBlock, LlvmBasicBlockHandle headBlock, LlvmBasicBlockHandle hitBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmApi.PositionBuilderAtEnd(builder, wordBlock);
+        LlvmValueHandle wordIdx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "swar_wi");
+        LlvmValueHandle wordPtr = LlvmApi.BuildGEP2(builder, state.I8, data, [wordIdx], "swar_word_ptr");
+        LlvmValueHandle word = LlvmApi.BuildLoad2(builder, state.I64, wordPtr, "swar_word");
+        LlvmValueHandle xored = LlvmApi.BuildXor(builder, word, needleWord, "swar_xored");
+        LlvmValueHandle sub = LlvmApi.BuildSub(builder, xored, LlvmApi.ConstInt(state.I64, 0x0101010101010101UL, 0), "swar_sub");
+        LlvmValueHandle notX = LlvmApi.BuildXor(builder, xored, LlvmApi.ConstInt(state.I64, 0xFFFFFFFFFFFFFFFFUL, 0), "swar_not");
+        LlvmValueHandle mask = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildAnd(builder, sub, notX, "swar_sub_not"),
+            LlvmApi.ConstInt(state.I64, 0x8080808080808080UL, 0), "swar_mask");
+        LlvmValueHandle anyHit = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, mask, LlvmApi.ConstInt(state.I64, 0, 0), "swar_any_hit");
+        LlvmValueHandle advanced = LlvmApi.BuildAdd(builder, wordIdx, LlvmApi.ConstInt(state.I64, 8, 0), "swar_wi_next");
+        var wordMissBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "word_miss");
+        LlvmApi.BuildCondBr(builder, anyHit, byteBlock, wordMissBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, wordMissBlock);
+        LlvmApi.BuildStore(builder, advanced, idxSlot);
+        LlvmApi.BuildBr(builder, headBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, byteBlock);
+        LlvmValueHandle byteIdx = LlvmApi.BuildLoad2(builder, state.I64, idxSlot, "swar_bi");
+        LlvmValueHandle bytePtr = LlvmApi.BuildGEP2(builder, state.I8, data, [byteIdx], "swar_byte_ptr");
+        LlvmValueHandle curByte = LlvmApi.BuildLoad2(builder, state.I8, bytePtr, "swar_byte");
+        LlvmValueHandle eq = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curByte, needle, "swar_eq");
+        var byteMissBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "byte_miss");
+        LlvmApi.BuildCondBr(builder, eq, hitBlock, byteMissBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, byteMissBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, byteIdx, LlvmApi.ConstInt(state.I64, 1, 0), "swar_bi_next"), idxSlot);
+        LlvmApi.BuildBr(builder, headBlock);
+    }
+
+    // Ashes.Byte.scanHash(bytes)(needle)(from) : (Int, Int) — one fused pass: index of the first
     // needle byte at or after `from` (or -1), and the FNV-1a hash of the bytes scanned before it
-    // (identical to Ashes.Bytes.hash over that range). FNV is inherently sequential, so the fused
+    // (identical to Ashes.Byte.hash over that range). FNV is inherently sequential, so the fused
     // scalar loop costs what the hash pass alone would; the separate memchr pass disappears.
     private static LlvmValueHandle EmitBytesScanHash(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle needleVal, LlvmValueHandle fromVal)
     {
@@ -248,7 +384,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
 
-    // Ashes.Bytes.compare(left)(right) : Int — three-way lexicographic byte order, normalized to
+    // Ashes.Byte.compare(left)(right) : Int — three-way lexicographic byte order, normalized to
     // -1/0/1. One memcmp over min(len) plus a length tie-break, instead of a byte-at-a-time loop.
     // Uses the module's freestanding memcmp (present on every target); LLVM lowers small
     // fixed-pattern calls efficiently and glibc is not required.
@@ -283,9 +419,9 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildSelect(builder, rawIsZero, byLen, bySign, "bytes_cmp_result");
     }
 
-    // Ashes.Bytes.subText(bytes)(start)(len) : Str — copies `len` bytes from `start` into a fresh
+    // Ashes.Byte.subText(bytes)(start)(len) : Str — copies `len` bytes from `start` into a fresh
     // Str ([length][bytes]). Range is clamped into the source so it never reads out of bounds.
-    // Ashes.Bytes.subView(bytes)(start)(len) : Str — a zero-copy view {len|VIEW, ptr} over the
+    // Ashes.Byte.subView(bytes)(start)(len) : Str — a zero-copy view {len|VIEW, ptr} over the
     // source range (clamped like subText). O(1); the backing must outlive the view.
     private static LlvmValueHandle EmitBytesSubView(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle startVal, LlvmValueHandle lenVal)
     {

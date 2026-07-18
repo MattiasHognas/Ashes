@@ -163,19 +163,19 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_file_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""match Ashes.IO.File.exists("present.txt") with | Ok(found) -> if found then 1 else 0 | Error(_) -> 0"""));
     }
 
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_network_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Net.Http.get("http://127.0.0.1:8080/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
     public void Windows_backend_llvm_support_check_should_accept_https_network_programs()
     {
-        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg"""));
+        AssertWindowsLlvmCompiles(LowerExpression("""match await Ashes.Net.Http.get("https://localhost/") with | Ok(text) -> text | Error(msg) -> msg"""));
     }
 
     [Test]
@@ -279,7 +279,7 @@ public sealed class WindowsBackendCoverageTests
             await File.WriteAllTextAsync(Path.Combine(tmpDir, "hello.txt"), "hello").ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match Ashes.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("hello.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
@@ -301,9 +301,9 @@ public sealed class WindowsBackendCoverageTests
         try
         {
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match Ashes.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("missing.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
-            result.Stdout.ShouldBe("Ashes.File.readText() failed\n");
+            result.Stdout.ShouldBe("Ashes.IO.File.readText() failed\n");
         }
         finally
         {
@@ -325,9 +325,9 @@ public sealed class WindowsBackendCoverageTests
             await File.WriteAllBytesAsync(Path.Combine(tmpDir, "invalid_utf8.bin"), [0xFF, 0xFE, 0xFD]).ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match Ashes.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.readText("invalid_utf8.bin") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
-            result.Stdout.ShouldBe("Ashes.File.readText() encountered invalid UTF-8\n");
+            result.Stdout.ShouldBe("Ashes.IO.File.readText() encountered invalid UTF-8\n");
         }
         finally
         {
@@ -347,7 +347,7 @@ public sealed class WindowsBackendCoverageTests
         try
         {
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match Ashes.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
+                """match Ashes.IO.File.writeText("out.txt")("hello") with | Error(msg) -> Ashes.IO.print(msg) | Ok(_) -> match Ashes.IO.File.readText("out.txt") with | Ok(text) -> Ashes.IO.print(text) | Error(msg) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("hello\n");
         }
@@ -366,7 +366,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 // Drain the client's request before responding. If the server closes the
@@ -391,7 +391,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -414,7 +414,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/") with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 _ = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -438,7 +438,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Async.race([Ashes.Http.get("https://__HOST__:__PORT__/a"), Ashes.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Task.race([Ashes.Net.Http.get("https://__HOST__:__PORT__/a"), Ashes.Net.Http.get("https://__HOST__:__PORT__/b")]) with | Ok(text) -> text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -466,7 +466,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmTlsLoopbackAsync(
-            """Ashes.IO.print(match await Ashes.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
+            """Ashes.IO.print(match await Ashes.Net.Http.get("https://__HOST__:__PORT__/empty") with | Ok(text) -> if text == "" then "empty" else "bad:" + text | Error(msg) -> msg)""",
             async stream =>
             {
                 var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
@@ -561,7 +561,7 @@ public sealed class WindowsBackendCoverageTests
             await File.WriteAllTextAsync(Path.Combine(tmpDir, "present.txt"), "x").ConfigureAwait(false);
 
             var result = await CompileRunWithWindowsLlvmAsync(
-                """match (Ashes.File.exists("present.txt"), Ashes.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
+                """match (Ashes.IO.File.exists("present.txt"), Ashes.IO.File.exists("missing.txt")) with | (Ok(a), Ok(b)) -> Ashes.IO.print((if a then "true" else "false") + ":" + (if b then "true" else "false")) | (Error(msg), _) -> Ashes.IO.print(msg) | (_, Error(msg)) -> Ashes.IO.print(msg)""",
                 workingDirectory: tmpDir).ConfigureAwait(false);
             result.Stdout.ShouldBe("true:false\n");
         }
@@ -884,7 +884,7 @@ public sealed class WindowsBackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tls
             import Ashes.Net.Tls.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient tls =
                 async(match await Ashes.Net.Tls.receive(tls)(4096) with
                     | Error(e) -> Error(e)
@@ -892,7 +892,7 @@ public sealed class WindowsBackendCoverageTests
                         match await Ashes.Net.Tls.send(tls)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tls.close(tls))
-            in match Ashes.Async.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tls.Server.serveTls({{port}})("cert.pem")("key.pem")(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -941,7 +941,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_serve_http_over_the_tcp_server()
     {
-        // HTTP layer coverage under wine: Ashes.Http.Server.serve parses the request line, routes on
+        // HTTP layer coverage under wine: Ashes.Net.Http.Server.serve parses the request line, routes on
         // the path, and writes an HTTP/1.1 response; the C# test drives it with raw GETs over loopback.
         if (!CanRunWindowsRuntimePrograms())
         {
@@ -951,14 +951,14 @@ public sealed class WindowsBackendCoverageTests
         int port = GetFreeLoopbackPort();
         var source = $$"""
             import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
+            import Ashes.Net.Http.Server
+            import Ashes.Task
             let route req =
-                async(match Ashes.Http.Server.path(req) with
-                    | "/health" -> Ashes.Http.Server.text(200)("ok")
-                    | "/" -> Ashes.Http.Server.text(200)("hello from ashes")
-                    | _p -> Ashes.Http.Server.text(404)("not found"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                async(match Ashes.Net.Http.Server.path(req) with
+                    | "/health" -> Ashes.Net.Http.Server.text(200)("ok")
+                    | "/" -> Ashes.Net.Http.Server.text(200)("hello from ashes")
+                    | _p -> Ashes.Net.Http.Server.text(404)("not found"))
+            in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(route)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -1038,7 +1038,7 @@ public sealed class WindowsBackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tcp
             import Ashes.Net.Tcp.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient client =
                 async(match await Ashes.Net.Tcp.receive(client)(4096) with
                     | Error(e) -> Error(e)
@@ -1046,7 +1046,7 @@ public sealed class WindowsBackendCoverageTests
                         match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -1085,7 +1085,7 @@ public sealed class WindowsBackendCoverageTests
     [Test]
     public async Task Windows_backend_llvm_should_overlap_handlers_blocked_in_async_all()
     {
-        // Run-queue scheduler parity regression: a spawned handler blocked in Ashes.Async.all must
+        // Run-queue scheduler parity regression: a spawned handler blocked in Ashes.Task.all must
         // not stop peer connections from advancing. Under the legacy re-entrant driver two handlers
         // that both aggregate sub-tasks serialized; on the scheduler (WSAPoll aggregate wait) they
         // overlap — four clients against a handler that Async.all-waits two 300 ms sleeps complete
@@ -1196,29 +1196,29 @@ public sealed class WindowsBackendCoverageTests
             import Ashes.IO
             import Ashes.Net.Tcp
             import Ashes.Net.Tcp.Server
-            import Ashes.Async
+            import Ashes.Task
             let onClient client =
                 async(match await Ashes.Net.Tcp.receive(client)(4096) with
                     | Error(e) -> Error(e)
                     | Ok(msg) ->
-                        match await Ashes.Async.all([Ashes.Async.sleep(300), Ashes.Async.sleep(300)]) with
+                        match await Ashes.Task.all([Ashes.Task.sleep(300), Ashes.Task.sleep(300)]) with
                             | Error(e2) -> Error(e2)
                             | Ok(_ts) ->
                                 match await Ashes.Net.Tcp.send(client)("echo: " + msg) with
                                     | Error(e3) -> Error(e3)
                                     | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Async.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
 
     private static string HttpConcurrentServerSource(int port) => $$"""
             import Ashes.IO
-            import Ashes.Http.Server
-            import Ashes.Async
+            import Ashes.Net.Http.Server
+            import Ashes.Task
             let route req =
-                async(Ashes.Http.Server.text(200)("ok"))
-            in match Ashes.Async.run(Ashes.Http.Server.serve({{port}})(route)) with
+                async(Ashes.Net.Http.Server.text(200)("ok"))
+            in match Ashes.Task.run(Ashes.Net.Http.Server.serve({{port}})(route)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;

@@ -31,7 +31,7 @@ public static class DiagnosticCodes
 
     // ASH010–ASH012 were allocated for an `async`-block enforcement model (await/networking outside
     // `async`, async error-type conflict) that the language no longer has — `async` is now a builtin
-    // (Ashes.Async.task), not a keyword, and async-only safety is enforced by the Task type. They
+    // (Ashes.Task.task), not a keyword, and async-only safety is enforced by the Task type. They
     // were never emitted, so the numbers are free for reuse by future diagnostics.
 }
 

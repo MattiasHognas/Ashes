@@ -1,7 +1,7 @@
 // expect: hello
-match Ashes.File.writeText("out.txt")("hello") with
+match Ashes.IO.File.writeText("out.txt")("hello") with
     | Error(msg) -> Ashes.IO.print(msg)
     | Ok(_) ->
-        match Ashes.File.readText("out.txt") with
+        match Ashes.IO.File.readText("out.txt") with
             | Ok(text) -> Ashes.IO.print(text)
             | Error(msg) -> Ashes.IO.print(msg)

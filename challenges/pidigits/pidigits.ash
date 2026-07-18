@@ -1,14 +1,14 @@
-// pidigits — Benchmarks Game challenge, driven by native Ashes.BigInt.
+// pidigits — Benchmarks Game challenge, driven by native Ashes.Number.BigInt.
 //
 // Streams the first N decimal digits of pi with the unbounded spigot (Gibbons) algorithm, in the
 // Benchmarks Game output format: ten digits per line, each line tagged with the running digit
 // count. The running state (q, r, t) grows without bound, so every step is arbitrary-precision
-// arithmetic -- the benchmark that was blocked until Ashes.BigInt landed. With BigInt operators
+// arithmetic -- the benchmark that was blocked until Ashes.Number.BigInt landed. With BigInt operators
 // and `N` literals the spigot reads almost exactly like its mathematical definition.
 //
 // Usage: ./pidigits 10000   (defaults to 27 digits when no argument is given)
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let recursive padRight s n =
     if n == 0
     then s

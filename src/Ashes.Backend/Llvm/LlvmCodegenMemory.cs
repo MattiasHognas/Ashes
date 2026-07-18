@@ -1459,7 +1459,7 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>Applies a unary LLVM math intrinsic (e.g. <c>llvm.sqrt.f64</c>) to an f64 value,
-    /// declaring the intrinsic in the module on first use. Backs the Ashes.Math Float unary
+    /// declaring the intrinsic in the module on first use. Backs the Ashes.Number.Math Float unary
     /// primitives (sqrt/floor/ceil/round/trunc).</summary>
     private static LlvmValueHandle EmitFloatUnaryIntrinsic(LlvmCodegenState state, LlvmValueHandle value, string intrinsicName)
     {

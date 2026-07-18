@@ -8,7 +8,7 @@
 //
 // Usage: ./n-body 1000   (defaults to 1000)
 import Ashes.IO as io
-import Ashes.Math as math
+import Ashes.Number.Math as math
 import Ashes.Text as text
 type Body =
     | x: Float

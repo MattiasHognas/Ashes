@@ -563,7 +563,7 @@ public sealed partial class Lowering
     /// </summary>
     /// <summary>
     /// Resolves a call root to the binding name used by the reuse registries: a plain <c>Var</c> yields
-    /// its name; a qualified stdlib/user-module reference (<c>Ashes.Map.set</c>) yields its stitched
+    /// its name; a qualified stdlib/user-module reference (<c>Ashes.Collection.Map.set</c>) yields its stitched
     /// top-level name (<c>Ashes_Map_set</c>). Returns null for intrinsics and non-name roots.
     /// </summary>
     private string? ResolveSpecializableCalleeName(Expr root)

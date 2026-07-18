@@ -382,7 +382,7 @@ public sealed class LspProgramTests
         _ = await ReadMessageAsync(process).ConfigureAwait(false);
 
         const string uri = "file:///tmp/module_completion.ash";
-        const string source = "import Ashes.List\nAshes.IO.";
+        const string source = "import Ashes.Collection.List\nAshes.IO.";
 
         await WriteMessageAsync(process, new
         {

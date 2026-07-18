@@ -251,8 +251,8 @@ public sealed class MatchTypingTests
     {
         var (_, diag) = LowerProgram(
             """
-            import Ashes.File
-            match Ashes.File.exists("out.txt") with
+            import Ashes.IO.File
+            match Ashes.IO.File.exists("out.txt") with
             | Ok(found) ->
                 if found
                 then Ashes.IO.print(1)

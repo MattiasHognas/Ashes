@@ -1,5 +1,5 @@
 // expect: 7|hello|1,2,3,|499500
-import Ashes.Parallel
+import Ashes.Task.Parallel
 import Ashes.Text
 import Ashes.IO
 let recursive showList xs =
@@ -13,14 +13,14 @@ let recursive psum lo hi =
     else
         let mid = lo + (hi - lo) / 2
         in
-            match Ashes.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
+            match Ashes.Task.Parallel.both(given (u) -> psum(lo)(mid))(given (u) -> psum(mid)(hi)) with
                 | (a, b) -> a + b
 
 let scalars =
-    match Ashes.Parallel.both(given (u) -> 3 + 4)(given (u) -> "hello") with
+    match Ashes.Task.Parallel.both(given (u) -> 3 + 4)(given (u) -> "hello") with
         | (n, s) -> Ashes.Text.fromInt(n) + "|" + s
 
 let lists =
-    match Ashes.Parallel.both(given (u) -> 0)(given (u) -> 1 :: 2 :: 3 :: []) with
+    match Ashes.Task.Parallel.both(given (u) -> 0)(given (u) -> 1 :: 2 :: 3 :: []) with
         | (z, xs) -> showList(xs)
 in Ashes.IO.print(scalars + "|" + lists + "|" + Ashes.Text.fromInt(psum(0)(1000)))

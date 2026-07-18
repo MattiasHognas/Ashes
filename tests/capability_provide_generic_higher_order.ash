@@ -1,5 +1,5 @@
 // expect-compile-error: used at a generic type here
-import Ashes.List
+import Ashes.Collection.List
 capability Ord(a) =
     | compare : a -> a -> Int
 
@@ -11,7 +11,7 @@ provide Ord(Int) =
 let minOf =
     given (first) ->
         given (items) ->
-            Ashes.List.foldLeft(given (best) ->
+            Ashes.Collection.List.foldLeft(given (best) ->
                 given (next) ->
                     if Ord.compare(next)(best) < 0
                     then next

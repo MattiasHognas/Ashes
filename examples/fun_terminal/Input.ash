@@ -1,8 +1,7 @@
-import Ashes.Bytes as bytes
-import Ashes.List as list
-import Ashes.Maybe as maybe
-import Ashes.UInt as uint
-
+import Ashes.Byte as bytes
+import Ashes.Collection.List as list
+import Ashes.Core.Maybe as maybe
+import Ashes.Number.UInt as uint
 type Event =
     | Up
     | Down

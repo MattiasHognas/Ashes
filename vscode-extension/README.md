@@ -95,7 +95,7 @@ pre-download the compiler, language server, and debug adapter in one step.
 
 ```ash
 import Ashes.IO as io
-import Ashes.List as list
+import Ashes.Collection.List as list
 
 type Shape =
     | Circle(Float)

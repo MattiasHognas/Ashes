@@ -281,7 +281,7 @@ internal static partial class LlvmCodegen
     /// <see cref="TaskStructLayout.StateCompleted"/> with <c>Ok(0)</c>.
     /// Already-completed tasks are a no-op.
     /// Always returns 0.
-    /// Used by <c>Ashes.Async.race</c> to release resources held by losers
+    /// Used by <c>Ashes.Task.race</c> to release resources held by losers
     /// as soon as the first task in the race completes.
     /// Known limitations: the userspace TLS session memory held by TLS leaf
     /// tasks is not freed (released at process exit); leaf tasks not yet
@@ -972,9 +972,9 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // A count <= 0 means "auto": the shared effective worker cap, so serve honors the same
-        // --parallel-workers compile cap and withWorkers runtime override as Ashes.Parallel (one
+        // --parallel-workers compile cap and withWorkers runtime override as Ashes.Task.Parallel (one
         // worker per online CPU by default, narrowed by either). The cap globals/fn are emitted
-        // for programs that use forkWorkers even without Ashes.Parallel.
+        // for programs that use forkWorkers even without Ashes.Task.Parallel.
         LlvmValueHandle autoCount = EmitEffectiveWorkerCap(state, "step_fork_workers");
         LlvmValueHandle count = LlvmApi.BuildSelect(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, requested, LlvmApi.ConstInt(state.I64, 0, 0), "step_fork_workers_auto"),

@@ -8,7 +8,7 @@
 // Usage: ./spectral-norm 100   (defaults to 100)
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.Math as math
+import Ashes.Number.Math as math
 let a i j = 1.0 / math.toFloat((i + j) * (i + j + 1) / 2 + i + 1)
 
 let recursive ones i acc =

@@ -18,8 +18,8 @@ public sealed class LspCompletionTests
                 var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
 
                 completions.ShouldContain("IO");
-                completions.ShouldContain("Http");
-                completions.ShouldContain("List");
+                completions.ShouldContain("Net");
+                completions.ShouldContain("Collection");
             }
         }
     }

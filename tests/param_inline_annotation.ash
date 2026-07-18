@@ -2,13 +2,13 @@
 // annotated sugar parameter `let f (b: Body) = ...` both unify the parameter with the annotated
 // type before the body is lowered, so record dot-access on the parameter and Float operator
 // selection resolve without annotating the whole binding. Also covers the stitched-module path
-// (the Ashes.List import forces the paren-wrapped flat entry block, whose text-based header
+// (the Ashes.Collection.List import forces the paren-wrapped flat entry block, whose text-based header
 // scanners must accept the parenthesized annotated parameter).
 // expect: e=6.0 10.0 3
 import Ashes.IO as io
 import Ashes.Text as text
-import Ashes.Math as math
-import Ashes.List as list
+import Ashes.Number.Math as math
+import Ashes.Collection.List as list
 type Body =
     | mass: Float
     | vx: Float

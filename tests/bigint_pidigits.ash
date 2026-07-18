@@ -1,8 +1,8 @@
 // expect: 314159265358979323846264338327
-// Unbounded spigot (Gibbons) streaming pi digits, driven entirely by Ashes.BigInt.
+// Unbounded spigot (Gibbons) streaming pi digits, driven entirely by Ashes.Number.BigInt.
 // Verifies the first 30 digits of pi against the known value.
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let ten = big.fromInt(10)
 
 let three = big.fromInt(3)

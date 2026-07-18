@@ -1,8 +1,8 @@
 // expect: 14
 import Ashes.IO
-import Ashes.List
-import Ashes.Maybe
-import Ashes.Result
+import Ashes.Collection.List
+import Ashes.Core.Maybe
+import Ashes.Core.Result
 let nums = [1, 2, 3, 4, 5]
 
 let doubled =

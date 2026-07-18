@@ -3,16 +3,16 @@
 // computed tuple value materialized correctly (min/max/sum update on hit).
 // expect: k17=(17,80017,17,1)
 import Ashes.IO
-import Ashes.Map
-import Ashes.Map.MapTree
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import Ashes.Text
-import Ashes.String
+import Ashes.Text
 let upd newKey tenths =
     (let recursive go map =
         match map with
-            | Empty -> Ashes.Map.makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
+            | Empty -> Ashes.Collection.Map.makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Bytes.compare(Ashes.Bytes.fromText(newKey))(Ashes.Bytes.fromText(key))
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
                 in
                     if ordering == 0
                     then
@@ -27,11 +27,11 @@ let upd newKey tenths =
                                         if tenths > mx
                                         then tenths
                                         else mx
-                                    in Ashes.Map.makeNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
+                                    in Ashes.Collection.Map.makeNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
                     else
                         if ordering <= -1
-                        then Ashes.Map.balance(Ashes.Map.makeNode(go(left))(key)(value)(right))
-                        else Ashes.Map.balance(Ashes.Map.makeNode(left)(key)(value)(go(right)))
+                        then Ashes.Collection.Map.balance(Ashes.Collection.Map.makeNode(go(left))(key)(value)(right))
+                        else Ashes.Collection.Map.balance(Ashes.Collection.Map.makeNode(left)(key)(value)(go(right)))
     in go)
 
 let recursive loop i map =
@@ -44,7 +44,7 @@ let recursive loop i map =
 let final = loop(17)(Empty)
 
 let shown =
-    match Ashes.Map.getStr("k17")(final) with
+    match Ashes.Collection.Map.getStr("k17")(final) with
         | Some((mn, mx, sm, ct)) -> "k17=(" + Ashes.Text.fromInt(mn) + "," + Ashes.Text.fromInt(mx) + "," + Ashes.Text.fromInt(sm - sm / 1000 * 1000) + "," + Ashes.Text.fromInt(ct - ct / 1000 * 1000) + ")"
         | None -> "missing"
 

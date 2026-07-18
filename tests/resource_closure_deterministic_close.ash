@@ -5,7 +5,7 @@
 // resource dropper (closure+24) to close the fh deterministically.
 // Reaching 50 successful reads exercises the dropper path without corruption;
 // the fd-release guarantee itself is verified under a low `ulimit -n`.
-import Ashes.File
+import Ashes.IO.File
 import Ashes.IO
 import Ashes.Text
 let recursive loop n acc =
@@ -13,12 +13,12 @@ let recursive loop n acc =
     then acc
     else
         let reader =
-            match Ashes.File.open("cdc_input.txt") with
+            match Ashes.IO.File.open("cdc_input.txt") with
                 | Error(_e) ->
                     given (x) -> 0
                 | Ok(h) ->
                     given (x) ->
-                        match Ashes.File.readChunk(h)(1) with
+                        match Ashes.IO.File.readChunk(h)(1) with
                             | Error(_) -> 0
                             | Ok(_c) -> 1
         in loop(n - 1)(acc + reader(0))

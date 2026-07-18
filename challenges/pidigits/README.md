@@ -21,14 +21,14 @@ loop), which suits Ashes — *except* for the arithmetic width.
 ## What it probes (expected flaws)
 
 - **Arbitrary-precision integer throughput.** The spigot's accumulators grow without bound, so
-  every step is `Ashes.BigInt` arithmetic (`mul`, `add`, `sub`, `div`, `compare`). This exercises
+  every step is `Ashes.Number.BigInt` arithmetic (`mul`, `add`, `sub`, `div`, `compare`). This exercises
   the native bignum runtime and its immutable, arena-allocated values under a tight loop.
 - **Arena churn.** Each bignum operation allocates a fresh value, so a long digit run stresses
   the arena exactly as the memory model predicts — the cost this benchmark is meant to surface.
 
 ## Dependencies / blockers
 
-**None.** Native `Ashes.BigInt` (arbitrary-precision integers) has shipped — see the
+**None.** Native `Ashes.Number.BigInt` (arbitrary-precision integers) has shipped — see the
 [architecture notes](../../docs/md/internals/architecture.md#bigint-arbitrary-precision-integers).
 `pidigits.ash` implements the unbounded spigot with it (using `BigInt` operators and `N` literals);
 the digits match π (`3141592653 5897932384 …`).
@@ -57,7 +57,7 @@ challenges/bench.sh pidigits 1000
 ```
 
 Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded — this benchmark does not
-use `Ashes.Parallel`), `-O2`:
+use `Ashes.Task.Parallel`), `-O2`:
 
 | N (digits) | Time | Peak RSS |
 |------------|------|----------|

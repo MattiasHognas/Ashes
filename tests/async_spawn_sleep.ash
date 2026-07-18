@@ -1,14 +1,14 @@
 // expect: spawned main
 import Ashes.IO
-import Ashes.Async
+import Ashes.Task
 let spawned =
-    async(match await Ashes.Async.sleep(50) with
+    async(match await Ashes.Task.sleep(50) with
         | Ok(_x) -> Ashes.IO.write("spawned ")
         | Error(_e) -> Ashes.IO.write("spawned-err "))
 
-let _s = Ashes.Async.spawn(spawned)
+let _s = Ashes.Task.spawn(spawned)
 in
-    match Ashes.Async.run(async(match await Ashes.Async.sleep(400) with
+    match Ashes.Task.run(async(match await Ashes.Task.sleep(400) with
         | Ok(_y) -> Ashes.IO.writeLine("main")
         | Error(_e2) -> Ashes.IO.writeLine("main-err"))) with
         | Ok(_u) -> Ashes.IO.write("")

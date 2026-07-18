@@ -8,23 +8,23 @@
 // so key "399999" holds 90 + 399999 = 400089, over 400000 distinct keys.
 import Ashes.IO
 import Ashes.Text
-import Ashes.Map
-import Ashes.String
-import Ashes.Bytes
-import Ashes.UInt
+import Ashes.Collection.Map
+import Ashes.Text
+import Ashes.Byte
+import Ashes.Number.UInt
 let recursive loop tag i n m =
     if i >= n
     then m
     else
-        let b0 = Ashes.UInt.toInt(Ashes.Bytes.get(tag)(0))
+        let b0 = Ashes.Number.UInt.toInt(Ashes.Byte.get(tag)(0))
         in
             let key = Ashes.Text.fromInt(i)
-            in loop(tag)(i + 1)(n)(Ashes.Map.set(Ashes.String.compare)(key)(b0 + i)(m))
+            in loop(tag)(i + 1)(n)(Ashes.Collection.Map.set(Ashes.Text.compare)(key)(b0 + i)(m))
 
-let tag = Ashes.Bytes.fromText("Z")
+let tag = Ashes.Byte.fromText("Z")
 
-let final = loop(tag)(0)(400000)(Ashes.Map.empty)
+let final = loop(tag)(0)(400000)(Ashes.Collection.Map.empty)
 in
-    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Map.size(final)) + "|" + (match Ashes.Map.get(Ashes.String.compare)("399999")(final) with
+    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + "|" + (match Ashes.Collection.Map.get(Ashes.Text.compare)("399999")(final) with
         | Some(v) -> Ashes.Text.fromInt(v)
         | None -> "?"))

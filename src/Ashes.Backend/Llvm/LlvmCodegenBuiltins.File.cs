@@ -7,7 +7,7 @@ internal static partial class LlvmCodegen
 {
 
     // rawBytes: read the file as raw Bytes — no UTF-8 validation, and (on Linux) no size cap. Used by
-    // Ashes.File.readAllBytes. readText passes rawBytes: false (UTF-8-validated, capped).
+    // Ashes.IO.File.readAllBytes. readText passes rawBytes: false (UTF-8-validated, capped).
     private static LlvmValueHandle EmitFileReadText(LlvmCodegenState state, LlvmValueHandle pathRef, bool rawBytes = false)
     {
         return IsLinuxFlavor(state.Flavor)
@@ -15,7 +15,7 @@ internal static partial class LlvmCodegen
             : EmitWindowsFileReadText(state, pathRef, rawBytes);
     }
 
-    // Ashes.File.mmap(path) : Result(Str, Bytes) — map the whole file read-only and return a zero-copy
+    // Ashes.IO.File.mmap(path) : Result(Str, Bytes) — map the whole file read-only and return a zero-copy
     // Bytes view over the mapping (no read/copy). On Windows this falls back to the capped readAllBytes
     // read (no file mapping wired there yet).
     private static LlvmValueHandle EmitFileMmap(LlvmCodegenState state, LlvmValueHandle pathRef)
@@ -1145,7 +1145,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, contBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, errBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.open: could not open file")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.IO.File.open: could not open file")), resultSlot);
         LlvmApi.BuildBr(builder, contBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, contBlock);
@@ -1190,14 +1190,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, contBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, errBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.File.readChunk: read failed")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Ashes.IO.File.readChunk: read failed")), resultSlot);
         LlvmApi.BuildBr(builder, contBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, contBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fchunk_result_value");
     }
 
-    // Ashes.File.readLine(handle) : Maybe(Str). Reads one '\n'-terminated line (newline + a trailing
+    // Ashes.IO.File.readLine(handle) : Maybe(Str). Reads one '\n'-terminated line (newline + a trailing
     // '\r' stripped) from the handle's fd through a refillable module-global buffer, returning None at
     // EOF (or on a read error, matching stdin readLine). Mirrors EmitReadLine but the read buffer is
     // guarded by the fd it currently holds: if readLine is called with a different handle than the one
@@ -1402,7 +1402,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
-        EmitPanic(state, EmitStackStringObject(state, "Ashes.File.readLine input line too long"));
+        EmitPanic(state, EmitStackStringObject(state, "Ashes.IO.File.readLine input line too long"));
     }
 
     private static LlvmValueHandle EmitFileClose(LlvmCodegenState state, LlvmValueHandle handleVal)
@@ -1411,7 +1411,7 @@ internal static partial class LlvmCodegen
         return EmitResultOk(state, EmitUnitValue(state));
     }
 
-    // Fire-and-forget close of the underlying fd/HANDLE. Used by both Ashes.File.close and the
+    // Fire-and-forget close of the underlying fd/HANDLE. Used by both Ashes.IO.File.close and the
     // automatic resource Drop at scope exit.
     private static void EmitFileHandleClose(LlvmCodegenState state, LlvmValueHandle handleVal)
     {

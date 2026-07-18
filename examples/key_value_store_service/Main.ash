@@ -1,10 +1,9 @@
 import Kv
 import Resp
-import Ashes.Async as tasks
+import Ashes.Task as tasks
 import Ashes.IO as io
 import Ashes.Net.Tcp as tcp
 import Ashes.Net.Tcp.Server as server
-
 let port = 6380
 
 let _banner = io.writeLine("key-value store listening on 127.0.0.1:6380")

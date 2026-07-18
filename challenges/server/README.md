@@ -18,7 +18,7 @@ client makes the server the bottleneck, so real differences show.
 
 - **`tcp_echo.ash`** — the Ashes TCP echo server (`Ashes.Net.Tcp.Server.serve`): one `receive` + echo
   + `close` per connection — the smallest handler, so it measures the server path.
-- **`http_echo.ash`** — the Ashes HTTP server (`Ashes.Http.Server.serve`): every request returns a
+- **`http_echo.ash`** — the Ashes HTTP server (`Ashes.Net.Http.Server.serve`): every request returns a
   fixed `200 "ok"`, so it measures the HTTP path (request parse + response render) over the TCP layer.
 - **`dotnet-tcp.cs`** / **`dotnet-http.cs`** — single-file .NET baselines (concurrent async accept
   loops, the natural .NET idiom; the HTTP one is a raw socket, not Kestrel, to stay apples-to-apples).

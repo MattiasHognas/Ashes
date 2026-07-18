@@ -1,6 +1,5 @@
 import Raylib
 import Scene
-
 let drawTerrain _ =
     Unit
     |> beginTriangles

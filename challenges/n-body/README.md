@@ -21,21 +21,21 @@ calculation and the `1/distance³` force term both require a **square root**.
 ## What it probes (expected flaws)
 
 - **Float throughput** in a long `N`-step loop: the distance term and the energy both use
-  `Ashes.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so the real primitive is exercised
+  `Ashes.Number.Math.sqrt` (hardware `llvm.sqrt`, now shipped), so the real primitive is exercised
   rather than a hand-rolled Newton's-method approximation.
 - **Fixed-precision formatting** to 9 dp via `Ashes.Text.formatFloat(value)(9)` (shipped).
 - **Arena behaviour** of a fold that rebuilds the small body list each step.
 
 ## Dependencies / blockers
 
-**None.** `Ashes.Math.sqrt` (hardware square root) and `Ashes.Text.formatFloat` (9-dp
+**None.** `Ashes.Number.Math.sqrt` (hardware square root) and `Ashes.Text.formatFloat` (9-dp
 fixed-precision formatting) have both shipped — the benchmark is ready to implement.
 
 ## Status
 
 **Implemented + benchmarked.** [`n-body.ash`](n-body.ash) is the intended pure solution: each body
 a record, the system a fixed 5-element `List(Body)` rebuilt by `advance` every step, energy printed
-to 9 dp via `Ashes.Math.sqrt` + `Ashes.Text.formatFloat`. Output matches the reference
+to 9 dp via `Ashes.Number.Math.sqrt` + `Ashes.Text.formatFloat`. Output matches the reference
 (`-0.169075164` / `-0.169059907` at the standard workload).
 
 ## Build & run

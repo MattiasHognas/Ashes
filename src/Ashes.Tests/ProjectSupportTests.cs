@@ -120,13 +120,13 @@ public sealed class ProjectSupportTests
                 """{"entry":"src/Main.ash","sourceRoots":["src"],"include":["vendor"]}""");
             Directory.CreateDirectory(Path.Combine(root, "src"));
             Directory.CreateDirectory(Path.Combine(root, "vendor"));
-            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import Ashes.List\nAshes.IO.print(1)");
+            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import Ashes.Collection.List\nAshes.IO.print(1)");
             File.WriteAllText(Path.Combine(root, "src", "List.ash"), "1");
             File.WriteAllText(Path.Combine(root, "vendor", "List.ash"), "2");
 
             var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
             var plan = ProjectSupport.BuildCompilationPlan(project);
-            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.List");
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Collection.List");
         }
         finally
         {
@@ -141,11 +141,11 @@ public sealed class ProjectSupportTests
         try
         {
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
-            File.WriteAllText(Path.Combine(root, "Main.ash"), "import Ashes.List\nAshes.IO.print(Ashes.List.length([1, 2, 3, 4]))");
+            File.WriteAllText(Path.Combine(root, "Main.ash"), "import Ashes.Collection.List\nAshes.IO.print(Ashes.Collection.List.length([1, 2, 3, 4]))");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
-            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.List");
-            plan.OrderedModules.Single(x => string.Equals(x.ModuleName, "Ashes.List", StringComparison.Ordinal)).FilePath.ShouldBe("<std:Ashes.List>");
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Collection.List");
+            plan.OrderedModules.Single(x => string.Equals(x.ModuleName, "Ashes.Collection.List", StringComparison.Ordinal)).FilePath.ShouldBe("<std:Ashes.Collection.List>");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
@@ -542,10 +542,10 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.Result\nmatch Ashes.Result.map((given (x) -> x + 1))(Ok(41)) with | Ok(value) -> Ashes.IO.print(value) | Error(_) -> Ashes.IO.print(0)");
+                "import Ashes.Core.Result\nmatch Ashes.Core.Result.map((given (x) -> x + 1))(Ok(41)) with | Ok(value) -> Ashes.IO.print(value) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
-            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Result");
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldContain("Ashes.Core.Result");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
@@ -590,10 +590,10 @@ public sealed class ProjectSupportTests
             File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
             File.WriteAllText(
                 Path.Combine(root, "Main.ash"),
-                "import Ashes.File\nmatch Ashes.File.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
+                "import Ashes.IO.File\nmatch Ashes.IO.File.exists(\"file.txt\") with | Ok(found) -> if found then Ashes.IO.print(1) else Ashes.IO.print(0) | Error(_) -> Ashes.IO.print(0)");
 
             var plan = ProjectSupport.BuildCompilationPlan(ProjectSupport.LoadProject(Path.Combine(root, "ashes.json")));
-            plan.ImportedStdModules.ShouldContain("Ashes.File");
+            plan.ImportedStdModules.ShouldContain("Ashes.IO.File");
 
             var combinedSource = ProjectSupport.BuildCompilationSource(plan);
 
@@ -720,10 +720,10 @@ public sealed class ProjectSupportTests
     [Test]
     public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
     {
-        // The Ashes.List import stitches a source stdlib module, so the entry body sits behind a
+        // The Ashes.Collection.List import stitches a source stdlib module, so the entry body sits behind a
         // long combined prefix; without mapping, the '+' error's span would render as a bogus
         // position (offsets into the stitched prefix against the user's file).
-        var original = "import Ashes.IO as io\nimport Ashes.List as list\nlet x = 1\n\nlet y = x + \"oops\"\n\nio.print(\"z\")";
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nlet x = 1\n\nlet y = x + \"oops\"\n\nio.print(\"z\")";
         var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
         layout.EntryOffset.ShouldBeGreaterThan(0, "the stitched stdlib module must create a prefix");
@@ -747,7 +747,7 @@ public sealed class ProjectSupportTests
     [Test]
     public void MapDiagnosticsToOriginal_attributes_module_region_spans_to_the_owning_file_without_position()
     {
-        var original = "import Ashes.IO as io\nimport Ashes.List as list\nio.print(\"z\")";
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
         var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
         layout.EntryOffset.ShouldBeGreaterThan(0);
@@ -770,7 +770,7 @@ public sealed class ProjectSupportTests
         // The type declaration is hoisted to the top of the combined source (before the module
         // prefix); the fragment table maps a span inside it back to the declaration's position in
         // the user's file.
-        var original = "import Ashes.IO as io\nimport Ashes.List as list\nlet a = 1\n\ntype Pair = | MkPair(Int, Int)\n\nio.print(\"z\")";
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nlet a = 1\n\ntype Pair = | MkPair(Int, Int)\n\nio.print(\"z\")";
         var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
         layout.BodyStart.ShouldBeGreaterThan(0, "the type declaration must be hoisted");

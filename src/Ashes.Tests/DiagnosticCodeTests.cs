@@ -55,7 +55,7 @@ public sealed class DiagnosticCodeTests
     }
 
     // `await` and the networking builtins are intentionally usable outside any `async` context:
-    // `async` is a builtin (Ashes.Async.task), not a block keyword, so there is nothing to be
+    // `async` is a builtin (Ashes.Task.task), not a block keyword, so there is nothing to be
     // "outside" of. `await` runs its task wherever it appears, and async-only safety is enforced by
     // the `Task` type. These guards lock in that permissive behaviour so the abandoned
     // await-/networking-outside-async enforcement does not silently reappear.
@@ -63,7 +63,7 @@ public sealed class DiagnosticCodeTests
     [Test]
     public void Await_outside_async_compiles_without_error()
     {
-        var diag = LowerExpression("await Ashes.Async.task(42)");
+        var diag = LowerExpression("await Ashes.Task.task(42)");
 
         diag.StructuredErrors.ShouldBeEmpty();
     }
@@ -71,8 +71,8 @@ public sealed class DiagnosticCodeTests
     [Test]
     public void Networking_builtin_outside_async_compiles_without_error()
     {
-        LowerExpression("Ashes.Http.get(\"http://example.com\")").StructuredErrors.ShouldBeEmpty();
-        LowerExpression("Ashes.Http.get(\"https://example.com\")").StructuredErrors.ShouldBeEmpty();
+        LowerExpression("Ashes.Net.Http.get(\"http://example.com\")").StructuredErrors.ShouldBeEmpty();
+        LowerExpression("Ashes.Net.Http.get(\"https://example.com\")").StructuredErrors.ShouldBeEmpty();
     }
 
     private static Diagnostics LowerExpression(string source)

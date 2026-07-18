@@ -1,5 +1,5 @@
 // expect: 6
-import Ashes.List
+import Ashes.Collection.List
 let add =
     given (acc) ->
         given (x) -> acc + x

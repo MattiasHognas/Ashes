@@ -1,6 +1,5 @@
-import Ashes.String as str
+import Ashes.Text as str
 import Ashes.Text as text
-
 type RespParse =
     | RespNeedMore
     | RespMalformed(Str)

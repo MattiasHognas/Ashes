@@ -58,17 +58,17 @@ Canonical built-ins available today include:
 - `Ashes.IO.write(expr)` returning `Unit`
 - `Ashes.IO.writeLine(expr)` returning `Unit`
 - `Ashes.IO.readLine()` returning `Maybe(Str)`
-- `Ashes.File.readText(path)` returning `Result(Str, Str)`
-- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)`
-- `Ashes.File.exists(path)` returning `Result(Str, Bool)`
+- `Ashes.IO.File.readText(path)` returning `Result(Str, Str)`
+- `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)`
+- `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)`
 - `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))`
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)`
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)`
 - `Ashes.Text.fromInt(value)` returning `Str`
 - `Ashes.Text.fromFloat(value)` returning `Str`
 - `Ashes.Text.toHex(value)` returning `Str`
-- `Ashes.Http.get(url)` returning `Task(Str, Str)`
-- `Ashes.Http.post(url, body)` returning `Task(Str, Str)`
+- `Ashes.Net.Http.get(url)` returning `Task(Str, Str)`
+- `Ashes.Net.Http.post(url, body)` returning `Task(Str, Str)`
 - `Ashes.Net.Tcp.connect(host)(port)` returning `Task(Str, Socket)`
 - `Ashes.Net.Tcp.send(socket)(text)` returning `Task(Str, Int)`
 - `Ashes.Net.Tcp.receive(socket)(maxBytes)` returning `Task(Str, Str)`
@@ -77,20 +77,20 @@ Canonical built-ins available today include:
 - `Ashes.Net.Tls.send(socket)(text)` returning `Task(Str, Int)`
 - `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)`
 - `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)`
-- `Ashes.Async.run(task)` returning `Result(E, A)`
-- `Ashes.Async.task(value)` returning `Task(Str, A)`
-- `Ashes.Async.fromResult(result)` returning `Task(E, A)`
-- `Ashes.Async.sleep(ms)` returning `Task(Str, Int)`
-- `Ashes.Async.all(tasks)` returning `Task(E, List(A))`
-- `Ashes.Async.race(tasks)` returning `Task(E, A)`
-- `Ashes.Async.spawn(task)` returning `Unit`
+- `Ashes.Task.run(task)` returning `Result(E, A)`
+- `Ashes.Task.task(value)` returning `Task(Str, A)`
+- `Ashes.Task.fromResult(result)` returning `Task(E, A)`
+- `Ashes.Task.sleep(ms)` returning `Task(Str, Int)`
+- `Ashes.Task.all(tasks)` returning `Task(E, List(A))`
+- `Ashes.Task.race(tasks)` returning `Task(E, A)`
+- `Ashes.Task.spawn(task)` returning `Unit`
 
 Shipped standard-library modules under the reserved `Ashes` namespace also include:
 
-- `Ashes.List`
-- `Ashes.Maybe`
-- `Ashes.Result`
-- `Ashes.String`
+- `Ashes.Collection.List`
+- `Ashes.Core.Maybe`
+- `Ashes.Core.Result`
+- `Ashes.Text`
 - `Ashes.Test`
 
 Built-in runtime types available without import include:
@@ -256,9 +256,9 @@ The arithmetic operators `+`, `-`, `*`, `/` (truncated toward zero), `%`, and th
 let squared = 1000000000000N * 1000000000000N
 
 As with `Float`, negation uses subtraction from zero (`0N - x`), not a `-` prefix. `Int↔BigInt`
-conversions are `Ashes.BigInt.fromInt` / `Ashes.BigInt.toInt`, and string conversions are
+conversions are `Ashes.Number.BigInt.fromInt` / `Ashes.Number.BigInt.toInt`, and string conversions are
 `Ashes.Text.fromBigInt` / `Ashes.Text.parseBigInt` (see
-[STANDARD_LIBRARY](standard-library.md#ashesbigint)). Like every value, a `BigInt` is immutable;
+[STANDARD_LIBRARY](standard-library.md#ashesnumberbigint)). Like every value, a `BigInt` is immutable;
 each operation allocates a fresh, normalized result.
 
 The `%` (remainder) operator also applies to `Int` and the unsigned types; the result's sign
@@ -276,11 +276,11 @@ Ashes strings represent UTF-8 text.
 
 Filesystem text APIs operate on UTF-8 encoded files:
 
-- `Ashes.File.readText(path)` returning `Result(Str, Str)`.
-- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)`.
-- `Ashes.File.exists(path)` returning `Result(Str, Bool)`.
+- `Ashes.IO.File.readText(path)` returning `Result(Str, Str)`.
+- `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)`.
+- `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)`.
 - Filesystem text is interpreted and written as UTF-8.
-- Invalid UTF-8 passed through `Ashes.File.readText` returns `Error(...)`.
+- Invalid UTF-8 passed through `Ashes.IO.File.readText` returns `Error(...)`.
 - Binary file APIs are not part of the current language surface.
 
 Networking APIs live under `Ashes.Net.Tcp` and `Ashes.Net.Tls`:
@@ -308,7 +308,7 @@ Networking rules:
 - `Ashes.Net.Tls.connect` performs a TCP connect followed by a TLS client handshake.
 - TLS connections require SNI, hostname verification, and system-trust validation.
 - On the current Linux x64, Linux arm64, and Windows x64 backends, `Ashes.Net.Tls`
-  uses the same hermetic Mbed TLS runtime path as `https://` in `Ashes.Http`.
+  uses the same hermetic Mbed TLS runtime path as `https://` in `Ashes.Net.Http`.
 - `close` is explicit and deterministic; using a closed `Socket` or `TlsSocket`
   returns `Error(...)`.
 - **Automatic cleanup**: `Socket` and `TlsSocket` are **resource types**. The compiler
@@ -320,16 +320,16 @@ Networking rules:
 - **Double-close**: calling `close` on an already-closed networking resource is a
   compile-time error.
 
-Basic HTTP client APIs live under `Ashes.Http`:
+Basic HTTP client APIs live under `Ashes.Net.Http`:
 
-- `Ashes.Http.get(url)` returning `Task(Str, Str)`.
-- `Ashes.Http.post(url, body)` returning `Task(Str, Str)`.
+- `Ashes.Net.Http.get(url)` returning `Task(Str, Str)`.
+- `Ashes.Net.Http.post(url, body)` returning `Task(Str, Str)`.
 
 Example:
 
 ```ash
-match Ashes.Async.run(async
-  let response = await Ashes.Http.get("http://example.com")
+match Ashes.Task.run(async
+  let response = await Ashes.Net.Http.get("http://example.com")
   in response) with
   | Ok(text) -> Ashes.IO.print(text)
   | Error(err) -> Ashes.IO.print(err)
@@ -591,7 +591,7 @@ type Result(E, A) =
     | Error(E)
 
 `Result` is a built-in runtime type. User code may use `Ok(...)` and `Error(...)`
-directly, and helper functions are available from the shipped `Ashes.Result` module.
+directly, and helper functions are available from the shipped `Ashes.Core.Result` module.
 
 A constructor payload is a full **type expression**, not just a simple name:
 
@@ -1015,7 +1015,7 @@ explicit `given` form remains valid and is what the sugar expands to.
 A sugar parameter may carry an inline type annotation by parenthesizing it:
 
 let energy (b: Body) = b.mass * speedSquared(b)
-let scale (v: Float) n = v * Ashes.Math.toFloat(n)
+let scale (v: Float) n = v * Ashes.Number.Math.toFloat(n)
 
 An annotated sugar parameter desugars to a `given` layer carrying the same
 annotation (`let energy = given (b: Body) -> ...`); unannotated parameters stay
@@ -1044,7 +1044,7 @@ All branches must return compatible types.
 ## 9. Lists
 
 Lists are immutable linked lists. All list operations — cons (`::`),
-`Ashes.List.append`, `Ashes.List.map`, `Ashes.List.filter`, etc. —
+`Ashes.Collection.List.append`, `Ashes.Collection.List.map`, `Ashes.Collection.List.filter`, etc. —
 return a **new** list. The original list is never modified.
 
 ### 9.1 Empty List
@@ -1200,7 +1200,7 @@ Rules:
 
 Example:
 
-import Ashes.Maybe
+import Ashes.Core.Maybe
 
 let unwrapOr opt def =
     match opt with
@@ -1465,7 +1465,7 @@ qualified access.  Unqualified access to the module's exported names is still
 available (e.g. `print "hello"` still works after `import Ashes.IO as IO`).
 
 The alias must be a valid identifier (letter followed by alphanumerics/underscores).
-Aliases may be lowercase (e.g. `import Ashes.List as list`).
+Aliases may be lowercase (e.g. `import Ashes.Collection.List as list`).
 
 For multi-segment module imports, both full and short qualification are supported:
 
@@ -1499,8 +1499,8 @@ Examples:
 
 ```ash
 import Ashes.IO.print
-import Ashes.List.map as listMap
-import Ashes.Result.Result as R
+import Ashes.Collection.List.map as listMap
+import Ashes.Core.Result.Result as R
 ```
 
 Rules:
@@ -1513,8 +1513,8 @@ Rules:
 - Selector imports compose with whole-module imports; the same module may be imported
   both wholesale and via selectors.
 
-Built-in standard-library modules (`Ashes.IO`, `Ashes.List`, `Ashes.Text`,
-`Ashes.Result`, `Ashes.Maybe`, etc.) resolve through the **identical** path as
+Built-in standard-library modules (`Ashes.IO`, `Ashes.Collection.List`, `Ashes.Text`,
+`Ashes.Core.Result`, `Ashes.Core.Maybe`, etc.) resolve through the **identical** path as
 user modules: each module has a known set of exported bindings and types, and
 selectors are checked against that set. For example `import Ashes.IO.print` and
 `import Ashes.IO.print as p` behave exactly like selectors against a user module.
@@ -1604,9 +1604,9 @@ The built-in `Ashes.IO` module exports:
 
 Other built-in runtime modules are also always available through qualified access:
 
-- `Ashes.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
-- `Ashes.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
-- `Ashes.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
+- `Ashes.IO.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
+- `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
+- `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
 - `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))` - split one Unicode scalar from the front of a string.
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)` - parse a decimal integer with optional leading `-`.
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)` - parse a decimal float with optional fraction and exponent.
@@ -1621,8 +1621,8 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.Net.Tls.send(socket)(text)` returning `Task(Str, Int)` - async TLS send.
 - `Ashes.Net.Tls.receive(socket)(maxBytes)` returning `Task(Str, Str)` - async TLS receive.
 - `Ashes.Net.Tls.close(socket)` returning `Task(Str, Unit)` - explicit async TLS close.
-- `Ashes.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for `http://` and `https://` URLs.
-- `Ashes.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for `http://` and `https://` URLs.
+- `Ashes.Net.Http.get(url)` returning `Task(Str, Str)` - async HTTP GET for `http://` and `https://` URLs.
+- `Ashes.Net.Http.post(url, body)` returning `Task(Str, Str)` - async HTTP POST for `http://` and `https://` URLs.
 
 ### 13.3 Built-in Runtime Types
 
@@ -1721,77 +1721,77 @@ never mutates its arguments.
 
 Current shipped modules include:
 
-- `Ashes.List` — helper functions for the built-in list type.
-- `Ashes.Map` — persistent immutable map helpers and the shipped `MapTree(K, V)` value type.
-- `Ashes.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
-- `Ashes.Result` — helper functions for the built-in `Result(E, A)` runtime type.
-- `Ashes.String` — pure string helpers built on `Ashes.Text`.
+- `Ashes.Collection.List` — helper functions for the built-in list type.
+- `Ashes.Collection.Map` — persistent immutable map helpers and the shipped `MapTree(K, V)` value type.
+- `Ashes.Core.Maybe` — helper functions for the built-in `Maybe(T)` runtime type.
+- `Ashes.Core.Result` — helper functions for the built-in `Result(E, A)` runtime type.
+- `Ashes.Text` — pure string helpers built on `Ashes.Text`.
 - `Ashes.Test` — assertion helpers for tests and small programs.
 
 Stable helper surfaces:
 
-#### `Ashes.List`
+#### `Ashes.Collection.List`
 
-- `Ashes.List.append : List<a> -> List<a> -> List<a>`
-- `Ashes.List.length : List<a> -> Int`
-- `Ashes.List.head : List<a> -> Maybe(a)`
-- `Ashes.List.tail : List<a> -> Maybe(List<a>)`
-- `Ashes.List.map : (a -> b) -> List<a> -> List<b>`
-- `Ashes.List.filter : (a -> Bool) -> List<a> -> List<a>`
-- `Ashes.List.foldLeft : (b -> a -> b) -> b -> List<a> -> b`
-- `Ashes.List.fold : (a -> b -> b) -> b -> List<a> -> b`
-- `Ashes.List.isEmpty : List<a> -> Bool`
-- `Ashes.List.reverse : List<a> -> List<a>`
+- `Ashes.Collection.List.append : List<a> -> List<a> -> List<a>`
+- `Ashes.Collection.List.length : List<a> -> Int`
+- `Ashes.Collection.List.head : List<a> -> Maybe(a)`
+- `Ashes.Collection.List.tail : List<a> -> Maybe(List<a>)`
+- `Ashes.Collection.List.map : (a -> b) -> List<a> -> List<b>`
+- `Ashes.Collection.List.filter : (a -> Bool) -> List<a> -> List<a>`
+- `Ashes.Collection.List.foldLeft : (b -> a -> b) -> b -> List<a> -> b`
+- `Ashes.Collection.List.fold : (a -> b -> b) -> b -> List<a> -> b`
+- `Ashes.Collection.List.isEmpty : List<a> -> Bool`
+- `Ashes.Collection.List.reverse : List<a> -> List<a>`
 
-#### `Ashes.Map`
+#### `Ashes.Collection.Map`
 
-- `Ashes.Map.empty : MapTree(k, v)`
-- `Ashes.Map.isEmpty : MapTree(k, v) -> Bool`
-- `Ashes.Map.get : (k -> k -> Int) -> k -> MapTree(k, v) -> Maybe(v)`
-- `Ashes.Map.contains : (k -> k -> Int) -> k -> MapTree(k, v) -> Bool`
-- `Ashes.Map.set : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
-- `Ashes.Map.insert : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
-- `Ashes.Map.size : MapTree(k, v) -> Int`
-- `Ashes.Map.foldLeft : (s -> k -> v -> s) -> s -> MapTree(k, v) -> s`
-- `Ashes.Map.toList : MapTree(k, v) -> List<(k, v)>`
-- `Ashes.Map.fromList : (k -> k -> Int) -> List<(k, v)> -> MapTree(k, v)`
+- `Ashes.Collection.Map.empty : MapTree(k, v)`
+- `Ashes.Collection.Map.isEmpty : MapTree(k, v) -> Bool`
+- `Ashes.Collection.Map.get : (k -> k -> Int) -> k -> MapTree(k, v) -> Maybe(v)`
+- `Ashes.Collection.Map.contains : (k -> k -> Int) -> k -> MapTree(k, v) -> Bool`
+- `Ashes.Collection.Map.set : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Collection.Map.insert : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Collection.Map.size : MapTree(k, v) -> Int`
+- `Ashes.Collection.Map.foldLeft : (s -> k -> v -> s) -> s -> MapTree(k, v) -> s`
+- `Ashes.Collection.Map.toList : MapTree(k, v) -> List<(k, v)>`
+- `Ashes.Collection.Map.fromList : (k -> k -> Int) -> List<(k, v)> -> MapTree(k, v)`
 
-`Ashes.Map` is a persistent AVL tree. Callers provide a total ordering
+`Ashes.Collection.Map` is a persistent AVL tree. Callers provide a total ordering
 function because the language does not yet have a built-in ordering abstraction.
 
-#### `Ashes.Maybe`
+#### `Ashes.Core.Maybe`
 
-- `Ashes.Maybe.default : a -> Maybe(a) -> a`
-- `Ashes.Maybe.flatMap : (a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`
-- `Ashes.Maybe.getOrElse : a -> Maybe(a) -> a`
-- `Ashes.Maybe.isNone : Maybe(a) -> Bool`
-- `Ashes.Maybe.isSome : Maybe(a) -> Bool`
-- `Ashes.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
-- `Ashes.Maybe.unwrapOr : Maybe(a) -> a -> a`
+- `Ashes.Core.Maybe.default : a -> Maybe(a) -> a`
+- `Ashes.Core.Maybe.flatMap : (a -> Maybe(b)) -> Maybe(a) -> Maybe(b)`
+- `Ashes.Core.Maybe.getOrElse : a -> Maybe(a) -> a`
+- `Ashes.Core.Maybe.isNone : Maybe(a) -> Bool`
+- `Ashes.Core.Maybe.isSome : Maybe(a) -> Bool`
+- `Ashes.Core.Maybe.map : (a -> b) -> Maybe(a) -> Maybe(b)`
+- `Ashes.Core.Maybe.unwrapOr : Maybe(a) -> a -> a`
 
-#### `Ashes.Result`
+#### `Ashes.Core.Result`
 
-- `Ashes.Result.default : a -> Result(E, a) -> a`
-- `Ashes.Result.bind : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
-- `Ashes.Result.map : (a -> b) -> Result(E, a) -> Result(E, b)`
-- `Ashes.Result.flatMap : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
-- `Ashes.Result.getOrElse : a -> Result(E, a) -> a`
-- `Ashes.Result.isOk : Result(E, a) -> Bool`
-- `Ashes.Result.isError : Result(E, a) -> Bool`
-- `Ashes.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
+- `Ashes.Core.Result.default : a -> Result(E, a) -> a`
+- `Ashes.Core.Result.bind : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Core.Result.map : (a -> b) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Core.Result.flatMap : (a -> Result(E, b)) -> Result(E, a) -> Result(E, b)`
+- `Ashes.Core.Result.getOrElse : a -> Result(E, a) -> a`
+- `Ashes.Core.Result.isOk : Result(E, a) -> Bool`
+- `Ashes.Core.Result.isError : Result(E, a) -> Bool`
+- `Ashes.Core.Result.mapError : (E -> F) -> Result(E, a) -> Result(F, a)`
 
-#### `Ashes.String`
+#### `Ashes.Text`
 
-- `Ashes.String.substring : Str -> Int -> Int -> Str`
-- `Ashes.String.length : Str -> Int`
-- `Ashes.String.indexOf : Str -> Str -> Int`
-- `Ashes.String.startsWith : Str -> Str -> Bool`
-- `Ashes.String.contains : Str -> Str -> Bool`
-- `Ashes.String.split : Str -> Str -> List<Str>`
-- `Ashes.String.trim : Str -> Str`
-- `Ashes.String.isLetter : Str -> Bool`
-- `Ashes.String.isDigit : Str -> Bool`
-- `Ashes.String.isWhiteSpace : Str -> Bool`
+- `Ashes.Text.substring : Str -> Int -> Int -> Str`
+- `Ashes.Text.length : Str -> Int`
+- `Ashes.Text.indexOf : Str -> Str -> Int`
+- `Ashes.Text.startsWith : Str -> Str -> Bool`
+- `Ashes.Text.contains : Str -> Str -> Bool`
+- `Ashes.Text.split : Str -> Str -> List<Str>`
+- `Ashes.Text.trim : Str -> Str`
+- `Ashes.Text.isLetter : Str -> Bool`
+- `Ashes.Text.isDigit : Str -> Bool`
+- `Ashes.Text.isWhiteSpace : Str -> Bool`
 
 `Ashes.Test` currently exports:
 
@@ -1913,8 +1913,8 @@ Iteration is expressed using recursion and pattern matching.
 is pure in the following sense:
 
 - Calling a function never changes the value of any existing binding.
-- Operations that conceptually "add" or "remove" (e.g. `Ashes.List.append`,
-  cons `::`, `Ashes.List.filter`) always return a **new** value; the
+- Operations that conceptually "add" or "remove" (e.g. `Ashes.Collection.List.append`,
+  cons `::`, `Ashes.Collection.List.filter`) always return a **new** value; the
   original is unmodified.
 - There are no in-place updates. If a program needs a modified version of
   a value, it builds one via expression — the original remains available
@@ -1969,7 +1969,7 @@ resource binding is:
 
 - stored into an aggregate (constructor field, tuple element, list cell),
 - passed as an argument to a function or handler call, or
-- passed to `Ashes.Async.spawn`.
+- passed to `Ashes.Task.spawn`.
 
 Because Ashes has no borrowing, passing a resource to a function transfers it: the callee now owns
 the resource (and is responsible for closing it), and the caller must not use or close it afterward.
@@ -2156,7 +2156,7 @@ per active call, so its maximum depth is bounded by the thread's stack:
   On Linux targets the main thread gets the operating system's default
   stack limit (`RLIMIT_STACK`, commonly 8 MiB). On `win-x64` the image
   reserves 8 MiB by default.
-- **Parallel workers.** `Ashes.Parallel` workers default to a 1 MiB
+- **Parallel workers.** `Ashes.Task.Parallel` workers default to a 1 MiB
   stack, configurable with the `--parallel-stack-size` compile flag (see
   the CLI specification).
 
@@ -2195,37 +2195,37 @@ computation that may fail with error type `E` or succeed with value type `A`.
 
 `await <expr>` resolves a `Task(E, A)` to `Result(E, A)`:
 
-    let result = await Ashes.Http.get("http://example.com")
+    let result = await Ashes.Net.Http.get("http://example.com")
     in result
 
 - `await <expr>` where `<expr> : Task(E, A)` produces `Result(E, A)`.
 - `await` runs the task to completion.
-- `Ashes.Async.run(task)` has equivalent return shape (`Result(E, A)`), so `await` can be used directly.
+- `Ashes.Task.run(task)` has equivalent return shape (`Result(E, A)`), so `await` can be used directly.
 
 ### 19.3 Async Let (let!)
 
 `let!` is sugar for `await` in a binding position:
 
-    let! response = Ashes.Http.get("http://example.com")
+    let! response = Ashes.Net.Http.get("http://example.com")
     in response
 
 This desugars to:
 
-    let response = await Ashes.Http.get("http://example.com")
+    let response = await Ashes.Net.Http.get("http://example.com")
     in response
 
 `let!` flattens binding chains — no additional nesting per await point.
 Multiple `let!` bindings chain sequentially:
 
-    let! a = Ashes.Http.get("http://a.com")
-    let! b = Ashes.Http.get("http://b.com")
+    let! a = Ashes.Net.Http.get("http://a.com")
+    let! b = Ashes.Net.Http.get("http://b.com")
     in a + b
 
 Desugars to:
 
-    let a = await Ashes.Http.get("http://a.com")
+    let a = await Ashes.Net.Http.get("http://a.com")
     in
-        let b = await Ashes.Http.get("http://b.com")
+        let b = await Ashes.Net.Http.get("http://b.com")
         in a + b
 
 ### 19.4 Type Inference Rules
@@ -2237,38 +2237,38 @@ Desugars to:
 
 `Task(E, A)` and `Result(E, A)` share the same error-propagation model:
 
-- `Ashes.Async.fromResult(result)` — wraps a `Result(E, A)` into a
+- `Ashes.Task.fromResult(result)` — wraps a `Result(E, A)` into a
   `Task(E, A)` that completes immediately.
-- `Ashes.Async.task(value)` — wraps a value into an already successful `Task(Str, A)`.
-- `Ashes.Async.run(task)` — runs a task to completion and returns
+- `Ashes.Task.task(value)` — wraps a value into an already successful `Task(Str, A)`.
+- `Ashes.Task.run(task)` — runs a task to completion and returns
   `Result(E, A)`.
 
-### 19.6 Ashes.Async Module
+### 19.6 Ashes.Task Module
 
 | Function | Type |
 |----------|------|
-| `Ashes.Async.run(task)` | `Task(E, A) -> Result(E, A)` |
-| `Ashes.Async.task(value)` | `A -> Task(Str, A)` |
-| `Ashes.Async.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
-| `Ashes.Async.sleep(ms)` | `Int -> Task(Str, Int)` |
-| `Ashes.Async.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
-| `Ashes.Async.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
-| `Ashes.Async.spawn(task)` | `Task(E, A) -> Unit` |
+| `Ashes.Task.run(task)` | `Task(E, A) -> Result(E, A)` |
+| `Ashes.Task.task(value)` | `A -> Task(Str, A)` |
+| `Ashes.Task.fromResult(r)` | `Result(E, A) -> Task(E, A)` |
+| `Ashes.Task.sleep(ms)` | `Int -> Task(Str, Int)` |
+| `Ashes.Task.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
+| `Ashes.Task.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
+| `Ashes.Task.spawn(task)` | `Task(E, A) -> Unit` |
 
-`Ashes.Async.spawn(task)` detaches a task for fire-and-forget execution: the task advances
-cooperatively whenever any `Ashes.Async.run` drive is blocked waiting (on a socket or timer), and
+`Ashes.Task.spawn(task)` detaches a task for fire-and-forget execution: the task advances
+cooperatively whenever any `Ashes.Task.run` drive is blocked waiting (on a socket or timer), and
 its result is dropped when it completes. Ownership of any resources the task references (for
 example an accepted socket) moves into the detached task — the spawning scope no longer closes
 them, so the task must release its own resources. Detached tasks still in flight when the driving
 `run` completes (and the program exits) are abandoned. This is the concurrency primitive behind
 `Ashes.Net.Tcp.Server.serve`'s concurrent connection handling.
 
-#### 19.6.1 Ashes.Async.sleep
+#### 19.6.1 Ashes.Task.sleep
 
-`Ashes.Async.sleep(ms)` creates a task that suspends for the given
+`Ashes.Task.sleep(ms)` creates a task that suspends for the given
 number of milliseconds, then completes with `0`:
 
-    let _ = await Ashes.Async.sleep(100)
+    let _ = await Ashes.Task.sleep(100)
     in 42
 
 - The argument is an `Int` representing milliseconds.
@@ -2278,15 +2278,15 @@ number of milliseconds, then completes with `0`:
 - On Linux, `sleep` uses the `nanosleep` syscall.
 - On Windows, `sleep` uses the `Sleep` kernel32 function.
 
-#### 19.6.2 Ashes.Async.all
+#### 19.6.2 Ashes.Task.all
 
-`Ashes.Async.all(tasks)` takes a list of tasks and runs them all,
+`Ashes.Task.all(tasks)` takes a list of tasks and runs them all,
 collecting results into a list in the original order:
 
-    let results = await Ashes.Async.all([
-        Ashes.Async.task(1),
-        Ashes.Async.task(2),
-        Ashes.Async.task(3)
+    let results = await Ashes.Task.all([
+        Ashes.Task.task(1),
+        Ashes.Task.task(2),
+        Ashes.Task.task(3)
     ])
     in results
 
@@ -2296,14 +2296,14 @@ collecting results into a list in the original order:
 - Results are collected in the same order as the input list.
 - An empty input list produces an empty result list.
 
-#### 19.6.3 Ashes.Async.race
+#### 19.6.3 Ashes.Task.race
 
-`Ashes.Async.race(tasks)` takes a list of tasks and returns the result
+`Ashes.Task.race(tasks)` takes a list of tasks and returns the result
 of the first task to complete:
 
-    let result = await Ashes.Async.race([
-        Ashes.Async.task(42),
-        Ashes.Async.task(99)
+    let result = await Ashes.Task.race([
+        Ashes.Task.task(42),
+        Ashes.Task.task(99)
     ])
     in result
 
@@ -2326,9 +2326,9 @@ of the first task to complete:
 ### 19.8 Diagnostics
 
 Async/await has no dedicated diagnostic codes. `async` is a builtin
-(`Ashes.Async.task`), not a block keyword, so there is no "outside `async`"
+(`Ashes.Task.task`), not a block keyword, so there is no "outside `async`"
 state to police; misuse (for example combining tasks with mismatched error
-types, or consuming a `Task` without `await`/`Ashes.Async.run`) surfaces through
+types, or consuming a `Task` without `await`/`Ashes.Task.run`) surfaces through
 ordinary type-inference diagnostics. See [Diagnostics Reference](diagnostics.md) for the
 full code table.
 
@@ -2358,7 +2358,7 @@ explicit signatures), static `provide` with concrete and generic (monomorphized 
 resolution, and capabilities and providers declared in imported project modules. Aborting arms
 (a path that never resumes) and multi-shot `resume` are rejected with a
 clear diagnostic — see section 20.7 for why. Capabilities
-interacting with `async`/`await` state machines or `Ashes.Parallel` worker threads is not yet
+interacting with `async`/`await` state machines or `Ashes.Task.Parallel` worker threads is not yet
 defined; handler evidence is currently per-process, not per-task or per-thread. How handlers compile
 (dynamically-scoped evidence globals, stack-allocated frames, the `resume` rewrites) is
 documented in [Architecture](../internals/architecture.md).
@@ -2590,8 +2590,8 @@ Three capabilities are built into the compiler and require no declaration:
 - **`NetListen`** — creating a listening endpoint. Carried by `Ashes.Net.Tcp.Server.listen` and
   `forkWorkers`, and therefore (by row inference) by every `serve` combinator
   (`Ashes.Net.Tcp.Server.serve` / `serveParallel` / `serveWithDrainTimeout`,
-  `Ashes.Http.Server.serve` / `serveParallel`, `Ashes.Net.Tls.Server.serveTls`).
-- **`NetConnect`** — dialing out. Carried by `Ashes.Net.Tcp.connect`, `Ashes.Http.get` / `post`,
+  `Ashes.Net.Http.Server.serve` / `serveParallel`, `Ashes.Net.Tls.Server.serveTls`).
+- **`NetConnect`** — dialing out. Carried by `Ashes.Net.Tcp.connect`, `Ashes.Net.Http.get` / `post`,
   and `Ashes.Net.Tls.connect`.
 - **`Stop`** — requesting graceful shutdown of the running server. Unlike the two network
   capabilities it is **performable**: it has one operation, `Stop.stop : Unit -> Unit`.
@@ -2604,7 +2604,7 @@ implicit provider, and they are excluded from the top-level unsatisfied-capabili
 - Every function that (transitively) creates a network endpoint carries the capability in its
   inferred row, so "this program is a server" (or "dials out") is visible in its type.
 - A written **closed** row that omits them rejects such calls (`ASH018`), exactly like any other
-  capability: `let f : Str -> Int needs {Prices} = ...` cannot call `Ashes.Http.get`.
+  capability: `let f : Str -> Int needs {Prices} = ...` cannot call `Ashes.Net.Http.get`.
 - They can be named in `needs` rows like declared capabilities:
   `let opener : Int -> Task(Str, Socket) needs {NetListen} = given (p) -> tcp.listen(p)`.
 
@@ -2627,7 +2627,7 @@ compile-time error.
 Because a handler's `needs {Stop}` (or `{NetConnect}`, for a handler that dials out) must thread
 through `serve`, capability rows propagate correctly through higher-order library combinators and
 recursive helpers: a recursive function that performs a capability — or that applies a
-capability-performing parameter, as `Ashes.List.map` applies its mapping function — carries an open latent row, so
+capability-performing parameter, as `Ashes.Collection.List.map` applies its mapping function — carries an open latent row, so
 passing a capability-performing function to it is accepted.
 
 ### 20.9 Design Notes

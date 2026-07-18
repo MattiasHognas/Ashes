@@ -36,18 +36,18 @@ let recursive rpcTrimStart text =
 let parseContentLength line =
     (let prefix = "Content-Length: "
     in
-        let lb = Ashes.Bytes.fromText(line)
+        let lb = Ashes.Byte.fromText(line)
         in
             let plen = Ashes.Text.byteLength(prefix)
             in
-                let llen = Ashes.Bytes.length(lb)
+                let llen = Ashes.Byte.length(lb)
                 in
                     if llen < plen
                     then None
                     else
-                        if Ashes.Bytes.subView(lb)(0)(plen) == prefix
+                        if Ashes.Byte.subView(lb)(0)(plen) == prefix
                         then
-                            let valueStr = Ashes.Bytes.subText(lb)(plen)(llen - plen)
+                            let valueStr = Ashes.Byte.subText(lb)(plen)(llen - plen)
                             in
                                 match Ashes.Text.parseInt(rpcTrimStart(valueStr)) with
                                     | Ok(n) -> Some(n)

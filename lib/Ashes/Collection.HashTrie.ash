@@ -5,7 +5,7 @@ type Trie(K, V) =
 
 let empty = TrieEmpty
 
-let hashText text = Ashes.Bytes.hash(Ashes.Bytes.fromText(text))
+let hashText text = Ashes.Byte.hash(Ashes.Byte.fromText(text))
 
 let recursive firstDiffShift a b shift =
     if a >> shift & 15 == b >> shift & 15
@@ -102,7 +102,7 @@ let upsertHashed hash key missValue onHit =
             | TrieLeaf(h2, k2, v2, next) ->
                 if h2 == hash
                 then
-                    if Ashes.Bytes.compare(Ashes.Bytes.fromText(k2))(Ashes.Bytes.fromText(key)) == 0
+                    if Ashes.Byte.compare(Ashes.Byte.fromText(k2))(Ashes.Byte.fromText(key)) == 0
                     then TrieLeaf(h2)(k2)(onHit(v2))(next)
                     else TrieLeaf(h2)(k2)(v2)(go(next))
                 else
@@ -165,7 +165,7 @@ let getHashed hash key =
             | TrieLeaf(h2, k2, v2, next) ->
                 if h2 == hash
                 then
-                    if Ashes.Bytes.compare(Ashes.Bytes.fromText(k2))(Ashes.Bytes.fromText(key)) == 0
+                    if Ashes.Byte.compare(Ashes.Byte.fromText(k2))(Ashes.Byte.fromText(key)) == 0
                     then Some(v2)
                     else go(next)
                 else None

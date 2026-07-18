@@ -2,7 +2,6 @@ import Kv
 import Resp
 import Ashes.IO as io
 import Ashes.Test as test
-
 let check label expected actual =
     (let _ = test.assertEqual(expected)(actual)
     in io.writeLine("ok - " + label))

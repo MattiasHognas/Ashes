@@ -1811,7 +1811,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(builder, sleepType, sleepFnPtr, [ms32], "");
     }
 
-    // Detached tasks (Ashes.Async.spawn)
+    // Detached tasks (Ashes.Task.spawn)
     //
     // A spawned task is fire-and-forget: its frame is copied into a private arena chunk (so it
     // survives the spawner's arena resets), it is chained into a global detached list via the

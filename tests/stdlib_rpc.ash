@@ -1,17 +1,17 @@
 // expect: ok
-import Ashes.Rpc
+import Ashes.Net.Rpc
 let hasLength =
-    match Ashes.Rpc.parseContentLength("Content-Length: 42") with
+    match Ashes.Net.Rpc.parseContentLength("Content-Length: 42") with
         | None -> false
         | Some(n) -> n == 42
 in
     let noHeader =
-        match Ashes.Rpc.parseContentLength("X-Other: ignored") with
+        match Ashes.Net.Rpc.parseContentLength("X-Other: ignored") with
             | None -> true
             | Some(_) -> false
     in
         let zeroLength =
-            match Ashes.Rpc.parseContentLength("Content-Length: 0") with
+            match Ashes.Net.Rpc.parseContentLength("Content-Length: 0") with
                 | None -> false
                 | Some(n) -> n == 0
         in

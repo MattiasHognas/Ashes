@@ -1,6 +1,6 @@
 // expect: 123 999999999999999999999999999999 1000000000000000000000000 121932631112635269
 import Ashes.IO as io
-import Ashes.BigInt as big
+import Ashes.Number.BigInt as big
 let a = 123N
 
 let b = 999999999999999999999999999999N

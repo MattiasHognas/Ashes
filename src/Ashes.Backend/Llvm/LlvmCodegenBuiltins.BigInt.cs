@@ -4,7 +4,7 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
-    // Ashes.BigInt
+    // Ashes.Number.BigInt
     // BigInt values are heap pointers to { i64 header = (negFlag<<32)|limbCount, i64 limb[...] },
     // sign-magnitude, base 2^64, little-endian, normalized (zero = header 0, no limbs).
     //

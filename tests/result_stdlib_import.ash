@@ -1,5 +1,5 @@
 // expect: 42
-import Ashes.Result
+import Ashes.Core.Result
 import Ashes.IO
 match map(given (n) -> n + 1)(Ok(41)) with
     | Ok(value) -> print(value)

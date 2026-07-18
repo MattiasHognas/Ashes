@@ -283,9 +283,9 @@ the target ID.
 | Dependency | Source | Purpose |
 |------------|--------|---------|
 | libLLVM (native) | Downloaded via `scripts/download-llvm-native.*` | LLVM C API (`libLLVM.so` / `libLLVM.dll`) |
-| Mbed TLS (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-mbedtls.sh`) | TLS runtime for `Ashes.Http` / `Ashes.Net.Tls` (`libmbedtls.bc`), linked into programs that use it |
-| openlibm (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-openlibm.sh`) | Transcendental math for `Ashes.Math` Layer 2 (`libopenlibm.bc`), linked into programs that use it |
-| PCRE2 (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-pcre2.sh`) | Regular-expression engine for `Ashes.Regex` (`libpcre2.bc`, 8-bit + Unicode, JIT off), linked into programs that use it |
+| Mbed TLS (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-mbedtls.sh`) | TLS runtime for `Ashes.Net.Http` / `Ashes.Net.Tls` (`libmbedtls.bc`), linked into programs that use it |
+| openlibm (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-openlibm.sh`) | Transcendental math for `Ashes.Number.Math` Layer 2 (`libopenlibm.bc`), linked into programs that use it |
+| PCRE2 (bitcode) | Vendored under `runtimes/` (refreshed via `scripts/download-pcre2.sh`) | Regular-expression engine for `Ashes.Text.Regex` (`libpcre2.bc`, 8-bit + Unicode, JIT off), linked into programs that use it |
 
 The compiler talks to LLVM through a thin P/Invoke interop layer
 (`Ashes.Backend/Llvm/Interop/LlvmApi.cs`) — no managed wrapper packages
@@ -319,7 +319,7 @@ The openlibm `libopenlibm.bc` payloads are likewise committed. Re-run
 produced by the clang frontend, every target's payload builds on one host with
 clang alone (no cross toolchain). See *Math runtime model* below.
 
-The PCRE2 `libpcre2.bc` payloads (backing `Ashes.Regex`) are committed and provisioned the same
+The PCRE2 `libpcre2.bc` payloads (backing `Ashes.Text.Regex`) are committed and provisioned the same
 way. Re-run `scripts/download-pcre2.sh` only when updating `Pcre2Version` in
 `Directory.Build.props`. The script compiles the 8-bit PCRE2 library (Unicode on, JIT off) from
 source to per-target bitcode, then `internalize` + `globaldce` strips everything unreachable from
@@ -330,7 +330,7 @@ pass more than four arguments, so it needs the Microsoft x64 calling convention 
 declaration-only stub headers plus a small `memchr`/`strchr`/ctype shim, so no MinGW sysroot is
 required. A compiled pattern (`pcre2_code*`) lives in the bump region, which the arena never
 relocates, so a `Regex` value is a stable handle; per-match scratch is reclaimed by a region cursor
-save/restore around each match. The payload is linked into a program only when it uses `Ashes.Regex`
+save/restore around each match. The payload is linked into a program only when it uses `Ashes.Text.Regex`
 (gated on the regex IR intrinsics), after the program's own optimization passes.
 
 To bump the LLVM version, pass the new version to the download script —
@@ -341,9 +341,9 @@ provision matching payloads.
 
 ### Async & TLS runtime model
 
-Networking (TCP/HTTP) and TLS are **async-only**: the `Ashes.Http` / `Ashes.Net.Tcp`
+Networking (TCP/HTTP) and TLS are **async-only**: the `Ashes.Net.Http` / `Ashes.Net.Tcp`
 / `Ashes.Net.Tls` APIs return `Task(E, A)` and are consumed via `await` /
-`Ashes.Async.run` (the `Task` type is the enforcement — misuse is an ordinary type
+`Ashes.Task.run` (the `Task` type is the enforcement — misuse is an ordinary type
 error). Under the hood these lower to **non-blocking leaf tasks** driven by the
 coroutine/state-machine machinery (`StateMachineTransform.cs` + the LLVM task
 runner): each leaf task carries wait metadata and steps incrementally, returning
@@ -367,11 +367,11 @@ the earliest timer deadline or, when socket/TLS/HTTP leaves are parked, on socke
 readiness — an `epoll_wait` on a persistent epoll set on Linux, or one `WSAPoll`
 over a pollfd array rebuilt from the parked list on Windows — then re-queues the
 parked leaves.
-`Ashes.Async.all` / `race` are **parking composite tasks**: children carry the
+`Ashes.Task.all` / `race` are **parking composite tasks**: children carry the
 composite as their `Waiter`, each completion decrements the composite's counter
 (`all`) or delivers the first result (`race`), and the composite completes to its
 own waiter — a handler blocked in `all` never serializes its peers.
-`Ashes.Async.spawn` enqueues a detached task with a **private arena**
+`Ashes.Task.spawn` enqueues a detached task with a **private arena**
 (`ArenaOwner` = itself): each scheduler step installs the owning task's arena
 cursor as the global bump allocator and writes it back after, sub-tasks inherit
 the awaiter's owner (zero-copy awaits), and a spawned root's arena is reaped when
@@ -427,9 +427,9 @@ ownership scope resets the arena (subject to the usual conservative escape rules
 in `Lowering.Ownership.cs`), and a spawned root task's private arena is freed by
 the scheduler when the task completes. Task execution is **single-threaded on
 the calling thread** — the scheduler steps every task on the thread that invoked
-`Ashes.Async.run` (concurrency, not parallelism), so all task allocations land
+`Ashes.Task.run` (concurrency, not parallelism), so all task allocations land
 in that thread's arenas and never alias another thread's heap. One structural
-restriction follows from the layout: a parallel fork/join (`Ashes.Parallel.both`)
+restriction follows from the layout: a parallel fork/join (`Ashes.Task.Parallel.both`)
 must not straddle an `await`, because the worker descriptor and worker arena are
 not serialized into the state struct; the transform asserts this.
 
@@ -452,12 +452,12 @@ bundles, pinning), SNI / multiple certificates, ALPN, HTTP/2, HTTP/3.
 #### Server runtime: multi-reactor and graceful shutdown
 
 A server is not a new runtime — it is the composition already described: the run-queue
-scheduler (one cooperative poll loop per process), `Ashes.Async.spawn` (each accepted
+scheduler (one cooperative poll loop per process), `Ashes.Task.spawn` (each accepted
 connection's handler is a detached task with a private arena reaped on completion, so
 resident memory is bounded under sustained load), and the async tail-recursive loop
 transform (the accept loop and each connection's keep-alive loop are single suspending
 coroutines with the per-iteration arena reset). `Ashes.Net.Tcp.Server.serve` /
-`Ashes.Http.Server.serve` / `serveTls` return the lifecycle `Task(E, ())`: `Ok(())`
+`Ashes.Net.Http.Server.serve` / `serveTls` return the lifecycle `Task(E, ())`: `Ok(())`
 is a clean stop, `Error(...)` a bind/listener failure.
 
 `serve` is a **multi-reactor prefork** — one independent reactor process per online CPU,
@@ -491,7 +491,7 @@ same drain from inside a handler — a worker signals the parent, so it stops th
 
 ### Math runtime model
 
-`Ashes.Math` is delivered in two layers with no runtime dependency in either.
+`Ashes.Number.Math` is delivered in two layers with no runtime dependency in either.
 
 **Layer 1 (hermetic core).** The integer helpers and pure-Float helpers ship as
 ordinary Ashes in `lib/Ashes/Math.ash`; `sqrt`/`floor`/`ceil`/`round`/`trunc`
@@ -522,7 +522,7 @@ float/long-double/complex/gamma/bessel source variants; a few forwarding shims).
 
 ### BigInt (arbitrary-precision integers)
 
-`BigInt` is a native primitive (`Ashes.BigInt`), consistent with `Int`/`Float`/`u8`–`u64` being
+`BigInt` is a native primitive (`Ashes.Number.BigInt`), consistent with `Int`/`Float`/`u8`–`u64` being
 native. It is an **immutable, arena-allocated heap value** — a pointer to
 `{ i64 header, i64 limb[…] }` where `header = (negFlag << 32) | limbCount`, the magnitude is
 sign-magnitude base-2^64 little-endian, and the form is normalized (no leading-zero limbs; zero is
@@ -543,7 +543,7 @@ division (Knuth Algorithm D is a documented performance follow-up).
 
 Because values are immutable and arena-allocated, a growing bignum in a tight loop churns the arena;
 that cost is deliberate (there is no GC or reference counting) and is what the pidigits challenge
-exercises. `Int↔BigInt` conversions live in `Ashes.BigInt` (`fromInt`/`toInt`); string conversions
+exercises. `Int↔BigInt` conversions live in `Ashes.Number.BigInt` (`fromInt`/`toInt`); string conversions
 live in `Ashes.Text` (`fromBigInt`/`parseBigInt`), matching `fromInt`/`parseInt`.
 
 ---
@@ -625,7 +625,7 @@ flowchart TD
 
 ### Per-thread arenas (structured parallelism)
 
-The single-arena description above is per **thread**. When `Ashes.Parallel.both`
+The single-arena description above is per **thread**. When `Ashes.Task.Parallel.both`
 forks a worker, that worker runs on its own bump arena so the two threads never
 race on the shared heap-cursor globals:
 
@@ -645,7 +645,7 @@ race on the shared heap-cursor globals:
 
 The number of workers a fork may spawn is capped. The **compiled maximum** is a
 fixed `--parallel-workers` constant or, when unset, the once-detected core count
-(cached in `__ashes_parallel_cap`). `Ashes.Parallel.withWorkers(count)(action)`
+(cached in `__ashes_parallel_cap`). `Ashes.Task.Parallel.withWorkers(count)(action)`
 adds a dynamically-scoped **override**: it saves the previous value of the
 `__ashes_parallel_override` global, stores `count`, runs the thunk, and restores
 the old value on return (a compiler intrinsic, not a runtime function). The fork
@@ -711,7 +711,7 @@ recursion depth is bounded by these sizes:
   (`SizeOfStackReserve`, 4 KiB initially committed). The reserve can be
   overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
   environment variable read by the PE linker.
-- **Parallel workers.** `Ashes.Parallel` workers get 1 MiB by default —
+- **Parallel workers.** `Ashes.Task.Parallel` workers get 1 MiB by default —
   `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
   the `--parallel-stack-size` CLI flag.
 
@@ -771,7 +771,7 @@ recursion depth is bounded by these sizes:
   (`SizeOfStackReserve`, 4 KiB initially committed). The reserve can be
   overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
   environment variable read by the PE linker.
-- **Parallel workers.** `Ashes.Parallel` workers get 1 MiB by default —
+- **Parallel workers.** `Ashes.Task.Parallel` workers get 1 MiB by default —
   `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
   the `--parallel-stack-size` CLI flag.
 
@@ -851,7 +851,7 @@ The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler`
 `AllocStack` / `Alloc` / `StoreMemOffset` / `LoadMemOffset` / `CallClosure` / label machinery.
 
 Current limitations: the evidence globals are per-process, so installing or using handlers
-across `Ashes.Parallel` workers is unspecified (per-thread evidence belongs with the TLS arena
+across `Ashes.Task.Parallel` workers is unspecified (per-thread evidence belongs with the TLS arena
 work), and a `handle` whose body suspends (`await`) is unspecified — handler frames are
 stack-allocated and do not survive coroutine suspension.
 

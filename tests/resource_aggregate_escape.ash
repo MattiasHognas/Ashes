@@ -4,11 +4,11 @@
 // user: storing a resource into an aggregate moves ownership into it, so the arm must not close the
 // fh (the aggregate analog of the escaping-closure case). Before the fix
 // the escaped Some(fh) held a closed fd and this read "read-err".
-import Ashes.File
-import Ashes.Maybe
+import Ashes.IO.File
+import Ashes.Core.Maybe
 import Ashes.IO
 let wrapped =
-    match Ashes.File.open("agg_escape_input.txt") with
+    match Ashes.IO.File.open("agg_escape_input.txt") with
         | Error(_e) -> None
         | Ok(h) -> Some(h)
 
@@ -16,7 +16,7 @@ let result =
     match wrapped with
         | None -> "none"
         | Some(h2) ->
-            match Ashes.File.readChunk(h2)(5) with
+            match Ashes.IO.File.readChunk(h2)(5) with
                 | Error(_) -> "read-err"
                 | Ok(chunk) -> chunk
 in Ashes.IO.print(result)

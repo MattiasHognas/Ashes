@@ -1,8 +1,7 @@
 import Resp
-import Ashes.Bytes as bytes
+import Ashes.Byte as bytes
 import Ashes.Text as text
-import Ashes.UInt as uint
-
+import Ashes.Number.UInt as uint
 let lowerCode c =
     (let code =
         0

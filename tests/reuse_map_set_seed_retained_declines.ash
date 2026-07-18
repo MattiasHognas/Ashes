@@ -1,7 +1,7 @@
 // expect: 100 999
 // CO-2c soundness discriminator: a Map.set RESULT that is RETAINED must NOT be moved into a reuse fold.
 //
-// `w = Ashes.Map.set(0)(100)(empty)` is a Map.set result — an admissible move seed IN ISOLATION under
+// `w = Ashes.Collection.Map.set(0)(100)(empty)` is a Map.set result — an admissible move seed IN ISOLATION under
 // CO-2c. But here it is RETAINED: `keep = w` reads it after `bump(3)(w)`. Because `w` is used twice it
 // is not move-linear, so the analysis DECLINES to elide `bump`'s entry deep-copy (the move admission is
 // gated on move-linearity, not merely on the seed being a Map.set result). The kept copy makes `bump`'s
@@ -9,7 +9,7 @@
 // `keep` still reads the ORIGINAL value 100. If the copy were wrongly elided, `bump` would rewrite w's
 // node in place and `keep` would read the corrupted 999 — so `100 999` (not `999 999`) proves the
 // decline and the soundness of the elision gate.
-import Ashes.Map
+import Ashes.Collection.Map
 import Ashes.IO
 import Ashes.Text
 let cmp a b =
@@ -21,16 +21,16 @@ let cmp a b =
         else 1
 
 let valOf d k m =
-    match Ashes.Map.get(cmp)(k)(m) with
+    match Ashes.Collection.Map.get(cmp)(k)(m) with
         | None -> d
         | Some(v) -> v
 
 let recursive bump n acc =
     if n <= 0
     then acc
-    else bump(n - 1)(Ashes.Map.set(cmp)(0)(999)(acc))
+    else bump(n - 1)(Ashes.Collection.Map.set(cmp)(0)(999)(acc))
 
-let w = Ashes.Map.set(cmp)(0)(100)(Ashes.Map.empty)
+let w = Ashes.Collection.Map.set(cmp)(0)(100)(Ashes.Collection.Map.empty)
 
 let keep = w
 

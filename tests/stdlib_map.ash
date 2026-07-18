@@ -1,5 +1,5 @@
 // expect: ok
-import Ashes.Map
+import Ashes.Collection.Map
 import Ashes.IO
 import Ashes.Text
 let compareInt left right =
@@ -10,36 +10,36 @@ let compareInt left right =
         then -1
         else 1
 in
-    let map = Ashes.Map.set(compareInt)(3)("three")(Ashes.Map.set(compareInt)(1)("one")(Ashes.Map.set(compareInt)(2)("two updated")(Ashes.Map.empty)))
+    let map = Ashes.Collection.Map.set(compareInt)(3)("three")(Ashes.Collection.Map.set(compareInt)(1)("one")(Ashes.Collection.Map.set(compareInt)(2)("two updated")(Ashes.Collection.Map.empty)))
     in
-        let fromListMap = Ashes.Map.fromList(compareInt)((4, "four") :: (2, "two") :: [])
+        let fromListMap = Ashes.Collection.Map.fromList(compareInt)((4, "four") :: (2, "two") :: [])
         in
-            let merged = Ashes.Map.set(compareInt)(4)("four")(map)
+            let merged = Ashes.Collection.Map.set(compareInt)(4)("four")(map)
             in
                 let summary =
-                    Ashes.Map.foldLeft(given (acc) ->
+                    Ashes.Collection.Map.foldLeft(given (acc) ->
                         given (key) ->
                             given (value) -> acc + Ashes.Text.fromInt(key) + "=" + value + ";")("")(merged)
                 in
-                    match Ashes.Map.get(compareInt)(2)(merged) with
+                    match Ashes.Collection.Map.get(compareInt)(2)(merged) with
                         | None -> Ashes.IO.print("fail")
                         | Some(two) ->
-                            match Ashes.Map.get(compareInt)(4)(fromListMap) with
+                            match Ashes.Collection.Map.get(compareInt)(4)(fromListMap) with
                                 | None -> Ashes.IO.print("fail")
                                 | Some(four) ->
-                                    if Ashes.Map.contains(compareInt)(1)(merged)
+                                    if Ashes.Collection.Map.contains(compareInt)(1)(merged)
                                     then
-                                        if Ashes.Map.contains(compareInt)(5)(merged)
+                                        if Ashes.Collection.Map.contains(compareInt)(5)(merged)
                                         then Ashes.IO.print("fail")
                                         else
-                                            if Ashes.Map.isEmpty(Ashes.Map.empty)
+                                            if Ashes.Collection.Map.isEmpty(Ashes.Collection.Map.empty)
                                             then
-                                                if Ashes.Map.isEmpty(merged)
+                                                if Ashes.Collection.Map.isEmpty(merged)
                                                 then Ashes.IO.print("fail")
                                                 else
-                                                    if Ashes.Map.size(merged) == 4
+                                                    if Ashes.Collection.Map.size(merged) == 4
                                                     then
-                                                        if Ashes.Map.size(fromListMap) == 2
+                                                        if Ashes.Collection.Map.size(fromListMap) == 2
                                                         then
                                                             if two == "two updated"
                                                             then

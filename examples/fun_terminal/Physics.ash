@@ -1,6 +1,5 @@
 import Input as input
-import Ashes.Math as math
-
+import Ashes.Number.Math as math
 let courtWidth = 62
 
 let courtHeight = 18
