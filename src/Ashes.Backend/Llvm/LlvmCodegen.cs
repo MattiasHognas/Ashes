@@ -226,6 +226,7 @@ internal static partial class LlvmCodegen
             Backends.TargetIds.LinuxX64 => CompileLinux(program, options),
             Backends.TargetIds.LinuxArm64 => CompileLinuxArm64(program, options),
             Backends.TargetIds.WindowsX64 => CompileWindows(program, options),
+            Backends.TargetIds.WindowsArm64 => CompileWindowsArm64(program, options),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
     }
@@ -254,6 +255,27 @@ internal static partial class LlvmCodegen
         LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsX64);
         byte[] objectBytes = EmitObjectCode(target);
         return LlvmImageLinker.LinkWindowsExecutable(objectBytes, "entry", null, GetExternalLibraries(program));
+    }
+
+    private static byte[] CompileWindowsArm64(IrProgram program, BackendCompileOptions options)
+    {
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
+        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
+        bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
+        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsArm64, options, usesTlsRuntime);
+
+        VerifyModule(target);
+        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        if (options.EmitDebugInfo)
+        {
+            VerifyModule(target);
+        }
+
+        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsArm64);
+        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.WindowsArm64);
+        LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.WindowsArm64);
+        byte[] objectBytes = EmitObjectCode(target);
+        return LlvmImageLinker.LinkWindowsArm64Executable(objectBytes, "entry", null, GetExternalLibraries(program));
     }
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
@@ -442,7 +464,7 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static void EmitGlibcRuntimeMarker(LlvmTargetContext target, LlvmCodegenFlavor flavor, bool usesTlsRuntime, LlvmTypeHandle i8)
     {
-        if (!usesTlsRuntime || flavor == LlvmCodegenFlavor.WindowsX64)
+        if (!usesTlsRuntime || IsWindowsFlavor(flavor))
         {
             return;
         }
@@ -585,7 +607,7 @@ internal static partial class LlvmCodegen
 
     private static EmitProgramModuleFlags EmitProgramModuleComputeFlags(IrProgram program, LlvmCodegenFlavor flavor)
     {
-        bool isWindows = flavor == LlvmCodegenFlavor.WindowsX64;
+        bool isWindows = IsWindowsFlavor(flavor);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
         bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
         bool usesWindowsStdout = isWindows
@@ -855,7 +877,7 @@ internal static partial class LlvmCodegen
     private static void EmitProgramModuleImportsCert(
         LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags, EmitProgramModuleImports imports)
     {
-        if (flavor == LlvmCodegenFlavor.WindowsX64 && flags.UsesNetworkingRuntimeAbi)
+        if (IsWindowsFlavor(flavor) && flags.UsesNetworkingRuntimeAbi)
         {
             imports.WindowsCertOpenSystemStoreImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_CertOpenSystemStoreA");
             LlvmApi.SetLinkage(imports.WindowsCertOpenSystemStoreImport, LlvmLinkage.External);
@@ -877,7 +899,7 @@ internal static partial class LlvmCodegen
             LlvmApi.SetLinkage(imports.WindowsExitProcessImport, LlvmLinkage.External);
         }
 
-        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(flavor))
         {
             imports.WindowsVirtualAllocImport = LlvmApi.AddGlobal(target.Module, LlvmApi.PointerTypeInContext(target.Context, 0), "__imp_VirtualAlloc");
             LlvmApi.SetLinkage(imports.WindowsVirtualAllocImport, LlvmLinkage.External);
@@ -1042,7 +1064,7 @@ internal static partial class LlvmCodegen
         bool usesWorkerOverride = ProgramUsesInstruction<IrInst.LoadParallelWorkerOverride>(program);
         if (ProgramUsesInstruction<IrInst.ParallelFork>(program) || usesParallelQueue || usesWorkerOverride)
         {
-            if (flavor == LlvmCodegenFlavor.WindowsX64)
+            if (IsWindowsFlavor(flavor))
             {
                 // Worker spawn/join on win-x64 uses these kernel32 imports (looked up by name in
                 // LlvmCodegenParallel). VirtualAlloc/VirtualFree are already created above for every
@@ -1297,6 +1319,7 @@ internal static partial class LlvmCodegen
             LlvmCodegenFlavor.LinuxX64 => Backends.TargetIds.LinuxX64,
             LlvmCodegenFlavor.LinuxArm64 => Backends.TargetIds.LinuxArm64,
             LlvmCodegenFlavor.WindowsX64 => Backends.TargetIds.WindowsX64,
+            LlvmCodegenFlavor.WindowsArm64 => Backends.TargetIds.WindowsArm64,
             _ => throw new ArgumentOutOfRangeException(nameof(flavor), $"Unsupported codegen flavor '{flavor}'.")
         };
     }
@@ -1501,15 +1524,16 @@ internal static partial class LlvmCodegen
     private static LlvmCodegenState EmitFunctionBodyLinuxArenaSetup(
         LlvmCodegenState state, LlvmCodegenFlavor flavor, bool isEntry)
     {
-        if (flavor != LlvmCodegenFlavor.LinuxX64 && flavor != LlvmCodegenFlavor.WindowsX64)
+        if (flavor != LlvmCodegenFlavor.LinuxX64 && !IsWindowsFlavor(flavor))
         {
             return state;
         }
 
         // Recover this thread's TCB base and address the arena cursor/end (and to-space/blob)
         // through it as ordinary pointers, so worker threads get their own arenas. On linux the
-        // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on win-x64
-        // the TCB pointer lives in TEB+0x28 (the OS provides the GS-based TEB, so no arch_prctl).
+        // entry sets up GS (arch_prctl) + the TCB self-pointer and others read %gs:0; on Windows
+        // the TCB pointer lives in TEB+0x28 (win-x64 reaches the TEB via GS, win-arm64 via x18;
+        // the OS provides the TEB, so no arch_prctl).
         LlvmValueHandle tcbBase;
         if (flavor == LlvmCodegenFlavor.LinuxX64)
         {
@@ -2078,7 +2102,8 @@ internal static partial class LlvmCodegen
     {
         LinuxX64,
         LinuxArm64,
-        WindowsX64
+        WindowsX64,
+        WindowsArm64
     }
 
     private static bool IsLinuxFlavor(LlvmCodegenFlavor flavor) =>
@@ -2086,6 +2111,13 @@ internal static partial class LlvmCodegen
 
     private static bool IsLinuxArm64Flavor(LlvmCodegenFlavor flavor) =>
         flavor == LlvmCodegenFlavor.LinuxArm64;
+
+    private static bool IsWindowsFlavor(LlvmCodegenFlavor flavor) =>
+        flavor is LlvmCodegenFlavor.WindowsX64 or LlvmCodegenFlavor.WindowsArm64;
+
+    // Windows-on-ARM64: AArch64 instruction/register model with the Windows PE/import ABI.
+    private static bool IsArm64Flavor(LlvmCodegenFlavor flavor) =>
+        flavor is LlvmCodegenFlavor.LinuxArm64 or LlvmCodegenFlavor.WindowsArm64;
 
     /// <summary>
     /// Emits local <c>memcpy</c> and <c>memset</c> function implementations so that LLVM's

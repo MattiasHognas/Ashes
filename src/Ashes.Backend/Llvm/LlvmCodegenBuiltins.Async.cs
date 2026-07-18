@@ -1083,7 +1083,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitRequestServerStop(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), ShutdownFlagGlobal(state));
             return LlvmApi.ConstInt(state.I64, 0, 0);

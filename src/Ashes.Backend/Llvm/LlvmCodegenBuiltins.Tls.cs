@@ -30,7 +30,7 @@ internal static partial class LlvmCodegen
             state.Target.Builder,
             LlvmIntPredicate.Eq,
             ioResult,
-            state.Flavor == LlvmCodegenFlavor.WindowsX64
+            IsWindowsFlavor(state.Flavor)
                 ? LlvmApi.ConstInt(state.I32, WindowsWsaErrorWouldBlock, 0)
                 : LlvmApi.ConstInt(state.I32, unchecked((ulong)(-LinuxErrWouldBlock)), 0),
             name);

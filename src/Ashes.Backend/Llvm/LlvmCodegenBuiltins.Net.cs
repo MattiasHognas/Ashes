@@ -108,7 +108,7 @@ internal static partial class LlvmCodegen
 
     private static (LlvmValueHandle Read, LlvmValueHandle Write) EmitNetworkingMbedTlsCallbacks(in NetworkingAbiContext ctx)
     {
-        if (!IsLinuxFlavor(ctx.Flavor) && ctx.Flavor != LlvmCodegenFlavor.WindowsX64)
+        if (!IsLinuxFlavor(ctx.Flavor) && !IsWindowsFlavor(ctx.Flavor))
         {
             return (default, default);
         }
@@ -216,7 +216,7 @@ internal static partial class LlvmCodegen
         DeclareNetworkingRuntimeFunction(target, "ashes_scheduler_run", LlvmApi.FunctionType(i64, [i64]));
         DeclareNetworkingRuntimeFunction(target, "ashes_detached_wait_meta", LlvmApi.FunctionType(i64, []));
         DeclareNetworkingRuntimeFunction(target, "ashes_detached_advance_timers", LlvmApi.FunctionType(i64, [i64]));
-        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(flavor))
         {
             DeclareNetworkingRuntimeFunction(target, "ashes_detached_fill_pollfds", LlvmApi.FunctionType(i64, [i64, i64]));
         }
@@ -247,7 +247,7 @@ internal static partial class LlvmCodegen
         EmitNetworkingRuntimeFunction(ctx, "ashes_http_post", LlvmApi.FunctionType(i64, [i64, i64]),
             (state, fn) => EmitHttpRequest(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1), hasBody: true));
         EmitNetworkingRuntimeFunction(ctx, "ashes_tls_runtime_init", LlvmApi.FunctionType(i64, []),
-            (state, _) => IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64
+            (state, _) => IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor)
                 ? EmitEnsureTlsRuntimeInitialized(state, linuxTlsGlobals, usesTlsRuntime, "tls_runtime_init")
                 : LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tcp_connect_task", LlvmApi.FunctionType(i64, [i64]),
@@ -271,23 +271,23 @@ internal static partial class LlvmCodegen
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_connect_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
             (state, fn) => EmitStepTlsConnectTask(state, LlvmApi.GetParam(fn, 0)));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_handshake_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
-            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor))
                 ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS handshake runtime is not implemented yet", "step_tls_handshake_todo"));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_server_handshake_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
-            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor))
                 ? EmitStepTlsHandshakeTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals, serverSide: true)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes server TLS handshake runtime is not implemented yet", "step_tls_server_handshake_todo"));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_send_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
-            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor))
                 ? EmitStepTlsSendTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS send runtime is not implemented yet", "step_tls_send_todo"));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_receive_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
-            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor))
                 ? EmitStepTlsReceiveTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS receive runtime is not implemented yet", "step_tls_receive_todo"));
         EmitNetworkingRuntimeFunction(ctx, "ashes_step_tls_close_task", LlvmApi.FunctionType(ctx.I64, [ctx.I64]),
-            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || state.Flavor == LlvmCodegenFlavor.WindowsX64)
+            (state, fn) => usesTlsRuntime && (IsLinuxFlavor(state.Flavor) || IsWindowsFlavor(state.Flavor))
                 ? EmitStepTlsCloseTask(state, LlvmApi.GetParam(fn, 0), linuxTlsGlobals)
                 : EmitStepTlsTodoTask(state, LlvmApi.GetParam(fn, 0), "Ashes TLS close runtime is not implemented yet", "step_tls_close_todo"));
     }
@@ -311,7 +311,7 @@ internal static partial class LlvmCodegen
             (state, fn) => EmitDetachedWaitMetaBody(state));
         EmitNetworkingRuntimeFunction(ctx, "ashes_detached_advance_timers", LlvmApi.FunctionType(i64, [i64]),
             (state, fn) => EmitDetachedAdvanceTimersBody(state, LlvmApi.GetParam(fn, 0)));
-        if (ctx.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(ctx.Flavor))
         {
             EmitNetworkingRuntimeFunction(ctx, "ashes_detached_fill_pollfds", LlvmApi.FunctionType(i64, [i64, i64]),
                 (state, fn) => EmitDetachedFillPollFdsBody(state, LlvmApi.GetParam(fn, 0), LlvmApi.GetParam(fn, 1)));
@@ -399,7 +399,7 @@ internal static partial class LlvmCodegen
 
         (LlvmValueHandle mbedTlsReadCallback, LlvmValueHandle mbedTlsWriteCallback) = EmitNetworkingMbedTlsCallbacks(ctx);
 
-        LinuxTlsGlobals linuxTlsGlobals = IsLinuxFlavor(flavor) || flavor == LlvmCodegenFlavor.WindowsX64
+        LinuxTlsGlobals linuxTlsGlobals = IsLinuxFlavor(flavor) || IsWindowsFlavor(flavor)
             ? new LinuxTlsGlobals(
                 CreateNetworkingInternalI64Global(target, i64, "__ashes_tls_init_status"),
                 CreateNetworkingInternalI64Global(target, i64, "__ashes_tls_ctx"),

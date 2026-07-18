@@ -13,10 +13,10 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--path <dir>]] [[--dev]]");
@@ -58,7 +58,7 @@ static string DeriveOutputPath(string inputPath, string targetId)
     var dir = Path.GetDirectoryName(inputPath);
     var name = Path.GetFileNameWithoutExtension(inputPath);
 
-    var outName = string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name;
+    var outName = TargetIds.IsWindows(targetId) ? name + ".exe" : name;
     return string.IsNullOrWhiteSpace(dir) ? outName : Path.Combine(dir!, outName);
 }
 
@@ -124,7 +124,7 @@ static string DeriveProjectOutputPath(AshesProject project, string targetId)
         ? project.Name!
         : Path.GetFileNameWithoutExtension(project.EntryPath);
 
-    if (string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal))
+    if (TargetIds.IsWindows(targetId))
     {
         outputName += ".exe";
     }
@@ -291,7 +291,7 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunImageCaptureA
     Directory.CreateDirectory(tmpDir);
 
     var name = "ashes_" + Guid.NewGuid().ToString("N");
-    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
+    var exePath = Path.Combine(tmpDir, TargetIds.IsWindows(targetId) ? name + ".exe" : name);
 
     await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
     SetUnixExecutableModeIfSupported(exePath);
@@ -323,7 +323,7 @@ static async Task<int> RunImageWithInheritedStdioAsync(byte[] image, string targ
     Directory.CreateDirectory(tmpDir);
 
     var name = "ashes_" + Guid.NewGuid().ToString("N");
-    var exePath = Path.Combine(tmpDir, string.Equals(targetId, TargetIds.WindowsX64, StringComparison.Ordinal) ? name + ".exe" : name);
+    var exePath = Path.Combine(tmpDir, TargetIds.IsWindows(targetId) ? name + ".exe" : name);
 
     await File.WriteAllBytesAsync(exePath, image).ConfigureAwait(false);
     SetUnixExecutableModeIfSupported(exePath);
@@ -604,7 +604,7 @@ async Task<int> RunCompileAsync(string[] a)
         ? DeriveProjectOutputPath(project, target)
         : arguments.InputFile is not null
             ? DeriveOutputPath(arguments.InputFile, target)
-            : "out" + (string.Equals(target, TargetIds.WindowsX64, StringComparison.Ordinal) ? ".exe" : ""));
+            : "out" + (TargetIds.IsWindows(target) ? ".exe" : ""));
 
     var outDir = Path.GetDirectoryName(outPath);
     if (!string.IsNullOrWhiteSpace(outDir))
@@ -872,7 +872,7 @@ static void PrintReplHelp()
     AnsiConsole.MarkupLine("  [yellow]:help[/]   Show this help");
     AnsiConsole.MarkupLine("  [yellow]:quit[/]   Exit");
     AnsiConsole.MarkupLine("  [yellow]:target[/] Show current target");
-    AnsiConsole.MarkupLine("  [yellow]:target linux-x64|linux-arm64|win-x64[/]  Change target");
+    AnsiConsole.MarkupLine("  [yellow]:target linux-x64|linux-arm64|win-x64|win-arm64[/]  Change target");
     AnsiConsole.MarkupLine("  [yellow]let name = ... in name[/]  Persist a binding in the session");
 }
 
@@ -884,14 +884,14 @@ static void HandleReplTargetCommand(string trimmedFirst, ref string target)
         AnsiConsole.MarkupLine($"Target: [bold]{target}[/]");
         return;
     }
-    if (parts.Length == 2 && (string.Equals(parts[1], TargetIds.LinuxX64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.LinuxArm64, StringComparison.Ordinal) || string.Equals(parts[1], TargetIds.WindowsX64, StringComparison.Ordinal)))
+    if (parts.Length == 2 && TargetIds.IsKnown(parts[1]))
     {
         target = parts[1];
         AnsiConsole.MarkupLine($"Target set to [bold]{target}[/]");
         return;
     }
 
-    AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|linux-arm64|win-x64");
+    AnsiConsole.MarkupLine("[red]Error:[/] Usage: :target linux-x64|linux-arm64|win-x64|win-arm64");
 }
 
 static async Task ProcessReplSubmissionAsync(List<ReplBinding> sessionBindings, List<string> buffer, string target, BackendCompileOptions backendOptions)

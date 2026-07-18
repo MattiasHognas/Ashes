@@ -72,7 +72,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle stdinHandle = default;
         LlvmValueHandle bytesReadSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             stdinHandle = EmitWindowsGetStdHandle(state, StdInputHandle, "stdin_handle");
             bytesReadSlot = ReadLineScratchGlobal(state, "__ashes_readline_bytes_read", state.I32);
@@ -692,7 +692,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle stdinHandle = default;
         LlvmValueHandle bytesReadSlot = default;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             stdinHandle = EmitWindowsGetStdHandle(state, StdInputHandle, "re_stdin_handle");
             bytesReadSlot = LlvmApi.BuildAlloca(builder, state.I32, "re_bytes_read");

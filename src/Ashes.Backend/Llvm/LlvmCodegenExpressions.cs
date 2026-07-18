@@ -125,7 +125,7 @@ internal static partial class LlvmCodegen
         var llvmParameterTypes = parameterTypes.Select(type => GetLlvmFfiType(state, type)).ToArray();
         LlvmTypeHandle functionType = LlvmApi.FunctionType(llvmReturnType, llvmParameterTypes);
         LlvmValueHandle function;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             if (string.IsNullOrWhiteSpace(libraryName))
             {
@@ -2404,7 +2404,7 @@ internal static partial class LlvmCodegen
         // Socket waits on Windows need the WSAPoll import, which exists exactly when the program
         // uses the networking runtime; without it no socket leaf can ever park, so the timer-only
         // sleep below is complete.
-        bool windowsSockets = state.Flavor == LlvmCodegenFlavor.WindowsX64
+        bool windowsSockets = IsWindowsFlavor(state.Flavor)
             && state.WindowsWsaPollImport.Ptr != 0;
 
         LlvmValueHandle minSlot = LlvmApi.BuildAlloca(builder, state.I64, "saw_min_slot");
@@ -2510,7 +2510,7 @@ internal static partial class LlvmCodegen
     private static void EmitAggregateWaitRegisterSocket(LlvmCodegenState state, in AggregateWaitContext ctx, LlvmValueHandle scanKind, LlvmValueHandle scanCur)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        bool windowsSockets = state.Flavor == LlvmCodegenFlavor.WindowsX64 && state.WindowsWsaPollImport.Ptr != 0;
+        bool windowsSockets = IsWindowsFlavor(state.Flavor) && state.WindowsWsaPollImport.Ptr != 0;
         if (IsLinuxFlavor(state.Flavor))
         {
             LlvmValueHandle readish = LlvmApi.BuildOr(builder,
@@ -2552,7 +2552,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle maxVal = LlvmApi.ConstInt(state.I64, unchecked((ulong)long.MaxValue), 0);
-        bool windowsSockets = state.Flavor == LlvmCodegenFlavor.WindowsX64 && state.WindowsWsaPollImport.Ptr != 0;
+        bool windowsSockets = IsWindowsFlavor(state.Flavor) && state.WindowsWsaPollImport.Ptr != 0;
 
         LlvmValueHandle minRem = LlvmApi.BuildLoad2(builder, state.I64, ctx.MinSlot, "saw_min");
         LlvmValueHandle sleepMs = LlvmApi.BuildSelect(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, minRem, maxVal, "saw_no_timer"), zero, minRem, "saw_sleep_ms");

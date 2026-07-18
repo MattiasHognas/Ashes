@@ -417,23 +417,30 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "tcb_base");
     }
 
-    // win-x64 per-thread arena: the TCB base pointer lives in the TEB's ArbitraryUserPointer field
-    // (TEB+0x28, reached via the GS-based TEB), a slot Windows never uses and that is genuinely
-    // per-thread. This mirrors the linux GS:0 self-pointer approach — no TlsAlloc, no collision with a
-    // loaded runtime's TLS indices, and a cheap inline read that LLVM can hoist/CSE.
+    // Windows per-thread arena: the TCB base pointer lives in the TEB's ArbitraryUserPointer field
+    // (TEB+0x28), a slot Windows never uses and that is genuinely per-thread. This mirrors the linux
+    // GS:0 self-pointer approach — no TlsAlloc, no collision with a loaded runtime's TLS indices, and
+    // a cheap inline read that LLVM can hoist/CSE. The TEB is reached via the GS segment on win-x64
+    // and via the reserved x18 register on win-arm64 (Windows-on-ARM dedicates x18 to the TEB base).
     private const int WindowsTebArenaSlotOffset = 0x28;
 
     private static LlvmValueHandle EmitReadTcbBaseFromTeb(LlvmCodegenState state)
     {
         LlvmTypeHandle readType = LlvmApi.FunctionType(state.I64, []);
-        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, $"movq %gs:{WindowsTebArenaSlotOffset}, $0", "=r", false, false);
+        string asm = IsArm64Flavor(state.Flavor)
+            ? $"ldr $0, [x18, #{WindowsTebArenaSlotOffset}]"
+            : $"movq %gs:{WindowsTebArenaSlotOffset}, $0";
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, asm, "=r", false, false);
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "teb_tcb_base");
     }
 
     private static void EmitWriteTcbBaseToTeb(LlvmCodegenState state, LlvmValueHandle tcbAddr)
     {
         LlvmTypeHandle writeType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
-        LlvmValueHandle write = LlvmApi.GetInlineAsm(writeType, $"movq $0, %gs:{WindowsTebArenaSlotOffset}", "r,~{memory}", true, false);
+        string asm = IsArm64Flavor(state.Flavor)
+            ? $"str $0, [x18, #{WindowsTebArenaSlotOffset}]"
+            : $"movq $0, %gs:{WindowsTebArenaSlotOffset}";
+        LlvmValueHandle write = LlvmApi.GetInlineAsm(writeType, asm, "r,~{memory}", true, false);
         LlvmApi.BuildCall2(state.Target.Builder, writeType, write, [tcbAddr], "");
     }
 
@@ -519,7 +526,7 @@ internal static partial class LlvmCodegen
         {
             tcbBase = EmitReadTcbBaseFromGs(state);
         }
-        else if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        else if (IsWindowsFlavor(state.Flavor))
         {
             tcbBase = EmitReadTcbBaseFromTeb(state);
         }

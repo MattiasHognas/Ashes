@@ -97,7 +97,7 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static void EmitParallelRuntime(LlvmTargetContext target, LlvmCodegenFlavor flavor, LlvmAttributeHandle nounwindAttr)
     {
-        if (flavor != LlvmCodegenFlavor.LinuxX64 && flavor != LlvmCodegenFlavor.WindowsX64 && flavor != LlvmCodegenFlavor.LinuxArm64)
+        if (flavor != LlvmCodegenFlavor.LinuxX64 && !IsWindowsFlavor(flavor) && flavor != LlvmCodegenFlavor.LinuxArm64)
         {
             return;
         }
@@ -211,7 +211,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle i64 = state.I64;
-        if (flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(flavor))
         {
             // SYSTEM_INFO is 48 bytes; dwNumberOfProcessors is the DWORD at offset 32.
             LlvmValueHandle infoBuf = EmitStackAlloc(state, 64, "cap_sysinfo");
@@ -417,7 +417,7 @@ internal static partial class LlvmCodegen
         bool runtimeEmitted = LlvmApi.GetNamedFunction(state.Target.Module, ParallelWorkerFnName) != default;
         if (!runtimeEmitted
             || (state.Flavor != LlvmCodegenFlavor.LinuxX64
-                && state.Flavor != LlvmCodegenFlavor.WindowsX64
+                && !IsWindowsFlavor(state.Flavor)
                 && state.Flavor != LlvmCodegenFlavor.LinuxArm64))
         {
             EmitParallelForkInline(state, desc, rightClosure);
@@ -524,7 +524,7 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitParallelJoin(LlvmCodegenState state, LlvmValueHandle desc)
     {
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             LlvmBuilderHandle winBuilder = state.Target.Builder;
             // If the right thunk ran on a worker (mode != 0), block until the thread exits — that both
@@ -582,7 +582,7 @@ internal static partial class LlvmCodegen
 
     private static bool EmitParallelCleanup(LlvmCodegenState state, LlvmValueHandle desc)
     {
-        if (state.Flavor != LlvmCodegenFlavor.LinuxX64 && state.Flavor != LlvmCodegenFlavor.WindowsX64 && state.Flavor != LlvmCodegenFlavor.LinuxArm64)
+        if (state.Flavor != LlvmCodegenFlavor.LinuxX64 && !IsWindowsFlavor(state.Flavor) && state.Flavor != LlvmCodegenFlavor.LinuxArm64)
         {
             return false;
         }
@@ -614,7 +614,7 @@ internal static partial class LlvmCodegen
         // on arm64 (the worker wrote it — its end lives in the TLS block at a link-time tprel offset).
         LlvmValueHandle workerTcb = LoadMemory(state, desc, ParallelDescWorkerTcb, "par_cleanup_tcb");
         LlvmValueHandle arenaEnd;
-        if (state.Flavor == LlvmCodegenFlavor.WindowsX64)
+        if (IsWindowsFlavor(state.Flavor))
         {
             LlvmValueHandle handle = LoadMemory(state, desc, ParallelDescWorkerStack, "par_cleanup_handle");
             LlvmTypeHandle closeHandleType = LlvmApi.FunctionType(state.I32, [state.I64]);
@@ -848,7 +848,7 @@ internal static partial class LlvmCodegen
     /// other flavors. Runtime helpers that allocate, free, or run user closures need these.
     /// </summary>
     private static LlvmCodegenState WithWindowsRuntimeImports(LlvmCodegenState state) =>
-        state.Flavor != LlvmCodegenFlavor.WindowsX64 ? state : state with
+        !IsWindowsFlavor(state.Flavor) ? state : state with
         {
             WindowsVirtualAllocImport = LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_VirtualAlloc"),
             WindowsVirtualFreeImport = LlvmApi.GetNamedGlobal(state.Target.Module, "__imp_VirtualFree"),

@@ -70,6 +70,7 @@ internal sealed class HermeticRuntimeAssets
             TargetIds.LinuxX64 => "linux-x64",
             TargetIds.LinuxArm64 => "linux-arm64",
             TargetIds.WindowsX64 => "win-x64",
+            TargetIds.WindowsArm64 => "win-arm64",
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unsupported hermetic {_displayName} runtime target '{targetId}'.")
         };
 
