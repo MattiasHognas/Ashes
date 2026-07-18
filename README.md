@@ -7,10 +7,10 @@ native executables without runtime dependencies.
 // A tiny order-pricing pipeline.
 // Pure, immutable, strictly typed — iteration is recursion + match, never loops.
 import Ashes.IO as io
-import Ashes.List as list
+import Ashes.Collection.List as list
 import Ashes.Text as text
-import Ashes.Math as math
-import Ashes.Async as async
+import Ashes.Number.Math as math
+import Ashes.Task as async
 
 // An algebraic data type: the drinks on the menu...
 type Drink =
@@ -97,7 +97,7 @@ No GC. No runtime. Just a native binary.
 Ashes compiles `.ash` source files to **standalone native executables**
 (ELF on Linux, PE on Windows) using a compiler written in .NET. The
 produced binaries have **zero runtime dependencies** - no external
-assembler, toolchain, or garbage collector required - and are optimized trough LLVM.
+assembler, toolchain, or garbage collector required - and are optimized through LLVM.
 
 This repository contains the full toolchain:
 - Compiler
@@ -174,7 +174,7 @@ in io.print(sum([1, 2, 3, 4, 5])(0))
 ### Pipelines
 
 ```ash
-import Ashes.Result as result
+import Ashes.Core.Result as result
 import Ashes.Text as text
 import Ashes.IO as io
 
@@ -188,7 +188,7 @@ import Ashes.IO as io
 ### Async/Await
 
 ```ash
-import Ashes.Async as task
+import Ashes.Task as task
 import Ashes.IO as io
 
 let work = 
@@ -256,21 +256,25 @@ in
 
 ## Standard Library
 
-| Module | Purpose |
+The library is organized under ten top-level namespaces:
+
+| Namespace | What's inside |
 |---|---|
-| `Ashes.IO` | Console I/O, `print`, `panic`, `args`, line-based input |
-| `Ashes.File` | UTF-8 file read/write/exists returning `Result` |
-| `Ashes.Http` | HTTP/1.1 GET/POST for `http://` and `https://` URLs |
-| `Ashes.Net.Tcp` | Async TCP client (connect, send, receive, close) |
-| `Ashes.Net.Tls` | Async TLS client (connect, send, receive, close) |
-| `Ashes.Async` | `run`, `fromResult`, `sleep`, `all`, `race` |
-| `Ashes.List` | `map`, `filter`, `fold`, `length`, `head`, `reverse`, ... |
-| `Ashes.Maybe` | Helpers for the built-in `Maybe(T)` type |
-| `Ashes.Result` | Helpers for the built-in `Result(E, A)` type |
-| `Ashes.Text` | Unicode-aware `uncons` plus `parseInt` and `parseFloat` |
+| `Ashes.IO` | Console I/O (`print`, `write`, `writeLine`, `readLine`, `args`), plus `IO.Console` (raw key/mouse terminal input), `IO.File` (read/write/`mmap`/exists), `IO.Process` (subprocesses) |
+| `Ashes.Net` | `Net.Http`(+`.Server`), `Net.Tcp`(+`.Server`), `Net.Tls`(+`.Server`) clients and servers, and `Net.Rpc` (stdio Content-Length message framing) |
+| `Ashes.Number` | `Number.Math` (arithmetic, trig, rounding, conversions), `Number.BigInt` (arbitrary precision), `Number.UInt` (the unsigned-byte ↔ `Int` bridge) |
+| `Ashes.Collection` | `Collection.List`, `.Array`, `.Map`, `.HashMap`, `.HashTrie` — persistent, structure-sharing containers |
+| `Ashes.Text` | Strings and text formats: `uncons`, `split`, `trim`, `join`, `parseInt`/`parseFloat`, `formatFloat`, plus `Text.Regex` (PCRE2) and `Text.Json` |
+| `Ashes.Byte` | Immutable byte sequences with O(1) indexing, hashing, and scanning |
+| `Ashes.Task` | Async tasks (`run`, `sleep`, `all`, `race`, `spawn`) and `Task.Parallel` (data-parallel fork/join over worker threads) |
+| `Ashes.Core` | `Core.Maybe` and `Core.Result` helpers for the built-in option/result types |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types: `Int`, `Float`, `Bool`, `Str`, `Unit`, `Maybe`, `Result`, `List`, `Socket`, `Task`, `TlsSocket`
+Built-in types (always available without imports): `Int`, `Float`, `Bool`, `Str`, `Bytes`,
+`BigInt`, `Unit`, `Maybe(T)`, `Result(E, A)`, `List(T)`, `Task(E, A)`, `Socket`, `TlsSocket`,
+`Process`, `FileHandle`.
+
+Full per-module API: [Standard Library reference](docs/md/reference/standard-library.md).
 
 ---
 
@@ -390,26 +394,15 @@ just release-github 1.2.3    # branch, build, tag, and publish a GitHub Release
 
 ## Examples
 
-Explore the [`examples/`](examples/) directory:
+The [`examples/`](examples/) directory holds four self-contained project examples, each with its
+own `ashes.json` and README:
 
 | Example | What it shows |
 |---|---|
-| [`hello.ash`](examples/hello.ash) | Minimal output |
-| [`pipeline.ash`](examples/pipeline.ash) | Pipeline operator `\|>` |
-| [`color_match.ash`](examples/color_match.ash) | ADTs and pattern matching |
-| [`tail_recursion.ash`](examples/tail_recursion.ash) | Tail-call optimization |
-| [`closures.ash`](examples/closures.ash) | Closures capturing bindings |
-| [`result_flow.ash`](examples/result_flow.ash) | `Result` pipelines |
-| [`stdlib_overview.ash`](examples/stdlib_overview.ash) | Standard library tour |
-| [`text_parsing_demo.ash`](examples/text_parsing_demo.ash) | `Ashes.Text` parsing primitives |
-| [`polymorphism_basics.ash`](examples/polymorphism_basics.ash) | Let-polymorphism |
-| [`io_echo_all.ash`](examples/io_echo_all.ash) | Recursive I/O until EOF |
-| [`http_get.ash`](examples/http_get.ash) | HTTP GET request |
-
-Multi-file project examples: [`project_imports/`](examples/project_imports/),
-[`project_using_libs/`](examples/project_using_libs/),
-[`list_pipeline/`](examples/list_pipeline/),
-[`result_flow/`](examples/result_flow/)
+| [`restful_api/`](examples/restful_api/) | A CRUD todo API over `Ashes.Net.Http.Server` with storage behind a custom `Store` **capability** — the router is a pure request→response function; production satisfies `Store` with a JSON-file `provide`, and the tests swap in an in-memory `handle`, so they run with no socket or file. |
+| [`key_value_store_service/`](examples/key_value_store_service/) | A mini Redis: an in-memory key-value server speaking the RESP wire protocol (works with `redis-cli`), where the store is an accumulator threaded through the recursive accept loop — "mutation" as pure recursion holding state across connections. |
+| [`fun_terminal/`](examples/fun_terminal/) | Real-time terminal **Pong** vs the computer, built on `Ashes.IO.Console` raw key/mouse input with flicker-free ANSI rendering and a pure physics step. |
+| [`3d_application/`](examples/3d_application/) | A raylib **FFI** experiment: an ANSI-free 3D terrain rendered by calling into the vendored raylib shared library through Ashes `external` declarations (using the primitive-only `rlgl` API). |
 
 ---
 
@@ -427,7 +420,7 @@ in the spec; [Memory Model](docs/md/internals/architecture.md#memory-model) in t
 architecture guide.*
 
 **Does Ashes require a runtime?**
-No. `.ash` source compiles directly to a standalone native executable.There
+No. `.ash` source compiles directly to a standalone native executable. There
 is no VM, garbage collector, interpreter, runtime library, or hidden scheduler
 that ships alongside the binary.
 Ashes lowers to LLVM IR and uses LLVM for optimization and native object generation,
@@ -476,13 +469,13 @@ mandelbrot, fannkuch-redux, k-nucleotide, and more).
 **How are the collections implemented?**
 Everything is persistent (immutable, structure-sharing):
 - `List` is a singly-linked cons list — never an array.
-- `Ashes.Array` is an indexed sequence backed by a persistent balanced tree, so
+- `Ashes.Collection.Array` is an indexed sequence backed by a persistent balanced tree, so
   `get`/`set` are `O(log n)` and `set` returns a new array sharing most nodes.
-- `Ashes.Map` is a persistent AVL tree; `Ashes.HashMap` is an AVL tree ordered
-  by `(hash, key)` (no caller-supplied ordering needed); `Ashes.HashTrie` is a
+- `Ashes.Collection.Map` is a persistent AVL tree; `Ashes.Collection.HashMap` is an AVL tree
+  ordered by `(hash, key)` (no caller-supplied ordering needed); `Ashes.Collection.HashTrie` is a
   persistent 16-ary hash trie — the lower-constant-factor alternative at scale.
 
-*Details: [Standard Library](docs/md/reference/standard-library.md#shipped-helper-modules).*
+*Details: [Standard Library](docs/md/reference/standard-library.md#ashescollectionlist).*
 
 **Won't recursion-as-iteration overflow the stack?**
 No — tail calls compile to constant-stack loops, including cross-member tail
@@ -495,7 +488,7 @@ in the spec; [Stacks](docs/md/internals/architecture.md#stacks) in the architect
 **Is sharing data safe?**
 Always. Every value is immutable, so the compiler shares freely instead of
 copying — there is no aliasing hazard by construction. Across threads,
-`Ashes.Parallel` workers run on their own arenas and results are deep-copied
+`Ashes.Task.Parallel` workers run on their own arenas and results are deep-copied
 back at the join, so heaps never alias between threads.
 *Details: [Evaluation Strategy](docs/md/reference/language.md#15-evaluation-strategy)
 in the spec;
@@ -522,7 +515,7 @@ architecture guide.*
 
 **If everything is pure, how do files, networking, and printing work?**
 Through built-in functions under the reserved `Ashes` modules — `Ashes.IO`,
-`Ashes.File`, `Ashes.Net`, `Ashes.Http`, `Ashes.Process`. Ashes is strictly and
+`Ashes.IO.File`, `Ashes.Net`, `Ashes.Net.Http`, `Ashes.IO.Process`. Ashes is strictly and
 sequentially evaluated, so these effects happen in a well-defined order, and the
 purity contract is specifically about values: no function mutates an existing
 binding or value in place. Networking and TLS additionally return `Task(E, A)`
@@ -534,11 +527,11 @@ modules in the standard library; the
 [effects system](docs/md/reference/language.md#20-algebraic-effects-and-handlers).*
 
 **Why not just use Rust?**
-Aside from the obious fact that Rust is a mature and strong programming language 
+Aside from the obvious fact that Rust is a mature and strong programming language 
 while Ashes is a one person experiment that is nowhere close to production ready.. 
 I'd say Ashes is very different at its core and design. Rust gives you explicit 
 ownership, mutation, and low-level control. Ashes deliberately hides all of that: 
-a purely functional model withHindley–Milner type inference, immutable values, 
+a purely functional model with Hindley–Milner type inference, immutable values, 
 and inferred deterministic memory management — native performance and no GC, 
 but without asking the programmer to reason about ownership or lifetimes. 
 If you want manual control over mutation and memory layout, reach for Rust; 
