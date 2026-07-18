@@ -109,6 +109,17 @@ Backend/runtime validation for the other targets can run on a Linux x64 host via
 - **linux-arm64**: executed through `qemu-aarch64` / `qemu-aarch64-static` with an arm64 sysroot
   (e.g. `/usr/aarch64-linux-gnu`). The linux-arm64 coverage helper looks for qemu on `PATH` and at
   the rootless Arch-style location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+- **win-arm64**: **compile-and-link only on an x64 host** — a Windows-on-ARM PE cannot be executed
+  here. Wine on x64 can't load ARM64 PEs, and `qemu-aarch64` runs ELF, not PE. Chaining them
+  (x64 → `qemu-aarch64` → an aarch64 Wine that *does* have `aarch64-windows` PE builtins, e.g.
+  Debian trixie's Wine 10) is *capable* but impractical: under single-core TCG emulation Wine's
+  first-boot (`wineboot`) does not complete in reasonable time (observed: wedged in the `start.exe`
+  phase after 90 min). win-arm64 is therefore validated **structurally** — the C# suite
+  (`WindowsArm64BackendTests`) parses the emitted PE (machine `0xAA64`, imports, resolved
+  relocations) and `verify.sh`/`ci/jobs.sh` cross-compile a program and check the machine field.
+  **Execution validation requires a native aarch64 host** (a real Windows-on-ARM machine, or a
+  native ARM64 Linux box / cloud ARM instance running Wine ≥ 10 with `aarch64-windows`, where there
+  is no qemu tax and `wine app.exe` runs the PE at native speed).
 
 ## CLI entry points
 
