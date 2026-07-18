@@ -42,7 +42,7 @@ the game announces the winner on exit and restores your terminal mode.
 
 ```sh
 cd examples/fun_terminal
-dotnet run --project ../../src/Ashes.Cli -- run --project ashes-test.json
+dotnet run --project ../../src/Ashes.Cli -- test --project ashes-test.json
 ```
 
 The tests are pure: escape-sequence decoding (keys, mouse, partial and unknown

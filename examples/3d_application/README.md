@@ -11,7 +11,7 @@ functions instead. That keeps the call boundary primitive-only.
 Expected run shape:
 
 ```sh
-cd examples/3d
+cd examples/3d_application
 dotnet run --project ../../src/Ashes.Cli -- compile --project ashes.json
 ./out/raylib-3d-terrain
 ```
@@ -21,3 +21,10 @@ binary can find the vendored shared library from `out/` without `LD_LIBRARY_PATH
 Use `compile` rather than `run`: `run` executes a temporary binary under
 `/tmp/ashes`, where `$ORIGIN` no longer points at this example directory.
 Running still requires a graphical X11/Wayland session that raylib/GLFW can open.
+
+## Run the tests
+
+```sh
+cd examples/3d_application
+dotnet run --project ../../src/Ashes.Cli -- test --project ashes-test.json
+```

@@ -5,6 +5,7 @@ import Physics as physics
 import Physics.State
 import Ashes.Console as console
 import Ashes.IO as io
+
 let frameMs = 33
 
 let recursive collectInput pending deadline =

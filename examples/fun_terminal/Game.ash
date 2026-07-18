@@ -3,6 +3,7 @@ import Physics as physics
 import Physics.State
 import Ashes.Math as math
 import Ashes.Text as text
+
 let netColumn = 31
 
 let paddleCell col row playerRow cpuRow =

@@ -1,5 +1,6 @@
 import Ashes.Bytes as bytes
 import Ashes.UInt as uint
+
 let esc = bytes.subText(bytes.appendByte(bytes.empty(Unit))(uint.fromInt(27)))(0)(1)
 
 let reset = esc + "[0m"

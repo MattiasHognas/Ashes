@@ -3,6 +3,7 @@ import Ashes.Json as json
 import Ashes.List as list
 import Ashes.String as str
 import Ashes.Text as text
+
 capability Store =
     | load : Unit -> Str
     | save : Str -> Unit

@@ -1,3 +1,4 @@
+// expect: all tests passed
 import Ansi as ansi
 import Game as game
 import Input as input
@@ -5,11 +6,10 @@ import Physics as physics
 import Physics.State
 import Ashes.IO as io
 import Ashes.String as str
-import Ashes.Test.assertEqual
+import Ashes.Test as test
 import Ashes.Text as text
-let checkText label (expected: Str) (actual: Str) =
-    (let _ = assertEqual(expected)(actual)
-    in io.writeLine("ok - " + label))
+
+let checkText _label (expected: Str) (actual: Str) = test.assertEqual(expected)(actual)
 
 let checkInt label (expected: Int) (actual: Int) =
     actual

@@ -226,6 +226,85 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildMemCpy(builder, destBytes, 1, sourceBytes, 1, length);
     }
 
+    /// <summary>
+    /// Overlap-safe byte copy for the arena copy-out paths. After RestoreArenaState the
+    /// destination is allocated from the reset cursor at or below the still-readable source
+    /// (dest &lt;= src), so the ranges may overlap when the scope allocated less than the copied
+    /// size before the source object. That layout is safe for a forward copy but is undefined
+    /// for llvm.memcpy — at -O2 LLVM vectorizes/reorders the copy and corrupts the overlapping
+    /// tail (observed as record fields taking neighboring fields' values). llvm.memmove is no
+    /// alternative: it lowers to a memmove libcall and Ashes executables link no libc. The copy
+    /// is emitted as a call to a shared helper whose body is an ascending byte loop (each byte
+    /// is read before any later write can reach it precisely because dest &lt;= src); the helper
+    /// carries noinline + no-builtins so LLVM's loop-idiom pass cannot rewrite the loop back
+    /// into a memcpy/memmove libcall.
+    /// </summary>
+    private static void EmitMoveBytes(LlvmCodegenState state, LlvmValueHandle destBytes, LlvmValueHandle sourceBytes, LlvmValueHandle length, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle helper = GetOrEmitMoveBytesHelper(state);
+        LlvmTypeHandle helperType = MoveBytesHelperType(state);
+        LlvmApi.BuildCall2(builder, helperType, helper, [destBytes, sourceBytes, length], "");
+    }
+
+    private const string MoveBytesHelperName = "__ashes_move_bytes";
+
+    private static LlvmTypeHandle MoveBytesHelperType(LlvmCodegenState state) =>
+        LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I8Ptr, state.I8Ptr, state.I64]);
+
+    private static LlvmValueHandle GetOrEmitMoveBytesHelper(LlvmCodegenState state)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, MoveBytesHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, MoveBytesHelperName, MoveBytesHelperType(state));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateStringAttribute(state.Target.Context, "no-builtins", ""));
+
+        LlvmValueHandle destParam = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle srcParam = LlvmApi.GetParam(fn, 1);
+        LlvmValueHandle lenParam = LlvmApi.GetParam(fn, 2);
+
+        var entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        var headBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "move_head");
+        var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "move_body");
+        var exitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "move_exit");
+
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "move_idx");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+        LlvmApi.BuildBr(builder, headBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, headBlock);
+        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "move_i");
+        LlvmValueHandle hasMore = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, index, lenParam, "move_more");
+        LlvmApi.BuildCondBr(builder, hasMore, bodyBlock, exitBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        LlvmValueHandle srcPtr = LlvmApi.BuildGEP2(builder, state.I8, srcParam, [index], "move_src");
+        LlvmValueHandle destPtr = LlvmApi.BuildGEP2(builder, state.I8, destParam, [index], "move_dest");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildLoad2(builder, state.I8, srcPtr, "move_byte"), destPtr);
+        LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), "move_next"), indexSlot);
+        LlvmApi.BuildBr(builder, headBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, exitBlock);
+        LlvmApi.BuildRetVoid(builder);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
+    }
+
     // String header word: bits [0..62] = byte length, bit 63 = "view" flag. An owned string is
     // {len, inline bytes…}; a view is {len|VIEW, backing-bytes-pointer} pointing into another
     // string's bytes (no copy), used by uncons/substring. Views are materialized to owned strings by
@@ -808,7 +887,7 @@ internal static partial class LlvmCodegen
             LlvmValueHandle destPtr = EmitAllocDynamic(state, sizeBytes);
             LlvmValueHandle srcPtrBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
             LlvmValueHandle destPtrBytes = LlvmApi.BuildIntToPtr(builder, destPtr, state.I8Ptr, "copy_out_dest_ptr");
-            EmitCopyBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
+            EmitMoveBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
             LlvmApi.BuildStore(builder, destPtr, resultSlot);
             LlvmApi.BuildBr(builder, mergeBlock);
 
@@ -843,7 +922,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize, cursorSlot, endSlot);
         StoreMemory(state, dynDest, 0, length, "copy_out_str_dest_len");
         LlvmValueHandle dynDestBytes = GetStringBytesPointer(state, dynDest, "copy_out_dest");
-        EmitCopyBytes(state, dynDestBytes, srcBytes, length, "copy_out");
+        EmitMoveBytes(state, dynDestBytes, srcBytes, length, "copy_out");
         return dynDest;
     }
 
@@ -865,7 +944,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle dest = EmitAllocDynamic(state, size);
         LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_bigint_src");
         LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "copy_out_bigint_dest");
-        EmitCopyBytes(state, destBytes, srcBytes, size, "copy_out_bigint");
+        EmitMoveBytes(state, destBytes, srcBytes, size, "copy_out_bigint");
         return dest;
     }
 
@@ -1232,7 +1311,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle newEnv = EmitAllocDynamic(state, envSize);
         LlvmValueHandle envSrcBytes = LlvmApi.BuildIntToPtr(builder, envPtr, state.I8Ptr, "copy_closure_env_src");
         LlvmValueHandle envDestBytes = LlvmApi.BuildIntToPtr(builder, newEnv, state.I8Ptr, "copy_closure_env_dest");
-        EmitCopyBytes(state, envDestBytes, envSrcBytes, envSize, "copy_closure_env");
+        EmitMoveBytes(state, envDestBytes, envSrcBytes, envSize, "copy_closure_env");
         LlvmApi.BuildStore(builder, newEnv, newEnvSlot);
         LlvmApi.BuildBr(builder, envMergeBlock);
 
