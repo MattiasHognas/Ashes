@@ -719,6 +719,29 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void Analyze_with_project_context_should_resolve_whole_module_alias_imports()
+    {
+        var root = CreateTempProjectDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "Helper.ash"),
+                "import Ashes.Text as text\n\nlet describe n = \"n=\" + text.fromInt(n)");
+
+            var mainPath = Path.Combine(root, "Main.ash");
+            const string source = "import Helper\nimport Ashes.IO as io\nio.print(Helper.describe(6))";
+            File.WriteAllText(mainPath, source);
+
+            var diagnostics = DocumentService.Analyze(source, mainPath);
+
+            diagnostics.ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void Analyze_with_project_context_should_allow_imported_Ashes_IO_unqualified_names()
     {
         var root = CreateTempProjectDirectory();

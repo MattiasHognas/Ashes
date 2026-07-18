@@ -1,3 +1,3 @@
-import ApiMock
+import ApiMock as mock
 import Ashes.IO as io
-io.print(ApiMock.runTests(Unit))
+io.print(mock.runTests(Unit))

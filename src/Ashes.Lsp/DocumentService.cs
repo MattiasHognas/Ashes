@@ -59,7 +59,8 @@ public static partial class DocumentService
         string CombinedSource,
         int EntryOffset,
         int BodyStart,
-        IReadOnlySet<string> ImportedStdModules);
+        IReadOnlySet<string> ImportedStdModules,
+        IReadOnlyDictionary<string, string>? ModuleAliases);
 
     private readonly record struct DefinitionLocation(string? FilePath, TextSpan Span);
 
@@ -286,7 +287,12 @@ public static partial class DocumentService
         var plan = ProjectSupport.BuildCompilationPlan(pseudoProject);
         var layout = ProjectSupport.BuildCompilationLayout(plan, strippedSource);
 
-        return new ProjectAnalysisContext(layout.Source, layout.EntryOffset, layout.BodyStart, plan.ImportedStdModules);
+        return new ProjectAnalysisContext(
+            layout.Source,
+            layout.EntryOffset,
+            layout.BodyStart,
+            plan.ImportedStdModules,
+            plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
     }
 
     private static AnalysisContext PrepareAnalysisContext(string source, string? filePath)
@@ -319,7 +325,7 @@ public static partial class DocumentService
                     combined.Value.EntryOffset,
                     combined.Value.BodyStart,
                     combined.Value.ImportedStdModules,
-                    null,
+                    combined.Value.ModuleAliases,
                     []);
             }
         }
