@@ -8,7 +8,11 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| [Affine/Linear Ownership](OWNERSHIP.md) | Planned | Turn best-effort ownership analysis into a type-checked affine/linear discipline with borrow inference |
+| [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
+| [Package Registry Website](REGISTRY_WEBSITE.md) | Planned | Server-rendered browse/search UI over the existing registry API, surfacing per-package capability requirements |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
+| [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
 
 ---
 

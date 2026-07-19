@@ -172,7 +172,11 @@ export default defineConfig({
         collapsed: true,
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
+          page("Affine/Linear Ownership", "/future/OWNERSHIP"),
+          page("Traits / Typeclasses", "/future/TRAITS"),
+          page("Package Registry Website", "/future/REGISTRY_WEBSITE"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
+          page("WebAssembly Target", "/future/WASM_TARGET"),
         ],
       },
     ],
