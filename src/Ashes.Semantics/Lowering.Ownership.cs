@@ -208,10 +208,15 @@ public sealed partial class Lowering
     /// If the scope's result is a closure that captures resources this scope owns, those resources
     /// escape with the closure. Mark them as already-handled so <see cref="EmitDropsForCurrentScope"/>
     /// does not close them here — closing a resource the escaping closure still references would be a
-    /// use-after-close at scope exit. The resource is then released at program exit;
-    /// closing it deterministically when the closure itself dies is future work. Conservative: only
-    /// the result-closure's direct captures are recognised (resources reached through nested
-    /// aggregates or a chain of closures are not yet tracked).
+    /// use-after-close at scope exit — and attach a deterministic dropper (closure+24) that closes
+    /// them when the closure itself dies.
+    ///
+    /// This handles the direct-result-closure case with deterministic close. Second-order escapes —
+    /// a resource reached only through an aggregate holding a closure, or a chain of closures — are
+    /// handled soundly (but without the deterministic dropper) by
+    /// <see cref="EmitDropsForCurrentScope"/> via <c>OwnershipInfo.CapturedByClosure</c>: any
+    /// closure-captured resource not recognised here has its close skipped and ownership transferred
+    /// to the closure, so it is never closed underneath a value that still references it.
     /// </summary>
     private void SkipDropsForResourcesEscapingViaResult(int resultTemp)
     {
@@ -481,11 +486,26 @@ public sealed partial class Lowering
         var scope = _ownershipScopes.Peek();
         foreach (var (_, info) in scope)
         {
-            if (!info.IsDropped)
+            if (info.IsDropped)
             {
-                EmitOwnedValueDrop(info);
-                info.ReleaseKind = ResourceReleaseKind.AutoDropped;
+                continue;
             }
+
+            if (info.CapturedByClosure && (info.IsResource || info.IsResourceBearing))
+            {
+                // A closure captured this resource, so it may be reachable from a value escaping this
+                // scope through a route the type cannot show (a closure, an aggregate holding one, or a
+                // chain of them). Closing it here would strand the escaped value on a closed resource.
+                // Transfer ownership to the closure instead: the resource is released when that closure
+                // (or its enclosing aggregate) is dropped, or at program exit. Sound — never a
+                // use-after-close. The direct-result-closure case was already moved by
+                // SkipDropsForResourcesEscapingViaResult above and does not reach here.
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+                continue;
+            }
+
+            EmitOwnedValueDrop(info);
+            info.ReleaseKind = ResourceReleaseKind.AutoDropped;
         }
     }
 

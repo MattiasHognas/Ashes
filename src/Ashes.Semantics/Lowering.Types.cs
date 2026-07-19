@@ -315,6 +315,17 @@ public sealed partial class Lowering
         public bool IsResourceBearing { get; } = isResourceBearing;
 
         /// <summary>
+        /// True once this resource (or resource-bearing) binding has been captured by a closure. The
+        /// closure may escape the owning scope directly, nested in an aggregate, or through a chain of
+        /// other closures — routes the type cannot reveal (the escaping value's type hides the
+        /// resource). Rather than prove non-escape, the scope transfers ownership to the closure at
+        /// exit instead of closing the resource underneath a value that still references it (which
+        /// would be a use-after-close). The direct-result-closure case is handled earlier by
+        /// <see cref="SkipDropsForResourcesEscapingViaResult"/> and keeps its deterministic dropper.
+        /// </summary>
+        public bool CapturedByClosure { get; set; }
+
+        /// <summary>
         /// Why this owned value stopped being usable by this binding, and the single source of truth
         /// for whether it has been released. Distinguishes an explicit <c>close</c>
         /// (<see cref="ResourceReleaseKind.Closed"/>) from an ownership transfer

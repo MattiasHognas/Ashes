@@ -3161,9 +3161,17 @@ public sealed partial class Lowering
         for (int ci = 0; ci < captures.Count; ci++)
         {
             var owned = LookupOwnedValue(captures[ci]);
-            if (owned is not null && owned.IsResource && owned.Type is not null)
+            if (owned is not null && (owned.IsResource || owned.IsResourceBearing))
             {
-                resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
+                // The resource now lives inside this closure's environment. If the closure outlives
+                // the owning scope — directly, via an aggregate, or through a chain of closures — the
+                // scope must not close the resource at exit. Mark the owner so scope-exit drop
+                // transfers ownership to the closure instead (see OwnershipInfo.CapturedByClosure).
+                owned.CapturedByClosure = true;
+                if (owned.IsResource && owned.Type is not null)
+                {
+                    resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
+                }
             }
         }
 
