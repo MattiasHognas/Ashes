@@ -387,6 +387,73 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// The inferred uniqueness summary of a top-level function: which parameters are uniquely owned at
+    /// every external call (the move-safety GFP) and which of the function's own parameters its result
+    /// may alias, with multiplicity, plus a poison flag (the result-reach LFP). Makes the two
+    /// whole-program fixpoints a first-class, queryable per-function property (Increment 5, S1) — the
+    /// foundation later sub-steps compose across call boundaries and read to guarantee reuse and
+    /// reclaim. This is a read-view over the analysis the reuse path already consumes; producing it
+    /// changes no lowering behaviour.
+    /// </summary>
+    internal sealed record FunctionUniquenessSummary(
+        string Function,
+        IReadOnlyList<string> Parameters,
+        IReadOnlySet<string> UniqueParameters,
+        IReadOnlyDictionary<string, int> ResultReach,
+        bool ResultPoisoned)
+    {
+        /// <summary>
+        /// The result is a fresh, uniquely-owned value: it aliases no parameter and is not poisoned
+        /// (provably confined to the parameters, none of which it reaches).
+        /// </summary>
+        public bool ResultFresh => !ResultPoisoned && ResultReach.Count == 0;
+
+        /// <summary>True if the result may alias parameter <paramref name="param"/>.</summary>
+        public bool ResultReaches(string param) => ResultReach.ContainsKey(param);
+    }
+
+    /// <summary>
+    /// The names of every top-level function the move/uniqueness analysis registered (empty until the
+    /// program has been analysed). Introspection surface for the uniqueness summaries.
+    /// </summary>
+    internal IReadOnlyCollection<string> AnalyzedFunctionNames =>
+        _maAnalyzed ? _maFuncs.Keys.ToList() : [];
+
+    /// <summary>
+    /// Materializes the <see cref="FunctionUniquenessSummary"/> for a top-level function, or null if
+    /// the program has not been analysed or <paramref name="function"/> is not a registered,
+    /// fully-visible top-level function. Faithful by construction: it reads the same move-safety and
+    /// result-reach results the reuse path consumes.
+    /// </summary>
+    internal FunctionUniquenessSummary? GetUniquenessSummary(string function)
+    {
+        if (!_maAnalyzed || !_maFuncs.TryGetValue(function, out var info))
+        {
+            return null;
+        }
+
+        var unique = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var param in info.Params)
+        {
+            if (IsParamMoveSafe(function, param))
+            {
+                unique.Add(param);
+            }
+        }
+
+        var (counts, poison) = _maResultReach.TryGetValue(function, out var reach)
+            ? reach
+            : (new Dictionary<string, int>(StringComparer.Ordinal), false);
+
+        return new FunctionUniquenessSummary(
+            function,
+            info.Params,
+            unique,
+            new Dictionary<string, int>(counts, StringComparer.Ordinal),
+            poison);
+    }
+
+    /// <summary>
     /// Greatest-fixpoint node: the value bound to parameter <paramref name="param"/> of top-level
     /// function <paramref name="func"/> is uniquely owned at every invocation. Computed on demand
     /// with cycle-breaking (a cycle resolves to false — the sound under-approximation).

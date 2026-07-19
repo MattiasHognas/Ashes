@@ -13,6 +13,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Ashes.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="..\..\lib\Ashes\Collection.Array.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.Array.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Collection.List.ash"
