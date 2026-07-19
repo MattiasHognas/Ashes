@@ -4106,13 +4106,15 @@ public sealed partial class Lowering
                 SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
 
-            // A resource passed to an opaque function moves into the callee: with no borrowing, the
-            // caller cannot use it afterwards, and the callee is now responsible for its cleanup. So
-            // the caller's scope must not also drop it (that double-closes / double-frees). This is
-            // the function-application analogue of the aggregate/spawn move rules — it is what lets a
-            // combinator like Ashes.Net.Tls.Server.serveTls hand an accepted TlsSocket to a handler
-            // that closes it, without the combinator's own scope closing it a second time.
-            MarkResourceArgMoved(collectedArgs[i]);
+            // A resource passed to an opaque function normally moves into the callee (no borrowing: the
+            // caller must not use or drop it afterwards, or it double-closes). Borrow inference skips the
+            // move when the callee provably only READS this parameter — never closing, storing,
+            // returning, or capturing it — so the caller keeps ownership and drops it once. Conservative:
+            // only proven borrows are skipped; everything else still moves.
+            if (!CalleeParamBorrowsOnly(rootExpr, i))
+            {
+                MarkResourceArgMoved(collectedArgs[i]);
+            }
 
             int target = NewTemp();
             Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
