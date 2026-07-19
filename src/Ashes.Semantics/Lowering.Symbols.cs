@@ -768,14 +768,15 @@ public sealed partial class Lowering
                 int sizeBytes = tup.Elements.Count * 8;
                 if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
                 {
-                    // Update path: the reused node's old value cell (a same-size blob tuple, still in
-                    // the field until the caller overwrites it) is dead. Overwrite its contents in place
-                    // rather than allocating a fresh blob cell, so value storage is reused and the blob
-                    // stays bounded by distinct keys instead of growing per update.
+                    // Update path: the reused node's old value cell is dead. Overwrite its contents in
+                    // place when it is provably persistent (a runtime blob-region check in the backend),
+                    // else materialize fresh — so value storage is reused and the blob stays bounded by
+                    // distinct keys, without overwriting reclaimable main-arena memory in place.
                     int oldValueTemp = NewTemp();
                     Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
-                    Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
-                    fieldTemp = oldValueTemp;
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
+                    fieldTemp = persistentField;
                 }
                 else
                 {
