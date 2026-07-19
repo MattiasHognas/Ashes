@@ -28,6 +28,7 @@ public static class DiagnosticCodes
     public const string ListElementTypeMismatch = "ASH005";
     public const string UseAfterDrop = "ASH006";
     public const string DoubleDrop = "ASH007";
+    public const string UseAfterMove = "ASH008";
 
     // ASH010–ASH012 were allocated for an `async`-block enforcement model (await/networking outside
     // `async`, async error-type conflict) that the language no longer has — `async` is now a builtin

@@ -3541,7 +3541,7 @@ public sealed partial class Lowering
         {
             if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
             {
-                movedOwned.IsDropped = true;
+                movedOwned.ReleaseKind = ResourceReleaseKind.Moved;
             }
         }
     }

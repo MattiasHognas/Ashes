@@ -128,7 +128,7 @@ public sealed partial class Lowering
             && LookupOwnedValue(v.Name) is { IsDropped: false } info
             && (info.IsResource || info.IsResourceBearing))
         {
-            info.IsDropped = true;
+            info.ReleaseKind = ResourceReleaseKind.Moved;
         }
     }
 
@@ -200,7 +200,7 @@ public sealed partial class Lowering
             return false; // already dropped — double-drop
         }
 
-        info.IsDropped = true;
+        info.ReleaseKind = ResourceReleaseKind.Closed;
         return true;
     }
 
@@ -230,7 +230,7 @@ public sealed partial class Lowering
             {
                 // The resource is owned by this exiting scope and captured by its escaping result
                 // closure, so after this scope it is reachable only through the closure: move it in.
-                info.IsDropped = true;
+                info.ReleaseKind = ResourceReleaseKind.Moved;
                 escaping.Add((envOffset, type));
             }
         }
@@ -281,7 +281,7 @@ public sealed partial class Lowering
                 if ((info.IsResource || info.IsResourceBearing || string.Equals(info.TypeName, "Function", StringComparison.Ordinal)) && !info.IsDropped)
                 {
                     EmitOwnedValueDrop(info);
-                    info.IsDropped = true;
+                    info.ReleaseKind = ResourceReleaseKind.AutoDropped;
                 }
             }
 
@@ -484,7 +484,7 @@ public sealed partial class Lowering
             if (!info.IsDropped)
             {
                 EmitOwnedValueDrop(info);
-                info.IsDropped = true;
+                info.ReleaseKind = ResourceReleaseKind.AutoDropped;
             }
         }
     }
@@ -1540,9 +1540,18 @@ public sealed partial class Lowering
             var info = LookupOwnedValue(v.Name);
             if (info is not null && info.IsResource && info.IsDropped)
             {
-                ReportDiagnostic(GetSpan(expr),
-                    $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
-                    DiagnosticCodes.UseAfterDrop);
+                if (info.ReleaseKind == ResourceReleaseKind.Moved)
+                {
+                    ReportDiagnostic(GetSpan(expr),
+                        $"Resource '{v.Name}' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.",
+                        DiagnosticCodes.UseAfterMove);
+                }
+                else
+                {
+                    ReportDiagnostic(GetSpan(expr),
+                        $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
+                        DiagnosticCodes.UseAfterDrop);
+                }
             }
         }
     }

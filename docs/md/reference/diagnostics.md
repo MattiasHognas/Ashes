@@ -17,6 +17,7 @@ Current codes:
 | `ASH005` | List element type mismatch                                    |
 | `ASH006` | Use-after-drop (using a resource after it has been closed)    |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
+| `ASH008` | Use-after-move (using or closing a resource after its ownership was moved) |
 | `ASH013` | Duplicate top-level binding name                              |
 | `ASH014` | Reference to a binding not yet declared (forward reference)   |
 | `ASH015` | `and` used without a preceding `let recursive`                      |
@@ -41,7 +42,7 @@ Current codes:
 | `ASH035` | Dependency graph contains a cycle                             |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
-Codes `ASH008`–`ASH009` are reserved for future resource-lifecycle diagnostics.
+Code `ASH009` is reserved for future resource-lifecycle diagnostics.
 Codes `ASH010`–`ASH012` and `ASH025` are unused and free for reuse.
 
 ## Top-level declaration and import diagnostics

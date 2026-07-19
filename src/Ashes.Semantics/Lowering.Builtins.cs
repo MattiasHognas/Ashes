@@ -1634,9 +1634,18 @@ public sealed partial class Lowering
             var info = LookupOwnedValue(v.Name);
             if (info is not null && info.IsDropped)
             {
-                ReportDiagnostic(GetSpan(socketArg),
-                    $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
-                    DiagnosticCodes.DoubleDrop);
+                if (info.ReleaseKind == ResourceReleaseKind.Moved)
+                {
+                    ReportDiagnostic(GetSpan(socketArg),
+                        $"Resource '{v.Name}' has been moved and can no longer be closed here. Ownership was transferred when it was passed to a function or stored in a data structure.",
+                        DiagnosticCodes.UseAfterMove);
+                }
+                else
+                {
+                    ReportDiagnostic(GetSpan(socketArg),
+                        $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
+                        DiagnosticCodes.DoubleDrop);
+                }
             }
         }
 
@@ -1672,9 +1681,18 @@ public sealed partial class Lowering
             var info = LookupOwnedValue(v.Name);
             if (info is not null && info.IsDropped)
             {
-                ReportDiagnostic(GetSpan(socketArg),
-                    $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
-                    DiagnosticCodes.DoubleDrop);
+                if (info.ReleaseKind == ResourceReleaseKind.Moved)
+                {
+                    ReportDiagnostic(GetSpan(socketArg),
+                        $"Resource '{v.Name}' has been moved and can no longer be closed here. Ownership was transferred when it was passed to a function or stored in a data structure.",
+                        DiagnosticCodes.UseAfterMove);
+                }
+                else
+                {
+                    ReportDiagnostic(GetSpan(socketArg),
+                        $"Resource '{v.Name}' has already been closed. Closing a resource twice is not allowed.",
+                        DiagnosticCodes.DoubleDrop);
+                }
             }
         }
 
@@ -3098,7 +3116,7 @@ public sealed partial class Lowering
             if (LookupOwnedValue(freeName) is { IsDropped: false } moved
                 && (moved.IsResource || moved.IsResourceBearing))
             {
-                moved.IsDropped = true;
+                moved.ReleaseKind = ResourceReleaseKind.Moved;
             }
         }
 

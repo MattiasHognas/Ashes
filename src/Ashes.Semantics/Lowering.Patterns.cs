@@ -25,7 +25,7 @@ public sealed partial class Lowering
             && LookupOwnedValue(scrutineeVar.Name) is { IsDropped: false } scrutineeInfo
             && (scrutineeInfo.IsResource || scrutineeInfo.IsResourceBearing))
         {
-            scrutineeInfo.IsDropped = true;
+            scrutineeInfo.ReleaseKind = ResourceReleaseKind.Moved;
         }
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();

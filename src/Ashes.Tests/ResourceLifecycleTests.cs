@@ -180,6 +180,94 @@ public sealed class ResourceLifecycleTests
             x => x.Message.Contains("already been closed", StringComparison.Ordinal));
     }
 
+    // --- Use-after-move detection (ASH008) ---
+
+    [Test]
+    public void Use_after_move_into_function_reports_ash008_diagnostic()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            let consume =
+                given (s) -> "taken"
+            in
+                Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                    | Error(_) -> "fail"
+                    | Ok(sock) ->
+                        let _ = consume(sock)
+                        in
+                            let _ = await Ashes.Net.Tcp.send(sock)("hello")
+                            in "ok")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterMove,
+            "Expected ASH008 (use-after-move) diagnostic for using a socket after passing it to a function.");
+        diag.StructuredErrors.ShouldContain(
+            x => x.Message.Contains("has been moved", StringComparison.Ordinal));
+        diag.StructuredErrors.ShouldNotContain(
+            x => x.Code == DiagnosticCodes.UseAfterDrop,
+            "A moved resource must not be reported as use-after-close (ASH006).");
+    }
+
+    [Test]
+    public void Use_after_move_into_aggregate_reports_ash008_diagnostic()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
+                    let wrapped = Some(sock)
+                    in
+                        let _ = await Ashes.Net.Tcp.send(sock)("hello")
+                        in "ok")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterMove,
+            "Expected ASH008 (use-after-move) diagnostic for using a socket after storing it in an aggregate.");
+    }
+
+    [Test]
+    public void Close_after_move_reports_ash008_not_double_drop()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            let consume =
+                given (s) -> "taken"
+            in
+                Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                    | Error(_) -> "fail"
+                    | Ok(sock) ->
+                        let _ = consume(sock)
+                        in
+                            let _ = await Ashes.Net.Tcp.close(sock)
+                            in "ok")
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterMove,
+            "Expected ASH008 (use-after-move) diagnostic for closing a socket after it was moved.");
+        diag.StructuredErrors.ShouldNotContain(
+            x => x.Code == DiagnosticCodes.DoubleDrop,
+            "A moved resource closed once must not be reported as double-close (ASH007).");
+    }
+
+    [Test]
+    public void Use_after_move_code_is_ash008()
+    {
+        DiagnosticCodes.UseAfterMove.ShouldBe("ASH008");
+    }
+
     // --- Ownership: owned types get Drop, copy types don't ---
 
     [Test]

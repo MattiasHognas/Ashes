@@ -275,6 +275,25 @@ public sealed partial class Lowering
     }
 
     // --- Ownership tracking ---
+    // Why a resource binding stopped being usable. Single source of truth for release state; the
+    // OwnershipInfo.IsDropped flag is derived from it. Drives diagnostic selection (ASH006 vs ASH008).
+    private enum ResourceReleaseKind
+    {
+        // Still live and this scope's responsibility.
+        None,
+
+        // Released by an explicit close/release call — a later use is use-after-close (ASH006).
+        Closed,
+
+        // Ownership transferred (passed to a function/handler/spawn, stored in an aggregate, consumed
+        // by a match, or captured by an escaping closure) — a later use is use-after-move (ASH008).
+        Moved,
+
+        // Released by a compiler-inserted drop at scope exit or a TCO back-edge. No user-visible
+        // transfer point; a later use (should not occur by construction) reports use-after-close.
+        AutoDropped,
+    }
+
     // Tracks owned bindings and their drop/borrow state.
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
@@ -295,7 +314,24 @@ public sealed partial class Lowering
         /// </summary>
         public bool IsResourceBearing { get; } = isResourceBearing;
 
-        public bool IsDropped { get; set; }
+        /// <summary>
+        /// Why this owned value stopped being usable by this binding, and the single source of truth
+        /// for whether it has been released. Distinguishes an explicit <c>close</c>
+        /// (<see cref="ResourceReleaseKind.Closed"/>) from an ownership transfer
+        /// (<see cref="ResourceReleaseKind.Moved"/>) and a compiler scope-exit drop
+        /// (<see cref="ResourceReleaseKind.AutoDropped"/>), so a subsequent use is reported as
+        /// use-after-close (ASH006) or use-after-move (ASH008) as appropriate. Only the reason is
+        /// resource-specific; the derived <see cref="IsDropped"/> flag applies to every owned value.
+        /// </summary>
+        public ResourceReleaseKind ReleaseKind { get; set; }
+
+        /// <summary>
+        /// True once this value has been released by any means (closed, moved, or scope-exit dropped).
+        /// Derived from <see cref="ReleaseKind"/> — there is no independent dropped flag to keep in
+        /// sync. A live value is <see cref="ResourceReleaseKind.None"/>.
+        /// </summary>
+        public bool IsDropped => ReleaseKind != ResourceReleaseKind.None;
+
         /// <summary>
         /// Number of live borrows of this value. The compiler infers borrows when
         /// an owned value is used without consuming ownership. By scope structure,

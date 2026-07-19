@@ -2102,9 +2102,15 @@ This is what lets a combinator hand an accepted socket to an opaque handler that
 the combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Server.serve` and
 `Ashes.Net.Tls.Server.serveTls`).
 
+Using or closing a resource *after* its ownership has moved is a compile-time error (`ASH008`),
+distinct from use-after-close (`ASH006`): the resource was not closed here, its ownership was
+transferred. Storing a resource into an aggregate that then escapes and is never referenced again by
+the original binding is the intended pattern and stays valid — the error only fires when the moved-out
+binding is used again.
+
 ### 16.3 Compile-Time Safety
 
-The compiler enforces resource safety with two rules:
+The compiler enforces resource safety with three rules:
 
 1. **No use-after-close.** Using a resource after it has been closed
    (passing it to `send` or `receive`) is a compile-time error
@@ -2113,11 +2119,14 @@ The compiler enforces resource safety with two rules:
 2. **No double-close.** Calling `close` on an already-closed resource
    is a compile-time error (diagnostic `ASH007`).
 
+3. **No use-after-move.** Using or closing a resource after its ownership
+   has moved (see §16.2.1) is a compile-time error (diagnostic `ASH008`).
+
 These checks are performed at compile time during semantic analysis.
 
 ### 16.4 What Is Not Affected
 
-Resource safety rules (use-after-close, double-close) apply only to resource
+Resource safety rules (use-after-close, double-close, use-after-move) apply only to resource
 types. General owned types (String, List, ADTs, closures) receive automatic
 Drop but have no restrictions on reuse — see §17.
 
