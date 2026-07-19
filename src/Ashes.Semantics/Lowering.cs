@@ -2856,7 +2856,7 @@ public sealed partial class Lowering
                 // against the already-unique accumulator with no copy — the actual win.
                 directReuseSlots.Add(accLocal.Slot);
                 bool elideDirect = tco.SelfName.Length > 0
-                    && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                    && ReuseAccumulatorIsUnique(tco.SelfName, accName);
                 if (!elideDirect)
                 {
                     reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
@@ -2906,7 +2906,7 @@ public sealed partial class Lowering
                 // re-entry (the nested-reuse leak). Skip it only when provably safe; the
                 // conservative default keeps the copy.
                 bool elide = tco.SelfName.Length > 0
-                    && IsReuseAccumulatorMoveSafe(tco.SelfName, accName);
+                    && ReuseAccumulatorIsUnique(tco.SelfName, accName);
                 if (!elide)
                 {
                     reuseDefensiveCopy.Add((accL.Slot, accL.T));

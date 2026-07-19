@@ -372,19 +372,15 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// True when the prologue deep-copy of accumulator parameter <paramref name="accParam"/> of fold
-    /// <paramref name="funcName"/> can be safely elided: the accumulator is provably uniquely owned
-    /// at every external call site. Conservative — returns false on any uncertainty.
+    /// The authoritative reuse-elision predicate: the prologue deep-copy of accumulator parameter
+    /// <paramref name="accParam"/> of fold <paramref name="funcName"/> can be safely elided exactly
+    /// when the accumulator is a unique parameter of the fold's uniqueness summary (proven uniquely
+    /// owned at every external call site). Read through <see cref="GetUniquenessSummary"/> so the
+    /// summary is the single source of truth for the decision. Conservative — false on any uncertainty
+    /// (no summary, or the parameter not proven unique).
     /// </summary>
-    private bool IsReuseAccumulatorMoveSafe(string funcName, string accParam)
-    {
-        if (!_maAnalyzed)
-        {
-            return false;
-        }
-
-        return IsParamMoveSafe(funcName, accParam);
-    }
+    private bool ReuseAccumulatorIsUnique(string funcName, string accParam)
+        => GetUniquenessSummary(funcName) is { } summary && summary.UniqueParameters.Contains(accParam);
 
     /// <summary>
     /// The inferred uniqueness summary of a top-level function: which parameters are uniquely owned at
