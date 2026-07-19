@@ -318,9 +318,10 @@ public sealed partial class Lowering
     /// Walks <paramref name="temp"/> (of <paramref name="type"/>) and closes every resource nested
     /// in it. Handles a direct resource (Drop), an ADT (tag switch → drop resource-bearing fields of
     /// the live constructor), a tuple (drop resource-bearing elements), and a list (loop, drop each
-    /// resource-bearing element). Recursion is cycle-guarded; a recursive resource-bearing ADT (a
-    /// data structure that nests both itself and a resource — effectively unheard of) is left to
-    /// program-exit cleanup rather than risk an unbounded unfold.
+    /// resource-bearing element). A self-recursive resource-bearing ADT (one that nests both itself
+    /// and a resource) is walked at runtime by a synthesized recursive dropper
+    /// (<see cref="EmitRecursiveAdtResourceDrop"/>) rather than a static unfold. Only a mutual-recursion
+    /// cycle between distinct ADT types still bottoms out on the inline cycle guard.
     /// </summary>
     private void EmitResourceBearingDrop(int temp, TypeRef type)
         => EmitResourceBearingDrop(temp, type, new HashSet<string>(StringComparer.Ordinal));
@@ -332,6 +333,14 @@ public sealed partial class Lowering
         {
             case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
                 Emit(new IrInst.Drop(temp, named.Symbol.Name));
+                return;
+
+            case TypeRef.TNamedType named when IsSelfRecursiveResourceBearingAdt(named):
+                // A type that nests both itself and a resource (e.g. Bag = Mt | Put(FileHandle, Bag)):
+                // a static unfold would not terminate, so walk it at runtime via a synthesized
+                // recursive dropper instead of the visiting-guarded inline unfold (which leaked the
+                // tail to program exit).
+                EmitRecursiveAdtResourceDrop(named, temp);
                 return;
 
             case TypeRef.TNamedType named:
@@ -365,7 +374,10 @@ public sealed partial class Lowering
         var key = Pretty(named);
         if (!visiting.Add(key))
         {
-            return; // recursive resource-bearing ADT — leave to program exit (extremely rare)
+            // Reached only on the mutual-recursion fallback from EmitRecursiveAdtResourceDrop; a
+            // self-recursive type is handled by the synthesized dropper before it gets here. Leaving
+            // the deeper mutual tail to program exit (extremely rare) rather than unfolding forever.
+            return;
         }
 
         var (cases, blocks) = CollectAdtResourceDropCases(named, out var typeParamMap);
@@ -443,6 +455,188 @@ public sealed partial class Lowering
         }
 
         return (cases, blocks);
+    }
+
+    private readonly Dictionary<string, string> _adtDropperLabels = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _adtDropperInProgress = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True if the ADT reaches its own type through a resource-bearing field (e.g.
+    /// <c>type Bag = Mt | Put(FileHandle, Bag)</c>), so a static unfold of its resource-drop would
+    /// not terminate. Such a type is dropped by a synthesized recursive function
+    /// (<see cref="SynthesizeAdtResourceDropper"/>) instead of the inline unfold in
+    /// <see cref="EmitAdtResourceDrop"/>.
+    /// </summary>
+    private bool IsSelfRecursiveResourceBearingAdt(TypeRef.TNamedType named)
+        => ReachesResourceBearingSelf(named, Pretty(named), new HashSet<string>(StringComparer.Ordinal), isRoot: true);
+
+    private bool ReachesResourceBearingSelf(TypeRef type, string rootKey, HashSet<string> visiting, bool isRoot)
+    {
+        var pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TNamedType n when BuiltinRegistry.IsResourceTypeName(n.Symbol.Name):
+                return false;
+
+            case TypeRef.TNamedType n:
+                var key = Pretty(n);
+                if (!isRoot && string.Equals(key, rootKey, StringComparison.Ordinal))
+                {
+                    return true; // reached the root type again through a field: self-recursive
+                }
+
+                if (!visiting.Add(key))
+                {
+                    return false;
+                }
+
+                var (_, blocks) = CollectAdtResourceDropCases(n, out var typeParamMap);
+                foreach (var (_, ctor) in blocks)
+                {
+                    for (int j = 0; j < ctor.Arity; j++)
+                    {
+                        var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                        if (IsResourceBearing(fieldType)
+                            && ReachesResourceBearingSelf(fieldType, rootKey, visiting, isRoot: false))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                visiting.Remove(key);
+                return false;
+
+            case TypeRef.TTuple tuple:
+                return tuple.Elements.Any(e =>
+                    IsResourceBearing(e) && ReachesResourceBearingSelf(e, rootKey, visiting, isRoot: false));
+
+            case TypeRef.TList list:
+                return IsResourceBearing(list.Element)
+                    && ReachesResourceBearingSelf(list.Element, rootKey, visiting, isRoot: false);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Drops a self-recursive resource-bearing ADT by building its synthesized recursive dropper
+    /// closure at this site (env[0] = the closure itself, so the body recurses via env[0]) and calling
+    /// it. Mirrors <see cref="EmitAdtDeepCopy"/>. Falls back to the inline unfold for a mutual-recursion
+    /// cycle between distinct ADT types (extremely rare), which drops the outer levels and leaves the
+    /// deeper mutual tail to program exit as before.
+    /// </summary>
+    private void EmitRecursiveAdtResourceDrop(TypeRef.TNamedType named, int temp)
+    {
+        var label = SynthesizeAdtResourceDropper(named);
+        if (label is null)
+        {
+            EmitAdtResourceDrop(temp, named, new HashSet<string>(StringComparer.Ordinal));
+            return;
+        }
+
+        int envPtr = NewTemp();
+        Emit(new IrInst.Alloc(envPtr, 8));
+        int dropper = NewTemp();
+        Emit(new IrInst.MakeClosure(dropper, label, envPtr, 8));
+        Emit(new IrInst.StoreMemOffset(envPtr, 0, dropper)); // tie the self-reference knot
+        int result = NewTemp();
+        Emit(new IrInst.CallClosure(result, dropper, temp));
+    }
+
+    /// <summary>
+    /// Synthesizes (once per concrete type, cached) a recursive resource-drop function for a
+    /// self-recursive resource-bearing ADT and returns its label. The function takes (env, value):
+    /// it switches on the constructor tag and drops each resource-bearing field — same-type fields via
+    /// the self-closure at env[0] (runtime recursion), other fields via
+    /// <see cref="EmitResourceBearingDrop"/>. Returns null for a mutual-recursion cycle between
+    /// distinct ADT types (caller falls back to the inline unfold). Tag-level, so it is independent of
+    /// constructor scope at the call site.
+    /// </summary>
+    private string? SynthesizeAdtResourceDropper(TypeRef.TNamedType named)
+    {
+        var key = Pretty(named);
+        if (_adtDropperLabels.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        if (!_adtDropperInProgress.Add(key))
+        {
+            return null; // mutual-recursion cycle between distinct ADT types
+        }
+
+        string label = $"__rdrop_{_nextLambdaId++}";
+        _adtDropperLabels[key] = label; // register before the body so self-type fields resolve to it
+
+        var saved = BeginSynthesizedBody();
+        EmitAdtResourceDropperBody(named);
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+        RestoreEnclosingBodyState(saved);
+
+        _adtDropperInProgress.Remove(key);
+        return label;
+    }
+
+    /// <summary>
+    /// Emits the body of a synthesized ADT resource-dropper: read the constructor tag, switch to the
+    /// live constructor's block, and drop each resource-bearing field — same-type fields via the
+    /// self-closure at env[0] (recursion), others via <see cref="EmitResourceBearingDrop"/>.
+    /// Constructors that carry no resource fall through to the end and return 0.
+    /// </summary>
+    private void EmitAdtResourceDropperBody(TypeRef.TNamedType named)
+    {
+        var rootKey = Pretty(named);
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: the value to drop (implicit)
+
+        int argTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(argTemp, argSlot));
+        int selfTemp = NewTemp();
+        Emit(new IrInst.LoadEnv(selfTemp, 0));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, argTemp));
+
+        var (cases, blocks) = CollectAdtResourceDropCases(named, out var typeParamMap);
+        string endLabel = NewLabel("rdrop_end");
+        Emit(new IrInst.SwitchTag(tagTemp, cases, endLabel));
+        foreach (var (label, ctor) in blocks)
+        {
+            Emit(new IrInst.Label(label));
+            for (int j = 0; j < ctor.Arity; j++)
+            {
+                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                if (!IsResourceBearing(fieldType))
+                {
+                    continue;
+                }
+
+                int fieldTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(fieldTemp, argTemp, j));
+                if (string.Equals(Pretty(Prune(fieldType)), rootKey, StringComparison.Ordinal))
+                {
+                    int r = NewTemp();
+                    Emit(new IrInst.CallClosure(r, selfTemp, fieldTemp)); // recurse via self-closure
+                }
+                else
+                {
+                    EmitResourceBearingDrop(fieldTemp, fieldType);
+                }
+            }
+
+            Emit(new IrInst.Jump(endLabel));
+        }
+
+        Emit(new IrInst.Label(endLabel));
+        int ret = NewTemp();
+        Emit(new IrInst.LoadConstInt(ret, 0));
+        Emit(new IrInst.Return(ret));
     }
 
     private void EmitListResourceDrop(int listTemp, TypeRef elementType, HashSet<string> visiting)
