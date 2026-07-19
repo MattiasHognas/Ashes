@@ -743,9 +743,25 @@ public sealed partial class Lowering
             var pruned = Prune(argType);
             if (pruned is TypeRef.TStr or TypeRef.TBytes)
             {
-                int persistentField = NewTemp();
-                Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
-                fieldTemp = persistentField;
+                if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
+                {
+                    // Update path: reuse the dead old value blob in place when the new string fits and
+                    // the old blob is provably persistent (a runtime blob-region check in the backend),
+                    // else materialize fresh. Bounds blob growth to the largest value per cell instead of
+                    // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
+                    // path below.
+                    int oldValueTemp = NewTemp();
+                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
+                    fieldTemp = persistentField;
+                }
+                else
+                {
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                    fieldTemp = persistentField;
+                }
             }
             else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
             {

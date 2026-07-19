@@ -585,6 +585,7 @@ public static class IrOptimizer
             IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutArenaToSpace co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyFixedInto ci => ci with { DestTemp = R(ci.DestTemp), SrcTemp = R(ci.SrcTemp) },
+            IrInst.CopyStringIntoOrFresh cs => cs with { OldBlobTemp = R(cs.OldBlobTemp), SrcTemp = R(cs.SrcTemp) },
             IrInst.CopyOutList co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutClosure co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutTcoListCell co => co with { SrcTemp = R(co.SrcTemp) },
@@ -1825,6 +1826,7 @@ public static class IrOptimizer
             case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutArenaToSpace c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyFixedInto c: usedTemps.Add(c.DestTemp); usedTemps.Add(c.SrcTemp); break;
+            case IrInst.CopyStringIntoOrFresh c: usedTemps.Add(c.OldBlobTemp); usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutList c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutClosure c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutTcoListCell c: usedTemps.Add(c.SrcTemp); break;
