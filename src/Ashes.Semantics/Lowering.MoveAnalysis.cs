@@ -1926,6 +1926,9 @@ public sealed partial class Lowering
                 CollectCallsAndEscapesMatch(m, enclosing);
                 return;
 
+            case Expr.Let l when TryCollectPartialFoldBinding(l, enclosing):
+                return;
+
             case Expr.Let l:
                 WalkBindingValue(l.Name, l.Value, enclosing);
                 CollectCallsAndEscapes(l.Body, enclosing);
@@ -1988,6 +1991,195 @@ public sealed partial class Lowering
         var call = (Expr.Call)e;
         CollectCallsAndEscapes(call.Func, enclosing);
         CollectCallsAndEscapes(call.Arg, enclosing);
+    }
+
+    // `let g = f(partialArgs) in body` where f is a known function and g is used ONLY as saturated
+    // completing calls `g(moreArgs)`. Resolving g to f's completed call sites makes f fully visible
+    // (its accumulator can then be proven uniquely owned) instead of escaping as a partially-applied
+    // value. Sound by construction, fail-closed: any use of g that is not a completing call leaves f to
+    // escape via the normal walk. Returns true when the binding was resolved and handled here.
+    private bool TryCollectPartialFoldBinding(Expr.Let l, string enclosing)
+    {
+        if (_maAmbiguous.Contains(l.Name))
+        {
+            return false;
+        }
+
+        var partialArgs = new List<Expr>();
+        var root = CollectCallArgs(l.Value, partialArgs);
+        if (root is not Expr.Var f
+            || !_maFuncs.TryGetValue(f.Name, out var callee)
+            || partialArgs.Count == 0
+            || partialArgs.Count >= callee.Params.Count)
+        {
+            return false;
+        }
+
+        int neededMore = callee.Params.Count - partialArgs.Count;
+        var completing = new List<List<Expr>>();
+        if (!AllUsesAreCompletingCalls(l.Body, l.Name, neededMore, completing))
+        {
+            return false;
+        }
+
+        // Record f's now-visible saturated call sites (partial args ++ each completing call's args).
+        if (!_maCallSites.TryGetValue(f.Name, out var sites))
+        {
+            sites = new List<(string, List<Expr>)>();
+            _maCallSites[f.Name] = sites;
+        }
+
+        foreach (var moreArgs in completing)
+        {
+            var combined = new List<Expr>(partialArgs);
+            combined.AddRange(moreArgs);
+            sites.Add((enclosing, combined));
+        }
+
+        // The partial args live in the binding value (not walked below); account for them. The body
+        // walk handles the completing-call arguments and everything else — g is not a known function,
+        // so it never escapes anything.
+        foreach (var a in partialArgs)
+        {
+            CollectCallsAndEscapes(a, enclosing);
+        }
+
+        CollectCallsAndEscapes(l.Body, enclosing);
+        return true;
+    }
+
+    // Fail-closed: true only when every occurrence of g in e is the root of a saturated completing call
+    // g(exactly neededMore args); each call's arg list is collected into completing. Any bare use, wrong
+    // arity, closure capture, shadowing binder, or unhandled node yields false.
+    private bool AllUsesAreCompletingCalls(Expr e, string g, int neededMore, List<List<Expr>> completing)
+    {
+        switch (e)
+        {
+            case Expr.IntLit or Expr.BigIntLit or Expr.UIntLit or Expr.FloatLit
+                or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+                return true;
+
+            case Expr.Var v:
+                return !string.Equals(v.Name, g, StringComparison.Ordinal);
+
+            case Expr.Call:
+                return CallUsesGOnlyAsCompleting(e, g, neededMore, completing);
+
+            case Expr.If i:
+                return AllUsesAreCompletingCalls(i.Cond, g, neededMore, completing)
+                    && AllUsesAreCompletingCalls(i.Then, g, neededMore, completing)
+                    && AllUsesAreCompletingCalls(i.Else, g, neededMore, completing);
+
+            case Expr.Let l: return CompletingLetLike(l.Name, l.Value, l.Body, g, neededMore, completing);
+            case Expr.LetResult lr: return CompletingLetLike(lr.Name, lr.Value, lr.Body, g, neededMore, completing);
+            case Expr.LetRecursive lc: return CompletingLetLike(lc.Name, lc.Value, lc.Body, g, neededMore, completing);
+
+            case Expr.Lambda lam:
+                return string.Equals(lam.ParamName, g, StringComparison.Ordinal) || !MentionsVar(lam.Body, g);
+
+            case Expr.Match m:
+                return CompletingMatch(m, g, neededMore, completing);
+
+            case Expr.TupleLit t: return t.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing));
+            case Expr.ListLit ls: return ls.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing));
+
+            case Expr.Cons cons:
+                return AllUsesAreCompletingCalls(cons.Head, g, neededMore, completing)
+                    && AllUsesAreCompletingCalls(cons.Tail, g, neededMore, completing);
+
+            case Expr.Await aw:
+                return AllUsesAreCompletingCalls(aw.Task, g, neededMore, completing);
+
+            case Expr.BitwiseNot bn:
+                return AllUsesAreCompletingCalls(bn.Operand, g, neededMore, completing);
+
+            default:
+                return CompletingBinary(e, g, neededMore, completing);
+        }
+    }
+
+    private bool CallUsesGOnlyAsCompleting(Expr call, string g, int neededMore, List<List<Expr>> completing)
+    {
+        var args = new List<Expr>();
+        var root = CollectCallArgs(call, args);
+        if (root is Expr.Var rv && string.Equals(rv.Name, g, StringComparison.Ordinal))
+        {
+            // g at a call head: it must be a saturated completing call, and its args must not re-use g.
+            if (args.Count != neededMore)
+            {
+                return false;
+            }
+
+            if (!args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing)))
+            {
+                return false;
+            }
+
+            completing.Add(args);
+            return true;
+        }
+
+        return AllUsesAreCompletingCalls(root, g, neededMore, completing)
+            && args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing));
+    }
+
+    private bool CompletingLetLike(string boundName, Expr value, Expr body, string g, int neededMore, List<List<Expr>> completing)
+        => !string.Equals(boundName, g, StringComparison.Ordinal)
+            && AllUsesAreCompletingCalls(value, g, neededMore, completing)
+            && AllUsesAreCompletingCalls(body, g, neededMore, completing);
+
+    private bool CompletingMatch(Expr.Match m, string g, int neededMore, List<List<Expr>> completing)
+    {
+        if (!AllUsesAreCompletingCalls(m.Value, g, neededMore, completing))
+        {
+            return false;
+        }
+
+        foreach (var c in m.Cases)
+        {
+            if (PatternBinds(c.Pattern, g)
+                || !AllUsesAreCompletingCalls(c.Body, g, neededMore, completing)
+                || (c.Guard is not null && !AllUsesAreCompletingCalls(c.Guard, g, neededMore, completing)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CompletingBinary(Expr e, string g, int neededMore, List<List<Expr>> completing)
+    {
+        (Expr Left, Expr Right)? ops = e switch
+        {
+            Expr.Add x => (x.Left, x.Right),
+            Expr.Subtract x => (x.Left, x.Right),
+            Expr.Multiply x => (x.Left, x.Right),
+            Expr.Divide x => (x.Left, x.Right),
+            Expr.Modulo x => (x.Left, x.Right),
+            Expr.BitwiseAnd x => (x.Left, x.Right),
+            Expr.BitwiseOr x => (x.Left, x.Right),
+            Expr.BitwiseXor x => (x.Left, x.Right),
+            Expr.ShiftLeft x => (x.Left, x.Right),
+            Expr.ShiftRight x => (x.Left, x.Right),
+            Expr.GreaterThan x => (x.Left, x.Right),
+            Expr.LessThan x => (x.Left, x.Right),
+            Expr.GreaterOrEqual x => (x.Left, x.Right),
+            Expr.LessOrEqual x => (x.Left, x.Right),
+            Expr.Equal x => (x.Left, x.Right),
+            Expr.NotEqual x => (x.Left, x.Right),
+            Expr.ResultPipe x => (x.Left, x.Right),
+            Expr.ResultMapErrorPipe x => (x.Left, x.Right),
+            _ => null,
+        };
+
+        if (ops is not { } b)
+        {
+            return !MentionsVar(e, g); // unmodeled node: fail-closed
+        }
+
+        return AllUsesAreCompletingCalls(b.Left, g, neededMore, completing)
+            && AllUsesAreCompletingCalls(b.Right, g, neededMore, completing);
     }
 
     private void CollectCallsAndEscapesMatch(Expr.Match m, string enclosing)

@@ -2093,14 +2093,21 @@ takes responsibility for it — so the original scope no longer cleans it up. Ow
 resource binding is:
 
 - stored into an aggregate (constructor field, tuple element, list cell),
-- passed as an argument to a function or handler call, or
+- passed to a function or handler that **consumes** it (see borrowing below), or
 - passed to `Ashes.Task.spawn`.
 
-Because Ashes has no borrowing, passing a resource to a function transfers it: the callee now owns
-the resource (and is responsible for closing it), and the caller must not use or close it afterward.
-This is what lets a combinator hand an accepted socket to an opaque handler that closes it, without
-the combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Server.serve` and
+Passing a resource to a function that consumes it transfers ownership: the callee now owns the
+resource (and is responsible for closing it), and the caller must not use or close it afterward. This
+is what lets a combinator hand an accepted socket to an opaque handler that closes it, without the
+combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Server.serve` and
 `Ashes.Net.Tls.Server.serveTls`).
+
+**Borrowing.** Passing a resource to a function that only *reads* it — never closing, storing,
+returning, or capturing it — is a **borrow**, not a move: the caller keeps ownership and closes it
+once, and may keep using the resource afterward. Borrowing is inferred automatically (there is no
+borrow syntax); a parameter is treated as borrowed only when the compiler can prove every use in the
+callee is a read. This lets read-only helpers take a resource without consuming it. Anything the
+compiler cannot prove is a pure read is conservatively a move.
 
 Using or closing a resource *after* its ownership has moved is a compile-time error (`ASH008`),
 distinct from use-after-close (`ASH006`): the resource was not closed here, its ownership was

@@ -189,7 +189,7 @@ public sealed class ResourceLifecycleTests
         var program = new Parser(
             """
             let consume =
-                given (s) -> "taken"
+                given (s) -> Some(s)
             in
                 Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                     | Error(_) -> "fail"
@@ -241,7 +241,7 @@ public sealed class ResourceLifecycleTests
         var program = new Parser(
             """
             let consume =
-                given (s) -> "taken"
+                given (s) -> Some(s)
             in
                 Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
                     | Error(_) -> "fail"
