@@ -743,23 +743,40 @@ public sealed partial class Lowering
             var pruned = Prune(argType);
             if (pruned is TypeRef.TStr or TypeRef.TBytes)
             {
-                int persistentField = NewTemp();
-                Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
-                fieldTemp = persistentField;
+                if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
+                {
+                    // Update path: reuse the dead old value blob in place when the new string fits and
+                    // the old blob is provably persistent (a runtime blob-region check in the backend),
+                    // else materialize fresh. Bounds blob growth to the largest value per cell instead of
+                    // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
+                    // path below.
+                    int oldValueTemp = NewTemp();
+                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
+                    fieldTemp = persistentField;
+                }
+                else
+                {
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
+                    fieldTemp = persistentField;
+                }
             }
             else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
             {
                 int sizeBytes = tup.Elements.Count * 8;
                 if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
                 {
-                    // Update path: the reused node's old value cell (a same-size blob tuple, still in
-                    // the field until the caller overwrites it) is dead. Overwrite its contents in place
-                    // rather than allocating a fresh blob cell, so value storage is reused and the blob
-                    // stays bounded by distinct keys instead of growing per update.
+                    // Update path: the reused node's old value cell is dead. Overwrite its contents in
+                    // place when it is provably persistent (a runtime blob-region check in the backend),
+                    // else materialize fresh — so value storage is reused and the blob stays bounded by
+                    // distinct keys, without overwriting reclaimable main-arena memory in place.
                     int oldValueTemp = NewTemp();
                     Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
-                    Emit(new IrInst.CopyFixedInto(oldValueTemp, fieldTemp, sizeBytes));
-                    fieldTemp = oldValueTemp;
+                    int persistentField = NewTemp();
+                    Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
+                    fieldTemp = persistentField;
                 }
                 else
                 {

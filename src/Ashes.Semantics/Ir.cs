@@ -435,6 +435,31 @@ public abstract record IrInst
     public sealed record CopyFixedInto(int DestTemp, int SrcTemp, int SizeBytes) : IrInst;
 
     /// <summary>
+    /// Variable-size in-place-or-fresh string/bytes value-cell reuse on the reuse/update path. The old
+    /// value blob at <paramref name="OldBlobTemp"/> is the reused node's superseded value. It is
+    /// overwritten in place ONLY when the new string at <paramref name="SrcTemp"/> both fits the old
+    /// owned blob's capacity AND that blob provably lives in the persistent blob region (a runtime check
+    /// against the current blob chunk); otherwise a fresh blob is materialized in the blob region. The
+    /// region check keeps the reuse sound: a blob in the reclaimable main arena is never overwritten in
+    /// place (which would dangle after the per-iteration arena reset). <paramref name="DestTemp"/>
+    /// receives the resulting (in-place or fresh) blob pointer. Bounds blob growth to the largest value
+    /// per cell — the variable-size analogue of <see cref="CopyFixedInto"/>.
+    /// </summary>
+    public sealed record CopyStringIntoOrFresh(int DestTemp, int OldBlobTemp, int SrcTemp) : IrInst;
+
+    /// <summary>
+    /// Fixed-size in-place-or-fresh value-cell reuse on the reuse/update path — the region-guarded
+    /// form of <see cref="CopyFixedInto"/>. The old value cell at <paramref name="OldBlobTemp"/> is
+    /// overwritten with <paramref name="SizeBytes"/> bytes from <paramref name="SrcTemp"/> ONLY when
+    /// that cell provably lives in the persistent blob region (a runtime check against the current blob
+    /// chunk); otherwise a fresh <paramref name="SizeBytes"/> cell is materialized in the blob region.
+    /// The guard keeps the in-place write sound: a cell in the reclaimable main arena is never
+    /// overwritten in place (which would dangle after the per-iteration arena reset).
+    /// <paramref name="DestTemp"/> receives the resulting (in-place or fresh) cell pointer.
+    /// </summary>
+    public sealed record CopyFixedIntoOrFresh(int DestTemp, int OldBlobTemp, int SrcTemp, int SizeBytes) : IrInst;
+
+    /// <summary>
     /// Describes how head values are handled during deep list copy-out.
     /// </summary>
     public enum ListHeadCopyKind

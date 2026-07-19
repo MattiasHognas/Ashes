@@ -993,6 +993,117 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Variable-size in-place-or-fresh string/bytes value reuse on the update path. Overwrites the old
+    /// blob at <paramref name="oldBlobTemp"/> in place only when the new string at
+    /// <paramref name="srcTemp"/> fits the old owned blob's capacity AND that blob is in the current
+    /// persistent blob chunk (a blob in the reclaimable main arena must not be overwritten — it dangles
+    /// after the per-iteration arena reset). Otherwise materializes a fresh blob in the blob region.
+    /// Bounds blob growth to the largest value per cell. See <see cref="IrInst.CopyStringIntoOrFresh"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyStringIntoOrFresh(LlvmCodegenState state, int oldBlobTemp, int srcTemp)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle oldPtr = LoadTemp(state, oldBlobTemp);
+        LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
+        LlvmValueHandle newLen = LoadStringLength(state, srcPtr, "cstr_new_len");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "cstr_result");
+
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_check");
+        var inPlaceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_in_place");
+        var freshBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_fresh");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_continue");
+
+        // The blob region may be empty (end == 0); skip the footer read and go fresh in that case.
+        LlvmValueHandle blobEnd = LlvmApi.BuildLoad2(builder, state.I64, state.BlobEndSlot, "cstr_blob_end");
+        LlvmValueHandle blobLive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, blobEnd, LlvmApi.ConstInt(state.I64, 0, 0), "cstr_blob_live");
+        LlvmApi.BuildCondBr(builder, blobLive, checkBlock, freshBlock);
+
+        // Safe to reuse in place iff the new value fits AND the old blob is in the current blob chunk
+        // ([base, cursor); base is the footer stored at blob_end). A blob in the reclaimable main arena,
+        // or in an earlier blob chunk, falls through to a fresh allocation — sound, only a missed reuse.
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle oldCap = LoadStringLength(state, oldPtr, "cstr_old_cap"); // owned blob: length == capacity
+        LlvmValueHandle fits = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, newLen, oldCap, "cstr_fits");
+        LlvmValueHandle blobCursor = LlvmApi.BuildLoad2(builder, state.I64, state.BlobCursorSlot, "cstr_blob_cursor");
+        LlvmValueHandle chunkBase = LoadMemory(state, blobEnd, 0, "cstr_chunk_base"); // footer at end = chunk base
+        LlvmValueHandle geBase = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, oldPtr, chunkBase, "cstr_ge_base");
+        LlvmValueHandle ltCursor = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, oldPtr, blobCursor, "cstr_lt_cursor");
+        LlvmValueHandle inChunk = LlvmApi.BuildAnd(builder, geBase, ltCursor, "cstr_in_chunk");
+        LlvmValueHandle safe = LlvmApi.BuildAnd(builder, fits, inChunk, "cstr_safe");
+        LlvmApi.BuildCondBr(builder, safe, inPlaceBlock, freshBlock);
+
+        // In place: rewrite the old owned blob's header to the new length (owned — LoadStringLength masks
+        // the view bit) and copy the new bytes into it.
+        LlvmApi.PositionBuilderAtEnd(builder, inPlaceBlock);
+        StoreMemory(state, oldPtr, 0, newLen, "cstr_in_place_len");
+        LlvmValueHandle destBytes = GetStringBytesPointer(state, oldPtr, "cstr_in_place_dest");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, srcPtr, "cstr_in_place_src");
+        EmitMoveBytes(state, destBytes, srcBytes, newLen, "cstr_in_place");
+        LlvmApi.BuildStore(builder, oldPtr, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        // Fresh: materialize a fresh owned blob in the persistent blob region.
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle fresh = EmitCopyOutStringValue(state, srcPtr, state.BlobCursorSlot, state.BlobEndSlot);
+        LlvmApi.BuildStore(builder, fresh, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "cstr_result_value");
+    }
+
+    /// <summary>
+    /// Fixed-size in-place-or-fresh value-cell reuse on the update path — the region-guarded form of
+    /// <see cref="EmitCopyFixedInto"/>. Overwrites the old cell at <paramref name="oldBlobTemp"/> with
+    /// <paramref name="sizeBytes"/> bytes only when it is in the current persistent blob chunk; otherwise
+    /// materializes a fresh cell in the blob region. See <see cref="IrInst.CopyFixedIntoOrFresh"/>.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyFixedIntoOrFresh(LlvmCodegenState state, int oldBlobTemp, int srcTemp, int sizeBytes)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle oldPtr = LoadTemp(state, oldBlobTemp);
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "cfif_result");
+
+        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_check");
+        var inPlaceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_in_place");
+        var freshBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_fresh");
+        var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_continue");
+
+        // The blob region may be empty (end == 0); skip the footer read and go fresh in that case.
+        LlvmValueHandle blobEnd = LlvmApi.BuildLoad2(builder, state.I64, state.BlobEndSlot, "cfif_blob_end");
+        LlvmValueHandle blobLive = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, blobEnd, LlvmApi.ConstInt(state.I64, 0, 0), "cfif_blob_live");
+        LlvmApi.BuildCondBr(builder, blobLive, checkBlock, freshBlock);
+
+        // In place only if the old cell is in the current persistent blob chunk ([base, cursor); base is
+        // the footer at blob_end). A cell in the reclaimable main arena or an earlier chunk falls back to
+        // a fresh allocation — sound, only a missed reuse.
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle blobCursor = LlvmApi.BuildLoad2(builder, state.I64, state.BlobCursorSlot, "cfif_blob_cursor");
+        LlvmValueHandle chunkBase = LoadMemory(state, blobEnd, 0, "cfif_chunk_base"); // footer at end = chunk base
+        LlvmValueHandle geBase = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, oldPtr, chunkBase, "cfif_ge_base");
+        LlvmValueHandle ltCursor = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, oldPtr, blobCursor, "cfif_lt_cursor");
+        LlvmValueHandle inChunk = LlvmApi.BuildAnd(builder, geBase, ltCursor, "cfif_in_chunk");
+        LlvmApi.BuildCondBr(builder, inChunk, inPlaceBlock, freshBlock);
+
+        // In place: overwrite the old cell's bytes.
+        LlvmApi.PositionBuilderAtEnd(builder, inPlaceBlock);
+        LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, oldPtr, state.I8Ptr, "cfif_dest");
+        LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, LoadTemp(state, srcTemp), state.I8Ptr, "cfif_src");
+        EmitCopyBytes(state, destBytes, srcBytes, LlvmApi.ConstInt(state.I64, (ulong)sizeBytes, 0), "cfif_in_place");
+        LlvmApi.BuildStore(builder, oldPtr, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        // Fresh: materialize a fresh fixed-size cell in the blob region.
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle fresh = EmitCopyOutArenaToSpace(state, srcTemp, sizeBytes);
+        LlvmApi.BuildStore(builder, fresh, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "cfif_result_value");
+    }
+
+    /// <summary>
     /// Deep-copies an entire cons-cell chain out of the arena. Uses a three-phase
     /// approach to avoid aliasing between source and destination cells (which share
     /// the same arena region after RestoreArenaState resets the cursor):
