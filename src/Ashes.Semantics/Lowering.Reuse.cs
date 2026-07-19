@@ -1081,6 +1081,13 @@ public sealed partial class Lowering
     // reader like Map.get (MapTree -> Maybe) does not — routing a reader through the reuse spec would
     // allocate its result cell (e.g. Some(value)) into the never-reset to-space, leaking one cell per
     // call. Readers stay on the normal path, where their result lives in the reclaimed main arena.
+    //
+    // Residual (rewriters): overwriting a node's heap-leaf value (a fresh Str each iteration)
+    // materializes the new blob into the never-reset to-space while the old one becomes dead but is
+    // not reclaimed — max RSS then grows linearly with iterations on a constant-size map. Reclaiming
+    // the old blob is sound only once the value is known dead and unaliased, which the uniqueness
+    // typing work establishes; the reclaim is folded into that work rather than a standalone
+    // to-space freelist here.
     private bool SpecializationRebuildsAccumulator(TypeRef funcType, int argCount)
     {
         var current = Prune(funcType);
