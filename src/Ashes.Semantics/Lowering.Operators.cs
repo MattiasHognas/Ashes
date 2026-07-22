@@ -28,8 +28,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerAdd(Expr.Add add)
     {
         using var diagnosticSpan = PushDiagnosticSpan(add);
-        var (leftTemp, leftType) = LowerExpr(add.Left);
-        var (rightTemp, rightType) = LowerExpr(add.Right);
+        var (leftTemp, leftType, rightTemp, rightType) = LowerAddOperands(add);
 
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
@@ -79,6 +78,22 @@ public sealed partial class Lowering
         int errorTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(errorTemp, 0));
         return (errorTemp, new TypeRef.TInt());
+    }
+
+    private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerAddOperands(Expr.Add add)
+    {
+        bool savedRuntimeStringRequest = _runtimeRcStringAllocationRequested;
+        _runtimeRcStringAllocationRequested = false;
+        try
+        {
+            var (leftTemp, leftType) = LowerExpr(add.Left);
+            var (rightTemp, rightType) = LowerExpr(add.Right);
+            return (leftTemp, leftType, rightTemp, rightType);
+        }
+        finally
+        {
+            _runtimeRcStringAllocationRequested = savedRuntimeStringRequest;
+        }
     }
 
     // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is

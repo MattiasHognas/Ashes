@@ -633,9 +633,11 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
 
-        IrProgram nestedArenaProducer = LowerProgram(BuildRejectedRcOwnedHeapClosureScratchProgram());
+        IrProgram nestedArenaProducer = LowerProgram(BuildRuntimeRcOwnedHeapClosureScratchProgram());
         AllInstructions(nestedArenaProducer).Any(instruction =>
-            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(nestedArenaProducer).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -964,11 +966,13 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+        AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
-        result.Stdout.ShouldBe("7\n");
+        result.Stdout.ShouldBe("8\n");
     }
 
     [Test]
@@ -5010,7 +5014,7 @@ public sealed class LinuxBackendCoverageTests
             AllInstructions(ir).Any(instruction =>
                 instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
-            long expected = iterations * 7L;
+            long expected = iterations * 8L;
             sample.Stdout.ShouldBe($"{expected}\n");
             samples.Add(sample);
         }
@@ -5689,7 +5693,7 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let length =
-                        let text = "value-" + (if n > 0 then "x" else "y") in
+                        let text = "value-" + Ashes.Text.fromInt(42) in
                         let f =
                             if n > 0
                             then given (unit) -> Ashes.Text.byteLength(text)
@@ -5700,7 +5704,7 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
-    private static string BuildRejectedRcOwnedHeapClosureScratchProgram()
+    private static string BuildRuntimeRcOwnedHeapClosureScratchProgram()
         => """
             let n = 1 in
             let text = "value-" + Ashes.Text.fromInt(n) in

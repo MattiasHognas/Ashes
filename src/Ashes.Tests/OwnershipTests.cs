@@ -111,6 +111,21 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_concat_reclaims_nested_string_producer_scratch()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let text = \"value-\" + Ashes.Text.fromInt(42) in text) in Ashes.Text.byteLength(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RestoreArenaState).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Direct_known_function_result_transfers_runtime_string_ownership_without_copy_out()
     {
         IrProgram ir = LowerProgram(

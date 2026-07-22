@@ -2444,9 +2444,7 @@ public sealed partial class Lowering
 
     private static bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
     {
-        return expression is Expr.Add add
-            && IsArenaAllocationFreeStringOperand(add.Left)
-            && IsArenaAllocationFreeStringOperand(add.Right);
+        return expression is Expr.Add;
     }
 
     private static bool IsArenaAllocationFreeStringOperand(Expr expression)
