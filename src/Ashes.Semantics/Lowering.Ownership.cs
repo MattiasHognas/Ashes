@@ -369,13 +369,26 @@ public sealed partial class Lowering
             // RC insertion can reclaim the container without conflating it with resource closing.
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
-        else if (info.IsResource || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+        else if (string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+        {
+            EmitFunctionDrop(loadTemp, info);
+        }
+        else if (info.IsResource)
         {
             Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
         }
         else
         {
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
+        }
+    }
+
+    private void EmitFunctionDrop(int loadTemp, OwnershipInfo info)
+    {
+        Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
+        if (info.RuntimeManaged)
+        {
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, RuntimeManaged: true));
         }
     }
 

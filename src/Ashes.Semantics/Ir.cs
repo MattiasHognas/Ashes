@@ -181,7 +181,13 @@ public abstract record IrInst
     public sealed record RegexCaptures(int Target, int Code, int Subject, int Start) : IrInst;  // -> Option(List(Option(Str)))
     public sealed record RegexSubstitute(int Target, int Code, int Subject, int Replacement) : IrInst; // -> Str
 
-    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
+    public sealed record MakeClosure(
+        int Target,
+        string FuncLabel,
+        int EnvPtrTemp,
+        int EnvSizeBytes,
+        bool RuntimeManaged = false
+    ) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
     public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
@@ -194,8 +200,8 @@ public abstract record IrInst
     // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
     public sealed record CallKnown(int Target, string FuncLabel, int EnvTemp, int ArgTemp) : IrInst;
 
-    // Generic fixed-size allocation. RuntimeManaged is currently emitted only for built-in list
-    // cells; tuples, closure environments, and runtime buffers remain arena-managed.
+    // Generic fixed-size allocation. RuntimeManaged is used for selected list cells and closure
+    // environments; tuples and other runtime buffers remain arena-managed.
     public sealed record Alloc(int Target, int SizeBytes, bool RuntimeManaged = false) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 

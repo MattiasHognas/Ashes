@@ -1814,8 +1814,7 @@ internal static partial class LlvmCodegen
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
             IrInst.CleanupResource cleanup => EmitResourceCleanup(state, LoadTemp(state, cleanup.SourceTemp), cleanup.TypeName),
-            IrInst.RcDrop { RuntimeManaged: true } drop =>
-                EmitRuntimeRcDrop(state, LoadTemp(state, drop.SourceTemp)),
+            IrInst.RcDrop { RuntimeManaged: true } drop => EmitRuntimeManagedDropInstruction(state, drop),
             IrInst.RcDrop => false,
             _ => (bool?)null,
         };
@@ -1829,6 +1828,14 @@ internal static partial class LlvmCodegen
             LoadTemp(state, instruction.StartTemp),
             LoadTemp(state, instruction.LenTemp),
             instruction.RuntimeManaged));
+    }
+
+    private static bool EmitRuntimeManagedDropInstruction(LlvmCodegenState state, IrInst.RcDrop instruction)
+    {
+        LlvmValueHandle value = LoadTemp(state, instruction.SourceTemp);
+        return string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
+            ? EmitRuntimeRcClosureDrop(state, value)
+            : EmitRuntimeRcDrop(state, value);
     }
 
     private static bool? EmitInstructionGroup3(LlvmCodegenState state, IrInst instruction)
@@ -2026,7 +2033,12 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, concatStr.Right),
                 concatStr.RuntimeManaged)),
             IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot)),
-            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp), makeClosure.EnvSizeBytes)),
+            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(
+                state,
+                makeClosure.FuncLabel,
+                LoadTemp(state, makeClosure.EnvPtrTemp),
+                makeClosure.EnvSizeBytes,
+                makeClosure.RuntimeManaged)),
             IrInst.LoadFuncAddr loadFuncAddr => StoreTemp(state, loadFuncAddr.Target,
                 LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[loadFuncAddr.FuncLabel], state.I64, $"func_addr_{loadFuncAddr.FuncLabel}")),
             IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target, EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp), makeClosureStack.EnvSizeBytes)),

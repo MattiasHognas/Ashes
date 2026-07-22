@@ -705,6 +705,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_copy_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcCopyClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Function", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let n = 1 in let f = if n > 0 then given (x) -> x + n else given (x) -> x + n in f");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("2\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1995,6 +2020,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt text", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_copy_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcCopyClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC copy-capture closure", samples);
     }
 
     [Test]
@@ -4245,6 +4284,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcCopyClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcCopyClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = ((long)iterations * (iterations + 1) / 2) + iterations;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4657,6 +4714,22 @@ public sealed class LinuxBackendCoverageTests
                         let text = Ashes.Text.fromBigInt(value) in
                         Ashes.Text.byteLength(text)
                     in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcCopyClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result =
+                        let f =
+                            if n > 0
+                            then given (x) -> x + n
+                            else given (x) -> x + n
+                        in f(1)
+                    in loop(n - 1)(total + result)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

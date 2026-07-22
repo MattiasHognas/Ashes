@@ -366,7 +366,8 @@
           {
             Target: 2,
             FuncLabel: lambda_1,
-            EnvSizeBytes: 8
+            EnvSizeBytes: 8,
+            RuntimeManaged: false
           },
           {
             Source: 2

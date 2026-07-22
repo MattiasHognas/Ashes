@@ -439,6 +439,7 @@ public sealed partial class Lowering
     private bool _runtimeRcStringAllocationRequested;
     private bool _runtimeRcBytesAllocationRequested;
     private bool _runtimeRcBigIntAllocationRequested;
+    private bool _runtimeRcClosureAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1954,9 +1955,57 @@ public sealed partial class Lowering
             return loweredAdtValue;
         }
 
-        return TryLowerRuntimeRcBigIntLet(let, out (int Temp, TypeRef Type) loweredBigInt)
-            ? loweredBigInt
-            : LowerExpr(let.Value);
+        return LowerRemainingLetValue(let);
+    }
+
+    private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
+    {
+        return TryLowerRuntimeRcCopyClosureLet(let, out (int Temp, TypeRef Type) loweredClosure)
+            ? loweredClosure
+            : TryLowerRuntimeRcBigIntLet(let, out (int Temp, TypeRef Type) loweredBigInt)
+                ? loweredBigInt
+                : LowerExpr(let.Value);
+    }
+
+    private bool TryLowerRuntimeRcCopyClosureLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcCopyClosureProducer(let.Value)
+            || !UsesNameOnlyAsDirectCallee(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcClosureAllocationRequested;
+        _runtimeRcClosureAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            _runtimeManagedResultTemps.Add(lowered.Temp);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcClosureAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcCopyClosureProducer(Expr expression)
+    {
+        return expression switch
+        {
+            Expr.Lambda lambda => LambdaCapturesOnlyCopyValues(lambda),
+            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then)
+                && IsRuntimeRcCopyClosureProducer(conditional.Else),
+            _ => false,
+        };
+    }
+
+    private bool LambdaCapturesOnlyCopyValues(Expr.Lambda lambda)
+    {
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        HashSet<string> free = FreeVars(lambda.Body, bound);
+        return free.All(name => LookupOwnedValue(name) is null);
     }
 
     private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -2734,6 +2783,7 @@ public sealed partial class Lowering
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntBinary { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
@@ -3321,7 +3371,7 @@ public sealed partial class Lowering
             }
             else
             {
-                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8, _runtimeRcClosureAllocationRequested));
             }
 
             for (int i = 0; i < captures.Count; i++)
@@ -3977,7 +4027,12 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
+            Emit(new IrInst.MakeClosure(
+                closureTemp,
+                label,
+                envPtrTemp,
+                envSizeBytes,
+                _runtimeRcClosureAllocationRequested));
         }
 
         // Record any resource captured by this closure, with its env offset (capture i lives at

@@ -37,15 +37,43 @@ internal static partial class LlvmCodegen
     // cleaned up (CleanupResource "Function").
     private const int ClosureSizeBytes = 32;
 
-    private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
+    private static LlvmValueHandle EmitMakeClosure(
+        LlvmCodegenState state,
+        string funcLabel,
+        LlvmValueHandle envPtr,
+        int envSizeBytes,
+        bool runtimeManaged = false)
     {
-        LlvmValueHandle closurePtr = EmitAlloc(state, ClosureSizeBytes);
+        LlvmValueHandle closurePtr = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, ClosureSizeBytes, "rc_closure")
+            : EmitAlloc(state, ClosureSizeBytes);
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
+    }
+
+    private static bool EmitRuntimeRcClosureDrop(LlvmCodegenState state, LlvmValueHandle closurePtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle envSize = LoadMemory(state, closurePtr, 16, "rc_closure_env_size");
+        LlvmValueHandle hasEnv = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, envSize,
+            LlvmApi.ConstInt(state.I64, 0, 0), "rc_closure_has_env");
+        LlvmBasicBlockHandle dropEnvBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_drop_env");
+        LlvmBasicBlockHandle dropClosureBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_drop_value");
+        LlvmApi.BuildCondBr(builder, hasEnv, dropEnvBlock, dropClosureBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, dropEnvBlock);
+        LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "rc_closure_env");
+        EmitRuntimeRcDrop(state, envPtr);
+        LlvmApi.BuildBr(state.Target.Builder, dropClosureBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, dropClosureBlock);
+        return EmitRuntimeRcDrop(state, closurePtr);
     }
 
     private static LlvmValueHandle EmitMakeClosureStack(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)

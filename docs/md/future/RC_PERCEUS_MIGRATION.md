@@ -317,6 +317,9 @@ results use dynamically sized RC buffers as well; division and modulo reclaim th
 buffer and runtime scratch immediately. Escaping conversion and arithmetic results remain arena-managed.
 `Ashes.Text.fromBigInt` likewise reclaims its decimal-conversion scratch immediately and places its
 final String on the direct-consumer RC path; escaping text results remain arena-managed.
+The first closure slice RC-manages both closure cells and non-empty environments when every capture
+is a copy value and an `if`-selected closure is called immediately. Direct lambdas keep their existing
+stack allocation, while escaping closures and closures with owned captures remain arena-managed.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and other BigInt
 results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
