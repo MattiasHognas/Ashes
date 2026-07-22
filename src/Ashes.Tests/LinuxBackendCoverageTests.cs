@@ -1213,6 +1213,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_parallel_worker_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildParallelWorkerMemoryProgram,
+            outputPerIteration: 3).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("parallel worker shared list", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
@@ -3104,6 +3119,24 @@ public sealed class LinuxBackendCoverageTests
                             match tail with
                                 | [] -> loop(n - 1)(total)
                                 | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildParallelWorkerMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let shared = 20 :: 22 :: [] in
+                    match Ashes.Task.Parallel.both(given (_u) -> 1 :: shared)(given (_u) -> 2 :: shared) with
+                        | (left, right) ->
+                            match left with
+                                | [] -> loop(n - 1)(total)
+                                | leftHead :: _ ->
+                                    match right with
+                                        | [] -> loop(n - 1)(total)
+                                        | rightHead :: _ -> loop(n - 1)(total + leftHead + rightHead)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
