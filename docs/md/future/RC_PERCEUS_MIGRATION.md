@@ -344,6 +344,13 @@ Validation:
 - Async tests cover values crossing await boundaries.
 - Cross-target validation covers linux-x64, linux-arm64, win-x64, and win-arm64 when available.
 
+Task/coroutine decision: task frames remain region-managed rather than ordinary RC values. Their
+intrusive ready/waiter links and suspend-resume state are scheduler-owned; detached tasks execute in
+private arena chunk chains that are explicitly released on completion, while main-task frames remain
+under lexical/TCO arena reset. A repeated 2K/10K/50K `Task.run(async ...)` RSS-slope test guards the
+main-task path, complementing the detached-task and async server memory tests. Ordinary RC values
+captured across suspension still require explicit sharing rules before that boundary can be enabled.
+
 ### Phase 7: Retire Obsolete Arena/Reuse Paths
 
 Deliverables:

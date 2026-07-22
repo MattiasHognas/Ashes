@@ -2072,6 +2072,20 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_region_managed_task_frames_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRegionManagedTaskFrameMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("region-managed task frames", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_list_performance_stays_within_arena_baseline_budget()
     {
         if (!OperatingSystem.IsLinux())
@@ -4356,6 +4370,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRegionManagedTaskFrameMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRegionManagedTaskFrameProgram(iterations));
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CreateTask).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.RestoreArenaState).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = (long)iterations * (iterations + 1) / 2;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4801,6 +4833,22 @@ public sealed class LinuxBackendCoverageTests
                             else given (unit) -> Ashes.Text.byteLength(text)
                         in f(0)
                     in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRegionManagedTaskFrameProgram(int iterations)
+        => $$"""
+            let runOne n =
+                match Ashes.Task.run(async(match await async n with
+                    | Ok(value) -> value
+                    | Error(_) -> 0)) with
+                    | Ok(value) -> value
+                    | Error(_) -> 0
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + runOne(n))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
