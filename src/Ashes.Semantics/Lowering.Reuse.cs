@@ -637,7 +637,7 @@ public sealed partial class Lowering
         int fieldCount,
         bool allowRuntimeManaged,
         out int tokenTemp,
-        out bool runtimeManaged)
+        out RuntimeReuseCleanup? runtimeCleanup)
     {
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
@@ -645,14 +645,14 @@ public sealed partial class Lowering
                 && (allowRuntimeManaged || !_reuseTokens[i].RuntimeManaged))
             {
                 tokenTemp = _reuseTokens[i].Temp;
-                runtimeManaged = _reuseTokens[i].RuntimeManaged;
+                runtimeCleanup = _reuseTokens[i].RuntimeCleanup;
                 _reuseTokens.RemoveAt(i);
                 return true;
             }
         }
 
         tokenTemp = -1;
-        runtimeManaged = false;
+        runtimeCleanup = null;
         return false;
     }
 

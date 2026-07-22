@@ -195,10 +195,14 @@ public sealed class OwnershipTests
             .Select(pair => pair.index)
             .ToArray();
         fieldReads.Length.ShouldBe(2);
+        foreach (int fieldRead in fieldReads)
+        {
+            ir.EntryFunction.Instructions[fieldRead + 1]
+                .ShouldBeOfType<IrInst.RcDrop>()
+                .RuntimeManaged.ShouldBeTrue();
+        }
         ir.EntryFunction.Instructions.Count(inst =>
-            inst is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
-        ir.EntryFunction.Instructions.Count(inst =>
-            inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(2);
+            inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(3);
     }
 
     [Test]
@@ -208,13 +212,11 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
         int tagRead = ir.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.GetAdtTag);
-        int firstToken = ir.EntryFunction.Instructions.FindIndex(inst =>
-            inst is IrInst.DropReuse { RuntimeManaged: true });
-        firstToken.ShouldBeGreaterThan(tagRead);
+        int firstDrop = ir.EntryFunction.Instructions.FindIndex(inst =>
+            inst is IrInst.RcDrop { TypeName: "Flag", RuntimeManaged: true });
+        firstDrop.ShouldBeGreaterThan(tagRead);
         ir.EntryFunction.Instructions.Count(inst =>
-            inst is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
-        ir.EntryFunction.Instructions.Count(inst =>
-            inst is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+            inst is IrInst.RcDrop { TypeName: "Flag", RuntimeManaged: true }).ShouldBe(3);
     }
 
     [Test]

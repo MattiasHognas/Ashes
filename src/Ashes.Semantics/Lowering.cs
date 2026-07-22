@@ -429,6 +429,10 @@ public sealed partial class Lowering
 
     // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
     private bool _runtimeRcCopyAdtAllocationRequested;
+    // Set while lowering a match arm with a runtime reuse token. Unlike the general copy-ADT
+    // request, this is restricted to the scrutinee's type so unrelated constructors remain arena
+    // managed and cannot consume the token merely because their layouts happen to match.
+    private TypeRef.TNamedType? _runtimeRcReuseAllocationTypeRequested;
     private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.

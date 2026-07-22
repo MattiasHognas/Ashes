@@ -48,20 +48,20 @@ public sealed class ReuseTokenTests
                 | Empty
                 | One(Int)
 
-            let choice = Empty
+            let choice = One(1)
             match choice with
-                | Empty -> One(1)
+                | Empty -> Empty
                 | One(_) -> Empty
             """);
 
         program.EntryFunction.Instructions.Count(instruction =>
             instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
-        program.EntryFunction.Instructions.Any(instruction =>
-            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
         program.EntryFunction.Instructions.Count(instruction =>
-            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(3);
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
         program.EntryFunction.Instructions.Count(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(2);
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(1);
     }
 
     [Test]
@@ -87,6 +87,74 @@ public sealed class ReuseTokenTests
             instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
         program.EntryFunction.Instructions.Count(instruction =>
             instruction is IrInst.AllocAdt { RuntimeManaged: false }).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_releases_old_children_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(_, value, _) -> Node(Leaf)(value + 1)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_declines_when_recursive_field_remains_live()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) -> Node(left)(value + 1)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Runtime_reuse_declines_when_tail_arm_would_leave_token_unconsumed()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let choice = Left(n) in
+                    match choice with
+                        | Left(value) -> loop(value - 1)
+                        | Right(value) -> loop(value - 1)
+
+            Ashes.IO.print(loop(3))
+            """);
+
+        IrFunction loop = program.Functions.Single(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }));
+        loop.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
     }
 
     [Test]

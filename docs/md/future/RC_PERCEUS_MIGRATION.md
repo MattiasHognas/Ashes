@@ -252,13 +252,18 @@ behavior. The runtime-managed path now implements the Perceus contract: `DropReu
 cell as its token, but decrements a shared cell and produces a null token; `AllocReusing` overwrites a
 non-null token or allocates a fresh RC cell for null. Native backend tests cover both outcomes.
 Lowering now emits runtime-managed tokens for an exhaustive, guard-free match over a live copy-only
-RC ADT whose scrutinee is dead. A same-sized runtime-manageable constructor consumes the token;
+or supported self-recursive RC ADT whose scrutinee is dead. A same-sized runtime-manageable
+constructor consumes the token;
 otherwise the constructor allocates a fresh RC cell and the arm null-guards and releases its
 unconsumed token with constructor-specialized cleanup. Allocation-regime checks prevent a runtime
-token from being consumed by a same-sized arena-managed constructor. Recursive-accumulator IR tests
-assert the complete `DropReuse` to `AllocReusing` path, and representative constant-memory and
-shared-value reuse programs remain unchanged. Pointer-bearing and recursive ADTs remain for a later
-slice that enables their already-described recursive-child token cleanup metadata at the source gate.
+token from being consumed by a same-sized arena-managed constructor. Before a unique recursive node
+is overwritten, constructor-specific lowering releases its dead old child ownership; reuse is
+declined if a recursive pattern binding remains live. A tail-position match is eligible only when
+every arm consumes its token before the TCO jump, so cleanup cannot become unreachable. Native RSS
+slope measurements for recursive reuse at 2K, 10K, and 50K iterations plateau within the established
+budget. Recursive-accumulator IR tests assert the complete `DropReuse` to `AllocReusing` path, and
+representative constant-memory and shared-value reuse programs remain unchanged. Other
+pointer-bearing ADTs and reuse that transfers recursive children remain for later slices.
 
 Deliverables:
 

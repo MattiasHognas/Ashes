@@ -200,10 +200,32 @@ public sealed class LinuxBackendCoverageTests
                 | Empty
                 | One(Int)
 
-            let choice = Empty
+            let choice = One(1)
             match choice with
-                | Empty -> One(1)
+                | Empty -> Empty
                 | One(_) -> Empty
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_recursive_adt_after_releasing_old_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(_, value, _) -> Node(Leaf)(value + 1)(Leaf)
             """)).ConfigureAwait(false);
 
         result.Stdout.ShouldBe(string.Empty);
@@ -1271,9 +1293,13 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
             outputPerIteration: 62).ConfigureAwait(false);
+        List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcAdtReuseMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
+        AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
     }
 
     [Test]
@@ -3329,6 +3355,27 @@ public sealed class LinuxBackendCoverageTests
                             match child with
                                 | Leaf -> loop(n - 1)(total + value)
                                 | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcAdtReuseMemoryProgram(int iterations)
+        => $$"""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tree = Node(Leaf)(1)(Leaf) in
+                    match tree with
+                        | Leaf ->
+                            let rebuilt = Leaf in
+                            loop(n - 1)(total)
+                        | Node(_, value, _) ->
+                            let rebuilt = Node(Leaf)(value + 1)(Leaf) in
+                            loop(n - 1)(total + value)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

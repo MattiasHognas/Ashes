@@ -586,7 +586,8 @@ public sealed partial class Lowering
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
-        bool runtimeManagedCandidate = _runtimeRcCopyAdtAllocationRequested
+        bool runtimeManagedCandidate = (_runtimeRcCopyAdtAllocationRequested
+                || RuntimeReuseAllocationMatches(resultType))
             && (CanRuntimeManageCopyAdt(resultType) || CanRuntimeManageRecursiveCopyAdt(resultType));
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
@@ -595,11 +596,17 @@ public sealed partial class Lowering
                 0,
                 runtimeManagedCandidate,
                 out int reuseTokenTemp,
-                out bool runtimeManagedReuse))
+                out RuntimeReuseCleanup? runtimeCleanup))
         {
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
-            Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp, runtimeManagedReuse));
+            EmitRuntimeReuseTokenChildrenDrop(reuseTokenTemp, runtimeCleanup);
+            Emit(new IrInst.AllocReusing(
+                ptrTemp,
+                tag,
+                0,
+                reuseTokenTemp,
+                runtimeCleanup is not null));
             _reuseResultTemps.Add(ptrTemp);
         }
         else if (stackAllocate)
@@ -658,7 +665,7 @@ public sealed partial class Lowering
         var resultType = InstantiateAdtType(ctor);
         bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
-                || (_runtimeRcCopyAdtAllocationRequested
+                || ((_runtimeRcCopyAdtAllocationRequested || RuntimeReuseAllocationMatches(named))
                     && (CanRuntimeManageCopyAdt(named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named))));
 
@@ -687,6 +694,10 @@ public sealed partial class Lowering
 
         return (ptrTemp, resultType);
     }
+
+    private bool RuntimeReuseAllocationMatches(TypeRef.TNamedType resultType)
+        => _runtimeRcReuseAllocationTypeRequested is { } requested
+            && ReferenceEquals(requested.Symbol, resultType.Symbol);
 
     private void PrepareRuntimeManagedAdtChildArguments(IReadOnlyList<Expr> arguments, List<int> argumentTemps)
     {
@@ -772,18 +783,19 @@ public sealed partial class Lowering
                 ctor.Arity,
                 runtimeManagedCandidate,
                 out int reuseTokenTemp,
-                out bool runtimeManagedReuse))
+                out RuntimeReuseCleanup? runtimeCleanup))
         {
             consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // by the caller, so overwriting the cell now is safe.
+            EmitRuntimeReuseTokenChildrenDrop(reuseTokenTemp, runtimeCleanup);
             Emit(new IrInst.AllocReusing(
                 ptrTemp,
                 tag,
                 ctor.Arity,
                 reuseTokenTemp,
-                runtimeManagedReuse));
+                runtimeCleanup is not null));
             _reuseResultTemps.Add(ptrTemp);
             reuseNode = true;
         }

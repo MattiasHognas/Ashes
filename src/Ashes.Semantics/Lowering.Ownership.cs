@@ -549,6 +549,49 @@ public sealed partial class Lowering
         Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 
+    private void EmitRuntimeReuseTokenChildrenDrop(
+        int tokenTemp,
+        RuntimeReuseCleanup? runtimeCleanup)
+    {
+        if (runtimeCleanup is not { } cleanup)
+        {
+            return;
+        }
+
+        List<int> recursiveFields = [];
+        for (int i = 0; i < cleanup.Constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                cleanup.Constructor,
+                i,
+                cleanup.Type));
+            if (fieldType is TypeRef.TNamedType child
+                && string.Equals(child.Symbol.Name, cleanup.Type.Symbol.Name, StringComparison.Ordinal))
+            {
+                recursiveFields.Add(i);
+            }
+        }
+
+        if (recursiveFields.Count == 0)
+        {
+            return;
+        }
+
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasTokenTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
+        string endLabel = NewLabel("reuse_children_released");
+        Emit(new IrInst.JumpIfFalse(hasTokenTemp, endLabel));
+        foreach (int fieldIndex in recursiveFields)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, fieldIndex));
+            EmitRecursiveRuntimeManagedAdtDrop(childTemp, cleanup.Type);
+        }
+        Emit(new IrInst.Label(endLabel));
+    }
+
     private readonly Dictionary<string, string> _runtimeRcDropperLabels = new(StringComparer.Ordinal);
 
     private void EmitRecursiveRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)

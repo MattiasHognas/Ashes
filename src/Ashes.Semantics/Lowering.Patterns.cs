@@ -42,7 +42,7 @@ public sealed partial class Lowering
         // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
         // arms that don't reference the accumulator again (so its cell is dead).
         (string? reuseScrutineeName, TypeRef.TNamedType? runtimeReuseType) =
-            GetMatchReuseScrutinee(match, valueType);
+            GetMatchReuseScrutinee(match, valueType, savedTailPos);
 
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
@@ -68,7 +68,8 @@ public sealed partial class Lowering
 
     private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(
         Expr.Match match,
-        TypeRef valueType)
+        TypeRef valueType,
+        bool matchIsInTailPosition)
     {
         if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name))
         {
@@ -78,6 +79,7 @@ public sealed partial class Lowering
         if (!TryGetRuntimeManagedReuseScrutinee(
                 match,
                 valueType,
+                matchIsInTailPosition,
                 out string runtimeScrutineeName,
                 out TypeRef.TNamedType runtimeType))
         {
@@ -90,13 +92,15 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
-    /// runtime-managed copy-only ADT, and the guard-free match must exhaustively consume it. A
-    /// same-sized constructor may consume the token; otherwise the arm releases a non-null token
-    /// with constructor-specialized cleanup after evaluating its body.
+    /// runtime-managed copy-only or supported self-recursive ADT, and the guard-free match must
+    /// exhaustively consume it. Recursive payload bindings must be dead. A same-sized constructor
+    /// may consume the token; otherwise the arm releases a non-null token with
+    /// constructor-specialized cleanup after evaluating its body.
     /// </summary>
     private bool TryGetRuntimeManagedReuseScrutinee(
         Expr.Match match,
         TypeRef valueType,
+        bool matchIsInTailPosition,
         out string scrutineeName,
         out TypeRef.TNamedType runtimeType)
     {
@@ -111,27 +115,96 @@ public sealed partial class Lowering
             }
             || Prune(valueType) is not TypeRef.TNamedType matchedType
             || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
-            || !CanRuntimeManageCopyAdt(matchedType)
+            || (!CanRuntimeManageCopyAdt(matchedType)
+                && !CanRuntimeManageRecursiveCopyAdt(matchedType))
             || match.Cases.Count != matchedType.Symbol.Constructors.Count)
         {
             return false;
         }
 
         var matchedConstructors = new HashSet<string>(StringComparer.Ordinal);
+        bool hasReusableArm = false;
         foreach (MatchCase matchCase in match.Cases)
         {
+            bool armConsumesToken = matchCase.Pattern is Pattern.Constructor or Pattern.Var
+                && TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol candidateConstructor)
+                && MatchArmBeginsWithRuntimeReuseConstructor(
+                    matchCase.Body,
+                    candidateConstructor.Arity);
             if (matchCase.Guard is not null
                 || ExprReferencesName(matchCase.Body, variable.Name, shadowed: false)
                 || !TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol matchedConstructor)
                 || !string.Equals(matchedConstructor.ParentType, matchedType.Symbol.Name, StringComparison.Ordinal)
-                || !matchedConstructors.Add(matchedConstructor.Name))
+                || !matchedConstructors.Add(matchedConstructor.Name)
+                || (matchIsInTailPosition && !armConsumesToken))
             {
                 return false;
             }
+
+            hasReusableArm |= armConsumesToken;
+        }
+
+        if (!hasReusableArm
+            || (CanRuntimeManageRecursiveCopyAdt(matchedType)
+            && !RuntimeReuseRecursiveFieldsAreDead(match.Cases, matchedType))
+            )
+        {
+            return false;
         }
 
         scrutineeName = variable.Name;
         runtimeType = matchedType;
+        return true;
+    }
+
+    private bool MatchArmBeginsWithRuntimeReuseConstructor(Expr body, int fieldCount)
+    {
+        if (TryDescribeConstructorExpression(
+                body,
+                out ConstructorSymbol? constructor,
+                out _,
+                out TypeRef.TNamedType? resultType)
+            && constructor is not null
+            && resultType is not null
+            && constructor.Arity == fieldCount
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageRecursiveCopyAdt(resultType)))
+        {
+            return true;
+        }
+
+        return body is Expr.Let let
+            && (MatchArmBeginsWithRuntimeReuseConstructor(let.Value, fieldCount)
+                || MatchArmBeginsWithRuntimeReuseConstructor(let.Body, fieldCount));
+    }
+
+    private bool RuntimeReuseRecursiveFieldsAreDead(
+        IReadOnlyList<MatchCase> cases,
+        TypeRef.TNamedType matchedType)
+    {
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Pattern is not Pattern.Constructor pattern
+                || !TryGetConstructorSymbol(pattern, out ConstructorSymbol constructor))
+            {
+                continue;
+            }
+
+            for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                    constructor,
+                    i,
+                    matchedType));
+                if (fieldType is TypeRef.TNamedType child
+                    && string.Equals(child.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
+                    && MatchCaseReferencesAnyBinding(matchCase, PatternBindings(pattern.Patterns[i])))
+                {
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 
@@ -287,18 +360,19 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore)
     {
-        bool runtimeTokenAvailable = _reuseTokens
+        TypeRef.TNamedType? runtimeReuseType = _reuseTokens
             .Skip(reuseTokensBefore)
-            .Any(token => token.RuntimeManaged);
-        bool savedCopyAdtRequest = _runtimeRcCopyAdtAllocationRequested;
-        _runtimeRcCopyAdtAllocationRequested |= runtimeTokenAvailable;
+            .Select(token => token.RuntimeCleanup?.Type)
+            .FirstOrDefault(type => type is not null);
+        TypeRef.TNamedType? savedReuseType = _runtimeRcReuseAllocationTypeRequested;
+        _runtimeRcReuseAllocationTypeRequested = runtimeReuseType ?? savedReuseType;
         try
         {
             return LowerExpr(body);
         }
         finally
         {
-            _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest;
+            _runtimeRcReuseAllocationTypeRequested = savedReuseType;
         }
     }
 
