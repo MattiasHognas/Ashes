@@ -1164,9 +1164,32 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> records = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaRecordMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> growingStrings = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaGrowingStringMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
+        AssertMemoryPlateaus("legacy arena growing string accumulator", growingStrings);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_bytes_and_bigint_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> bytes = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaBytesMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> bigints = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaBigIntMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena bytes", bytes);
+        AssertMemoryPlateaus("legacy arena bigint", bigints);
     }
 
     [Test]
@@ -3114,6 +3137,43 @@ public sealed class LinuxBackendCoverageTests
                     let box = Box(text = "value-" + Ashes.Text.fromInt(n), value = 1) in
                     if Ashes.Text.byteLength(box.text) > 0
                     then loop(n - 1)(total + box.value)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaGrowingStringMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n text =
+                if n <= 0 then Ashes.Text.byteLength(text)
+                else loop(n - 1)(text + "x")
+
+            Ashes.IO.print(loop({{iterations}})(""))
+            """;
+
+    private static string BuildLegacyArenaBytesMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let left = Ashes.Byte.fromText("value-") in
+                    let right = Ashes.Byte.fromText(Ashes.Text.fromInt(n)) in
+                    let bytes = Ashes.Byte.appendByte(Ashes.Byte.append(left)(right))(33u8) in
+                    if Ashes.Byte.length(bytes) > 0
+                    then loop(n - 1)(total + 1)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaBigIntMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value = 123456789012345678901234567890N * Ashes.Number.BigInt.fromInt(n) in
+                    if value > 0N
+                    then loop(n - 1)(total + 1)
                     else loop(n - 1)(total)
 
             Ashes.IO.print(loop({{iterations}})(0))
