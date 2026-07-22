@@ -426,6 +426,9 @@ public sealed partial class Lowering
     // narrow boundary cannot escape through calls, returns, matches, updates, or captured variables.
     private bool _runtimeRcRecordAllocationRequested;
 
+    // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
+    private bool _runtimeRcCopyAdtAllocationRequested;
+
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -1906,7 +1909,44 @@ public sealed partial class Lowering
             }
         }
 
+        if (IsConstructorExpression(let.Value) && IsImmediateAdtMatchUse(let.Name, let.Body))
+        {
+            bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
+            _runtimeRcCopyAdtAllocationRequested = true;
+            try
+            {
+                return LowerExpr(let.Value);
+            }
+            finally
+            {
+                _runtimeRcCopyAdtAllocationRequested = savedRequest;
+            }
+        }
+
         return LowerExpr(let.Value);
+    }
+
+    private static bool IsImmediateAdtMatchUse(string name, Expr body)
+    {
+        if (body is not Expr.Match(Expr.Var value, var cases, _)
+            || !string.Equals(value.Name, name, StringComparison.Ordinal)
+            || cases.Count < 2)
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in cases)
+        {
+            bool shadowed = PatternBindings(matchCase.Pattern)
+                .Any(boundName => string.Equals(boundName, name, StringComparison.Ordinal));
+            if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, name, shadowed))
+                || ExprReferencesName(matchCase.Body, name, shadowed))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

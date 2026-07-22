@@ -184,6 +184,48 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Copy_only_user_adt_consumed_by_match_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("type Choice = | Left(Int) | Right(Int)\nlet choice = Left(42) in match choice with | Left(value) -> Ashes.IO.print(value) | Right(value) -> Ashes.IO.print(value + 1)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        int[] fieldReads = ir.EntryFunction.Instructions
+            .Select((inst, index) => (inst, index))
+            .Where(pair => pair.inst is IrInst.GetAdtField)
+            .Select(pair => pair.index)
+            .ToArray();
+        fieldReads.Length.ShouldBe(2);
+        foreach (int fieldRead in fieldReads)
+        {
+            ir.EntryFunction.Instructions[fieldRead + 1]
+                .ShouldBeOfType<IrInst.RcDrop>()
+                .RuntimeManaged.ShouldBeTrue();
+        }
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(3);
+    }
+
+    [Test]
+    public void Copy_only_nullary_user_adt_consumed_by_match_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("type Flag = | On | Off\nlet flag = On in match flag with | On -> Ashes.IO.print(1) | Off -> Ashes.IO.print(0)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        int tagRead = ir.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.GetAdtTag);
+        int firstDrop = ir.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.RcDrop { TypeName: "Flag", RuntimeManaged: true });
+        firstDrop.ShouldBeGreaterThan(tagRead);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "Flag", RuntimeManaged: true }).ShouldBe(3);
+    }
+
+    [Test]
+    public void Pointer_field_user_adt_consumed_by_match_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Choice = | Left(String) | Right(String)\nlet choice = Left(\"hello\") in match choice with | Left(value) -> Ashes.IO.print(value) | Right(value) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

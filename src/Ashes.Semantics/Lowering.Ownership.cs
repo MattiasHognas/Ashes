@@ -1115,6 +1115,31 @@ public sealed partial class Lowering
         return true;
     }
 
+    private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (!CanArenaReset(fieldType))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Owned child fields must be fresh nested record literals. This prevents an RC parent from
     /// capturing an arena pointer or taking ownership of an independently tracked value.

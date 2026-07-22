@@ -74,11 +74,13 @@ internal static class PerceusLifetimePlacement
             return;
         }
 
+        HashSet<int> ownerAliases = CollectOwnerAliases(instructions, blocks, region, ownerSlot);
         foreach (int blockIndex in region)
         {
             Block block = blocks[blockIndex];
             block.OwnerLoads = FindOwnerLoads(instructions, block, ownerSlot);
-            block.HasUse = block.OwnerLoads.Count > 0;
+            block.OwnerUses = FindOwnerUses(instructions, block, ownerSlot, ownerAliases);
+            block.HasUse = block.OwnerUses.Count > 0;
         }
 
         ComputeLiveness(blocks, region);
@@ -166,7 +168,7 @@ internal static class PerceusLifetimePlacement
             IrInst.RcDrop placedDrop = anchor with { SourceTemp = owner.DefinitionTemp };
             if (block.HasUse && !block.LiveOut)
             {
-                int lastUse = FindLastOwnerUse(instructions, block, block.OwnerLoads);
+                int lastUse = block.OwnerUses[^1];
                 AddInsertion(insertions, LifetimeInsertionIndex(instructions, lastUse), placedDrop);
             }
             else if (!block.LiveIn && blockIndex == definitionBlock)
@@ -239,32 +241,61 @@ internal static class PerceusLifetimePlacement
         }
     }
 
-    private static int FindLastOwnerUse(List<IrInst> instructions, Block block, List<int> ownerLoads)
+    private static HashSet<int> CollectOwnerAliases(
+        List<IrInst> instructions,
+        List<Block> blocks,
+        HashSet<int> region,
+        int ownerSlot)
     {
-        int lastUse = ownerLoads[^1];
         var aliases = new HashSet<int>();
-        foreach (int loadIndex in ownerLoads)
+        foreach (int blockIndex in region)
         {
-            aliases.Add(((IrInst.LoadLocal)instructions[loadIndex]).Target);
+            foreach (int loadIndex in FindOwnerLoads(instructions, blocks[blockIndex], ownerSlot))
+            {
+                aliases.Add(((IrInst.LoadLocal)instructions[loadIndex]).Target);
+            }
         }
 
-        var usedTemps = new HashSet<int>();
-        for (int i = ownerLoads[0] + 1; i < block.End; i++)
+        foreach (int blockIndex in region.OrderBy(index => blocks[index].Start))
         {
-            if (instructions[i] is IrInst.Borrow borrow && aliases.Contains(borrow.SourceTemp))
+            Block block = blocks[blockIndex];
+            for (int i = block.Start; i < block.End; i++)
             {
-                aliases.Add(borrow.Target);
+                if (instructions[i] is IrInst.Borrow borrow && aliases.Contains(borrow.SourceTemp))
+                {
+                    aliases.Add(borrow.Target);
+                }
+            }
+        }
+
+        return aliases;
+    }
+
+    private static List<int> FindOwnerUses(
+        List<IrInst> instructions,
+        Block block,
+        int ownerSlot,
+        HashSet<int> aliases)
+    {
+        var uses = new List<int>();
+        var usedTemps = new HashSet<int>();
+        for (int i = block.Start; i < block.End; i++)
+        {
+            if (instructions[i] is IrInst.LoadLocal { Slot: var slot } && slot == ownerSlot)
+            {
+                uses.Add(i);
+                continue;
             }
 
             usedTemps.Clear();
             IrOptimizer.CollectUsedTemps(instructions[i], usedTemps);
             if (usedTemps.Overlaps(aliases))
             {
-                lastUse = i;
+                uses.Add(i);
             }
         }
 
-        return lastUse;
+        return uses;
     }
 
     private static List<int> FindOwnerLoads(List<IrInst> instructions, Block block, int ownerSlot)
@@ -413,6 +444,7 @@ internal static class PerceusLifetimePlacement
         public List<int> Successors { get; } = [];
         public List<int> Predecessors { get; } = [];
         public List<int> OwnerLoads { get; set; } = [];
+        public List<int> OwnerUses { get; set; } = [];
         public bool HasUse { get; set; }
         public bool LiveIn { get; set; }
         public bool LiveOut { get; set; }

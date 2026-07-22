@@ -610,7 +610,8 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
+            bool runtimeManaged = _runtimeRcCopyAdtAllocationRequested && CanRuntimeManageCopyAdt(resultType);
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManaged));
         }
         return (ptrTemp, resultType);
     }
@@ -650,9 +651,9 @@ public sealed partial class Lowering
         }
 
         var resultType = InstantiateAdtType(ctor);
-        bool runtimeManagedCandidate = _runtimeRcRecordAllocationRequested
-            && resultType is TypeRef.TNamedType named
-            && CanRuntimeManageConstructorApplication(ctor, args, named);
+        bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
+            && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
+                || (_runtimeRcCopyAdtAllocationRequested && CanRuntimeManageCopyAdt(named)));
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
