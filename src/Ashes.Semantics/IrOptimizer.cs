@@ -42,6 +42,7 @@ public static class IrOptimizer
 
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
         instructions = ElideTrivialOwnershipCopies(instructions);
+        instructions = FuseAdjacentRuntimeRcPairs(instructions);
         instructions = DevirtualizeKnownClosureCalls(instructions);
         instructions = FoldConstants(instructions);
         instructions = ReduceIdentitiesAndStrength(instructions);
@@ -53,6 +54,61 @@ public static class IrOptimizer
         {
             Instructions = instructions,
         };
+    }
+
+    // Adjacent runtime dup/drop fusion. No instruction may occur between the pair because an
+    // RcIsUnique or arbitrary call could observe the temporary increment. Dropping the duplicate
+    // cancels the split outright; dropping the source transfers its ownership to the identity-
+    // preserving duplicate, whose later uses can be remapped back to the source temp.
+    private static List<IrInst> FuseAdjacentRuntimeRcPairs(List<IrInst> instructions)
+    {
+        List<IrInst> result = new(instructions.Count);
+        Dictionary<int, int> remap = [];
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            IrInst instruction = RemapSourceTemps(instructions[i], remap);
+            if (instruction is not IrInst.RcDup { RuntimeManaged: true } dup
+                || i + 1 >= instructions.Count
+                || RemapSourceTemps(instructions[i + 1], remap) is not IrInst.RcDrop { RuntimeManaged: true } drop)
+            {
+                result.Add(instruction);
+                continue;
+            }
+
+            if (drop.SourceTemp == dup.Target && !IsTempUsedAfter(instructions, i + 2, dup.Target))
+            {
+                i++;
+                continue;
+            }
+
+            if (drop.SourceTemp == dup.SourceTemp)
+            {
+                remap[dup.Target] = dup.SourceTemp;
+                i++;
+                continue;
+            }
+
+            result.Add(instruction);
+        }
+
+        return result;
+    }
+
+    private static bool IsTempUsedAfter(List<IrInst> instructions, int startIndex, int temp)
+    {
+        HashSet<int> usedTemps = [];
+        for (int i = startIndex; i < instructions.Count; i++)
+        {
+            usedTemps.Clear();
+            CollectUsedTemps(instructions[i], usedTemps);
+            if (usedTemps.Contains(temp))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Redundant arena-bracket elision

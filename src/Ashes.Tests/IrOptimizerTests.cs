@@ -383,17 +383,16 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Runtime_rc_dup_and_drop_are_preserved_by_the_optimizer()
+    public void Runtime_rc_dup_and_drop_separated_by_uniqueness_check_are_preserved()
     {
         var instructions = new List<IrInst>
         {
             new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
-            new IrInst.RcIsUnique(3, 0),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 0),
             new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
             new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
-            new IrInst.LoadConstInt(2, 0),
-            new IrInst.Return(2),
+            new IrInst.Return(3),
         };
         var function = new IrFunction("entry", instructions, 0, 4, false);
         var program = new IrProgram(function, [], [], false, false, false, false, false, false);
@@ -403,6 +402,49 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
         optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
         optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcIsUnique).ShouldBe(1);
+    }
+
+    [Test]
+    public void Adjacent_runtime_dup_and_drop_of_duplicate_are_fused()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Adjacent_runtime_dup_and_drop_of_source_transfer_duplicate_ownership()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.RcIsUnique(2, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique { SourceTemp: 0 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 0, RuntimeManaged: true }).ShouldBe(1);
     }
 
     [Test]

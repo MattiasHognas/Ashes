@@ -100,6 +100,36 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.RcIsUnique(2, 1),
+            new IrInst.PrintBool(2),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.LoadConstInt(3, 0),
+            new IrInst.Return(3),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(optimized).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n");
+    }
+
+    [Test]
     public async Task Linux_backend_keeps_runtime_rc_child_while_parent_is_shared()
     {
         if (!OperatingSystem.IsLinux())

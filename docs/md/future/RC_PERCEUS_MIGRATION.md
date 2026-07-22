@@ -208,6 +208,10 @@ Validation:
 
 ### Phase 4: Drop Specialization And Fusion
 
+Current status: in progress. The first optimizer slice fuses adjacent runtime-managed `dup`/`drop`
+pairs, including ownership-transfer pairs, while preserving pairs separated by operations such as
+`is_unique` that can observe the temporary reference-count change.
+
 Deliverables:
 
 - Inline constructor-specific drop paths.
@@ -478,7 +482,7 @@ Focused tests:
    Add a layout abstraction for ADT/list payload offsets without changing the actual offsets yet.
    Acceptance: backend compile-focused tests pass and codegen output behavior is unchanged.
 
-5. **ADTs/lists RC slice.** *(implementation and linux-x64 memory validation in progress)*
+5. **ADTs/lists RC slice.** *(initial narrow implementation and linux-x64 validation complete)*
    Add headers and runtime RC for user ADTs/lists only, with fresh allocation, `dup`, `drop`, recursive
    drop, and basic uniqueness checks. Acceptance: small native runs pass, targeted leak/UAF checks
    pass on linux-x64, and resource diagnostics remain unchanged.
