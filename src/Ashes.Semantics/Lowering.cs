@@ -1994,18 +1994,52 @@ public sealed partial class Lowering
     {
         return expression switch
         {
-            Expr.Lambda lambda => LambdaCapturesOnlyCopyValues(lambda),
+            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda),
             Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then)
                 && IsRuntimeRcCopyClosureProducer(conditional.Else),
             _ => false,
         };
     }
 
-    private bool LambdaCapturesOnlyCopyValues(Expr.Lambda lambda)
+    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
     {
         HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
         HashSet<string> free = FreeVars(lambda.Body, bound);
-        return free.All(name => LookupOwnedValue(name) is null);
+        bool capturesOwnedValue = false;
+        foreach (string name in free)
+        {
+            OwnershipInfo? owned = LookupOwnedValue(name);
+            if (owned is null)
+            {
+                continue;
+            }
+
+            if (owned.RuntimeManaged
+                || owned.IsResource
+                || owned.IsResourceBearing
+                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            capturesOwnedValue = true;
+        }
+
+        return !capturesOwnedValue || IsKnownCopyClosureResult(lambda.Body);
+    }
+
+    private bool IsKnownCopyClosureResult(Expr expression)
+    {
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _))
+        {
+            return false;
+        }
+
+        string module = ResolveModuleAlias(qualified.Module);
+        return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal))
+            || string.Equals(module, "Ashes.Byte", StringComparison.Ordinal)
+                && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)

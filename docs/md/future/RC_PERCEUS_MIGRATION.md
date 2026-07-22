@@ -319,7 +319,11 @@ buffer and runtime scratch immediately. Escaping conversion and arithmetic resul
 final String on the direct-consumer RC path; escaping text results remain arena-managed.
 The first closure slice RC-manages both closure cells and non-empty environments when every capture
 is a copy value and an `if`-selected closure is called immediately. Direct lambdas keep their existing
-stack allocation, while escaping closures and closures with owned captures remain arena-managed.
+stack allocation, while escaping closures and closures with runtime-managed or resource-bearing
+captures remain arena-managed.
+The same closure/environment RC path admits a borrowed arena String or Bytes capture only when the
+immediate call has a statically known copy result (`Text.length`, `Text.byteLength`, or `Byte.length`);
+the enclosing scope retains and reclaims the captured value after the call.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and other BigInt
 results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
