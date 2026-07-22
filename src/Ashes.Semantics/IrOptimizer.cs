@@ -300,7 +300,7 @@ public static class IrOptimizer
 
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.RcDup dup)
+            if (inst is IrInst.RcDup { RuntimeManaged: false } dup)
             {
                 remap[dup.Target] = ResolveTemp(remap, dup.SourceTemp);
             }
@@ -330,7 +330,7 @@ public static class IrOptimizer
 
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.RcDup dup && remap.ContainsKey(dup.Target))
+            if (inst is IrInst.RcDup { RuntimeManaged: false } dup && remap.ContainsKey(dup.Target))
             {
                 continue; // erased marker
             }
@@ -1545,7 +1545,7 @@ public static class IrOptimizer
 
         for (int i = 0; i < instructions.Count; i++)
         {
-            if (instructions[i] is not IrInst.RcDrop drop) continue;
+            if (instructions[i] is not IrInst.RcDrop { RuntimeManaged: false } drop) continue;
 
             // Erased ordinary-value marker: safe to elide while arenas own reclamation.
             toRemove.Add(i);

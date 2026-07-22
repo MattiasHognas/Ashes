@@ -264,7 +264,8 @@
           Source: 7
         },
         {
-          Target: 8
+          Target: 8,
+          RuntimeManaged: false
         },
         {
           Slot: 6,

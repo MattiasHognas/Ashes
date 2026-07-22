@@ -383,6 +383,27 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
+    public void Runtime_rc_dup_and_drop_are_preserved_by_the_optimizer()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+        var function = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
     public void Resource_cleanup_is_never_erased_by_the_optimizer()
     {
         var instructions = new List<IrInst>

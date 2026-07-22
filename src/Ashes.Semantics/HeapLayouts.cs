@@ -50,6 +50,23 @@ internal sealed class HeapLayoutDescriptor
     }
 }
 
+/// <summary>
+/// Metadata stored immediately before a runtime-managed value. The public value pointer addresses
+/// the legacy payload layout, so arena and RC values use identical tag and field offsets.
+/// </summary>
+internal sealed class HeapHeaderLayoutDescriptor
+{
+    public int ReferenceCountOffsetBytes => 0;
+    public int AllocationSizeOffsetBytes => HeapLayouts.WordSizeBytes;
+    public int SizeBytes => 2 * HeapLayouts.WordSizeBytes;
+
+    public int TotalAllocationSizeBytes(int valueSizeBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(valueSizeBytes);
+        return checked(SizeBytes + valueSizeBytes);
+    }
+}
+
 /// <summary>Current ordinary heap layouts shared by lowering and native backends.</summary>
 internal static class HeapLayouts
 {
@@ -57,7 +74,10 @@ internal static class HeapLayouts
     public const int ListHeadIndex = 0;
     public const int ListTailIndex = 1;
 
-    // Legacy arena ADT: [tag, field0, field1, ...]. Ticket 5 will prepend the RC header here.
+    public static HeapHeaderLayoutDescriptor RcHeader { get; } = new();
+
+    // Value pointer layout: [tag, field0, field1, ...]. Runtime-managed values additionally have
+    // RcHeader immediately before this pointer; arena-managed values do not.
     public static HeapLayoutDescriptor Adt { get; } = new(tagOffsetBytes: 0, payloadOffsetBytes: WordSizeBytes);
 
     // Legacy list: nil = 0; cons = [head, tail]. Ticket 5 will prepend the RC header here.

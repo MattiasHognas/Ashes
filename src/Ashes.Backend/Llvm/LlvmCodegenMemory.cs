@@ -105,11 +105,77 @@ internal static partial class LlvmCodegen
         return (sizeBytes + 7) & ~7;
     }
 
-    private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
+    private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false)
     {
-        LlvmValueHandle ptr = EmitAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount));
+        int valueSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(fieldCount);
+        LlvmValueHandle ptr;
+        if (runtimeManaged)
+        {
+            int allocationSizeBytes = HeapLayouts.RcHeader.TotalAllocationSizeBytes(valueSizeBytes);
+            LlvmValueHandle allocationSize = LlvmApi.ConstInt(state.I64, (ulong)allocationSizeBytes, 0);
+            LlvmValueHandle allocationBase = EmitAllocateOsMemory(state, allocationSize, "rc_adt");
+            EmitHeapChunkInitCheck(state, allocationBase);
+            StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+                LlvmApi.ConstInt(state.I64, 1, 0), "rc_adt_count");
+            StoreMemory(state, allocationBase, HeapLayouts.RcHeader.AllocationSizeOffsetBytes,
+                allocationSize, "rc_adt_size");
+            ptr = LlvmApi.BuildAdd(state.Target.Builder, allocationBase,
+                LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_adt_value");
+        }
+        else
+        {
+            ptr = EmitAlloc(state, valueSizeBytes);
+        }
+
         StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
         return ptr;
+    }
+
+    private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    {
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(state.Target.Builder, valuePtr,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_dup_base");
+        LlvmValueHandle count = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_dup_count");
+        LlvmValueHandle incremented = LlvmApi.BuildAdd(state.Target.Builder, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_dup_incremented");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            incremented, "rc_dup_store");
+        return valuePtr;
+    }
+
+    private static bool EmitRuntimeRcDrop(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, valuePtr,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_drop_base");
+        LlvmValueHandle count = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_drop_count");
+        LlvmValueHandle isLast = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_drop_last");
+        LlvmBasicBlockHandle releaseBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_release");
+        LlvmBasicBlockHandle retainBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_retain");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_continue");
+        LlvmApi.BuildCondBr(builder, isLast, releaseBlock, retainBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, retainBlock);
+        LlvmValueHandle decremented = LlvmApi.BuildSub(builder, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_drop_decremented");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            decremented, "rc_drop_store");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
+        LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
+        EmitFreeOsMemory(state, allocationBase, allocationSize, "rc_drop");
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return false;
     }
 
     private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)

@@ -29,6 +29,19 @@ public sealed class HeapLayoutTests
     }
 
     [Test]
+    public void Rc_header_precedes_value_without_changing_payload_offsets()
+    {
+        HeapHeaderLayoutDescriptor header = HeapLayouts.RcHeader;
+
+        header.ReferenceCountOffsetBytes.ShouldBe(0);
+        header.AllocationSizeOffsetBytes.ShouldBe(8);
+        header.SizeBytes.ShouldBe(16);
+        header.TotalAllocationSizeBytes(HeapLayouts.Adt.AllocationSizeBytes(2)).ShouldBe(40);
+        HeapLayouts.Adt.TagOffsetBytes.ShouldBe(0);
+        HeapLayouts.Adt.PayloadWordOffsetBytes(0).ShouldBe(8);
+    }
+
+    [Test]
     public void Layout_rejects_negative_payload_indexes_and_counts()
     {
         Should.Throw<ArgumentOutOfRangeException>(() => HeapLayouts.Adt.PayloadWordOffsetBytes(-1));

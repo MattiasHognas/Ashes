@@ -89,7 +89,8 @@
           Source: 2
         },
         {
-          Target: 3
+          Target: 3,
+          RuntimeManaged: false
         },
         {
           Source: 3

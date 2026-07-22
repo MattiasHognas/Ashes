@@ -181,7 +181,7 @@ internal static class PerceusLifetimePlacement
                 AddInsertion(insertions, entryIndex, placedDrop);
             }
 
-            AddCallDups(instructions, block, borrowedArgumentCalls, ref tempCount, insertions);
+            AddCallDups(instructions, block, anchor.RuntimeManaged, borrowedArgumentCalls, ref tempCount, insertions);
         }
 
         return insertions;
@@ -209,6 +209,7 @@ internal static class PerceusLifetimePlacement
     private static void AddCallDups(
         List<IrInst> instructions,
         Block block,
+        bool runtimeManaged,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
         ref int tempCount,
         Dictionary<int, List<IrInst>> insertions)
@@ -231,7 +232,7 @@ internal static class PerceusLifetimePlacement
                     && (borrowedArgumentCalls is null || !borrowedArgumentCalls.Contains(call))
                     && (loadOrdinal + 1 < block.OwnerLoads.Count || block.LiveOut))
                 {
-                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, call.ArgTemp) { Location = call.Location });
+                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, call.ArgTemp, runtimeManaged) { Location = call.Location });
                     break;
                 }
             }

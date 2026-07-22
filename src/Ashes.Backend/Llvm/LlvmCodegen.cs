@@ -1734,7 +1734,8 @@ internal static partial class LlvmCodegen
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
             IrInst.CleanupResource cleanup => EmitResourceCleanup(state, LoadTemp(state, cleanup.SourceTemp), cleanup.TypeName),
-            // Ordinary-value RC is not active yet. Arena restoration still owns reclamation.
+            IrInst.RcDrop { RuntimeManaged: true } drop =>
+                EmitRuntimeRcDrop(state, LoadTemp(state, drop.SourceTemp)),
             IrInst.RcDrop => false,
             _ => (bool?)null,
         };
@@ -1748,7 +1749,9 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
-            // Erased Perceus marker: identity-preserving until runtime RC is enabled.
+            IrInst.RcDup { RuntimeManaged: true } dup => StoreTemp(state, dup.Target,
+                EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
+            // Erased Perceus marker: identity-preserving for arena-managed values.
             IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
@@ -1941,7 +1944,8 @@ internal static partial class LlvmCodegen
             IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
-            IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
+            IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target,
+                EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount, allocAdt.RuntimeManaged)),
             IrInst.AllocAdtToSpace allocToSpace => StoreTemp(state, allocToSpace.Target, EmitAllocAdtToSpace(state, allocToSpace.Tag, allocToSpace.FieldCount)),
             IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target, EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp), allocReusing.Tag)),
             IrInst.AllocAdtStack allocAdtStack => StoreTemp(state, allocAdtStack.Target, EmitStackAllocAdt(state, allocAdtStack.Tag, allocAdtStack.FieldCount)),

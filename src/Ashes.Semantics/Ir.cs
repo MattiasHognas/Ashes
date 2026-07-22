@@ -197,9 +197,9 @@ public abstract record IrInst
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
-    // ADT heap cell: layout is described by HeapLayouts.Adt. The current descriptor remains
-    // [tag:i64, field0:u64, field1:u64, ..., fieldN:u64] until the runtime RC slice.
-    public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
+    // ADT heap cell: layout is described by HeapLayouts.Adt. Runtime-managed cells carry an
+    // RcHeader immediately before the returned value pointer.
+    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false) : IrInst;
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
@@ -318,7 +318,8 @@ public abstract record IrInst
     public sealed record RcDrop(
         int SourceTemp,
         string TypeName,
-        int OwnerSlot = -1 // Lowering provenance used by precise placement; -1 for already-placed markers.
+        int OwnerSlot = -1, // Lowering provenance used by precise placement; -1 for already-placed markers.
+        bool RuntimeManaged = false
     ) : IrInst;
 
     /// <summary>
@@ -326,7 +327,7 @@ public abstract record IrInst
     /// identity-preserving alias of <paramref name="SourceTemp"/> until runtime reference counting is
     /// enabled; the optimizer erases the marker and remaps uses to the source.
     /// </summary>
-    public sealed record RcDup(int Target, int SourceTemp) : IrInst;
+    public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false) : IrInst;
 
     /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.

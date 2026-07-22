@@ -40,6 +40,35 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.RcDup(2, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(2, "Box", RuntimeManaged: true),
+            new IrInst.GetAdtField(3, 0, 0),
+            new IrInst.PrintInt(3),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(4, 0),
+            new IrInst.Return(4),
+        };
+        var function = new IrFunction("entry", instructions, 0, 5, false);
+        var program = new IrProgram(function, [], [], true, false, false, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
     public void Linux_backend_compile_should_emit_elf_header_for_int_program()
     {
         var bytes = CompileForLinux("Ashes.IO.print(40 + 2)");
