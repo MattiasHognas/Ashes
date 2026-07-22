@@ -496,10 +496,10 @@ Focused tests:
 
    Current validation includes native peak-RSS slope checks at 2K, 10K, and 50K iterations for
    shared-tail lists and shared-child recursive ADTs. Legacy arena controls currently cover pointer
-   lists, transient and growing-accumulator strings, pointer-bearing records, bytes, and BigInts.
-   The growing-string case directly guards the historical stranded-copy leak. These tests also found
-   and now guard a branch-lowering leak where the first TCO match arm's compiler-only release state
-   suppressed RC cleanup in later arms.
+   lists, transient and growing-accumulator strings, pointer-bearing records, bytes, BigInts, and
+   heap-backed captured closures. The growing-string case directly guards the historical
+   stranded-copy leak. These tests also found and now guard a branch-lowering leak where the first
+   TCO match arm's compiler-only release state suppressed RC cleanup in later arms.
 
 ## 8. Test And Measurement Strategy
 

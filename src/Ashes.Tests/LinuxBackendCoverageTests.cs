@@ -1193,6 +1193,26 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_legacy_arena_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildLegacyArenaClosureMemoryProgram(2_000));
+        probe.Functions.SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.MakeClosure).ShouldBeTrue(
+                "memory workload must exercise heap-backed closures");
+
+        List<MemoryExecutionResult> closures = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaClosureMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena closure", closures);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
@@ -3175,6 +3195,21 @@ public sealed class LinuxBackendCoverageTests
                     if value > 0N
                     then loop(n - 1)(total + 1)
                     else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaClosureMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n) in
+                    let f =
+                        if n > 0
+                        then given (x) -> if Ashes.Text.byteLength(text) > 0 then x + 1 else x
+                        else given (x) -> x
+                    in loop(n - 1)(total + f(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
