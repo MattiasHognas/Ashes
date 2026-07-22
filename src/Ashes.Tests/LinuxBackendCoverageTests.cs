@@ -973,6 +973,55 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_recursive_runtime_rc_adts()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Node(Leaf)(20)(Leaf))(42)(Node(Leaf)(22)(Leaf))
+            match tree with
+                | Leaf -> Ashes.IO.print(0)
+                | Node(_, value, _) -> Ashes.IO.print(value)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tree = Node(Node(Leaf)(20)(Leaf))(42)(Node(Leaf)(22)(Leaf)) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) -> loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("840000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_local_runtime_rc_record()
     {
         if (!OperatingSystem.IsLinux())

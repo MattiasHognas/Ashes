@@ -226,6 +226,31 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Fully_fresh_recursive_user_adt_consumed_by_match_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
+            && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+        IrFunction dropper = ir.Functions.Single(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal));
+        dropper.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        dropper.Instructions.Any(inst => inst is IrInst.SwitchTag).ShouldBeTrue();
+        dropper.Instructions.Count(inst => inst is IrInst.CallKnown { FuncLabel: var label }
+            && string.Equals(label, dropper.Label, StringComparison.Ordinal)).ShouldBe(2);
+        dropper.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_user_adt_capturing_existing_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Leaf in let tree = Node(child)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

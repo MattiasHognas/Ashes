@@ -610,7 +610,8 @@ public sealed partial class Lowering
         }
         else
         {
-            bool runtimeManaged = _runtimeRcCopyAdtAllocationRequested && CanRuntimeManageCopyAdt(resultType);
+            bool runtimeManaged = _runtimeRcCopyAdtAllocationRequested
+                && (CanRuntimeManageCopyAdt(resultType) || CanRuntimeManageRecursiveCopyAdt(resultType));
             Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManaged));
         }
         return (ptrTemp, resultType);
@@ -653,7 +654,9 @@ public sealed partial class Lowering
         var resultType = InstantiateAdtType(ctor);
         bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
-                || (_runtimeRcCopyAdtAllocationRequested && CanRuntimeManageCopyAdt(named)));
+                || (_runtimeRcCopyAdtAllocationRequested
+                    && (CanRuntimeManageCopyAdt(named)
+                        || CanRuntimeManageFreshRecursiveAdtConstructorApplication(ctor, args, named))));
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
@@ -686,7 +689,9 @@ public sealed partial class Lowering
         var argumentTemps = new List<int>(arguments.Count);
         var argumentTypes = new List<TypeRef>(arguments.Count);
         bool savedRuntimeRequest = _runtimeRcRecordAllocationRequested;
+        bool savedCopyAdtRequest = _runtimeRcCopyAdtAllocationRequested;
         _runtimeRcRecordAllocationRequested = runtimeManagedCandidate;
+        _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest && runtimeManagedCandidate;
         try
         {
             for (int i = 0; i < arguments.Count; i++)
@@ -702,6 +707,7 @@ public sealed partial class Lowering
         finally
         {
             _runtimeRcRecordAllocationRequested = savedRuntimeRequest;
+            _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest;
         }
 
         return (argumentTemps, argumentTypes);

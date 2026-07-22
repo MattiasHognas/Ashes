@@ -351,13 +351,15 @@ public sealed partial class Lowering
 
     private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)
     {
-        ConstructorSymbol constructor = named.Symbol.Constructors[0];
-        for (int i = 0; i < constructor.Arity; i++)
+        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
         {
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType))
+            for (int i = 0; i < constructor.Arity; i++)
             {
-                return true;
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (!CanArenaReset(fieldType))
+                {
+                    return true;
+                }
             }
         }
 
@@ -370,6 +372,12 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
     {
+        if (CanRuntimeManageRecursiveCopyAdt(named))
+        {
+            EmitRecursiveRuntimeManagedAdtDrop(valueTemp, named);
+            return;
+        }
+
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
         var childFields = new List<(int Index, TypeRef.TNamedType Type)>();
         for (int i = 0; i < constructor.Arity; i++)
@@ -398,6 +406,94 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private readonly Dictionary<string, string> _runtimeRcDropperLabels = new(StringComparer.Ordinal);
+
+    private void EmitRecursiveRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        string label = SynthesizeRuntimeManagedAdtDropper(named);
+        int envTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(envTemp, 0));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.CallKnown(resultTemp, label, envTemp, valueTemp));
+    }
+
+    private string SynthesizeRuntimeManagedAdtDropper(TypeRef.TNamedType named)
+    {
+        string key = Pretty(named);
+        if (_runtimeRcDropperLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        string label = $"__rcdrop_{_nextLambdaId++}";
+        _runtimeRcDropperLabels[key] = label;
+
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+        EmitRuntimeManagedAdtDropperBody(label, named);
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private void EmitRuntimeManagedAdtDropperBody(string label, TypeRef.TNamedType named)
+    {
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: value (implicit)
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, argSlot));
+
+        string sharedLabel = NewLabel("rcdrop_shared");
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        var cases = new List<(long Tag, string Label)>(named.Symbol.Constructors.Count);
+        var blocks = new List<(string Label, ConstructorSymbol Constructor)>(named.Symbol.Constructors.Count);
+        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
+        {
+            string constructorLabel = NewLabel("rcdrop_ctor");
+            cases.Add((GetConstructorTag(constructor), constructorLabel));
+            blocks.Add((constructorLabel, constructor));
+        }
+
+        Emit(new IrInst.SwitchTag(tagTemp, cases, sharedLabel));
+        foreach ((string constructorLabel, ConstructorSymbol constructor) in blocks)
+        {
+            Emit(new IrInst.Label(constructorLabel));
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (fieldType is not TypeRef.TNamedType child
+                    || !string.Equals(child.Symbol.Name, named.Symbol.Name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, i));
+                int envTemp = NewTemp();
+                Emit(new IrInst.LoadConstInt(envTemp, 0));
+                int childResultTemp = NewTemp();
+                Emit(new IrInst.CallKnown(childResultTemp, label, envTemp, childTemp));
+            }
+
+            Emit(new IrInst.Jump(sharedLabel));
+        }
+
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
     }
 
     /// <summary>
@@ -1134,6 +1230,108 @@ public sealed partial class Lowering
                 {
                     return false;
                 }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The first recursive runtime-RC boundary is a monomorphic user ADT whose fields are either
+    /// inline copy values or direct references to the same ADT. Constructor freshness is checked
+    /// separately so an RC cell can never capture an arena-owned recursive child.
+    /// </summary>
+    private bool CanRuntimeManageRecursiveCopyAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || symbol.Constructors.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool recursive = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                if (fieldType is not TypeRef.TNamedType child
+                    || !string.Equals(child.Symbol.Name, symbol.Name, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                recursive = true;
+            }
+        }
+
+        return recursive;
+    }
+
+    private bool CanRuntimeManageFreshRecursiveAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageRecursiveCopyAdt(resultType) || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (!IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsFreshConstructorTree(Expr expression, TypeSymbol expectedType)
+    {
+        var arguments = new List<Expr>();
+        if (expression is Expr.Var nullary
+            && _constructorSymbols.TryGetValue(nullary.Name, out ConstructorSymbol? nullaryConstructor)
+            && nullaryConstructor is not null
+            && nullaryConstructor.Arity == 0)
+        {
+            return string.Equals(nullaryConstructor.ParentType, expectedType.Name, StringComparison.Ordinal);
+        }
+
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is not Expr.Var constructorVariable
+            || !_constructorSymbols.TryGetValue(constructorVariable.Name, out ConstructorSymbol? constructor)
+            || constructor is null
+            || !string.Equals(constructor.ParentType, expectedType.Name, StringComparison.Ordinal)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        TypeRef.TNamedType resultType = InstantiateAdtType(constructor);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanArenaReset(fieldType) && !IsFreshConstructorTree(arguments[i], expectedType))
+            {
+                return false;
             }
         }
 
