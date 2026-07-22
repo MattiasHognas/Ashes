@@ -1989,13 +1989,14 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcBytesLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if (!IsRuntimeRcBytesProducer(let.Value)
-            || !IsImmediateRuntimeBytesUse(let.Body, let.Name))
+            || (!IsImmediateRuntimeBytesUse(let.Body, let.Name) && !directEscape))
         {
             lowered = default;
             return false;
         }
-        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
             && !IsRuntimeRcClosureCaptureSafeBytesProducer(let.Value))
         {
             lowered = default;

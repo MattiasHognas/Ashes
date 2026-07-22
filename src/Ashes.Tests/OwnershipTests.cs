@@ -188,14 +188,15 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_byte_singleton_remains_arena_managed()
+    public void Directly_escaping_byte_singleton_transfers_runtime_ownership()
     {
-        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.singleton(7u8) in bytes");
+        IrProgram ir = LowerProgram("let escaped = (let bytes = Ashes.Byte.singleton(7u8) in bytes) in Ashes.Byte.length(escaped)");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
     [Test]
@@ -210,14 +211,14 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_empty_bytes_remain_arena_managed()
+    public void Directly_escaping_empty_bytes_transfer_runtime_ownership()
     {
-        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.empty(Unit) in bytes");
+        IrProgram ir = LowerProgram("let escaped = (let bytes = Ashes.Byte.empty(Unit) in bytes) in Ashes.Byte.length(escaped)");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesEmpty { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesEmpty { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]
@@ -238,15 +239,15 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_fixed_width_bytes_remain_arena_managed()
+    public void Directly_escaping_fixed_width_bytes_transfer_runtime_ownership()
     {
-        IrProgram u16 = LowerProgram("let bytes = Ashes.Byte.u16Le(258u16) in bytes");
-        IrProgram u32 = LowerProgram("let bytes = Ashes.Byte.u32Le(16909060u32) in bytes");
-        IrProgram u64 = LowerProgram("let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes");
+        IrProgram u16 = LowerProgram("let escaped = (let bytes = Ashes.Byte.u16Le(258u16) in bytes) in Ashes.Byte.length(escaped)");
+        IrProgram u32 = LowerProgram("let escaped = (let bytes = Ashes.Byte.u32Le(16909060u32) in bytes) in Ashes.Byte.length(escaped)");
+        IrProgram u64 = LowerProgram("let escaped = (let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes) in Ashes.Byte.length(escaped)");
 
-        u16.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeFalse();
-        u32.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeFalse();
-        u64.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeFalse();
+        u16.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        u32.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+        u64.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]

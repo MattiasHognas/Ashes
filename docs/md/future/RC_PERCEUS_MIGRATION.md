@@ -403,6 +403,9 @@ then remove the copy-out/to-space machinery made unreachable by each broadened o
 The first retirement slice carries scratch-free RC String concatenations through a direct nested-let
 result. Lowering marks the inner owner moved, propagates runtime provenance through its load, and lets
 the receiving scope place the final drop; the old `CopyOutArena` path is absent for this shape.
+Scratch-free Bytes singletons, empties, and fixed-width encoders now use the same direct-result
+transfer. Append and list-conversion escapes remain on the arena path until nested producer ownership
+is carried with them.
 
 Deliverables:
 

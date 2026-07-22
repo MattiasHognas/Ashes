@@ -432,6 +432,26 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_transfers_directly_escaping_runtime_bytes_without_copy_out()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcEscapingBytesProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("9\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_manages_immediately_consumed_bytes_append()
     {
         if (!OperatingSystem.IsLinux())
@@ -2052,6 +2072,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC directly escaping string", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_bytes_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEscapingBytesMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC directly escaping Bytes", samples);
     }
 
     [Test]
@@ -4430,6 +4464,22 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingBytesMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEscapingBytesProgram(iterations));
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 9L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBytesAppendMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5032,6 +5082,24 @@ public sealed class LinuxBackendCoverageTests
                         let text = "ab" + "cd" in text
                     in let length = Ashes.Text.byteLength(escaped)
                     in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingBytesProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let one =
+                        let escaped =
+                            let bytes = Ashes.Byte.singleton(7u8) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in let eight =
+                        let escaped =
+                            let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in loop(n - 1)(total + one + eight)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
