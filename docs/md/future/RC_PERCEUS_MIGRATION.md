@@ -351,6 +351,13 @@ under lexical/TCO arena reset. A repeated 2K/10K/50K `Task.run(async ...)` RSS-s
 main-task path, complementing the detached-task and async server memory tests. Ordinary RC values
 captured across suspension still require explicit sharing rules before that boundary can be enabled.
 
+Cross-thread decision: the current runtime-RC eligibility rules stay strictly non-escaping and do not
+publish RC-managed values or closure environments to parallel workers. Structured parallel captures
+and results continue to use the existing parent/worker arena plus copy-out boundary, with worker
+arenas and per-thread RC free lists reclaimed during join. An IR/native regression test pins this
+gate for a shared-list `Task.Parallel.both` workload. Atomic RC or an explicit thread-shared marker
+must land before this eligibility boundary is widened; no atomic overhead is added to thread-local RC.
+
 ### Phase 7: Retire Obsolete Arena/Reuse Paths
 
 Deliverables:

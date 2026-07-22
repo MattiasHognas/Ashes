@@ -2208,6 +2208,26 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_parallel_shared_values_stay_outside_non_atomic_runtime_rc()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildParallelWorkerMemoryProgram(iterations: 1));
+        AllInstructions(program).Any(instruction => instruction is IrInst.ParallelFork).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("3\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
