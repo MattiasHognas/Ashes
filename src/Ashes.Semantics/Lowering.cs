@@ -2734,9 +2734,11 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
-        bool freshRuntimeList = IsFreshListConstructionExpression(let.Value)
+        bool freshConstruction = IsFreshListConstructionExpression(let.Value);
+        bool freshRuntimeList = freshConstruction
             && (IsImmediateCopyListMatchUse(let.Name, let.Body)
-                || IsTailConsumedByImmediateListMatch(let.Name, let.Body));
+                || IsTailConsumedByImmediateListMatch(let.Name, let.Body)
+                || IsDirectBindingResult(let.Body, let.Name));
         bool extendsRuntimeList = TryGetRuntimeRcListTailExtension(let.Name, let.Value, let.Body, out string? tailBinding);
         if (!freshRuntimeList && !extendsRuntimeList)
         {

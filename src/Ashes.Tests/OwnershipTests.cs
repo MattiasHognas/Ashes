@@ -783,6 +783,25 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_fresh_copy_list_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let values = [40, 2] in values) in match escaped with | [] -> 0 | head :: _ -> head");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_pointer_element_list_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let values = [\"one\", \"two\"] in values) in match escaped with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Pointer_element_list_consumed_by_match_remains_arena_managed()
     {
         IrProgram ir = LowerProgram("let values = [\"one\", \"two\"] in match values with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");

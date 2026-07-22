@@ -423,6 +423,9 @@ releases only the RC `Result` cell rather than treating either payload as an own
 child only when the Result cell is unique, while the interned `Error` String remains non-owning.
 Fresh user-ADT constructors whose fields are all copy values now transfer directly as a single RC
 cell. Pointer-bearing and polymorphic constructors remain gated until child ownership is proven.
+Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
+boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
+entire transferred spine at the receiving scope.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure

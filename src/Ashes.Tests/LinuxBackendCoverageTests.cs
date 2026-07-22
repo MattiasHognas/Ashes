@@ -2775,7 +2775,7 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let tail = [40, 2] in
+                    let tail = (let fresh = [40, 2] in fresh) in
                     let values = 1 :: tail in
                     match values with
                         | [] -> loop(n - 1)(total)
