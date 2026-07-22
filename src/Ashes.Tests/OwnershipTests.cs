@@ -256,11 +256,12 @@ public sealed class OwnershipTests
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
 
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
             && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
-        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)
+            && function.Instructions.Any(inst => inst is IrInst.RcIsUnique)).ShouldBeTrue();
     }
 
     [Test]
@@ -280,6 +281,7 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(5);
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
         ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
@@ -298,8 +300,8 @@ public sealed class OwnershipTests
         IrProgram ir = LowerProgram("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
 
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBe(1);
     }
 
     [Test]
@@ -328,6 +330,7 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
     }
 
@@ -348,11 +351,10 @@ public sealed class OwnershipTests
         IrFunction loop = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }));
         loop.Instructions.Count(inst => inst is IrInst.Jump { Target: var target }
             && target.EndsWith("_body", StringComparison.Ordinal)).ShouldBe(2);
-        // Each arm has a reachable pre-back-edge drop. Unoptimized IR also retains unreachable
-        // lexical cleanup, so requiring at least two drops per arm proves sibling lowering did not
-        // inherit the first arm's AutoDropped state.
+        // Each arm has a reachable pre-back-edge drop. Unoptimized IR also retains lexical cleanup,
+        // so three drops prove sibling lowering did not inherit the first arm's AutoDropped state.
         loop.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true })
-            .ShouldBeGreaterThanOrEqualTo(4);
+            .ShouldBeGreaterThanOrEqualTo(3);
     }
 
     [Test]

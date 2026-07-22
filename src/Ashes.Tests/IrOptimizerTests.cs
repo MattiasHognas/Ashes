@@ -535,6 +535,28 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
+    public void Unique_list_drop_uses_one_runtime_rc_operation()
+    {
+        IrProgram lowered = Lower("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountRuntimeRcOperations(optimized).ShouldBe(1);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Unique_tree_root_drop_elides_uniqueness_operation()
+    {
+        IrProgram lowered = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountRuntimeRcOperations(optimized).ShouldBe(3);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+    }
+
+    [Test]
     public void Resource_cleanup_is_never_erased_by_the_optimizer()
     {
         var instructions = new List<IrInst>
@@ -1106,6 +1128,27 @@ public sealed class IrOptimizerTests
         var ir = new Lowering(diag).Lower(ast);
         diag.ThrowIfAny();
         return ir;
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        Diagnostics diagnostics = new();
+        Program program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        IrProgram ir = new Lowering(diagnostics).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static int CountRuntimeRcOperations(IrProgram program)
+    {
+        return Count(program.EntryFunction)
+            + program.Functions.Sum(Count);
+
+        static int Count(IrFunction function)
+            => function.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }
+                or IrInst.RcDup { RuntimeManaged: true }
+                or IrInst.RcIsUnique);
     }
 
     [Test]

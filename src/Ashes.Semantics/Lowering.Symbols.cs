@@ -705,6 +705,7 @@ public sealed partial class Lowering
                 int duplicatedTemp = NewTemp();
                 Emit(new IrInst.RcDup(duplicatedTemp, argumentTemps[i], RuntimeManaged: true));
                 argumentTemps[i] = duplicatedTemp;
+                info.RuntimeDeepUnique = false;
             }
             else
             {

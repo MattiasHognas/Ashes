@@ -306,7 +306,8 @@ public sealed partial class Lowering
         TypeRef? type = null,
         bool isResourceBearing = false,
         bool runtimeManaged = false,
-        ConstructorSymbol? runtimeConstructor = null)
+        ConstructorSymbol? runtimeConstructor = null,
+        bool runtimeDeepUnique = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -329,6 +330,12 @@ public sealed partial class Lowering
         /// root drop to bypass generic tag dispatch; null means the constructor is not proven.
         /// </summary>
         public ConstructorSymbol? RuntimeConstructor { get; } = runtimeConstructor;
+
+        /// <summary>
+        /// True while this binding owns a fully fresh runtime-managed tree or list spine. Explicit
+        /// sharing clears the fact before drop generation.
+        /// </summary>
+        public bool RuntimeDeepUnique { get; set; } = runtimeDeepUnique;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The

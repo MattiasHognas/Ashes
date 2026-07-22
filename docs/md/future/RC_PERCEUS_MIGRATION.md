@@ -214,7 +214,10 @@ pairs, including ownership-transfer pairs, while preserving pairs separated by o
 root constructors now use constructor-specialized drops: nullary cells drop directly, while known
 recursive constructors skip root tag dispatch and retain uniqueness-guarded child cleanup. A narrow
 diamond optimization sinks a pre-branch `dup` into the only branch that consumes it and removes the
-other branch's dead drop, but only when that branch cannot observe the source count.
+other branch's dead drop, but only when that branch cannot observe the source count. Fully fresh
+list spines and recursive ADT roots carry a deep-uniqueness fact: unique lists lower to one unchecked
+drop loop and unique tree roots omit their root check, while any explicit child/tail sharing clears
+the fact and keeps guarded cleanup.
 
 Deliverables:
 

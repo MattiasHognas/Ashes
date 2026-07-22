@@ -2354,6 +2354,14 @@ public sealed partial class Lowering
                     runtimeConstructor = constructor;
                 }
 
+                bool runtimeDeepUnique = runtimeManaged && prunedValueType switch
+                {
+                    TypeRef.TList => IsFreshListConstructionExpression(let.Value),
+                    TypeRef.TNamedType named when CanRuntimeManageRecursiveCopyAdt(named)
+                        => IsFreshConstructorTree(let.Value, named.Symbol),
+                    _ => false,
+                };
+
                 TrackOwnedValue(
                     let.Name,
                     slot,
@@ -2362,7 +2370,8 @@ public sealed partial class Lowering
                     AstSpans.GetLetNameOrDefault(let),
                     prunedValueType,
                     runtimeManaged,
-                    runtimeConstructor);
+                    runtimeConstructor,
+                    runtimeDeepUnique);
             }
         }
     }
@@ -5019,6 +5028,7 @@ public sealed partial class Lowering
         {
             int duplicatedTemp = NewTemp();
             Emit(new IrInst.RcDup(duplicatedTemp, tailTemp, RuntimeManaged: true));
+            info.RuntimeDeepUnique = false;
             return duplicatedTemp;
         }
 

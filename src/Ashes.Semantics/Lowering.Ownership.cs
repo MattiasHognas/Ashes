@@ -158,7 +158,8 @@ public sealed partial class Lowering
         TextSpan? definitionSpan,
         TypeRef? type = null,
         bool runtimeManaged = false,
-        ConstructorSymbol? runtimeConstructor = null)
+        ConstructorSymbol? runtimeConstructor = null,
+        bool runtimeDeepUnique = false)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -173,7 +174,8 @@ public sealed partial class Lowering
                 type is null ? null : Prune(type),
                 isResourceBearing,
                 runtimeManaged,
-                runtimeConstructor);
+                runtimeConstructor,
+                runtimeDeepUnique);
         }
     }
 
@@ -329,7 +331,14 @@ public sealed partial class Lowering
             && Prune(info.Type) is TypeRef.TList runtimeList
             && CanArenaReset(Prune(runtimeList.Element)))
         {
-            EmitRuntimeManagedListDrop(loadTemp);
+            if (info.RuntimeDeepUnique)
+            {
+                EmitRuntimeManagedUniqueListDrop(loadTemp);
+            }
+            else
+            {
+                EmitRuntimeManagedListDrop(loadTemp);
+            }
         }
         else if (info.RuntimeManaged
             && info.Type is not null
@@ -340,7 +349,11 @@ public sealed partial class Lowering
             // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
             if (info.RuntimeConstructor is { } constructor)
             {
-                EmitKnownConstructorRuntimeManagedAdtDrop(loadTemp, runtimeAdt, constructor);
+                EmitKnownConstructorRuntimeManagedAdtDrop(
+                    loadTemp,
+                    runtimeAdt,
+                    constructor,
+                    info.RuntimeDeepUnique);
             }
             else
             {
@@ -402,6 +415,32 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(sharedLabel));
         Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
         Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(endLabel));
+    }
+
+    private void EmitRuntimeManagedUniqueListDrop(int listTemp)
+    {
+        int currentSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(currentSlot, listTemp));
+        string loopLabel = NewLabel("rcdrop_unique_list");
+        string endLabel = NewLabel("rcdrop_unique_list_end");
+
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
         Emit(new IrInst.Label(endLabel));
     }
 
@@ -467,7 +506,8 @@ public sealed partial class Lowering
     private void EmitKnownConstructorRuntimeManagedAdtDrop(
         int valueTemp,
         TypeRef.TNamedType named,
-        ConstructorSymbol constructor)
+        ConstructorSymbol constructor,
+        bool knownUnique)
     {
         List<int> recursiveFields = [];
         for (int i = 0; i < constructor.Arity; i++)
@@ -486,10 +526,14 @@ public sealed partial class Lowering
             return;
         }
 
-        int uniqueTemp = NewTemp();
         string sharedLabel = NewLabel("rc_drop_known_shared");
-        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
-        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        if (!knownUnique)
+        {
+            int uniqueTemp = NewTemp();
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        }
+
         foreach (int fieldIndex in recursiveFields)
         {
             int childTemp = NewTemp();
@@ -497,7 +541,11 @@ public sealed partial class Lowering
             EmitRecursiveRuntimeManagedAdtDrop(childTemp, named);
         }
 
-        Emit(new IrInst.Label(sharedLabel));
+        if (!knownUnique)
+        {
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
         Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 
