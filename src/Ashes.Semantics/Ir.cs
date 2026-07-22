@@ -315,7 +315,11 @@ public abstract record IrInst
     /// the erased-marker migration stage this is a backend no-op and is removed by the optimizer;
     /// arena restoration remains responsible for actual memory reclamation.
     /// </summary>
-    public sealed record RcDrop(int SourceTemp, string TypeName) : IrInst;
+    public sealed record RcDrop(
+        int SourceTemp,
+        string TypeName,
+        int OwnerSlot = -1 // Lowering provenance used by precise placement; -1 for already-placed markers.
+    ) : IrInst;
 
     /// <summary>
     /// Perceus lifetime marker for splitting ownership of an ordinary heap value. The target is an

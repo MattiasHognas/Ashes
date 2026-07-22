@@ -16,6 +16,7 @@ public sealed partial class Lowering
 
     private readonly List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
+    private readonly HashSet<IrInst.CallClosure> _borrowedArgumentCalls = new(ReferenceEqualityComparer.Instance);
 
     // '+' overload resolution. '+' is Int+Int / Float+Float / Str+Str, but the IR op (AddInt vs
     // ConcatStr) must be chosen at lowering time. When both operands are still type variables we
@@ -710,7 +711,7 @@ public sealed partial class Lowering
             LocalTypes: SnapshotLocalTypes()
         );
 
-        return new IrProgram(
+        var loweredProgram = new IrProgram(
             EntryFunction: entry,
             Functions: _funcs,
             StringLiterals: _strings,
@@ -727,6 +728,8 @@ public sealed partial class Lowering
             // Per-capability evidence slots plus the pending-post register and the live-posts counter.
             CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
         };
+
+        return PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
     }
 
     /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
@@ -4111,18 +4114,29 @@ public sealed partial class Lowering
             // move when the callee provably only READS this parameter — never closing, storing,
             // returning, or capturing it — so the caller keeps ownership and drops it once. Conservative:
             // only proven borrows are skipped; everything else still moves.
-            if (!CalleeParamBorrowsOnly(rootExpr, i))
+            bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, i);
+            if (!borrowsOnly)
             {
                 MarkResourceArgMoved(collectedArgs[i]);
             }
 
             int target = NewTemp();
-            Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
+            EmitClosureCall(target, currentTemp, argTemp, borrowsOnly);
             currentTemp = target;
             currentType = Prune(funType.Ret);
         }
 
         return null;
+    }
+
+    private void EmitClosureCall(int target, int closureTemp, int argumentTemp, bool borrowsArgument)
+    {
+        var callInstruction = new IrInst.CallClosure(target, closureTemp, argumentTemp);
+        Emit(callInstruction);
+        if (borrowsArgument)
+        {
+            _borrowedArgumentCalls.Add(callInstruction);
+        }
     }
 
     // Restore arena after the call chain completes.

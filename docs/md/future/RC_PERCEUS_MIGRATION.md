@@ -1,6 +1,7 @@
 # RC Perceus Migration Plan
 
-Status: planning, pre-implementation.
+Status: implementation in progress. The ownership-summary, explicit lifetime-IR, and erased
+placement-prototype tickets are implemented; runtime reference counting is not enabled yet.
 
 Decision snapshot:
 
@@ -434,16 +435,16 @@ Focused tests:
 
 ## 7. First Concrete Tickets
 
-1. **Summary model hardening, behavior-preserving.**
+1. **Summary model hardening, behavior-preserving.** *(implemented)*
    Move the existing uniqueness summary into a stable internal model and broaden
    `UniquenessSummaryTests`. Acceptance: summary tests pass; no IR/codegen changes.
 
-2. **Lifetime IR split, erased behavior.**
+2. **Lifetime IR split, erased behavior.** *(implemented)*
    Add ordinary heap lifetime marker instructions distinct from resource cleanup, update all temp
    walkers, and keep backend behavior unchanged. Acceptance: ownership/resource/state-machine focused
    tests pass.
 
-3. **Perceus placement prototype, erased behavior.**
+3. **Perceus placement prototype, erased behavior.** *(implemented)*
    Emit `RcDup`/`RcDrop` markers at last-use and branch-entry positions for a small expression subset.
    Acceptance: marker-placement tests for let/call/match pass; full program output unchanged when
    markers are erased.

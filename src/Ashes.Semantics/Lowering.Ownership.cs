@@ -310,7 +310,7 @@ public sealed partial class Lowering
             // The recursive walk above handles deterministic cleanup of nested resources. The
             // aggregate cell also has an ordinary heap lifetime, represented separately so later
             // RC insertion can reclaim the container without conflating it with resource closing.
-            Emit(new IrInst.RcDrop(loadTemp, info.TypeName));
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot));
         }
         else if (info.IsResource || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
         {
@@ -318,7 +318,7 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.RcDrop(loadTemp, info.TypeName));
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot));
         }
     }
 
