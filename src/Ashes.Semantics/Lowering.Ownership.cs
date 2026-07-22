@@ -1178,10 +1178,11 @@ public sealed partial class Lowering
         {
             int preRestoreEndSlot = NewLocal();
 
-            if (CanArenaReset(resultType))
+            if (CanArenaReset(resultType)
+                || resultTemp >= 0 && IsRuntimeManagedResultTemp(resultTemp))
             {
-                // Copy-type result: arena reset is always safe — unless a one-shot post pushed
-                // during this scope still lives in its allocations.
+                // Copy-type results and independent runtime-managed heap results survive an arena
+                // reset. A one-shot post pushed during this scope still keeps the window alive.
                 var scopeResetSkipLabel = BeginLivePostsGuard();
                 Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
                 Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));

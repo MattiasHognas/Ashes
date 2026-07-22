@@ -406,8 +406,11 @@ the receiving scope place the final drop; the old `CopyOutArena` path is absent 
 Scratch-free Bytes singletons, empties, and fixed-width encoders now use the same direct-result
 transfer. `Bytes.append` also transfers directly when both inputs are allocation-free values or
 `Byte.fromText` views over allocation-free Strings. `Bytes.appendByte` uses the same boundary for an
-allocation-free Bytes input and copy-valued byte. Allocating append operands and list-conversion escapes
-remain on the arena path until nested producer ownership is carried with them.
+allocation-free Bytes input and copy-valued byte. Allocating append operands remain on the arena path
+until nested producer ownership is carried with them. `Byte.fromList` now
+transfers when its input is a fresh copy-element list: the result is RC-managed and the enclosing let
+restores its arena watermark to reclaim the temporary list spine. Borrowed/list-variable inputs remain
+arena-managed because their ownership is not transferred by this boundary.
 Scratch-free `BigInt.fromInt` results also transfer across a direct nested-let result and avoid
 `CopyOutArena`; arithmetic and parse-result escapes remain gated pending child/provenance support.
 An empty-environment top-level function can now return one of these proven runtime-managed values

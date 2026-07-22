@@ -2576,13 +2576,15 @@ public sealed partial class Lowering
             }
         }
 
-        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _)
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, Expr argument)
             || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
         {
             return false;
         }
 
-        return string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
+        return string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
+                && IsFreshListConstructionExpression(argument)
+            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)

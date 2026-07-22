@@ -263,14 +263,25 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_bytes_from_list_remains_arena_managed()
+    public void Directly_escaping_bytes_from_fresh_list_transfers_runtime_ownership_and_reclaims_scratch()
     {
-        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.fromList([7u8, 8u8, 9u8]) in bytes");
+        IrProgram ir = LowerProgram("let escaped = (let bytes = Ashes.Byte.fromList([7u8, 8u8, 9u8]) in bytes) in Ashes.Byte.length(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RestoreArenaState).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Escaping_bytes_from_borrowed_list_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let values = [7u8, 8u8, 9u8] in let bytes = Ashes.Byte.fromList(values) in bytes");
 
         ir.EntryFunction.Instructions.Any(inst =>
             inst is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
     }
 
     [Test]
