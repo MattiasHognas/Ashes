@@ -113,6 +113,38 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_copy_record_field_reads_use_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("type Point = | x: Int | y: Int\nlet p = Point(x = 40, y = 2) in Ashes.IO.print(p.x + p.y)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Point", RuntimeManaged: true }).ShouldBeTrue();
+        int runtimeValue = ir.EntryFunction.Instructions
+            .OfType<IrInst.AllocAdt>()
+            .Single(allocation => allocation.RuntimeManaged)
+            .Target;
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena { SrcTemp: var source } && source == runtimeValue).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Local_pointer_record_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Box = | value: String\nlet box = Box(value = \"hello\") in Ashes.IO.print(1)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Captured_copy_record_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Point = | x: Int | y: Int\nlet p = Point(x = 40, y = 2) in let read = given (u) -> p.x in Ashes.IO.print(read(0))");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Point", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

@@ -670,7 +670,16 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
-        int ptrTemp = AllocateConstructorCell(ctor, tag, stackAllocate, out bool reuseNode, out int consumedTokenTemp);
+        bool runtimeManagedCandidate = _runtimeRcRecordAllocationRequested
+            && resultType is TypeRef.TNamedType named
+            && CanRuntimeManageAdt(named);
+        int ptrTemp = AllocateConstructorCell(
+            ctor,
+            tag,
+            stackAllocate,
+            runtimeManagedCandidate,
+            out bool reuseNode,
+            out int consumedTokenTemp);
         for (int i = 0; i < argTemps.Count; i++)
         {
             int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp);
@@ -686,7 +695,13 @@ public sealed partial class Lowering
     /// allocation. Returns the cell temp; <paramref name="reuseNode"/> and
     /// <paramref name="consumedTokenTemp"/> report whether (and which) reuse token was consumed.
     /// </summary>
-    private int AllocateConstructorCell(ConstructorSymbol ctor, int tag, bool stackAllocate, out bool reuseNode, out int consumedTokenTemp)
+    private int AllocateConstructorCell(
+        ConstructorSymbol ctor,
+        int tag,
+        bool stackAllocate,
+        bool runtimeManagedCandidate,
+        out bool reuseNode,
+        out int consumedTokenTemp)
     {
         int ptrTemp = NewTemp();
         reuseNode = false;
@@ -717,7 +732,7 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate));
         }
 
         return ptrTemp;

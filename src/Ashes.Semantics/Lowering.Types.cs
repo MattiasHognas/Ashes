@@ -298,7 +298,14 @@ public sealed partial class Lowering
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
     // Owned types (String, List, ADTs, Closures, resource types) are tracked.
-    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null, bool isResourceBearing = false)
+    private sealed class OwnershipInfo(
+        int slot,
+        string typeName,
+        bool isResource,
+        TextSpan? definitionSpan,
+        TypeRef? type = null,
+        bool isResourceBearing = false,
+        bool runtimeManaged = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -313,6 +320,8 @@ public sealed partial class Lowering
         /// Such an aggregate, if still owned at scope exit, is dropped by walking it for nested resources.
         /// </summary>
         public bool IsResourceBearing { get; } = isResourceBearing;
+
+        public bool RuntimeManaged { get; } = runtimeManaged;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The

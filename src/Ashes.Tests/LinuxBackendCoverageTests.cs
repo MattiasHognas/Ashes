@@ -856,6 +856,51 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_run_local_runtime_rc_record()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Point =
+                | x: Int
+                | y: Int
+
+            let point = Point(x = 40, y = 2)
+            Ashes.IO.print(point.x + point.y)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_local_runtime_rc_records()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Point =
+                | x: Int
+                | y: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let point = Point(x = 40, y = 2)
+                    in loop(n - 1)(total + point.x + point.y)
+
+            Ashes.IO.print(loop(2000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("84000\n");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         AssertLinuxLlvmCompiles(LowerExpression("Ashes.IO.panic(\"boom\")"));

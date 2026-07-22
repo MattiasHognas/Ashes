@@ -150,14 +150,28 @@ public sealed partial class Lowering
     /// Registers an owned binding in the current ownership scope.
     /// Called when a let binding or pattern binding creates an owned-type variable.
     /// </summary>
-    private void TrackOwnedValue(string name, int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null)
+    private void TrackOwnedValue(
+        string name,
+        int slot,
+        string typeName,
+        bool isResource,
+        TextSpan? definitionSpan,
+        TypeRef? type = null,
+        bool runtimeManaged = false)
     {
         if (_ownershipScopes.Count > 0)
         {
             // A direct resource is not also "resource-bearing"; only aggregates that nest a resource
             // need the recursive walk at drop time.
             bool isResourceBearing = !isResource && type is not null && IsResourceBearing(type);
-            _ownershipScopes.Peek()[name] = new OwnershipInfo(slot, typeName, isResource, definitionSpan, type is null ? null : Prune(type), isResourceBearing);
+            _ownershipScopes.Peek()[name] = new OwnershipInfo(
+                slot,
+                typeName,
+                isResource,
+                definitionSpan,
+                type is null ? null : Prune(type),
+                isResourceBearing,
+                runtimeManaged);
         }
     }
 
@@ -310,7 +324,7 @@ public sealed partial class Lowering
             // The recursive walk above handles deterministic cleanup of nested resources. The
             // aggregate cell also has an ordinary heap lifetime, represented separately so later
             // RC insertion can reclaim the container without conflating it with resource closing.
-            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot));
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
         else if (info.IsResource || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
         {
@@ -318,7 +332,7 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot));
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
     }
 
@@ -996,6 +1010,42 @@ public sealed partial class Lowering
         }
 
         staticSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(arity);
+        return true;
+    }
+
+    /// <summary>
+    /// Runtime RC starts with shallow records whose fields are all inline copy values. A pointer or
+    /// resource field requires a recursive drop program and therefore stays arena-managed.
+    /// </summary>
+    private bool CanRuntimeManageAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count == 0 || BuiltinRegistry.IsResourceTypeName(symbol.Name) || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParameterMap = null;
+        if (symbol.TypeParameters.Count > 0 && named.TypeArgs.Count == symbol.TypeParameters.Count)
+        {
+            typeParameterMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < symbol.TypeParameters.Count; i++)
+            {
+                typeParameterMap[symbol.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            foreach (TypeRef fieldType in constructor.ParameterTypes)
+            {
+                if (!CanArenaReset(ResolveFieldType(fieldType, typeParameterMap)))
+                {
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 

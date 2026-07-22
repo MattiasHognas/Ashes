@@ -422,6 +422,10 @@ public sealed partial class Lowering
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
     private readonly HashSet<int> _reuseResultTemps = new();
 
+    // Set only while lowering a direct local record literal whose uses are copy-field reads. This
+    // narrow boundary cannot escape through calls, returns, matches, updates, or captured variables.
+    private bool _runtimeRcRecordAllocationRequested;
+
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -1828,7 +1832,7 @@ public sealed partial class Lowering
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
-        TrackLetOwnership(let, slot, valueType);
+        TrackLetOwnership(let, slot, valueTemp, valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
@@ -1888,7 +1892,60 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
+        if (let.Value is Expr.RecordLit && IsImmediateCopyUseOfRecord(let.Body, let.Name))
+        {
+            bool savedRequest = _runtimeRcRecordAllocationRequested;
+            _runtimeRcRecordAllocationRequested = true;
+            try
+            {
+                return LowerExpr(let.Value);
+            }
+            finally
+            {
+                _runtimeRcRecordAllocationRequested = savedRequest;
+            }
+        }
+
         return LowerExpr(let.Value);
+    }
+
+    /// <summary>
+    /// Proves the deliberately small source boundary for the first RC-managed records. The record
+    /// itself may only appear as a qualified field receiver in an immediate scalar expression.
+    /// Binder, aggregate, control-flow, async, and handler forms stay on the arena path until RC
+    /// ownership is represented across those boundaries.
+    /// </summary>
+    private static bool IsImmediateCopyUseOfRecord(Expr expr, string recordName)
+    {
+        return expr switch
+        {
+            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit => true,
+            Expr.Var value => !string.Equals(value.Name, recordName, StringComparison.Ordinal),
+            Expr.QualifiedVar => true,
+            Expr.Add value => Both(value.Left, value.Right),
+            Expr.Subtract value => Both(value.Left, value.Right),
+            Expr.Multiply value => Both(value.Left, value.Right),
+            Expr.Divide value => Both(value.Left, value.Right),
+            Expr.Modulo value => Both(value.Left, value.Right),
+            Expr.BitwiseAnd value => Both(value.Left, value.Right),
+            Expr.BitwiseOr value => Both(value.Left, value.Right),
+            Expr.BitwiseXor value => Both(value.Left, value.Right),
+            Expr.ShiftLeft value => Both(value.Left, value.Right),
+            Expr.ShiftRight value => Both(value.Left, value.Right),
+            Expr.BitwiseNot value => IsImmediateCopyUseOfRecord(value.Operand, recordName),
+            Expr.GreaterThan value => Both(value.Left, value.Right),
+            Expr.GreaterOrEqual value => Both(value.Left, value.Right),
+            Expr.LessThan value => Both(value.Left, value.Right),
+            Expr.LessOrEqual value => Both(value.Left, value.Right),
+            Expr.Equal value => Both(value.Left, value.Right),
+            Expr.NotEqual value => Both(value.Left, value.Right),
+            Expr.Call value => Both(value.Func, value.Arg),
+            _ => false,
+        };
+
+        bool Both(Expr left, Expr right)
+            => IsImmediateCopyUseOfRecord(left, recordName)
+                && IsImmediateCopyUseOfRecord(right, recordName);
     }
 
     private void PushLetScope(Expr.Let let, int slot, TypeScheme scheme)
@@ -1900,7 +1957,7 @@ public sealed partial class Lowering
         });
     }
 
-    private void TrackLetOwnership(Expr.Let let, int slot, TypeRef valueType)
+    private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         var prunedValueType = Prune(valueType);
         var ownedTypeName = GetOwnedTypeName(prunedValueType);
@@ -1920,7 +1977,17 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let), prunedValueType);
+                bool runtimeManaged = _inst.Any(instruction =>
+                    instruction is IrInst.AllocAdt { Target: var target, RuntimeManaged: true }
+                    && target == valueTemp);
+                TrackOwnedValue(
+                    let.Name,
+                    slot,
+                    ownedTypeName,
+                    isResource,
+                    AstSpans.GetLetNameOrDefault(let),
+                    prunedValueType,
+                    runtimeManaged);
             }
         }
     }
