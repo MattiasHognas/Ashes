@@ -156,6 +156,24 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_text_copies_and_bigint_text_transfer_runtime_ownership()
+    {
+        IrProgram upper = LowerProgram("let escaped = (let text = Ashes.Text.asciiUpper(\"hello\") in text) in Ashes.Text.byteLength(escaped)");
+        IrProgram subText = LowerProgram("let escaped = (let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in text) in Ashes.Text.byteLength(escaped)");
+        IrProgram bigInt = LowerProgram("let escaped = (let text = Ashes.Text.fromBigInt(42N) in text) in Ashes.Text.byteLength(escaped)");
+
+        upper.EntryFunction.Instructions.Any(inst => inst is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBeTrue();
+        subText.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(inst => inst is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { upper, subText, bigInt })
+        {
+            ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+            ir.EntryFunction.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        }
+    }
+
+    [Test]
     public void Direct_known_function_result_transfers_runtime_string_ownership_without_copy_out()
     {
         IrProgram ir = LowerProgram(
@@ -415,14 +433,23 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_byte_subtext_remains_arena_managed()
+    public void Directly_escaping_byte_subtext_transfers_runtime_ownership()
     {
-        IrProgram ir = LowerProgram("let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in text");
+        IrProgram ir = LowerProgram("let escaped = (let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in text) in Ashes.Text.byteLength(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Escaping_byte_subtext_with_allocating_source_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let text = Ashes.Byte.subText(Ashes.Byte.fromText(Ashes.Text.fromInt(42)))(0)(1) in text");
 
         ir.EntryFunction.Instructions.Any(inst =>
             inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse();
     }
 
     [Test]

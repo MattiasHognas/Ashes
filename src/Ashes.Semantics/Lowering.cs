@@ -2442,24 +2442,40 @@ public sealed partial class Lowering
             && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
     }
 
-    private static bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
+    private bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
     {
         if (expression is Expr.Add)
         {
             return true;
         }
 
-        if (expression is Expr.Call(Expr.QualifiedVar qualified, _)
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, Expr argument)
             && string.Equals(qualified.Module, "Ashes.Text", StringComparison.Ordinal))
         {
             return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
                 || string.Equals(qualified.Name, "fromFloat", StringComparison.Ordinal)
-                || string.Equals(qualified.Name, "toHex", StringComparison.Ordinal);
+                || string.Equals(qualified.Name, "toHex", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "fromBigInt", StringComparison.Ordinal)
+                || (string.Equals(qualified.Name, "asciiUpper", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "asciiLower", StringComparison.Ordinal))
+                    && IsArenaAllocationFreeStringOperand(argument);
         }
 
-        return expression is Expr.Call(Expr.Call(Expr.QualifiedVar format, _), _)
+        if (expression is Expr.Call(Expr.Call(Expr.QualifiedVar format, _), _)
             && string.Equals(format.Module, "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(format.Name, "formatFloat", StringComparison.Ordinal);
+            && string.Equals(format.Name, "formatFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return expression is Expr.Call(
+                Expr.Call(
+                    Expr.Call(Expr.QualifiedVar subText, Expr bytes),
+                    _),
+                _)
+            && string.Equals(subText.Module, "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(subText.Name, "subText", StringComparison.Ordinal)
+            && IsArenaAllocationFreeBytesOperand(bytes);
     }
 
     private static bool IsArenaAllocationFreeStringOperand(Expr expression)

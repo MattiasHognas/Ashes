@@ -421,6 +421,8 @@ capture without stranding nested allocations.
 stack/scoped scratch, while the independently allocated RC String is dropped by the receiving scope.
 The scalar `Text.toHex`, `Text.fromFloat`, and `Text.formatFloat` producers now transfer likewise;
 formatter fragments remain scoped scratch and are reclaimed after the RC result escapes.
+ASCII case copies, `Byte.subText` copies, and `Text.fromBigInt` results also transfer directly. Their
+borrowed sources remain below the scope watermark, while fresh BigInt conversion scratch is reclaimed.
 An empty-environment top-level function can now return one of these proven runtime-managed values
 directly. The caller restores and reclaims the call's arena window without copying the independent RC
 result, propagates ownership to the receiving let, and emits the final drop there. Saturated curried

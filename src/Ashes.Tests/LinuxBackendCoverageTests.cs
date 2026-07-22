@@ -824,7 +824,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let text = Ashes.Text.asciiUpper(\"hello\") in text");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -919,7 +919,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let text = Ashes.Text.fromBigInt(42N) in text");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5429,8 +5429,9 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildRuntimeRcByteSubTextMemoryProgram(int iterations)
         => $$"""
             let emit unit =
-                let text = Ashes.Byte.subText(Ashes.Byte.fromText("abcdef"))(1)(3) in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Byte.subText(Ashes.Byte.fromText("abcdef"))(1)(3) in text
+                in Ashes.IO.print(escaped)
 
             let recursive loop n =
                 if n <= 0 then 0
@@ -5479,12 +5480,14 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildRuntimeRcAsciiCaseTextProgram(int iterations)
         => $$"""
             let emitUpper unit =
-                let text = Ashes.Text.asciiUpper("hello") in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.asciiUpper("hello") in text
+                in Ashes.IO.print(escaped)
 
             let emitLower unit =
-                let text = Ashes.Text.asciiLower("HELLO") in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.asciiLower("HELLO") in text
+                in Ashes.IO.print(escaped)
 
             let recursive loop n =
                 if n <= 0 then 0
@@ -5582,8 +5585,9 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let length =
-                        let text = Ashes.Text.fromBigInt(value) in
-                        Ashes.Text.byteLength(text)
+                        let escaped =
+                            let text = Ashes.Text.fromBigInt(value) in text
+                        in Ashes.Text.byteLength(escaped)
                     in loop(n - 1)(total + length)
 
             Ashes.IO.print(loop({{iterations}})(0))
