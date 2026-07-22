@@ -3611,7 +3611,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU16Le(target, valueTemp));
+        Emit(new IrInst.BytesU16Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3638,7 +3638,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU32Le(target, valueTemp));
+        Emit(new IrInst.BytesU32Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3665,7 +3665,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU64Le(target, valueTemp));
+        Emit(new IrInst.BytesU64Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 

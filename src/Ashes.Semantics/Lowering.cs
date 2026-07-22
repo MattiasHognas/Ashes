@@ -2021,7 +2021,10 @@ public sealed partial class Lowering
             || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal);
+            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
@@ -2610,6 +2613,9 @@ public sealed partial class Lowering
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesSingleton { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesEmpty { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU16Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU32Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU64Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 _ => false,
             });
     }

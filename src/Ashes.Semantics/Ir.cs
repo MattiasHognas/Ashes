@@ -309,9 +309,9 @@ public abstract record IrInst
     public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesHash(int Target, int BytesTemp) : IrInst;
-    public sealed record BytesU16Le(int Target, int ValueTemp) : IrInst;
-    public sealed record BytesU32Le(int Target, int ValueTemp) : IrInst;
-    public sealed record BytesU64Le(int Target, int ValueTemp) : IrInst;
+    public sealed record BytesU16Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU32Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU64Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesGetU16Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record BytesGetU32Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record BytesGetU64Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;

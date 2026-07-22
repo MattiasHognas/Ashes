@@ -507,6 +507,24 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_fixed_width_bytes()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcFixedWidthBytesProgram(iterations: 1));
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("14\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1671,6 +1689,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC empty bytes", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_fixed_width_bytes_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcFixedWidthBytesMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC fixed-width bytes", samples);
     }
 
     [Test]
@@ -3760,6 +3792,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcFixedWidthBytesMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcFixedWidthBytesProgram(iterations));
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 14}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4005,6 +4055,27 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let size = measure(0) in
                     loop(n - 1)(total + size + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcFixedWidthBytesProgram(int iterations)
+        => $$"""
+            let measure16 unit =
+                let bytes = Ashes.Byte.u16Le(258u16) in
+                Ashes.Byte.length(bytes)
+
+            let measure32 unit =
+                let bytes = Ashes.Byte.u32Le(16909060u32) in
+                Ashes.Byte.length(bytes)
+
+            let measure64 unit =
+                let bytes = Ashes.Byte.u64Le(72623859790382856u64) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + measure16(0) + measure32(0) + measure64(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

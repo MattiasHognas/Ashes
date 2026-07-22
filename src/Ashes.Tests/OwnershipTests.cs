@@ -220,6 +220,35 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_fixed_width_bytes_consumed_by_length_use_runtime_rc()
+    {
+        IrProgram u16 = LowerProgram("let bytes = Ashes.Byte.u16Le(258u16) in Ashes.Byte.length(bytes)");
+        IrProgram u32 = LowerProgram("let bytes = Ashes.Byte.u32Le(16909060u32) in Ashes.Byte.length(bytes)");
+        IrProgram u64 = LowerProgram("let bytes = Ashes.Byte.u64Le(72623859790382856u64) in Ashes.Byte.length(bytes)");
+
+        u16.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        u32.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+        u64.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { u16, u32, u64 })
+        {
+            ir.EntryFunction.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        }
+    }
+
+    [Test]
+    public void Escaping_fixed_width_bytes_remain_arena_managed()
+    {
+        IrProgram u16 = LowerProgram("let bytes = Ashes.Byte.u16Le(258u16) in bytes");
+        IrProgram u32 = LowerProgram("let bytes = Ashes.Byte.u32Le(16909060u32) in bytes");
+        IrProgram u64 = LowerProgram("let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes");
+
+        u16.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeFalse();
+        u32.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeFalse();
+        u64.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");
