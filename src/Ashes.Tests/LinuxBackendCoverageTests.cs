@@ -1052,6 +1052,58 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_hot_loops_should_have_bounded_peak_rss()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        MemoryExecutionResult list = await CompileRunWithLinuxLlvmPeakRssAsync(LowerProgram("""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = [40, 2] in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        MemoryExecutionResult adt = await CompileRunWithLinuxLlvmPeakRssAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let child = Node(Leaf)(20)(Leaf) in
+                    let tree = Node(child)(42)(Leaf) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) ->
+                            match child with
+                                | Leaf -> loop(n - 1)(total + value)
+                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        list.Stdout.ShouldBe("820000\n");
+        adt.Stdout.ShouldBe("1240000\n");
+        list.MaxRssKb.ShouldBeGreaterThan(0);
+        adt.MaxRssKb.ShouldBeGreaterThan(0);
+        list.MaxRssKb.ShouldBeLessThan(64_000, $"runtime-RC list loop peaked at {list.MaxRssKb} KB");
+        adt.MaxRssKb.ShouldBeLessThan(64_000, $"runtime-RC ADT loop peaked at {adt.MaxRssKb} KB");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
@@ -2883,6 +2935,52 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    private static async Task<MemoryExecutionResult> CompileRunWithLinuxLlvmPeakRssAsync(IrProgram ir)
+    {
+        const string rssMarker = "__ASHES_MAX_RSS_KB__=";
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_rss_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            ProcessStartInfo startInfo = new("/usr/bin/time")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            startInfo.ArgumentList.Add("-f");
+            startInfo.ArgumentList.Add(rssMarker + "%M");
+            startInfo.ArgumentList.Add(exePath);
+
+            using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
+            string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+            return new MemoryExecutionResult(stdout, ParsePeakRssKb(stderr, rssMarker));
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static long ParsePeakRssKb(string stderr, string marker)
+    {
+        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith(marker, StringComparison.Ordinal))
+            {
+                return long.Parse(line[marker.Length..], System.Globalization.CultureInfo.InvariantCulture);
+            }
+        }
+
+        throw new InvalidOperationException($"GNU time did not report peak RSS. stderr: {stderr}");
+    }
+
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -3055,4 +3153,5 @@ public sealed class LinuxBackendCoverageTests
     }
 
     private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    private readonly record struct MemoryExecutionResult(string Stdout, long MaxRssKb);
 }

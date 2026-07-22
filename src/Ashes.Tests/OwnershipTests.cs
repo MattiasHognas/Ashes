@@ -319,14 +319,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Runtime_copy_list_is_dropped_before_tco_back_edge()
+    public void Runtime_copy_list_is_dropped_before_each_tco_match_back_edge()
     {
         IrProgram ir = LowerProgram("let recursive loop n total = if n <= 0 then total else let values = [1, 2, 3] in match values with | [] -> loop(n - 1)(total) | head :: _ -> loop(n - 1)(total + head)\nAshes.IO.print(loop(3)(0))");
 
         IrFunction loop = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }));
-        int backEdge = loop.Instructions.FindLastIndex(inst => inst is IrInst.Jump);
-        backEdge.ShouldBeGreaterThan(0);
-        loop.Instructions.Take(backEdge).Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        loop.Instructions.Count(inst => inst is IrInst.Jump { Target: var target }
+            && target.EndsWith("_body", StringComparison.Ordinal)).ShouldBe(2);
+        // Each arm has a reachable pre-back-edge drop. Unoptimized IR also retains unreachable
+        // lexical cleanup, so requiring at least two drops per arm proves sibling lowering did not
+        // inherit the first arm's AutoDropped state.
+        loop.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true })
+            .ShouldBeGreaterThanOrEqualTo(4);
     }
 
     [Test]

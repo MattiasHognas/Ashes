@@ -3932,12 +3932,8 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
         }
 
-        LowerCallTcoMarkMovedArgs(collectedArgs);
-
-        // Release iteration-local resources and runtime-RC values before the arena reset and
-        // back-edge jump. Without this the lexical drop is emitted after the jump as dead code and
-        // leaks every iteration.
-        EmitTcoBackEdgeOwnedDrops(tco);
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot =
+            LowerCallTcoPrepareOwnedDrops(tco, collectedArgs);
 
         // Arena reset: restore heap state to loop-iteration watermark before
         // jumping back.
@@ -3968,12 +3964,50 @@ public sealed partial class Lowering
         // Jump back to loop start
         Emit(new IrInst.Jump(tco.BodyLabel));
 
+        RestoreOwnershipReleaseKinds(releaseSnapshot);
+
         tco.InTailPosition = savedTail;
 
         // Return a dummy value — this code path won't execute at runtime
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
         return (dummy, NewTypeVar());
+    }
+
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
+        TcoContext tco,
+        List<Expr> collectedArgs)
+    {
+        // Back-edge release state belongs only to this control-flow path. Match/if siblings are
+        // lowered afterwards using the same OwnershipInfo objects, so restore it after the jump.
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot =
+            SnapshotOwnershipReleaseKinds();
+        LowerCallTcoMarkMovedArgs(collectedArgs);
+        EmitTcoBackEdgeOwnedDrops(tco);
+        return snapshot;
+    }
+
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> SnapshotOwnershipReleaseKinds()
+    {
+        var snapshot = new List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>();
+        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
+        {
+            foreach (OwnershipInfo info in scope.Values)
+            {
+                snapshot.Add((info, info.ReleaseKind));
+            }
+        }
+
+        return snapshot;
+    }
+
+    private static void RestoreOwnershipReleaseKinds(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot)
+    {
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in snapshot)
+        {
+            info.ReleaseKind = releaseKind;
+        }
     }
 
     // An owned value passed by name as a self-call argument moves to the next iteration —

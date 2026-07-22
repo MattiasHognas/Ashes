@@ -1,8 +1,9 @@
 # RC Perceus Migration Plan
 
 Status: implementation in progress. The ownership-summary, explicit lifetime-IR, erased placement,
-and layout-descriptor scaffold tickets are implemented; runtime reference counting is not enabled
-yet.
+and layout-descriptor scaffold tickets are implemented. Runtime reference counting is enabled for
+the current narrow local ADT/list slice; broader heap coverage and later Perceus optimization phases
+remain pending.
 
 Decision snapshot:
 
@@ -477,10 +478,14 @@ Focused tests:
    Add a layout abstraction for ADT/list payload offsets without changing the actual offsets yet.
    Acceptance: backend compile-focused tests pass and codegen output behavior is unchanged.
 
-5. **ADTs/lists RC slice.**
+5. **ADTs/lists RC slice.** *(implementation and linux-x64 memory validation in progress)*
    Add headers and runtime RC for user ADTs/lists only, with fresh allocation, `dup`, `drop`, recursive
    drop, and basic uniqueness checks. Acceptance: small native runs pass, targeted leak/UAF checks
    pass on linux-x64, and resource diagnostics remain unchanged.
+
+   Current validation includes bounded peak-RSS native hot loops for shared-tail lists and shared-child
+   recursive ADTs. These tests found and now guard a branch-lowering leak where the first TCO match
+   arm's compiler-only release state suppressed RC cleanup in later arms.
 
 ## 8. Test And Measurement Strategy
 
