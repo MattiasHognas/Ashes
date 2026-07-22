@@ -3555,8 +3555,8 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.ScanBodyBlock);
         LlvmValueHandle scanNode = LlvmApi.BuildLoad2(builder, state.I64, layout.ListSlot, "all_scan_node");
-        LlvmValueHandle headTask = LoadMemory(state, scanNode, 0, "all_head_task");
-        LlvmValueHandle tailList = LoadMemory(state, scanNode, 8, "all_tail_list");
+        LlvmValueHandle headTask = LoadListHead(state, scanNode, "all_head_task");
+        LlvmValueHandle tailList = LoadListTail(state, scanNode, "all_tail_list");
         LlvmApi.BuildStore(builder, tailList, layout.ListSlot);
         EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [headTask], "all_step_task");
         LlvmValueHandle headState = LoadMemory(state, headTask, TaskStructLayout.StateIndex, "all_head_state");
@@ -3570,7 +3570,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.InspectResultBlock);
         LlvmValueHandle taskResult = LoadMemory(state, headTask, TaskStructLayout.ResultSlot, "all_task_result");
-        LlvmValueHandle taskTag = LoadMemory(state, taskResult, 0, "all_task_tag");
+        LlvmValueHandle taskTag = LoadAdtTag(state, taskResult, "all_task_tag");
         LlvmValueHandle isError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, taskTag, LlvmApi.ConstInt(state.I64, 0, 0), "all_task_is_error");
         LlvmApi.BuildCondBr(builder, isError, layout.FailureBlock, layout.ScanCheckBlock);
 
@@ -3606,14 +3606,14 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.BuildBodyBlock);
         LlvmValueHandle buildNode = LlvmApi.BuildLoad2(builder, state.I64, layout.RevSrcSlot, "all_build_node");
-        LlvmValueHandle buildTask = LoadMemory(state, buildNode, 0, "all_build_task");
-        LlvmValueHandle buildTail = LoadMemory(state, buildNode, 8, "all_build_tail");
+        LlvmValueHandle buildTask = LoadListHead(state, buildNode, "all_build_task");
+        LlvmValueHandle buildTail = LoadListTail(state, buildNode, "all_build_tail");
         LlvmValueHandle buildResult = LoadMemory(state, buildTask, TaskStructLayout.ResultSlot, "all_build_result");
-        LlvmValueHandle buildValue = LoadMemory(state, buildResult, 8, "all_build_value");
+        LlvmValueHandle buildValue = LoadAdtField(state, buildResult, 0, "all_build_value");
         LlvmValueHandle buildAcc = LlvmApi.BuildLoad2(builder, state.I64, layout.RevDstSlot, "all_build_acc");
-        LlvmValueHandle buildCons = EmitAlloc(state, 16);
-        StoreMemory(state, buildCons, 0, buildValue, "all_build_cons_head");
-        StoreMemory(state, buildCons, 8, buildAcc, "all_build_cons_tail");
+        LlvmValueHandle buildCons = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, buildCons, buildValue, "all_build_cons_head");
+        StoreListTail(state, buildCons, buildAcc, "all_build_cons_tail");
         LlvmApi.BuildStore(builder, buildTail, layout.RevSrcSlot);
         LlvmApi.BuildStore(builder, buildCons, layout.RevDstSlot);
         LlvmApi.BuildBr(builder, layout.BuildCheckBlock);
@@ -3636,12 +3636,12 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.ReverseBodyBlock);
         LlvmValueHandle reverseNode = LlvmApi.BuildLoad2(builder, state.I64, layout.RevSrcSlot, "all_reverse_node");
-        LlvmValueHandle reverseHead = LoadMemory(state, reverseNode, 0, "all_reverse_head");
-        LlvmValueHandle reverseTail = LoadMemory(state, reverseNode, 8, "all_reverse_tail");
+        LlvmValueHandle reverseHead = LoadListHead(state, reverseNode, "all_reverse_head");
+        LlvmValueHandle reverseTail = LoadListTail(state, reverseNode, "all_reverse_tail");
         LlvmValueHandle reverseAcc = LlvmApi.BuildLoad2(builder, state.I64, layout.RevDstSlot, "all_reverse_acc");
-        LlvmValueHandle reverseCons = EmitAlloc(state, 16);
-        StoreMemory(state, reverseCons, 0, reverseHead, "all_reverse_cons_head");
-        StoreMemory(state, reverseCons, 8, reverseAcc, "all_reverse_cons_tail");
+        LlvmValueHandle reverseCons = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, reverseCons, reverseHead, "all_reverse_cons_head");
+        StoreListTail(state, reverseCons, reverseAcc, "all_reverse_cons_tail");
         LlvmApi.BuildStore(builder, reverseTail, layout.RevSrcSlot);
         LlvmApi.BuildStore(builder, reverseCons, layout.RevDstSlot);
         LlvmApi.BuildBr(builder, layout.ReverseCheckBlock);

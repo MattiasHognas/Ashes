@@ -197,8 +197,8 @@ public abstract record IrInst
     public sealed record Alloc(int Target, int SizeBytes) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
-    // ADT heap cell: layout is [tag:i64, field0:u64, field1:u64, ..., fieldN:u64]
-    // AllocAdt allocates (1 + FieldCount) * 8 bytes and stores Tag at offset 0.
+    // ADT heap cell: layout is described by HeapLayouts.Adt. The current descriptor remains
+    // [tag:i64, field0:u64, field1:u64, ..., fieldN:u64] until the runtime RC slice.
     public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
@@ -221,16 +221,16 @@ public abstract record IrInst
     /// like <see cref="AllocAdt"/>.
     /// </summary>
     public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
-    // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
+    // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to
     // it at each back-edge so dynamic stack allocations in the loop body (e.g. per-iteration string/syscall
     // scratch buffers) are freed every iteration instead of accumulating until the stack overflows.
     public sealed record SaveStackPointer(int Slot) : IrInst;
     public sealed record RestoreStackPointer(int Slot) : IrInst;
-    // GetAdtTag: Target = *(Ptr + 0)
+    // GetAdtTag uses the descriptor's tag offset.
     public sealed record GetAdtTag(int Target, int Ptr) : IrInst;
-    // GetAdtField: Target = *(Ptr + 8 + FieldIndex*8)
+    // GetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record GetAdtField(int Target, int Ptr, int FieldIndex) : IrInst;
 
     public sealed record PrintInt(int Source) : IrInst;

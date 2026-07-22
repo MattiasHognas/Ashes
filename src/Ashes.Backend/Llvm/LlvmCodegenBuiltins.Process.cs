@@ -114,12 +114,12 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, tooMany, listTooManyBlock, listAppendBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, listAppendBlock);
-        LlvmValueHandle headRef = LoadMemory(state, cursor, 0, "spawn_head");
+        LlvmValueHandle headRef = LoadListHead(state, cursor, "spawn_head");
         LlvmValueHandle headCstr = EmitStringToCString(state, headRef, "spawn_arg_cstr");
         // argvArray[argc] = headCstr: store via base pointer + offset
         LlvmApi.BuildStore(builder, LlvmApi.BuildPtrToInt(builder, headCstr, state.I64, "spawn_arg_ptr"), LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildAdd(builder, argvBase, LlvmApi.BuildMul(builder, argc, LlvmApi.ConstInt(state.I64, 8, 0), "spawn_off"), "spawn_slot_addr"), state.I8Ptr, "spawn_slot_ptr"));
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, argc, LlvmApi.ConstInt(state.I64, 1, 0), "spawn_argc_next"), argcSlot);
-        LlvmValueHandle tail = LoadMemory(state, cursor, 8, "spawn_tail");
+        LlvmValueHandle tail = LoadListTail(state, cursor, "spawn_tail");
         LlvmApi.BuildStore(builder, tail, listCursorSlot);
         LlvmApi.BuildBr(builder, listLoopBlock);
 

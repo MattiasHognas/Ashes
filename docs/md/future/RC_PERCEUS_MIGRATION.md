@@ -1,7 +1,8 @@
 # RC Perceus Migration Plan
 
-Status: implementation in progress. The ownership-summary, explicit lifetime-IR, and erased
-placement-prototype tickets are implemented; runtime reference counting is not enabled yet.
+Status: implementation in progress. The ownership-summary, explicit lifetime-IR, erased placement,
+and layout-descriptor scaffold tickets are implemented; runtime reference counting is not enabled
+yet.
 
 Decision snapshot:
 
@@ -449,7 +450,7 @@ Focused tests:
    Acceptance: marker-placement tests for let/call/match pass; full program output unchanged when
    markers are erased.
 
-4. **Layout descriptor scaffold.**
+4. **Layout descriptor scaffold.** *(implemented)*
    Add a layout abstraction for ADT/list payload offsets without changing the actual offsets yet.
    Acceptance: backend compile-focused tests pass and codegen output behavior is unchanged.
 

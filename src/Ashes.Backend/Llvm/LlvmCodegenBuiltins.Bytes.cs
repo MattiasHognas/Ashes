@@ -552,7 +552,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, countBodyBlock);
         LlvmValueHandle cnt = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "bfl_cnt_val");
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, cnt, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_cnt_next"), countSlot);
-        LlvmValueHandle tailCount = LoadMemory(state, curCount, 8, "bfl_tail_count");
+        LlvmValueHandle tailCount = LoadListTail(state, curCount, "bfl_tail_count");
         LlvmApi.BuildStore(builder, tailCount, curSlot);
         LlvmApi.BuildBr(builder, countLoopBlock);
     }
@@ -583,14 +583,14 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, fillDone, doneBlock, fillBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, fillBodyBlock);
-        LlvmValueHandle headVal = LoadMemory(state, curFill, 0, "bfl_head");
+        LlvmValueHandle headVal = LoadListHead(state, curFill, "bfl_head");
         LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "bfl_idx");
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bfl_dest_data");
         LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, destData, [idx], "bfl_elem_ptr");
         LlvmValueHandle truncByte = LlvmApi.BuildTrunc(builder, headVal, state.I8, "bfl_byte");
         LlvmApi.BuildStore(builder, truncByte, elemPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_idx_next"), indexSlot);
-        LlvmValueHandle tailFill = LoadMemory(state, curFill, 8, "bfl_tail_fill");
+        LlvmValueHandle tailFill = LoadListTail(state, curFill, "bfl_tail_fill");
         LlvmApi.BuildStore(builder, tailFill, curSlot);
         LlvmApi.BuildBr(builder, fillLoopBlock);
     }

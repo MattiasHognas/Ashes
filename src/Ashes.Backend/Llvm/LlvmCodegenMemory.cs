@@ -86,8 +86,8 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitAllocAdtToSpace(LlvmCodegenState state, int tag, int fieldCount)
     {
-        LlvmValueHandle ptr = EmitAlloc(state, (1 + fieldCount) * 8, state.ToSpaceCursorSlot, state.ToSpaceEndSlot);
-        StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"tospace_adt_tag_{tag}");
+        LlvmValueHandle ptr = EmitAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount), state.ToSpaceCursorSlot, state.ToSpaceEndSlot);
+        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"tospace_adt_tag_{tag}");
         return ptr;
     }
 
@@ -107,15 +107,15 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
     {
-        LlvmValueHandle ptr = EmitAlloc(state, (1 + fieldCount) * 8);
-        StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
+        LlvmValueHandle ptr = EmitAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount));
+        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
         return ptr;
     }
 
     private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
     {
-        LlvmValueHandle ptr = EmitStackAlloc(state, (1 + fieldCount) * 8, $"adt_stack_{tag}");
-        StoreMemory(state, ptr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_stack_tag_{tag}");
+        LlvmValueHandle ptr = EmitStackAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount), $"adt_stack_{tag}");
+        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_stack_tag_{tag}");
         return ptr;
     }
 
@@ -127,9 +127,34 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static LlvmValueHandle EmitAllocReusing(LlvmCodegenState state, LlvmValueHandle tokenPtr, int tag)
     {
-        StoreMemory(state, tokenPtr, 0, LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
         return tokenPtr;
     }
+
+    private static int GetAdtTagOffsetBytes()
+        => HeapLayouts.Adt.TagOffsetBytes
+            ?? throw new InvalidOperationException("The ADT heap layout must contain a constructor tag.");
+
+    private static bool StoreAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, LlvmValueHandle value, string name)
+        => StoreMemory(state, adtPtr, HeapLayouts.Adt.PayloadWordOffsetBytes(fieldIndex), value, name);
+
+    private static LlvmValueHandle LoadAdtTag(LlvmCodegenState state, LlvmValueHandle adtPtr, string name)
+        => LoadMemory(state, adtPtr, GetAdtTagOffsetBytes(), name);
+
+    private static LlvmValueHandle LoadAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, string name)
+        => LoadMemory(state, adtPtr, HeapLayouts.Adt.PayloadWordOffsetBytes(fieldIndex), name);
+
+    private static bool StoreListHead(LlvmCodegenState state, LlvmValueHandle listPtr, LlvmValueHandle value, string name)
+        => StoreMemory(state, listPtr, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), value, name);
+
+    private static bool StoreListTail(LlvmCodegenState state, LlvmValueHandle listPtr, LlvmValueHandle value, string name)
+        => StoreMemory(state, listPtr, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), value, name);
+
+    private static LlvmValueHandle LoadListHead(LlvmCodegenState state, LlvmValueHandle listPtr, string name)
+        => LoadMemory(state, listPtr, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), name);
+
+    private static LlvmValueHandle LoadListTail(LlvmCodegenState state, LlvmValueHandle listPtr, string name)
+        => LoadMemory(state, listPtr, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), name);
 
     private static bool StoreMemory(LlvmCodegenState state, LlvmValueHandle baseAddress, int offsetBytes, LlvmValueHandle value, string name)
     {
@@ -1189,7 +1214,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_count_old");
         LlvmValueHandle newCount = LlvmApi.BuildAdd(builder, oldCount, one, prefix + "_count_inc");
         LlvmApi.BuildStore(builder, newCount, countSlot);
-        LlvmValueHandle countTail = LoadMemory(state, countCur, 8, prefix + "_count_tail");
+        LlvmValueHandle countTail = LoadListTail(state, countCur, prefix + "_count_tail");
         LlvmApi.BuildStore(builder, countTail, countCurSlot);
         LlvmApi.BuildBr(builder, countHead);
 
@@ -1225,13 +1250,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
-        LlvmValueHandle headVal = LoadMemory(state, cacheCur, 0, prefix + "_cache_head_val");
+        LlvmValueHandle headVal = LoadListHead(state, cacheCur, prefix + "_cache_head_val");
         LlvmValueHandle cacheIdx = LlvmApi.BuildLoad2(builder, state.I64, cacheIdxSlot, prefix + "_cache_idx_val");
         LlvmValueHandle bufSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [cacheIdx], prefix + "_buf_slot");
         LlvmApi.BuildStore(builder, headVal, bufSlot);
         LlvmValueHandle nextCacheIdx = LlvmApi.BuildAdd(builder, cacheIdx, one, prefix + "_cache_idx_inc");
         LlvmApi.BuildStore(builder, nextCacheIdx, cacheIdxSlot);
-        LlvmValueHandle cacheTail = LoadMemory(state, cacheCur, 8, prefix + "_cache_tail");
+        LlvmValueHandle cacheTail = LoadListTail(state, cacheCur, prefix + "_cache_tail");
         LlvmApi.BuildStore(builder, cacheTail, cacheCurSlot);
         LlvmApi.BuildBr(builder, cacheHead);
 
@@ -1245,7 +1270,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
-        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.List.FixedAllocationSizeBytes, 0);
 
         // Build destination list from cached head values
         // Arena allocations happen here. Source cells are never read again.
@@ -1259,8 +1284,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, prefix + "_first_head_val");
         LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
         LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, firstCell, 0, firstHeadCopied, prefix + "_store_first_head");
-        StoreMemory(state, firstCell, 8, zero, prefix + "_store_first_tail");
+        StoreListHead(state, firstCell, firstHeadCopied, prefix + "_store_first_head");
+        StoreListTail(state, firstCell, zero, prefix + "_store_first_tail");
         LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
         LlvmApi.BuildStore(builder, one, buildIdxSlot);
 
@@ -1280,12 +1305,12 @@ internal static partial class LlvmCodegen
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, prefix + "_build_head_val");
         LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
         LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, newCell, 0, buildHeadCopied, prefix + "_store_head");
-        StoreMemory(state, newCell, 8, zero, prefix + "_store_tail");
+        StoreListHead(state, newCell, buildHeadCopied, prefix + "_store_head");
+        StoreListTail(state, newCell, zero, prefix + "_store_tail");
 
         // Link: prevCell.tail = newCell
         LlvmValueHandle prevCell = LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, prefix + "_prev_val");
-        StoreMemory(state, prevCell, 8, newCell, prefix + "_link_tail");
+        StoreListTail(state, prevCell, newCell, prefix + "_link_tail");
 
         // Advance
         LlvmApi.BuildStore(builder, newCell, prevCellSlot);
@@ -1463,7 +1488,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, 16, 0);
+        LlvmValueHandle cellSize = LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.List.FixedAllocationSizeBytes, 0);
 
         // Nil guard: empty list → return 0.
         LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
@@ -1477,8 +1502,8 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
 
         // Read head and tail from the source cell.
-        LlvmValueHandle oldHead = LoadMemory(state, srcPtr, 0, "tco_cell_old_head");
-        LlvmValueHandle oldTail = LoadMemory(state, srcPtr, 8, "tco_cell_old_tail");
+        LlvmValueHandle oldHead = LoadListHead(state, srcPtr, "tco_cell_old_head");
+        LlvmValueHandle oldTail = LoadListTail(state, srcPtr, "tco_cell_old_tail");
 
         // Copy the head value according to the element type.
         // CopyOutTcoListCell is only emitted for String or InnerList heads;
@@ -1494,8 +1519,8 @@ internal static partial class LlvmCodegen
 
         // Allocate new 16-byte cons cell and populate.
         LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
-        StoreMemory(state, newCell, 0, newHead, "tco_cell_store_head");
-        StoreMemory(state, newCell, 8, oldTail, "tco_cell_store_tail");
+        StoreListHead(state, newCell, newHead, "tco_cell_store_head");
+        StoreListTail(state, newCell, oldTail, "tco_cell_store_tail");
         LlvmApi.BuildStore(builder, newCell, resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
 
@@ -1749,14 +1774,14 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitResultOk(LlvmCodegenState state, LlvmValueHandle value)
     {
         LlvmValueHandle result = EmitAllocAdt(state, 0, 1);
-        StoreMemory(state, result, 8, value, "result_ok_value");
+        StoreAdtField(state, result, 0, value, "result_ok_value");
         return result;
     }
 
     private static LlvmValueHandle EmitResultError(LlvmCodegenState state, LlvmValueHandle errorStringRef)
     {
         LlvmValueHandle result = EmitAllocAdt(state, 1, 1);
-        StoreMemory(state, result, 8, errorStringRef, "result_error_value");
+        StoreAdtField(state, result, 0, errorStringRef, "result_error_value");
         return result;
     }
 

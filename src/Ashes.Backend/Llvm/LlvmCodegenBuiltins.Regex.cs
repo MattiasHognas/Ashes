@@ -1,4 +1,5 @@
 using Ashes.Backend.Llvm.Interop;
+using Ashes.Semantics;
 
 namespace Ashes.Backend.Llvm;
 
@@ -325,15 +326,15 @@ internal static partial class LlvmCodegen
         EmitRegexCapturesElement(state, subjBytes, groupStart, groupEnd, elemSlot, unsetBlock, setBlock, elemCont);
 
         LlvmApi.PositionBuilderAtEnd(builder, elemCont);
-        LlvmValueHandle cons = EmitAlloc(state, 16);
-        StoreMemory(state, cons, 0, LlvmApi.BuildLoad2(builder, state.I64, elemSlot, "rx_cap_elem_val"), "rx_cap_cons_head");
-        StoreMemory(state, cons, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "rx_cap_prev_list"), "rx_cap_cons_tail");
+        LlvmValueHandle cons = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, cons, LlvmApi.BuildLoad2(builder, state.I64, elemSlot, "rx_cap_elem_val"), "rx_cap_cons_head");
+        StoreListTail(state, cons, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "rx_cap_prev_list"), "rx_cap_cons_tail");
         LlvmApi.BuildStore(builder, cons, listSlot);
         LlvmApi.BuildBr(builder, loopCheck);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopDone);
         LlvmValueHandle someList = EmitAllocAdt(state, 1, 1);
-        StoreMemory(state, someList, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "rx_cap_final_list"), "rx_cap_some_list");
+        StoreAdtField(state, someList, 0, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "rx_cap_final_list"), "rx_cap_some_list");
         LlvmApi.BuildStore(builder, someList, resultSlot);
         LlvmApi.BuildBr(builder, contBlock);
     }

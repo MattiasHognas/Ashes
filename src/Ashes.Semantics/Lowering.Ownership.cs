@@ -664,10 +664,10 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(nonNilTemp, endLabel));
 
         int headTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(headTemp, curTemp, 0));
+        Emit(new IrInst.LoadMemOffset(headTemp, curTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
         EmitResourceBearingDrop(headTemp, elementType, visiting);
         int tailTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(tailTemp, curTemp, 8));
+        Emit(new IrInst.LoadMemOffset(tailTemp, curTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
         Emit(new IrInst.StoreLocal(curSlot, tailTemp));
         Emit(new IrInst.Jump(headLabel));
 
@@ -995,7 +995,7 @@ public sealed partial class Lowering
             }
         }
 
-        staticSizeBytes = (1 + arity) * 8;
+        staticSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(arity);
         return true;
     }
 
@@ -1513,10 +1513,10 @@ public sealed partial class Lowering
             for (int j = 0; j < ctor.Arity; j++)
             {
                 int fieldTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, (j + 1) * 8));
+                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j)));
                 var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
                 int copied = CopyFieldInsideCopier(fieldTemp, fieldType, named, selfTemp);
-                Emit(new IrInst.StoreMemOffset(newTemp, (j + 1) * 8, copied));
+                Emit(new IrInst.StoreMemOffset(newTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j), copied));
             }
 
             Emit(new IrInst.Return(newTemp));
@@ -1593,16 +1593,16 @@ public sealed partial class Lowering
 
         Emit(new IrInst.Label(copyLabel));
         int headTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, 0));
+        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
         int tailTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, 8));
+        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
         int copiedHead = EmitDeepCopy(headTemp, elementType);
         int copiedTail = NewTemp();
         Emit(new IrInst.CallClosure(copiedTail, selfTemp, tailTemp));
         int cellTemp = NewTemp();
-        Emit(new IrInst.Alloc(cellTemp, 16));
-        Emit(new IrInst.StoreMemOffset(cellTemp, 0, copiedHead));
-        Emit(new IrInst.StoreMemOffset(cellTemp, 8, copiedTail));
+        Emit(new IrInst.Alloc(cellTemp, HeapLayouts.List.FixedAllocationSizeBytes));
+        Emit(new IrInst.StoreMemOffset(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), copiedHead));
+        Emit(new IrInst.StoreMemOffset(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), copiedTail));
         Emit(new IrInst.Return(cellTemp));
     }
 

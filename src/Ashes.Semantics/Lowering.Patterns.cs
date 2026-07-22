@@ -478,9 +478,9 @@ public sealed partial class Lowering
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        Emit(new IrInst.Alloc(nodeTemp, 16));
-        Emit(new IrInst.StoreMemOffset(nodeTemp, 0, headTemp));
-        Emit(new IrInst.StoreMemOffset(nodeTemp, 8, tailTemp));
+        Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         return (nodeTemp, Prune(listType));
     }
 
@@ -599,8 +599,8 @@ public sealed partial class Lowering
                 EmitRequireNonZero(valueTemp, failLabel);
                 int headTemp = NewTemp();
                 int tailTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, 0));
-                Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, 8));
+                Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+                Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
                 EmitPattern(c.Head, headTemp, failLabel, bindingTypes);
                 EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes);
                 return;
