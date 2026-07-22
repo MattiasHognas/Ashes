@@ -755,7 +755,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseBigInt(\"123\") in parsed");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5652,13 +5652,15 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let valid =
-                        let result = Ashes.Text.parseBigInt("123") in
-                        match result with
+                        let escaped =
+                            let result = Ashes.Text.parseBigInt("123") in result
+                        in match escaped with
                             | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
                             | Error(_message) -> 1
                     in let invalid =
-                        let result = Ashes.Text.parseBigInt("bad") in
-                        match result with
+                        let escaped =
+                            let result = Ashes.Text.parseBigInt("bad") in result
+                        in match escaped with
                             | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
                             | Error(_message) -> 1
                     in loop(n - 1)(total + valid + invalid)

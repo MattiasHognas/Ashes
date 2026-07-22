@@ -419,6 +419,8 @@ gated pending child/provenance support.
 Container-only `Text.parseInt`, `Text.parseFloat`, and `BigInt.toInt` results now transfer directly.
 Their success payloads are inline and error Strings are interned, so the type-directed escape drop
 releases only the RC `Result` cell rather than treating either payload as an owned child.
+`Text.parseBigInt` results now transfer as well. The existing tag-aware drop releases an `Ok` BigInt
+child only when the Result cell is unique, while the interned `Error` String remains non-owning.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure

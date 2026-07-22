@@ -255,6 +255,20 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_bigint_parse_result_transfers_child_aware_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let parsed = Ashes.Text.parseBigInt(\"123\") in parsed) in 1");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Direct_function_alias_preserves_runtime_result_ownership_provenance()
     {
         IrProgram ir = LowerProgram(

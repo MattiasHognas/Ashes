@@ -2082,7 +2082,8 @@ public sealed partial class Lowering
     private bool TryLowerRuntimeRcBigIntParseResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcBigIntParseResultProducer(let.Value)
-            || !IsImmediateRuntimeBigIntParseMatchUse(let.Name, let.Body))
+            || (!IsImmediateRuntimeBigIntParseMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
         {
             lowered = default;
             return false;
