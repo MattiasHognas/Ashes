@@ -170,7 +170,7 @@ internal static partial class LlvmCodegen
     }
 
     // BigInt -> Result(Str, Int): Ok(value) when it fits an i64, else Err.
-    private static LlvmValueHandle EmitBigIntToInt(LlvmCodegenState state, LlvmValueHandle bigAddr)
+    private static LlvmValueHandle EmitBigIntToInt(LlvmCodegenState state, LlvmValueHandle bigAddr, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "bi_toint_result");
@@ -214,11 +214,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, limb, LlvmApi.ConstInt(state.I64, 1UL << 63, 0), "bi_toint_negok"), okBlk, errBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, okBlk);
-        LlvmApi.BuildStore(builder, EmitResultOk(state, LlvmApi.BuildLoad2(builder, state.I64, valueSlot, "bi_toint_v")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, LlvmApi.BuildLoad2(builder, state.I64, valueSlot, "bi_toint_v"), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, doneBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, errBlk);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "BigInt does not fit in Int")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "BigInt does not fit in Int"), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, doneBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlk);

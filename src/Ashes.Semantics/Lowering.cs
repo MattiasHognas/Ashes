@@ -2007,10 +2007,17 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcScalarResultProducer(Expr expression)
     {
-        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
-            && (string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
-                || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal));
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _))
+        {
+            return false;
+        }
+
+        string module = ResolveModuleAlias(qualified.Module);
+        return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                && (string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal))
+            || string.Equals(module, "Ashes.Number.BigInt", StringComparison.Ordinal)
+                && string.Equals(qualified.Name, "toInt", StringComparison.Ordinal);
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -2919,6 +2926,7 @@ public sealed partial class Lowering
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntToInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,

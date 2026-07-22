@@ -617,6 +617,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_matched_bigint_to_int_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntToIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let converted = Ashes.Number.BigInt.toInt(123N) in converted");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("123\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_manages_immediately_consumed_text_to_hex()
     {
         if (!OperatingSystem.IsLinux())
@@ -2093,6 +2116,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC Text.parseFloat Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_to_int_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntToIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt.toInt Result", samples);
     }
 
     [Test]
@@ -4433,6 +4470,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntToIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntToIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 123L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -4963,6 +5017,23 @@ public sealed class LinuxBackendCoverageTests
                             | Ok(number) -> if number == 1.5 then 1 else 0
                             | Error(_message) -> 0
                     in loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntToIntProgram(int iterations)
+        => $$"""
+            let value = 123N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let converted =
+                        let result = Ashes.Number.BigInt.toInt(value) in
+                        match result with
+                            | Ok(number) -> number
+                            | Error(_message) -> 0
+                    in loop(n - 1)(total + converted)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
