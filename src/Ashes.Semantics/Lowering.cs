@@ -1924,7 +1924,7 @@ public sealed partial class Lowering
             }
         }
 
-        if (IsBytesAppendExpression(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
+        if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
         {
             bool savedRequest = _runtimeRcBytesAllocationRequested;
             _runtimeRcBytesAllocationRequested = true;
@@ -2003,13 +2003,14 @@ public sealed partial class Lowering
                 && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
     }
 
-    private bool IsBytesAppendExpression(Expr expression)
+    private bool IsRuntimeRcBytesProducer(Expr expression)
     {
         return expression is Expr.Call(
             Expr.Call(Expr.QualifiedVar qualified, _),
             _)
             && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "append", StringComparison.Ordinal);
+            && (string.Equals(qualified.Name, "append", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal));
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
@@ -2565,7 +2566,9 @@ public sealed partial class Lowering
                     || (instruction is IrInst.ConcatStr { Target: var concatTarget, RuntimeManaged: true }
                         && concatTarget == valueTemp)
                     || (instruction is IrInst.BytesAppend { Target: var bytesTarget, RuntimeManaged: true }
-                        && bytesTarget == valueTemp));
+                        && bytesTarget == valueTemp)
+                    || (instruction is IrInst.BytesAppendByte { Target: var appendedByteTarget, RuntimeManaged: true }
+                        && appendedByteTarget == valueTemp));
                 ConstructorSymbol? runtimeConstructor = null;
                 if (runtimeManaged
                     && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))

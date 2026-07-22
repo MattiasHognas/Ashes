@@ -132,6 +132,28 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_append_byte_consumed_by_length_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText(\"ab\"))(33u8) in Ashes.Byte.length(bytes)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Escaping_append_byte_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText(\"ab\"))(33u8) in bytes");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");

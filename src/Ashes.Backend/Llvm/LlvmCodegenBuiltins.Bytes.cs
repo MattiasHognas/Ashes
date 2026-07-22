@@ -484,13 +484,19 @@ internal static partial class LlvmCodegen
         return EmitStringConcat(state, leftRef, rightRef, runtimeManaged);
     }
 
-    private static LlvmValueHandle EmitBytesAppendByte(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle byteVal)
+    private static LlvmValueHandle EmitBytesAppendByte(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesRef,
+        LlvmValueHandle byteVal,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle oldLen = LoadStringLength(state, bytesRef, "bytes_appb_old_len");
         LlvmValueHandle newLen = LlvmApi.BuildAdd(builder, oldLen, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_appb_new_len");
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, newLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_appb_total_bytes");
-        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        LlvmValueHandle destRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_appb")
+            : EmitAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, newLen, "bytes_appb_len");
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_appb_dest");
         LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_appb_src");

@@ -306,7 +306,7 @@ public abstract record IrInst
     public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesSubView(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
     public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp, bool RuntimeManaged = false) : IrInst;
-    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
+    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesFromList(int Target, int ListTemp) : IrInst;
     public sealed record BytesHash(int Target, int BytesTemp) : IrInst;
     public sealed record BytesU16Le(int Target, int ValueTemp) : IrInst;
