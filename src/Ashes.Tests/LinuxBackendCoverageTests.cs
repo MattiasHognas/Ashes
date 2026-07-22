@@ -495,11 +495,13 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
-        result.Stdout.ShouldBe("13\n");
+        result.Stdout.ShouldBe("16\n");
     }
 
     [Test]
@@ -4616,9 +4618,11 @@ public sealed class LinuxBackendCoverageTests
             IrProgram ir = LowerProgram(BuildRuntimeRcEscapingBytesProgram(iterations));
             AllInstructions(ir).Any(instruction =>
                 instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
             AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{iterations * 13L}\n");
+            sample.Stdout.ShouldBe($"{iterations * 16L}\n");
             samples.Add(sample);
         }
 
@@ -5304,7 +5308,11 @@ public sealed class LinuxBackendCoverageTests
                         let escaped =
                             let bytes = Ashes.Byte.append(Ashes.Byte.fromText("ab"))(Ashes.Byte.fromText("cd")) in bytes
                         in Ashes.Byte.length(escaped)
-                    in loop(n - 1)(total + one + eight + four)
+                    in let three =
+                        let escaped =
+                            let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText("ab"))(33u8) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in loop(n - 1)(total + one + eight + four + three)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

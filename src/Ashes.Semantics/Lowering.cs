@@ -2561,11 +2561,19 @@ public sealed partial class Lowering
         if (expression is Expr.Call(
                 Expr.Call(Expr.QualifiedVar binary, Expr left),
                 Expr right)
-            && string.Equals(ResolveModuleAlias(binary.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && string.Equals(binary.Name, "append", StringComparison.Ordinal))
+            && string.Equals(ResolveModuleAlias(binary.Module), "Ashes.Byte", StringComparison.Ordinal))
         {
-            return IsArenaAllocationFreeBytesOperand(left)
-                && IsArenaAllocationFreeBytesOperand(right);
+            if (string.Equals(binary.Name, "append", StringComparison.Ordinal))
+            {
+                return IsArenaAllocationFreeBytesOperand(left)
+                    && IsArenaAllocationFreeBytesOperand(right);
+            }
+
+            if (string.Equals(binary.Name, "appendByte", StringComparison.Ordinal))
+            {
+                return IsArenaAllocationFreeBytesOperand(left)
+                    && right is Expr.UIntLit or Expr.Var or Expr.QualifiedVar;
+            }
         }
 
         if (expression is not Expr.Call(Expr.QualifiedVar qualified, _)
