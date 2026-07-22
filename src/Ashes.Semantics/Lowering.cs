@@ -1912,18 +1912,9 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        if (IsRuntimeRcStringProducer(let.Value) && IsImmediateRuntimeStringUse(let.Body, let.Name))
+        if (TryLowerRuntimeRcStringLet(let, out (int Temp, TypeRef Type) loweredString))
         {
-            bool savedRequest = _runtimeRcStringAllocationRequested;
-            _runtimeRcStringAllocationRequested = true;
-            try
-            {
-                return LowerExpr(let.Value);
-            }
-            finally
-            {
-                _runtimeRcStringAllocationRequested = savedRequest;
-            }
+            return loweredString;
         }
 
         if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
@@ -1956,6 +1947,34 @@ public sealed partial class Lowering
         }
 
         return LowerRemainingLetValue(let);
+    }
+
+    private bool TryLowerRuntimeRcStringLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcStringProducer(let.Value)
+            || !IsImmediateRuntimeStringUse(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && !IsRuntimeRcClosureCaptureSafeStringProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcStringAllocationRequested;
+        _runtimeRcStringAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcStringAllocationRequested = savedRequest;
+        }
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -2014,10 +2033,14 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (owned.RuntimeManaged
-                || owned.IsResource
+            if (owned.IsResource
                 || owned.IsResourceBearing
                 || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            if (owned.RuntimeManaged
+                && owned.Type is not TypeRef.TStr)
             {
                 return false;
             }
@@ -2095,20 +2118,62 @@ public sealed partial class Lowering
 
     private bool IsImmediateRuntimeStringUse(Expr body, string bindingName)
     {
-        if (body is not Expr.Call(
+        if (body is Expr.Call(
                 Expr.QualifiedVar qualified,
                 Expr.Var argument)
-            || !string.Equals(argument.Name, bindingName, StringComparison.Ordinal))
+            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal))
+        {
+            string module = ResolveModuleAlias(qualified.Module);
+            return (string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                    && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                        || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
+                || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
+        }
+
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
+    }
+
+    private bool IsImmediateRuntimeClosureCaptureUse(Expr body, string bindingName)
+    {
+        return body is Expr.Let closureLet
+            && UsesNameOnlyAsDirectCallee(closureLet.Body, closureLet.Name)
+            && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
+    }
+
+    private static bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
+    {
+        return expression is Expr.Add add
+            && IsArenaAllocationFreeStringOperand(add.Left)
+            && IsArenaAllocationFreeStringOperand(add.Right);
+    }
+
+    private static bool IsArenaAllocationFreeStringOperand(Expr expression)
+    {
+        return expression switch
+        {
+            Expr.StrLit or Expr.Var or Expr.QualifiedVar => true,
+            Expr.If conditional => IsArenaAllocationFreeStringOperand(conditional.Then)
+                && IsArenaAllocationFreeStringOperand(conditional.Else),
+            _ => false,
+        };
+    }
+
+    private bool ClosureBranchesCaptureForKnownCopyResult(Expr expression, string bindingName)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureBranchesCaptureForKnownCopyResult(conditional.Then, bindingName)
+                && ClosureBranchesCaptureForKnownCopyResult(conditional.Else, bindingName);
+        }
+
+        if (expression is not Expr.Lambda lambda || !IsKnownCopyClosureResult(lambda.Body))
         {
             return false;
         }
 
-        string module = ResolveModuleAlias(qualified.Module);
-        return (string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
-                && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
-                    || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
-            || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
-                && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        return FreeVars(lambda.Body, bound).Contains(bindingName);
     }
 
     private bool IsRuntimeRcStringProducer(Expr expression)
@@ -4073,6 +4138,7 @@ public sealed partial class Lowering
         // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
         // names still resolve to their owning bindings here.
         var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
+        var runtimeManagedCaptures = new List<(int EnvOffset, TypeRef Type)>();
         for (int ci = 0; ci < captures.Count; ci++)
         {
             var owned = LookupOwnedValue(captures[ci]);
@@ -4088,11 +4154,25 @@ public sealed partial class Lowering
                     resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
                 }
             }
+            else if (_runtimeRcClosureAllocationRequested
+                && owned is { RuntimeManaged: true, Type: not null })
+            {
+                owned.CapturedByClosure = true;
+                owned.ReleaseKind = ResourceReleaseKind.Moved;
+                runtimeManagedCaptures.Add((ci * 8, owned.Type));
+            }
         }
 
         if (resourceCaptures.Count > 0)
         {
             _closureResourceCaptures[closureTemp] = resourceCaptures;
+        }
+        if (runtimeManagedCaptures.Count > 0)
+        {
+            string dropperLabel = SynthesizeRuntimeManagedClosureDropper(runtimeManagedCaptures);
+            int dropperTemp = NewTemp();
+            Emit(new IrInst.LoadFuncAddr(dropperTemp, dropperLabel));
+            Emit(new IrInst.StoreMemOffset(closureTemp, 24, dropperTemp));
         }
 
         return closureTemp;

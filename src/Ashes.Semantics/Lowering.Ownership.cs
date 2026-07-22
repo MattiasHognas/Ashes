@@ -1064,7 +1064,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (info.CapturedByClosure && (info.IsResource || info.IsResourceBearing))
+            if (info.CapturedByClosure && (info.RuntimeManaged || info.IsResource || info.IsResourceBearing))
             {
                 // A closure captured this resource, so it may be reachable from a value escaping this
                 // scope through a route the type cannot show (a closure, an aggregate holding one, or a
@@ -1939,6 +1939,50 @@ public sealed partial class Lowering
     private readonly Dictionary<string, string> _adtCopierLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _adtCopierInProgress = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _closureDropperLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _runtimeManagedClosureDropperLabels = new(StringComparer.Ordinal);
+
+    private string SynthesizeRuntimeManagedClosureDropper(List<(int EnvOffset, TypeRef Type)> captures)
+    {
+        string key = string.Join(";", captures.Select(capture => $"{capture.EnvOffset}:{Pretty(capture.Type)}"));
+        if (_runtimeManagedClosureDropperLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        string label = $"__rc_cdrop_{_nextLambdaId++}";
+        _runtimeManagedClosureDropperLabels[key] = label;
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+
+        NewLocal(); // slot 0: own env (unused)
+        int targetEnvSlot = NewLocal();
+        int targetEnvTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(targetEnvTemp, targetEnvSlot));
+        foreach ((int envOffset, TypeRef type) in captures)
+        {
+            int capturedTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(capturedTemp, targetEnvTemp, envOffset));
+            EmitRuntimeManagedClosureCaptureDrop(capturedTemp, type);
+        }
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
+        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private void EmitRuntimeManagedClosureCaptureDrop(int capturedTemp, TypeRef type)
+    {
+        string typeName = Prune(type) switch
+        {
+            TypeRef.TStr => "String",
+            TypeRef.TBytes => "Bytes",
+            TypeRef.TBigInt => "BigInt",
+            _ => throw new InvalidOperationException("Unsupported runtime-managed closure capture."),
+        };
+        Emit(new IrInst.RcDrop(capturedTemp, typeName, RuntimeManaged: true));
+    }
 
     /// <summary>
     /// Synthesizes (once per layout, cached) a function that closes the resources an escaping

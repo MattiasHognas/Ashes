@@ -538,6 +538,10 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
 
+        IrProgram nestedArenaProducer = LowerProgram(BuildRejectedRcOwnedHeapClosureScratchProgram());
+        AllInstructions(nestedArenaProducer).Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeFalse();
+
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("bcd\n");
@@ -730,20 +734,22 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_runtime_manages_immediately_called_borrowed_heap_capture_closures()
+    public async Task Linux_backend_runtime_manages_immediately_called_owned_heap_capture_closures()
     {
         if (!OperatingSystem.IsLinux())
         {
             return;
         }
 
-        IrProgram program = LowerProgram(BuildRuntimeRcBorrowedHeapClosureProgram(iterations: 1));
+        IrProgram program = LowerProgram(BuildRuntimeRcOwnedHeapClosureProgram(iterations: 1));
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction =>
-            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -2058,17 +2064,17 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_runtime_rc_borrowed_heap_capture_closure_memory_should_plateau_as_work_scales()
+    public async Task Linux_backend_llvm_runtime_rc_owned_heap_capture_closure_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
         {
             return;
         }
 
-        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBorrowedHeapClosureMemoryGrowthAsync()
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcOwnedHeapClosureMemoryGrowthAsync()
             .ConfigureAwait(false);
 
-        AssertMemoryPlateaus("runtime-RC borrowed-heap-capture closure", samples);
+        AssertMemoryPlateaus("runtime-RC owned-heap-capture closure", samples);
     }
 
     [Test]
@@ -4371,18 +4377,17 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
-    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBorrowedHeapClosureMemoryGrowthAsync()
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcOwnedHeapClosureMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
         List<MemoryExecutionResult> samples = new(iterationCounts.Length);
         foreach (int iterations in iterationCounts)
         {
-            IrProgram ir = LowerProgram(BuildRuntimeRcBorrowedHeapClosureProgram(iterations));
+            IrProgram ir = LowerProgram(BuildRuntimeRcOwnedHeapClosureProgram(iterations));
             AllInstructions(ir).Any(instruction =>
                 instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
-            long expected = Enumerable.Range(1, iterations)
-                .Sum(n => 6L + n.ToString(CultureInfo.InvariantCulture).Length);
+            long expected = iterations * 7L;
             sample.Stdout.ShouldBe($"{expected}\n");
             samples.Add(sample);
         }
@@ -4840,13 +4845,13 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
-    private static string BuildRuntimeRcBorrowedHeapClosureProgram(int iterations)
+    private static string BuildRuntimeRcOwnedHeapClosureProgram(int iterations)
         => $$"""
             let recursive loop n total =
                 if n <= 0 then total
                 else
                     let length =
-                        let text = "value-" + Ashes.Text.fromInt(n) in
+                        let text = "value-" + (if n > 0 then "x" else "y") in
                         let f =
                             if n > 0
                             then given (unit) -> Ashes.Text.byteLength(text)
@@ -4855,6 +4860,17 @@ public sealed class LinuxBackendCoverageTests
                     in loop(n - 1)(total + length)
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRejectedRcOwnedHeapClosureScratchProgram()
+        => """
+            let n = 1 in
+            let text = "value-" + Ashes.Text.fromInt(n) in
+            let f =
+                if n > 0
+                then given (unit) -> Ashes.Text.byteLength(text)
+                else given (unit) -> Ashes.Text.byteLength(text)
+            in f(0)
             """;
 
     private static string BuildRegionManagedTaskFrameProgram(int iterations)
