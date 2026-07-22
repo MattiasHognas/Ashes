@@ -242,12 +242,32 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Recursive_user_adt_capturing_existing_child_remains_arena_managed()
+    public void Recursive_user_adt_transfers_existing_runtime_child_without_dup()
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Leaf in let tree = Node(child)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
 
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeFalse();
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_user_adt_dups_existing_runtime_child_when_original_remains_live()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Node(Leaf)(20)(Leaf) in let tree = Node(child)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> match child with | Leaf -> Ashes.IO.print(value) | Node(_, childValue, _) -> Ashes.IO.print(value + childValue)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(5);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_user_adt_reusing_one_child_in_two_fields_keeps_parent_on_arena()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Leaf in let tree = Node(child)(42)(child) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeFalse();
     }
 
     [Test]

@@ -995,6 +995,63 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_share_recursive_runtime_rc_adt_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let child = Node(Leaf)(20)(Leaf)
+            let tree = Node(child)(42)(Leaf)
+            match tree with
+                | Leaf -> Ashes.IO.print(0)
+                | Node(_, value, _) ->
+                    match child with
+                        | Leaf -> Ashes.IO.print(value)
+                        | Node(_, childValue, _) -> Ashes.IO.print(value + childValue)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("62\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_share_recursive_runtime_rc_adt_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let child = Node(Leaf)(20)(Leaf) in
+                    let tree = Node(child)(42)(Leaf) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) ->
+                            match child with
+                                | Leaf -> loop(n - 1)(total + value)
+                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1240000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())

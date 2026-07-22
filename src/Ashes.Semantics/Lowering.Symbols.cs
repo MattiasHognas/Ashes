@@ -656,10 +656,14 @@ public sealed partial class Lowering
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
                 || (_runtimeRcCopyAdtAllocationRequested
                     && (CanRuntimeManageCopyAdt(named)
-                        || CanRuntimeManageFreshRecursiveAdtConstructorApplication(ctor, args, named))));
+                        || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named))));
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
+        if (runtimeManagedCandidate)
+        {
+            PrepareRuntimeManagedAdtChildArguments(args, argTemps);
+        }
 
         int tag = GetConstructorTag(ctor);
 
@@ -678,6 +682,35 @@ public sealed partial class Lowering
         }
 
         return (ptrTemp, resultType);
+    }
+
+    private void PrepareRuntimeManagedAdtChildArguments(IReadOnlyList<Expr> arguments, List<int> argumentTemps)
+    {
+        if (_runtimeRcAdtChildBindings is null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i] is not Expr.Var variable
+                || !_runtimeRcAdtChildBindings.TryGetValue(variable.Name, out bool shared)
+                || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false } info)
+            {
+                continue;
+            }
+
+            if (shared)
+            {
+                int duplicatedTemp = NewTemp();
+                Emit(new IrInst.RcDup(duplicatedTemp, argumentTemps[i], RuntimeManaged: true));
+                argumentTemps[i] = duplicatedTemp;
+            }
+            else
+            {
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
     }
 
     private (List<int> Temps, List<TypeRef> Types) LowerConstructorArguments(

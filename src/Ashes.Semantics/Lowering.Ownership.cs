@@ -1324,7 +1324,7 @@ public sealed partial class Lowering
         return recursive;
     }
 
-    private bool CanRuntimeManageFreshRecursiveAdtConstructorApplication(
+    private bool CanRuntimeManageRecursiveAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType)
@@ -1342,13 +1342,28 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (!IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            if (!IsFreshConstructorTree(arguments[i], resultType.Symbol)
+                && !IsRuntimeManagedAdtChildBinding(arguments[i], resultType.Symbol))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private bool IsRuntimeManagedAdtChildBinding(Expr expression, TypeSymbol expectedType)
+    {
+        if (expression is not Expr.Var variable
+            || _runtimeRcAdtChildBindings is null
+            || !_runtimeRcAdtChildBindings.ContainsKey(variable.Name)
+            || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false, Type: not null } info
+            || Prune(info.Type) is not TypeRef.TNamedType named)
+        {
+            return false;
+        }
+
+        return string.Equals(named.Symbol.Name, expectedType.Name, StringComparison.Ordinal);
     }
 
     private bool IsFreshConstructorTree(Expr expression, TypeSymbol expectedType)

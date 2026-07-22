@@ -428,6 +428,7 @@ public sealed partial class Lowering
 
     // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
     private bool _runtimeRcCopyAdtAllocationRequested;
+    private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1919,21 +1920,46 @@ public sealed partial class Lowering
             return loweredList;
         }
 
-        if (IsConstructorExpression(let.Value) && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body))
+        if (TryLowerRuntimeRcAdtLet(let, out (int Temp, TypeRef Type) loweredAdtValue))
         {
-            bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
-            _runtimeRcCopyAdtAllocationRequested = true;
-            try
-            {
-                return LowerExpr(let.Value);
-            }
-            finally
-            {
-                _runtimeRcCopyAdtAllocationRequested = savedRequest;
-            }
+            return loweredAdtValue;
         }
 
         return LowerExpr(let.Value);
+    }
+
+    private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool immediateMatch = IsConstructorExpression(let.Value)
+            && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body);
+        bool consumedByParent = IsConstructorExpression(let.Value)
+            && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
+        if (!immediateMatch && !consumedByParent)
+        {
+            lowered = default;
+            return false;
+        }
+
+        Dictionary<string, bool>? childBindings = null;
+        if (immediateMatch)
+        {
+            TryCollectRuntimeRcAdtChildBindings(let.Name, let.Value, let.Body, out childBindings);
+        }
+
+        bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
+        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
+        _runtimeRcCopyAdtAllocationRequested = true;
+        _runtimeRcAdtChildBindings = childBindings;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcCopyAdtAllocationRequested = savedRequest;
+            _runtimeRcAdtChildBindings = savedChildBindings;
+        }
     }
 
     private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -2110,10 +2136,11 @@ public sealed partial class Lowering
 
     private bool TryGetConstructorExpressionType(Expr expression, out TypeSymbol? type)
     {
-        var arguments = new List<Expr>();
-        Expr root = CollectCallArgs(expression, arguments);
-        if (root is Expr.Var variable
-            && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? constructor)
+        if (TryDescribeConstructorExpression(
+            expression,
+            out ConstructorSymbol? constructor,
+            out _,
+            out _)
             && constructor is not null
             && _typeSymbols.TryGetValue(constructor.ParentType, out type))
         {
@@ -2121,6 +2148,106 @@ public sealed partial class Lowering
         }
 
         type = null;
+        return false;
+    }
+
+    private bool IsRecursiveAdtChildConsumedByImmediateMatch(string name, Expr body)
+    {
+        if (body is not Expr.Let parent
+            || !IsImmediateSafeAdtMatchUse(parent.Name, parent.Value, parent.Body)
+            || !TryDescribeConstructorExpression(parent.Value, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? parentType)
+            || constructor is null
+            || arguments is null
+            || parentType is null
+            || !CanRuntimeManageRecursiveCopyAdt(parentType))
+        {
+            return false;
+        }
+
+        bool consumed = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, parentType));
+            if (fieldType is not TypeRef.TNamedType child
+                || !string.Equals(child.Symbol.Name, parentType.Symbol.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (arguments[i] is Expr.Var variable && string.Equals(variable.Name, name, StringComparison.Ordinal))
+            {
+                consumed = true;
+            }
+            else if (!IsFreshConstructorTree(arguments[i], parentType.Symbol))
+            {
+                return false;
+            }
+        }
+
+        return consumed;
+    }
+
+    private bool TryCollectRuntimeRcAdtChildBindings(
+        string name,
+        Expr value,
+        Expr body,
+        out Dictionary<string, bool>? bindings)
+    {
+        bindings = null;
+        if (!IsImmediateSafeAdtMatchUse(name, value, body)
+            || !TryDescribeConstructorExpression(value, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? resultType)
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || !CanRuntimeManageRecursiveCopyAdt(resultType))
+        {
+            return false;
+        }
+
+        var collected = new Dictionary<string, bool>(StringComparer.Ordinal);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (fieldType is not TypeRef.TNamedType child
+                || !string.Equals(child.Symbol.Name, resultType.Symbol.Name, StringComparison.Ordinal)
+                || IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            {
+                continue;
+            }
+
+            if (arguments[i] is not Expr.Var variable
+                || collected.ContainsKey(variable.Name)
+                || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false })
+            {
+                return false;
+            }
+
+            collected[variable.Name] = ExprReferencesName(body, variable.Name, shadowed: false);
+        }
+
+        bindings = collected.Count == 0 ? null : collected;
+        return collected.Count > 0;
+    }
+
+    private bool TryDescribeConstructorExpression(
+        Expr expression,
+        out ConstructorSymbol? constructor,
+        out List<Expr>? arguments,
+        out TypeRef.TNamedType? resultType)
+    {
+        arguments = [];
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is Expr.Var variable
+            && _constructorSymbols.TryGetValue(variable.Name, out constructor)
+            && constructor is not null)
+        {
+            resultType = InstantiateAdtType(constructor);
+            return arguments.Count == constructor.Arity;
+        }
+
+        constructor = null;
+        arguments = null;
+        resultType = null;
         return false;
     }
 
