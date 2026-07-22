@@ -1742,7 +1742,10 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, bytesAppendByte.BytesTemp),
                 LoadTemp(state, bytesAppendByte.ByteTemp),
                 bytesAppendByte.RuntimeManaged)),
-            IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
+            IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(
+                state,
+                LoadTemp(state, bytesFromList.ListTemp),
+                bytesFromList.RuntimeManaged)),
             IrInst.BytesHash bytesHash => StoreTemp(state, bytesHash.Target, EmitBytesHash(state, LoadTemp(state, bytesHash.BytesTemp))),
             IrInst.BytesU16Le bytesU16Le => StoreTemp(state, bytesU16Le.Target, EmitBytesU16Le(state, LoadTemp(state, bytesU16Le.ValueTemp))),
             IrInst.BytesU32Le bytesU32Le => StoreTemp(state, bytesU32Le.Target, EmitBytesU32Le(state, LoadTemp(state, bytesU32Le.ValueTemp))),

@@ -301,13 +301,13 @@ Current status: in progress. The first string slice adds a runtime-managed flag 
 results and a dynamically sized RC allocation path that preserves the existing `{length, bytes}`
 payload pointer behind the standard RC header. Lowering enables it only for a local concatenation
 immediately consumed by a known non-retaining builtin (`Ashes.Text.length` or `Ashes.IO.print`).
-The first Byte slices apply the same dynamic RC layout to local `Ashes.Byte.append` and
-`Ashes.Byte.appendByte` results when immediately consumed by `Ashes.Byte.length`. Escaping string
-concatenations and Byte append results, affine `ConcatStrTip` accumulators, literals, views, other
-builtin-produced strings and Bytes values, and BigInts remain arena-managed. Compile-time evaluation
-may not fold a runtime-managed concat into an arena literal. Native correctness and separate
-2K/10K/50K RSS-slope tests cover String and Byte allocation, exact-size free-list reuse, and final
-`RcDrop` behavior.
+The first Byte slices apply the same dynamic RC layout to local `Ashes.Byte.append`,
+`Ashes.Byte.appendByte`, and `Ashes.Byte.fromList` results when immediately consumed by
+`Ashes.Byte.length`. Escaping string concatenations and migrated Byte producer results, affine
+`ConcatStrTip` accumulators, literals, views, other builtin-produced strings and Bytes values, and
+BigInts remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an
+arena literal. Native correctness and separate 2K/10K/50K RSS-slope tests cover String and Byte
+allocation, exact-size free-list reuse, and final `RcDrop` behavior.
 
 Deliverables:
 

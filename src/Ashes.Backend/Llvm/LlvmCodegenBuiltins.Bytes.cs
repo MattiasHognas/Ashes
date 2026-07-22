@@ -507,7 +507,10 @@ internal static partial class LlvmCodegen
         return destRef;
     }
 
-    private static LlvmValueHandle EmitBytesFromList(LlvmCodegenState state, LlvmValueHandle listRef)
+    private static LlvmValueHandle EmitBytesFromList(
+        LlvmCodegenState state,
+        LlvmValueHandle listRef,
+        bool runtimeManaged = false)
     {
         // Two-pass: count cells, allocate, fill.
         // List cons layout: [head:i64 @ offset 0, tail:i64 @ offset 8]; nil = 0.
@@ -527,7 +530,17 @@ internal static partial class LlvmCodegen
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "bfl_result");
 
         EmitBytesFromListCountPass(state, countSlot, curSlot, countLoopBlock, countBodyBlock, allocBlock);
-        EmitBytesFromListAllocAndFill(state, listRef, countSlot, curSlot, resultSlot, allocBlock, fillLoopBlock, fillBodyBlock, doneBlock);
+        EmitBytesFromListAllocAndFill(
+            state,
+            listRef,
+            countSlot,
+            curSlot,
+            resultSlot,
+            allocBlock,
+            fillLoopBlock,
+            fillBodyBlock,
+            doneBlock,
+            runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bfl_result_val");
@@ -556,7 +569,8 @@ internal static partial class LlvmCodegen
 
     private static void EmitBytesFromListAllocAndFill(
         LlvmCodegenState state, LlvmValueHandle listRef, LlvmValueHandle countSlot, LlvmValueHandle curSlot, LlvmValueHandle resultSlot,
-        LlvmBasicBlockHandle allocBlock, LlvmBasicBlockHandle fillLoopBlock, LlvmBasicBlockHandle fillBodyBlock, LlvmBasicBlockHandle doneBlock)
+        LlvmBasicBlockHandle allocBlock, LlvmBasicBlockHandle fillLoopBlock, LlvmBasicBlockHandle fillBodyBlock, LlvmBasicBlockHandle doneBlock,
+        bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
@@ -564,7 +578,9 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, allocBlock);
         LlvmValueHandle length = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "bfl_length");
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "bfl_total_bytes");
-        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        LlvmValueHandle destRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_from_list")
+            : EmitAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, length, "bfl_dest_len");
         LlvmApi.BuildStore(builder, destRef, resultSlot);
         // Reset cursor for fill pass.

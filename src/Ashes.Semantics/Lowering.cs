@@ -2005,12 +2005,21 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcBytesProducer(Expr expression)
     {
-        return expression is Expr.Call(
-            Expr.Call(Expr.QualifiedVar qualified, _),
-            _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && (string.Equals(qualified.Name, "append", StringComparison.Ordinal)
-                || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal));
+        Expr.QualifiedVar? qualified = expression switch
+        {
+            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
+            Expr.Call(Expr.QualifiedVar unary, _) => unary,
+            _ => null,
+        };
+        if (qualified is null
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(qualified.Name, "append", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal);
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
@@ -2555,20 +2564,7 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                bool runtimeManaged = _runtimeManagedResultTemps.Contains(valueTemp)
-                    || _inst.Any(instruction =>
-                    (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
-                        && adtTarget == valueTemp)
-                    || (instruction is IrInst.AllocReusing { Target: var reusedTarget, RuntimeManaged: true }
-                        && reusedTarget == valueTemp)
-                    || (instruction is IrInst.Alloc { Target: var allocationTarget, RuntimeManaged: true }
-                        && allocationTarget == valueTemp)
-                    || (instruction is IrInst.ConcatStr { Target: var concatTarget, RuntimeManaged: true }
-                        && concatTarget == valueTemp)
-                    || (instruction is IrInst.BytesAppend { Target: var bytesTarget, RuntimeManaged: true }
-                        && bytesTarget == valueTemp)
-                    || (instruction is IrInst.BytesAppendByte { Target: var appendedByteTarget, RuntimeManaged: true }
-                        && appendedByteTarget == valueTemp));
+                bool runtimeManaged = IsRuntimeManagedResultTemp(valueTemp);
                 ConstructorSymbol? runtimeConstructor = null;
                 if (runtimeManaged
                     && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))
@@ -2596,6 +2592,22 @@ public sealed partial class Lowering
                     runtimeDeepUnique);
             }
         }
+    }
+
+    private bool IsRuntimeManagedResultTemp(int valueTemp)
+    {
+        return _runtimeManagedResultTemps.Contains(valueTemp)
+            || _inst.Any(instruction => instruction switch
+            {
+                IrInst.AllocAdt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.AllocReusing { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                _ => false,
+            });
     }
 
     private (int Temp, TypeRef Type) PopLetScope(int bodyTemp, TypeRef bodyType)
