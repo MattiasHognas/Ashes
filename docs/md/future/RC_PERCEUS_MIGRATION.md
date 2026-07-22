@@ -498,8 +498,10 @@ Focused tests:
    shared-tail lists and shared-child recursive ADTs. Legacy arena controls currently cover pointer
    lists, transient and growing-accumulator strings, pointer-bearing records, bytes, BigInts, and
    heap-backed captured closures. The growing-string case directly guards the historical
-   stranded-copy leak. These tests also found and now guard a branch-lowering leak where the first
-   TCO match arm's compiler-only release state suppressed RC cleanup in later arms.
+   stranded-copy leak. A live keep-alive HTTP server control now samples RSS after 50, 500, and
+   3,000 requests and separately bounds late-phase growth after connection, parser, and response
+   initialization have settled. These tests also found and now guard a branch-lowering leak where
+   the first TCO match arm's compiler-only release state suppressed RC cleanup in later arms.
 
 ## 8. Test And Measurement Strategy
 

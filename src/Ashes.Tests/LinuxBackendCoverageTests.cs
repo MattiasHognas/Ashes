@@ -1677,7 +1677,7 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_http_keep_alive_should_not_accumulate_memory_per_request()
+    public async Task Linux_backend_llvm_http_keep_alive_memory_should_plateau_as_requests_scale()
     {
         // Async-loop arena reset: the HTTP connection loop reclaims its per-request allocations
         // (buffered reads, parse scaffolding, the rendered response) at the loop back-edge. Serve a
@@ -1708,15 +1708,28 @@ public sealed class LinuxBackendCoverageTests
             var stream = client.GetStream();
             var request = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-            // Warm up the connection (chunk growth, first-response scaffolding), then measure.
+            // Sample after progressively larger request counts. The late phase starts only after
+            // connection/parser/response scaffolding has settled, so retained per-request garbage
+            // shows up as a proportional slope rather than being hidden in startup noise.
             await HttpKeepAliveBurstAsync(stream, request, 50).ConfigureAwait(false);
-            long warmRssKb = ReadVmRssKb(proc.Id);
-            await HttpKeepAliveBurstAsync(stream, request, 3000).ConfigureAwait(false);
-            long endRssKb = ReadVmRssKb(proc.Id);
+            long rssAt50Kb = ReadVmRssKb(proc.Id);
+            await HttpKeepAliveBurstAsync(stream, request, 450).ConfigureAwait(false);
+            long rssAt500Kb = ReadVmRssKb(proc.Id);
+            await HttpKeepAliveBurstAsync(stream, request, 2500).ConfigureAwait(false);
+            long rssAt3000Kb = ReadVmRssKb(proc.Id);
 
             proc.HasExited.ShouldBeFalse();
-            long growthKb = endRssKb - warmRssKb;
-            growthKb.ShouldBeLessThan(24_000, $"server RSS grew {growthKb} KB over 3000 keep-alive requests (warm {warmRssKb} KB, end {endRssKb} KB) — the connection loop is not reclaiming per-request memory");
+            rssAt50Kb.ShouldBeGreaterThan(0);
+            rssAt500Kb.ShouldBeGreaterThan(0);
+            rssAt3000Kb.ShouldBeGreaterThan(0);
+            long totalGrowthKb = rssAt3000Kb - rssAt50Kb;
+            long lateGrowthKb = rssAt3000Kb - rssAt500Kb;
+            totalGrowthKb.ShouldBeLessThan(24_000,
+                $"server RSS grew {totalGrowthKb} KB from 50 to 3000 requests " +
+                $"({rssAt50Kb}, {rssAt500Kb}, {rssAt3000Kb} KB checkpoints)");
+            lateGrowthKb.ShouldBeLessThan(16_000,
+                $"server RSS grew {lateGrowthKb} KB from 500 to 3000 requests " +
+                $"({rssAt50Kb}, {rssAt500Kb}, {rssAt3000Kb} KB checkpoints)");
         }
         finally
         {
