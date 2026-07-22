@@ -11,10 +11,12 @@ internal static partial class LlvmCodegen
     // All helpers that work on TStr (LoadStringLength, GetStringBytesPointer,
     // EmitStringConcat, EmitAllocDynamic, EmitAlloc, etc.) are reused directly.
 
-    private static LlvmValueHandle EmitBytesEmpty(LlvmCodegenState state)
+    private static LlvmValueHandle EmitBytesEmpty(LlvmCodegenState state, bool runtimeManaged = false)
     {
         // Allocate 8 bytes (length word only, no data), store length = 0.
-        LlvmValueHandle bytesRef = EmitAlloc(state, 8);
+        LlvmValueHandle bytesRef = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, 8, "rc_bytes_empty")
+            : EmitAlloc(state, 8);
         StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "bytes_empty_len");
         return bytesRef;
     }

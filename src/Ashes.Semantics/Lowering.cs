@@ -2020,7 +2020,8 @@ public sealed partial class Lowering
         return string.Equals(qualified.Name, "append", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal);
+            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal);
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
@@ -2608,6 +2609,7 @@ public sealed partial class Lowering
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesSingleton { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesEmpty { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 _ => false,
             });
     }

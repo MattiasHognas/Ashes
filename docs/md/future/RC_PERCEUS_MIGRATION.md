@@ -303,12 +303,12 @@ payload pointer behind the standard RC header. Lowering enables it only for a lo
 immediately consumed by a known non-retaining builtin (`Ashes.Text.length` or `Ashes.IO.print`).
 The first Byte slices apply the same dynamic RC layout to local `Ashes.Byte.append`,
 `Ashes.Byte.appendByte`, and `Ashes.Byte.fromList` results, plus the fixed-size result of
-`Ashes.Byte.singleton`, when immediately consumed by `Ashes.Byte.length`. Escaping string
-concatenations and migrated Byte producer results, affine `ConcatStrTip` accumulators, literals,
-views, other builtin-produced strings and Bytes values, and BigInts remain arena-managed.
-Compile-time evaluation may not fold a runtime-managed concat into an arena literal. Native
-correctness and separate 2K/10K/50K RSS-slope tests cover String and Byte allocation, exact-size
-free-list reuse, and final `RcDrop` behavior.
+`Ashes.Byte.singleton` and `Ashes.Byte.empty`, when immediately consumed by `Ashes.Byte.length`.
+Escaping string concatenations and migrated Byte producer results, affine `ConcatStrTip`
+accumulators, literals, views, other builtin-produced strings and Bytes values, and BigInts remain
+arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
+Native correctness and separate 2K/10K/50K RSS-slope tests cover String and Byte allocation,
+exact-size free-list reuse, and final `RcDrop` behavior.
 
 Deliverables:
 

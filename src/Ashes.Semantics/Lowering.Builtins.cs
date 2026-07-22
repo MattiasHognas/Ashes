@@ -3177,7 +3177,7 @@ public sealed partial class Lowering
 
         Unify(prunedArgType, _resolvedTypes["Unit"]);
         var target = NewTemp();
-        Emit(new IrInst.BytesEmpty(target));
+        Emit(new IrInst.BytesEmpty(target, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 

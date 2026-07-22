@@ -1723,7 +1723,7 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
             IrInst.NetTcpListen tcpListen => StoreTemp(state, tcpListen.Target, EmitTcpListenAbiCall(state, LoadTemp(state, tcpListen.PortTemp))),
             IrInst.NetTcpAccept tcpAccept => StoreTemp(state, tcpAccept.Target, EmitTcpAcceptAbiCall(state, LoadTemp(state, tcpAccept.SocketTemp))),
-            IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state)),
+            IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state, bytesEmpty.RuntimeManaged)),
             IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(
                 state,
                 LoadTemp(state, bytesSingleton.ByteTemp),
