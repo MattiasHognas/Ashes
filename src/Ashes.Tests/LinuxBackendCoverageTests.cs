@@ -100,6 +100,72 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_drop_reuse_reuses_unique_cell()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.DropReuse(2, 0, 1, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 1, 1, 2, RuntimeManaged: true),
+            new IrInst.LoadConstInt(4, 43),
+            new IrInst.SetAdtField(3, 0, 4),
+            new IrInst.GetAdtField(5, 3, 0),
+            new IrInst.PrintInt(5),
+            new IrInst.RcIsUnique(6, 3),
+            new IrInst.PrintBool(6),
+            new IrInst.RcDrop(3, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(7, 0),
+            new IrInst.Return(7),
+        };
+        IrFunction function = new("entry", instructions, 0, 8, false);
+        IrProgram program = new(function, [], [], true, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\ntrue\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_drop_reuse_falls_back_when_cell_is_shared()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.DropReuse(2, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 1, 0, 2, RuntimeManaged: true),
+            new IrInst.CmpIntNe(4, 1, 3),
+            new IrInst.PrintBool(4),
+            new IrInst.RcIsUnique(5, 1),
+            new IrInst.PrintBool(5),
+            new IrInst.RcIsUnique(6, 3),
+            new IrInst.PrintBool(6),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(3, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(7, 0),
+            new IrInst.Return(7),
+        };
+        IrFunction function = new("entry", instructions, 0, 8, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\ntrue\ntrue\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())

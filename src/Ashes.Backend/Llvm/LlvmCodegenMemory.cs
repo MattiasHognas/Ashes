@@ -251,6 +251,40 @@ internal static partial class LlvmCodegen
         return false;
     }
 
+    private static LlvmValueHandle EmitRuntimeDropReuse(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "drop_reuse_result_slot");
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, valuePtr,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "drop_reuse_base");
+        LlvmValueHandle count = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "drop_reuse_count");
+        LlvmValueHandle isUnique = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "drop_reuse_unique");
+        LlvmBasicBlockHandle uniqueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "drop_reuse_take");
+        LlvmBasicBlockHandle sharedBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "drop_reuse_shared");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "drop_reuse_continue");
+        LlvmApi.BuildCondBr(builder, isUnique, uniqueBlock, sharedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, uniqueBlock);
+        LlvmApi.BuildStore(builder, valuePtr, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sharedBlock);
+        LlvmValueHandle decremented = LlvmApi.BuildSub(builder, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "drop_reuse_decremented");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            decremented, "drop_reuse_store");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "drop_reuse_result");
+    }
+
     private static void EmitReleaseRuntimeRcFreeList(LlvmCodegenState state, LlvmValueHandle head)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -295,10 +329,54 @@ internal static partial class LlvmCodegen
     /// uniquely-owned cell of the same size that was just deconstructed; its fields are rewritten by
     /// the following StoreMemOffset/SetAdtField. See <see cref="IrInst.AllocReusing"/>.
     /// </summary>
-    private static LlvmValueHandle EmitAllocReusing(LlvmCodegenState state, LlvmValueHandle tokenPtr, int tag)
+    private static LlvmValueHandle EmitAllocReusing(
+        LlvmCodegenState state,
+        LlvmValueHandle tokenPtr,
+        int tag,
+        int fieldCount,
+        bool runtimeManaged)
     {
-        StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
-        return tokenPtr;
+        if (!runtimeManaged)
+        {
+            StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
+                LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+            return tokenPtr;
+        }
+
+        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount);
+    }
+
+    private static LlvmValueHandle EmitRuntimeAllocReusing(
+        LlvmCodegenState state,
+        LlvmValueHandle tokenPtr,
+        int tag,
+        int fieldCount)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "alloc_reuse_result_slot");
+        LlvmValueHandle hasToken = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, tokenPtr,
+            LlvmApi.ConstInt(state.I64, 0, 0), "alloc_reuse_has_token");
+        LlvmBasicBlockHandle reuseBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "alloc_reuse_take");
+        LlvmBasicBlockHandle freshBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "alloc_reuse_fresh");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "alloc_reuse_continue");
+        LlvmApi.BuildCondBr(builder, hasToken, reuseBlock, freshBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
+        StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
+            LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        LlvmApi.BuildStore(builder, tokenPtr, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle fresh = EmitAllocAdt(state, tag, fieldCount, runtimeManaged: true);
+        LlvmApi.BuildStore(builder, fresh, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "alloc_reuse_result");
     }
 
     private static int GetAdtTagOffsetBytes()

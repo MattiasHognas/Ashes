@@ -1767,8 +1767,10 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
-            IrInst.DropReuse { RuntimeManaged: false } token =>
-                StoreTemp(state, token.Target, LoadTemp(state, token.SourceTemp)),
+            IrInst.DropReuse token => StoreTemp(state, token.Target,
+                token.RuntimeManaged
+                    ? EmitRuntimeDropReuse(state, LoadTemp(state, token.SourceTemp))
+                    : LoadTemp(state, token.SourceTemp)),
             IrInst.RcDup { RuntimeManaged: true } dup => StoreTemp(state, dup.Target,
                 EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
             // Erased Perceus marker: identity-preserving for arena-managed values.
@@ -1971,7 +1973,9 @@ internal static partial class LlvmCodegen
             IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target,
                 EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount, allocAdt.RuntimeManaged)),
             IrInst.AllocAdtToSpace allocToSpace => StoreTemp(state, allocToSpace.Target, EmitAllocAdtToSpace(state, allocToSpace.Tag, allocToSpace.FieldCount)),
-            IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target, EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp), allocReusing.Tag)),
+            IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target,
+                EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp),
+                    allocReusing.Tag, allocReusing.FieldCount, allocReusing.RuntimeManaged)),
             IrInst.AllocAdtStack allocAdtStack => StoreTemp(state, allocAdtStack.Target, EmitStackAllocAdt(state, allocAdtStack.Tag, allocAdtStack.FieldCount)),
             IrInst.SetAdtField setAdtField => StoreAdtField(state, LoadTemp(state, setAdtField.Ptr), setAdtField.FieldIndex, LoadTemp(state, setAdtField.Source), $"set_adt_field_{setAdtField.FieldIndex}"),
             IrInst.SaveStackPointer saveSp => EmitSaveStackPointer(state, saveSp.Slot),

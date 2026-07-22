@@ -217,9 +217,10 @@ public abstract record IrInst
 
     /// <summary>
     /// Converts a dead ADT cell into an explicit reuse token. <c>FieldCount</c> describes the
-    /// compatible allocation layout. The initial arena-backed path is statically unique, so this is
-    /// an identity operation in codegen; runtime-managed values will later use the same instruction
-    /// to perform the Perceus uniqueness check and produce a null token when reuse is unavailable.
+    /// compatible allocation layout. The arena-backed path is statically unique, so this is an
+    /// identity operation in codegen. For runtime-managed values, codegen consumes the source
+    /// ownership: a unique cell becomes the token, while a shared cell is decremented and produces
+    /// a null token.
     /// </summary>
     public sealed record DropReuse(
         int Target,
@@ -230,12 +231,18 @@ public abstract record IrInst
 
     /// <summary>
     /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
-    /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
-    /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
-    /// a linear TCO accumulator was just deconstructed from. The fields are written afterwards exactly
-    /// like <see cref="AllocAdt"/>.
+    /// address as <c>Target</c>, instead of bump-allocating. Arena-backed tokens are emitted only for
+    /// provably-dead, uniquely-owned ADT cells of the same size (1 + FieldCount words) — e.g. the node
+    /// a linear TCO accumulator was just deconstructed from. A null runtime-managed token instead
+    /// allocates a fresh RC cell. The fields are written afterwards exactly like <see cref="AllocAdt"/>.
     /// </summary>
-    public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
+    public sealed record AllocReusing(
+        int Target,
+        int Tag,
+        int FieldCount,
+        int TokenTemp,
+        bool RuntimeManaged = false
+    ) : IrInst;
     // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to

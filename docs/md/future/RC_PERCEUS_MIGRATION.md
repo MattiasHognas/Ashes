@@ -244,12 +244,15 @@ Validation:
 
 ### Phase 5: Perceus Reuse Tokens
 
-Current status: in progress. The first slice makes reuse-token creation explicit in IR. A dead,
-statically unique ADT match scrutinee now lowers to `DropReuse`, whose result token is the only value
-`AllocReusing` may consume; the token carries the source cell's field count so layout compatibility
-remains checked. The existing arena-backed path lowers `DropReuse` as an identity operation, preserving
-today's proven-unique behavior while establishing the seam for runtime RC uniqueness checks and a
-null/fresh fallback in the following slices. Recursive-accumulator IR tests assert the complete
+Current status: in progress. Reuse-token creation is explicit in IR. A dead, statically unique ADT
+match scrutinee lowers to `DropReuse`, whose result token is the only value `AllocReusing` may consume;
+the token carries the source cell's field count so layout compatibility remains checked. The
+arena-backed path lowers `DropReuse` as an identity operation, preserving today's proven-unique
+behavior. The runtime-managed path now implements the Perceus contract: `DropReuse` retains a unique
+cell as its token, but decrements a shared cell and produces a null token; `AllocReusing` overwrites a
+non-null token or allocates a fresh RC cell for null. Native backend tests cover both outcomes.
+Lowering remains conservative and emits runtime-managed reuse tokens only after a later slice proves
+the dead-scrutinee and compatible-layout conditions. Recursive-accumulator IR tests assert the complete
 `DropReuse` to `AllocReusing` path, and representative constant-memory and shared-value reuse programs
 remain unchanged.
 
