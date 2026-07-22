@@ -99,14 +99,15 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_concat_remains_arena_managed()
+    public void Directly_escaping_scratch_free_concat_transfers_runtime_ownership_without_copy_out()
     {
-        IrProgram ir = LowerProgram("let text = \"ab\" + \"cd\" in text");
+        IrProgram ir = LowerProgram("let escaped = (let text = \"ab\" + \"cd\" in text) in Ashes.Text.byteLength(escaped)");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
     [Test]

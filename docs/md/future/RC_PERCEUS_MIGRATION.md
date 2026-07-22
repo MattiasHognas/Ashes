@@ -400,6 +400,9 @@ Phase 6 exit audit:
 Current status: in progress. The Phase 6 exit audit above is the blocking ledger. Phase 7 must first
 carry runtime-managed provenance across escaping let results and direct function-result boundaries,
 then remove the copy-out/to-space machinery made unreachable by each broadened ownership boundary.
+The first retirement slice carries scratch-free RC String concatenations through a direct nested-let
+result. Lowering marks the inner owner moved, propagates runtime provenance through its load, and lets
+the receiving scope place the final drop; the old `CopyOutArena` path is absent for this shape.
 
 Deliverables:
 

@@ -1585,6 +1585,10 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
+        if (ownerInfo is { RuntimeManaged: true })
+        {
+            _runtimeManagedResultTemps.Add(result.Temp);
+        }
         if (ownerInfo is not null && !ownerInfo.IsDropped)
         {
             int borrowTemp = NewTemp();
@@ -1950,13 +1954,14 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcStringLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if (!IsRuntimeRcStringProducer(let.Value)
-            || !IsImmediateRuntimeStringUse(let.Body, let.Name))
+            || (!IsImmediateRuntimeStringUse(let.Body, let.Name) && !directEscape))
         {
             lowered = default;
             return false;
         }
-        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
             && !IsRuntimeRcClosureCaptureSafeStringProducer(let.Value))
         {
             lowered = default;
@@ -1974,6 +1979,12 @@ public sealed partial class Lowering
         {
             _runtimeRcStringAllocationRequested = savedRequest;
         }
+    }
+
+    private static bool IsDirectBindingResult(Expr body, string bindingName)
+    {
+        return body is Expr.Var variable
+            && string.Equals(variable.Name, bindingName, StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcBytesLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -3155,6 +3166,10 @@ public sealed partial class Lowering
                     runtimeManaged,
                     runtimeConstructor,
                     runtimeDeepUnique);
+                if (runtimeManaged && IsDirectBindingResult(let.Body, let.Name))
+                {
+                    LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
+                }
             }
         }
     }
