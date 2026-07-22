@@ -195,7 +195,11 @@ public sealed partial class Lowering
             return (target, new TypeRef.TStr());
         }
 
-        Emit(new IrInst.ConcatStr(target, leftTemp, rightTemp));
+        Emit(new IrInst.ConcatStr(
+            target,
+            leftTemp,
+            rightTemp,
+            _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 

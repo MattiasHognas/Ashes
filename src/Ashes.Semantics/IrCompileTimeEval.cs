@@ -632,7 +632,7 @@ public static class IrCompileTimeEval
             {
                 case IrInst.CmpStrEq c: Set(c.Target, new CtBool(string.Equals(ReadStr(c.Left), ReadStr(c.Right), StringComparison.Ordinal))); return true;
                 case IrInst.CmpStrNe c: Set(c.Target, new CtBool(!string.Equals(ReadStr(c.Left), ReadStr(c.Right), StringComparison.Ordinal))); return true;
-                case IrInst.ConcatStr c: Set(c.Target, new CtStr(ReadStr(c.Left) + ReadStr(c.Right))); return true;
+                case IrInst.ConcatStr { RuntimeManaged: false } c: Set(c.Target, new CtStr(ReadStr(c.Left) + ReadStr(c.Right))); return true;
                 case IrInst.AllocAdt aa: Set(aa.Target, new CtAdt(aa.Tag, new CtValue?[aa.FieldCount])); return true;
                 case IrInst.AllocAdtStack aa: Set(aa.Target, new CtAdt(aa.Tag, new CtValue?[aa.FieldCount])); return true;
                 case IrInst.SetAdtField sf: ReadAdt(Read(sf.Ptr)).Fields[sf.FieldIndex] = Read(sf.Source); return true;

@@ -130,6 +130,30 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), name + "_value");
     }
 
+    private static LlvmValueHandle EmitRuntimeRcAllocDynamic(
+        LlvmCodegenState state,
+        LlvmValueHandle valueSizeBytes,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle allocationSize = AlignRuntimeSize(
+            state,
+            LlvmApi.BuildAdd(
+                builder,
+                valueSizeBytes,
+                LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0),
+                name + "_total_size"),
+            name + "_aligned_size");
+        LlvmValueHandle allocationBase = EmitAcquireRuntimeRcBlock(state, allocationSize, name);
+        EmitHeapChunkInitCheck(state, allocationBase);
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            LlvmApi.ConstInt(state.I64, 1, 0), name + "_count");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.AllocationSizeOffsetBytes,
+            allocationSize, name + "_size");
+        return LlvmApi.BuildAdd(builder, allocationBase,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), name + "_value");
+    }
+
     private static LlvmValueHandle EmitAcquireRuntimeRcBlock(
         LlvmCodegenState state,
         LlvmValueHandle allocationSize,
@@ -472,14 +496,20 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "str_cmp_result_value");
     }
 
-    private static LlvmValueHandle EmitStringConcat(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef)
+    private static LlvmValueHandle EmitStringConcat(
+        LlvmCodegenState state,
+        LlvmValueHandle leftRef,
+        LlvmValueHandle rightRef,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "str_cat_left_len");
         LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "str_cat_right_len");
         LlvmValueHandle totalLen = LlvmApi.BuildAdd(builder, leftLen, rightLen, "str_cat_total_len");
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "str_cat_total_bytes");
-        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        LlvmValueHandle destRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_str_cat")
+            : EmitAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, totalLen, "str_cat_len");
 
         LlvmValueHandle destBytes = GetStringBytesPointer(state, destRef, "str_cat_dest_bytes");

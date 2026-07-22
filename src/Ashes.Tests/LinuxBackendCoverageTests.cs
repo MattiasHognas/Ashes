@@ -393,6 +393,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_string_concat()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let text = \"ab\" + \"cd\" in Ashes.IO.print(text)");
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("abcd\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1473,6 +1492,20 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
         AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
         AssertMemoryPlateaus("runtime-RC shared record child", sharedRecordChild);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_string_concat_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcStringConcatMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC string concat", samples);
     }
 
     [Test]
@@ -3459,6 +3492,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcStringConcatMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcStringConcatMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 5) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -3615,6 +3666,22 @@ public sealed class LinuxBackendCoverageTests
                     loop(n - 1)(total + node.bonus + leaf.value)
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcStringConcatMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let text = "ab" + "cd" in
+                Ashes.IO.print(text)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
             """;
 
     private static string BuildLegacyArenaListMemoryProgram(int iterations)

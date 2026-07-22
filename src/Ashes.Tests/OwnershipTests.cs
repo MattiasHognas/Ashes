@@ -84,6 +84,32 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_concat_consumed_by_print_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("let text = \"ab\" + \"cd\" in Ashes.IO.print(text)");
+
+        int runtimeString = ir.EntryFunction.Instructions
+            .OfType<IrInst.ConcatStr>()
+            .Single(concat => concat.RuntimeManaged)
+            .Target;
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.CopyOutArena { SrcTemp: var source } && source == runtimeString).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Escaping_concat_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let text = \"ab\" + \"cd\" in text");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");

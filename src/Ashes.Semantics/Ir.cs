@@ -153,7 +153,7 @@ public abstract record IrInst
 
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
-    public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
+    public sealed record ConcatStr(int Target, int Left, int Right, bool RuntimeManaged = false) : IrInst;
     // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
     // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
     // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot

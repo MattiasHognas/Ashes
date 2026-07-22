@@ -244,7 +244,8 @@ Validation:
 
 ### Phase 5: Perceus Reuse Tokens
 
-Current status: in progress. Reuse-token creation is explicit in IR. A dead, statically unique ADT
+Current status: complete for the heap families currently admitted to runtime RC. Reuse-token creation
+is explicit in IR. A dead, statically unique ADT
 match scrutinee lowers to `DropReuse`, whose result token is the only value `AllocReusing` may consume;
 the token carries the source cell's field count so layout compatibility remains checked. The
 arena-backed path lowers `DropReuse` as an identity operation, preserving today's proven-unique
@@ -275,7 +276,10 @@ with a transferred subtree, nested-record reuse, record-child pointer variants, 
 record children at 2K, 10K, and 50K iterations plateau within the established budget.
 Recursive-accumulator IR tests assert the complete `DropReuse` to `AllocReusing` path, and
 representative constant-memory and shared-value reuse programs remain unchanged. Generic,
-resource-bearing, mutually recursive, and other unsupported pointer ADTs remain for later slices.
+resource-bearing, mutually recursive, and other unsupported pointer ADTs enter through Phase 6 rather
+than weakening the reuse-token invariants. Persistent to-space/blob operations remain confined to the
+legacy arena reuse specialization and are explicitly tracked for retirement or narrowing in Phase 7;
+the existing `reuse_*` memory-slope regressions continue to guard that path until then.
 
 Deliverables:
 
@@ -292,6 +296,15 @@ Validation:
 - Fresh to-space/blob leaks are either eliminated or explicitly tracked as remaining work.
 
 ### Phase 6: Broaden RC Coverage
+
+Current status: in progress. The first string slice adds a runtime-managed flag to plain `ConcatStr`
+results and a dynamically sized RC allocation path that preserves the existing `{length, bytes}`
+payload pointer behind the standard RC header. Lowering enables it only for a local concatenation
+immediately consumed by a known non-retaining builtin (`Ashes.Text.length` or `Ashes.IO.print`).
+Escaping concatenations, affine `ConcatStrTip` accumulators, literals, views, builtin-produced strings,
+bytes, and BigInts remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat
+into an arena literal. Native correctness and 2K/10K/50K RSS-slope tests cover allocation, exact-size
+free-list reuse, and final `RcDrop` behavior.
 
 Deliverables:
 
