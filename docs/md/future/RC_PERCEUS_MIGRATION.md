@@ -315,6 +315,8 @@ their one final result on the direct-consumer RC path in both fixed and scientif
 drops it after `Ashes.Number.BigInt.compare`. Directly compared `add`, `sub`, `mul`, `div`, and `mod`
 results use dynamically sized RC buffers as well; division and modulo reclaim their unreturned sibling
 buffer and runtime scratch immediately. Escaping conversion and arithmetic results remain arena-managed.
+`Ashes.Text.fromBigInt` likewise reclaims its decimal-conversion scratch immediately and places its
+final String on the direct-consumer RC path; escaping text results remain arena-managed.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and other BigInt
 results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.

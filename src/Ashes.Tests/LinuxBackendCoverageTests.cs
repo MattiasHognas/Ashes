@@ -682,6 +682,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_measured_bigint_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntTextProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromBigInt(42N) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("30\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1958,6 +1981,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt arithmetic", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt text", samples);
     }
 
     [Test]
@@ -4191,6 +4228,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntTextProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 30}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4588,6 +4642,21 @@ public sealed class LinuxBackendCoverageTests
                         let value = Ashes.Number.BigInt.mod(left)(right) in
                         Ashes.Number.BigInt.compare(value)(value)
                     in loop(n - 1)(total + addComparison + subComparison + mulComparison + divComparison + modComparison)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntTextProgram(int iterations)
+        => $$"""
+            let value = 123456789012345678901234567890N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let length =
+                        let text = Ashes.Text.fromBigInt(value) in
+                        Ashes.Text.byteLength(text)
+                    in loop(n - 1)(total + length)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

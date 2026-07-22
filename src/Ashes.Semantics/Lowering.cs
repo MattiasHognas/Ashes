@@ -2022,7 +2022,8 @@ public sealed partial class Lowering
 
         string module = ResolveModuleAlias(qualified.Module);
         return (string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
-                && string.Equals(qualified.Name, "length", StringComparison.Ordinal))
+                && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
             || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
                 && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
     }
@@ -2062,6 +2063,13 @@ public sealed partial class Lowering
             && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
             && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
                 || string.Equals(caseProducer.Name, "asciiLower", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar bigIntProducer, _)
+            && string.Equals(ResolveModuleAlias(bigIntProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(bigIntProducer.Name, "fromBigInt", StringComparison.Ordinal))
         {
             return true;
         }
@@ -2725,6 +2733,7 @@ public sealed partial class Lowering
                 IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntBinary { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,

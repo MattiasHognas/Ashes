@@ -1718,7 +1718,10 @@ internal static partial class LlvmCodegen
                 state,
                 LoadTemp(state, bigIntFromInt.ValueTemp),
                 bigIntFromInt.RuntimeManaged)),
-            IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
+            IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(
+                state,
+                LoadTemp(state, bigIntToString.ValueTemp),
+                bigIntToString.RuntimeManaged)),
             IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),
             IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
             IrInst.BigIntBinary bigIntBinary => EmitBigIntBinaryInstruction(state, bigIntBinary),

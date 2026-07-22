@@ -140,19 +140,32 @@ internal static partial class LlvmCodegen
             [BigIntAsPtr(state, left, "bigint_ca"), BigIntAsPtr(state, right, "bigint_cb")], "bigint_cmp");
     }
 
-    private static LlvmValueHandle EmitBigIntToString(LlvmCodegenState state, LlvmValueHandle value)
+    private static LlvmValueHandle EmitBigIntToString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        bool runtimeManaged = false)
     {
         LlvmValueHandle la = BigIntLimbCount(state, value, "bigint_ts");
-        LlvmValueHandle scratchAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, la, 2)));
+        LlvmValueHandle scratchBytes = BigIntBytesForWords(state, BigIntAddConst(state, la, 2));
+        LlvmValueHandle scratchAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, scratchBytes, "rc_bigint_text_scratch")
+            : EmitAllocDynamic(state, scratchBytes);
         // Decimal string: <= la*20 digits + sign; string word count la*3 + 4 covers len word + bytes.
         LlvmValueHandle outWords = BigIntAddConst(state, LlvmApi.BuildMul(state.Target.Builder, la, LlvmApi.ConstInt(state.I64, 3, 0), "bigint_ts_w"), 4);
-        LlvmValueHandle outAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, outWords));
+        LlvmValueHandle outBytes = BigIntBytesForWords(state, outWords);
+        LlvmValueHandle outAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, outBytes, "rc_bigint_text")
+            : EmitAllocDynamic(state, outBytes);
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr]);
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, BigIntToDecimal);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, fn,
             [BigIntAsPtr(state, value, "bigint_tsa"), BigIntAsPtr(state, scratchAddress, "bigint_scratch"), BigIntAsPtr(state, outAddress, "bigint_tsout")], "");
+        if (runtimeManaged)
+        {
+            EmitRuntimeRcDrop(state, scratchAddress);
+        }
         return outAddress;
     }
 
