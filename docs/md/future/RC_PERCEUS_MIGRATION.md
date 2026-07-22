@@ -408,6 +408,11 @@ transfer. Append and list-conversion escapes remain on the arena path until nest
 is carried with them.
 Scratch-free `BigInt.fromInt` results also transfer across a direct nested-let result and avoid
 `CopyOutArena`; arithmetic and parse-result escapes remain gated pending child/provenance support.
+An empty-environment, single-argument top-level function can now return one of these proven
+runtime-managed values directly. The caller restores and reclaims the call's arena window without
+copying the independent RC result, propagates ownership to the receiving let, and emits the final
+drop there. Higher-order calls, captured functions, curried result chains, and functions returning
+arena-backed values retain the conservative copy-out path.
 
 Deliverables:
 

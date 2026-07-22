@@ -393,6 +393,11 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
+    // Empty-environment, single-argument top-level function labels whose return value is proven to be
+    // runtime-managed. A direct call to one of these functions may restore its arena window without
+    // copying the result out: the returned RC allocation is independent of the arena being reclaimed.
+    // This is intentionally label-based and does not infer ownership through higher-order calls.
+    private readonly HashSet<string> _runtimeManagedFunctionResultLabels = new(StringComparer.Ordinal);
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -3708,6 +3713,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
 
         Unify(bodyType, retTy);
+        RecordRuntimeManagedFunctionResult(label, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
         LowerLambdaCoreFinishFunction(label);
@@ -3715,6 +3721,14 @@ public sealed partial class Lowering
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
         return (closureTemp, funTy);
+    }
+
+    private void RecordRuntimeManagedFunctionResult(string label, int bodyTemp)
+    {
+        if (IsRuntimeManagedResultTemp(bodyTemp))
+        {
+            _runtimeManagedFunctionResultLabels.Add(label);
+        }
     }
 
     // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
@@ -3816,6 +3830,7 @@ public sealed partial class Lowering
         HashSet<string> SpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
+        HashSet<int> RuntimeManagedResultTemps,
         Dictionary<int, Expr> LetBindingValues);
 
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
@@ -3856,18 +3871,21 @@ public sealed partial class Lowering
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
+        var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
+        _runtimeManagedResultTemps.Clear();
         _letBindingValues.Clear();
 
         return new LowerLambdaCoreFrame(
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
-            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps, savedLetBindingValues);
+            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
+            savedRuntimeManagedResultTemps, savedLetBindingValues);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -4425,6 +4443,8 @@ public sealed partial class Lowering
         foreach (var n in frame.ResetSafe) _resetSafeAccumulators.Add(n);
         _reuseResultTemps.Clear();
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
+        _runtimeManagedResultTemps.Clear();
+        foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
@@ -5401,9 +5421,27 @@ public sealed partial class Lowering
         }
 
         var callResultType = Prune(currentType);
-        currentTemp = LowerCallRestoreArena(callWmCursorSlot, callWmEndSlot, currentTemp, callResultType);
+        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        currentTemp = LowerCallRestoreArena(
+            callWmCursorSlot,
+            callWmEndSlot,
+            currentTemp,
+            callResultType,
+            runtimeManagedResult);
+        if (runtimeManagedResult)
+        {
+            _runtimeManagedResultTemps.Add(currentTemp);
+        }
 
         return (currentTemp, currentType);
+    }
+
+    private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
+    {
+        return argumentCount == 1
+            && rootExpr is Expr.Var variable
+            && _topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction)
+            && _runtimeManagedFunctionResultLabels.Contains(topLevelFunction.Label);
     }
 
     // Applies the collected arguments one closure call at a time, unifying each parameter and
@@ -5487,10 +5525,15 @@ public sealed partial class Lowering
     // - Self-contained heap result (String, List with safe element, Closure,
     //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
     //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
-    private int LowerCallRestoreArena(int callWmCursorSlot, int callWmEndSlot, int currentTemp, TypeRef callResultType)
+    private int LowerCallRestoreArena(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        bool runtimeManagedResult)
     {
         int callPreRestoreEndSlot = NewLocal();
-        if (CanArenaReset(callResultType))
+        if (runtimeManagedResult || CanArenaReset(callResultType))
         {
             // A pending one-shot post (and everything it captures) lives in this window's
             // allocations; skip the reclaim while any is outstanding.

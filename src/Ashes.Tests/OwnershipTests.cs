@@ -111,6 +111,20 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Direct_known_function_result_transfers_runtime_string_ownership_without_copy_out()
+    {
+        IrProgram ir = LowerProgram(
+            "let make = given (unit) -> (let text = \"ab\" + \"cd\" in text) in let value = make(0) in Ashes.Text.byteLength(value)");
+
+        ir.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallClosure).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");
