@@ -145,6 +145,34 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Fresh_nested_copy_records_emit_recursive_runtime_drops()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet node = Node(child = Leaf(value = 40), bonus = 2) in Ashes.IO.print(node.bonus)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Unsupported_outer_record_keeps_fresh_nested_record_on_arena()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | label: String\nlet node = Node(child = Leaf(value = 40), label = \"answer\") in Ashes.IO.print(node.label)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Existing_child_binding_keeps_parent_and_child_on_arena()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet leaf = Leaf(value = 40) in let node = Node(child = leaf, bonus = 2) in Ashes.IO.print(node.bonus)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

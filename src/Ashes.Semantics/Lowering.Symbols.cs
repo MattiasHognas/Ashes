@@ -650,29 +650,19 @@ public sealed partial class Lowering
         }
 
         var resultType = InstantiateAdtType(ctor);
+        bool runtimeManagedCandidate = _runtimeRcRecordAllocationRequested
+            && resultType is TypeRef.TNamedType named
+            && CanRuntimeManageConstructorApplication(ctor, args, named)
+            // Recursive drops currently stay together at lexical scope. A TCO back-edge can bypass
+            // that scope exit, so nested RC trees remain arena-managed in recursive loop bodies.
+            && (!HasRuntimeManagedChildFields(named) || _tcoCtx is null);
 
-        // Evaluate all args left-to-right, unifying each with its declared type parameter.
-        // This catches mismatches when the same type parameter appears in multiple positions
-        // (e.g., Pair(T, T) applied to arguments of different types).
-        var argTemps = new List<int>(args.Count);
-        var argTypes = new List<TypeRef>(args.Count);
-        for (int i = 0; i < args.Count; i++)
-        {
-            var (argTemp, argType) = LowerExpr(args[i]);
-            argTemps.Add(argTemp);
-
-            var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
-            Unify(parameterType, argType);
-            argTypes.Add(Prune(argType));
-            MarkResourceArgMoved(args[i]);
-        }
+        (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
+            ctor, args, resultType, runtimeManagedCandidate);
 
         int tag = GetConstructorTag(ctor);
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
-        bool runtimeManagedCandidate = _runtimeRcRecordAllocationRequested
-            && resultType is TypeRef.TNamedType named
-            && CanRuntimeManageAdt(named);
         int ptrTemp = AllocateConstructorCell(
             ctor,
             tag,
@@ -687,6 +677,36 @@ public sealed partial class Lowering
         }
 
         return (ptrTemp, resultType);
+    }
+
+    private (List<int> Temps, List<TypeRef> Types) LowerConstructorArguments(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType,
+        bool runtimeManagedCandidate)
+    {
+        var argumentTemps = new List<int>(arguments.Count);
+        var argumentTypes = new List<TypeRef>(arguments.Count);
+        bool savedRuntimeRequest = _runtimeRcRecordAllocationRequested;
+        _runtimeRcRecordAllocationRequested = runtimeManagedCandidate;
+        try
+        {
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                (int argumentTemp, TypeRef argumentType) = LowerExpr(arguments[i]);
+                argumentTemps.Add(argumentTemp);
+                TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
+                Unify(parameterType, argumentType);
+                argumentTypes.Add(Prune(argumentType));
+                MarkResourceArgMoved(arguments[i]);
+            }
+        }
+        finally
+        {
+            _runtimeRcRecordAllocationRequested = savedRuntimeRequest;
+        }
+
+        return (argumentTemps, argumentTypes);
     }
 
     /// <summary>

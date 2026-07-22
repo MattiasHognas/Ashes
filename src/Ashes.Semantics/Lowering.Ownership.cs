@@ -318,7 +318,16 @@ public sealed partial class Lowering
     {
         int loadTemp = NewTemp();
         Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
-        if (info.IsResourceBearing && info.Type is not null)
+        if (info.RuntimeManaged
+            && info.Type is not null
+            && Prune(info.Type) is TypeRef.TNamedType runtimeAdt
+            && HasRuntimeManagedChildFields(runtimeAdt))
+        {
+            // Keep this recursive program together at lexical scope for now. The ordinary precise
+            // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
+            EmitRuntimeManagedAdtDrop(loadTemp, runtimeAdt);
+        }
+        else if (info.IsResourceBearing && info.Type is not null)
         {
             EmitResourceBearingDrop(loadTemp, info.Type);
             // The recursive walk above handles deterministic cleanup of nested resources. The
@@ -334,6 +343,57 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
+    }
+
+    private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)
+    {
+        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (!CanArenaReset(fieldType))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Emits a constructor-specialized recursive drop. Child ownership is released only when the
+    /// parent is unique; a shared parent merely decrements its own count and retains its children.
+    /// </summary>
+    private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        var childFields = new List<(int Index, TypeRef.TNamedType Type)>();
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (!CanArenaReset(fieldType) && fieldType is TypeRef.TNamedType child)
+            {
+                childFields.Add((i, child));
+            }
+        }
+
+        if (childFields.Count > 0)
+        {
+            int uniqueTemp = NewTemp();
+            string sharedLabel = NewLabel("rc_drop_shared");
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+            foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
+            {
+                int childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
+                EmitRuntimeManagedAdtDrop(childTemp, childType);
+            }
+
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 
     /// <summary>
@@ -1014,35 +1074,63 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Runtime RC starts with shallow records whose fields are all inline copy values. A pointer or
-    /// resource field requires a recursive drop program and therefore stays arena-managed.
+    /// Runtime RC starts with monomorphic records whose fields are inline copy values or other
+    /// recursively manageable records. Cyclic record layouts and resource-bearing layouts stay on
+    /// the arena path.
     /// </summary>
-    private bool CanRuntimeManageAdt(TypeRef.TNamedType named)
+    private bool CanRuntimeManageAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
     {
         TypeSymbol symbol = named.Symbol;
-        if (symbol.Constructors.Count == 0 || BuiltinRegistry.IsResourceTypeName(symbol.Name) || IsResourceBearing(named))
+        if (symbol.Constructors.Count != 1
+            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
         {
             return false;
         }
 
-        Dictionary<TypeParameterSymbol, TypeRef>? typeParameterMap = null;
-        if (symbol.TypeParameters.Count > 0 && named.TypeArgs.Count == symbol.TypeParameters.Count)
+        path ??= [];
+        if (!path.Add(symbol))
         {
-            typeParameterMap = new Dictionary<TypeParameterSymbol, TypeRef>();
-            for (int i = 0; i < symbol.TypeParameters.Count; i++)
+            return false;
+        }
+
+        ConstructorSymbol constructor = symbol.Constructors[0];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (!CanArenaReset(fieldType)
+                && (fieldType is not TypeRef.TNamedType child || !CanRuntimeManageAdt(child, path)))
             {
-                typeParameterMap[symbol.TypeParameters[i]] = named.TypeArgs[i];
+                path.Remove(symbol);
+                return false;
             }
         }
 
-        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        path.Remove(symbol);
+        return true;
+    }
+
+    /// <summary>
+    /// Owned child fields must be fresh nested record literals. This prevents an RC parent from
+    /// capturing an arena pointer or taking ownership of an independently tracked value.
+    /// </summary>
+    private bool CanRuntimeManageConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageAdt(resultType))
         {
-            foreach (TypeRef fieldType in constructor.ParameterTypes)
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanArenaReset(fieldType) && arguments[i] is not Expr.RecordLit)
             {
-                if (!CanArenaReset(ResolveFieldType(fieldType, typeParameterMap)))
-                {
-                    return false;
-                }
+                return false;
             }
         }
 

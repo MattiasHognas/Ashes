@@ -100,6 +100,43 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_keeps_runtime_rc_child_while_parent_is_shared()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
+            new IrInst.SetAdtField(1, 0, 0),
+            new IrInst.RcDup(2, 1, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.JumpIfFalse(3, "first_parent_shared"),
+            new IrInst.RcDrop(0, "Leaf", RuntimeManaged: true),
+            new IrInst.Label("first_parent_shared"),
+            new IrInst.RcDrop(1, "Node", RuntimeManaged: true),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.PrintBool(4),
+            new IrInst.RcIsUnique(5, 2),
+            new IrInst.JumpIfFalse(5, "second_parent_shared"),
+            new IrInst.RcDrop(0, "Leaf", RuntimeManaged: true),
+            new IrInst.Label("second_parent_shared"),
+            new IrInst.RcDrop(2, "Node", RuntimeManaged: true),
+            new IrInst.LoadConstInt(6, 0),
+            new IrInst.Return(6),
+        };
+        var function = new IrFunction("entry", instructions, 0, 7, false);
+        var program = new IrProgram(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n");
+    }
+
+    [Test]
     public void Linux_backend_compile_should_emit_elf_header_for_int_program()
     {
         var bytes = CompileForLinux("Ashes.IO.print(40 + 2)");
@@ -929,6 +966,29 @@ public sealed class LinuxBackendCoverageTests
             """)).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("84000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_nested_runtime_rc_records()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            Ashes.IO.print(node.bonus)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("2\n");
     }
 
     [Test]
