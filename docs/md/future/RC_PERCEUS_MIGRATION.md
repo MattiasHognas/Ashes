@@ -266,6 +266,29 @@ Validation:
 - Memory profiles for 1BRC, map/hashmap folds, string/bigint accumulators, parallel workloads, async
   server loops, and resource-heavy tests.
 
+### Phase 8: Final Paper Verification And Documentation Audit
+
+This phase starts only after every implementation slice is complete and the resulting runtime has
+passed its correctness, memory-safety, memory-behavior, performance, and cross-target validation.
+
+Deliverables:
+
+- Re-read the RC Perceus paper against the completed implementation and record any intentional
+  deviations, missing invariants, or Ashes-specific extensions.
+- Resolve every discrepancy found by that comparison before declaring the migration complete.
+- After the implementation and paper verification are complete, audit and update all documentation
+  under `docs/md/` so specifications, guides, architecture notes, testing instructions, and future
+  documents describe the final ownership, RC, reuse, and arena behavior accurately.
+- Remove or clearly mark superseded migration-era explanations and stale arena assumptions.
+
+Validation:
+
+- Run the full documentation build/check suite and search `docs/md/` for stale terminology and
+  obsolete lifetime claims.
+- Cross-check user-facing documentation examples against the final compiler and runtime behavior.
+- Do not mark the RC Perceus migration complete until the repository-wide documentation audit is
+  finished.
+
 ## 6. Codebase Task Map
 
 The migration has a few clear seams in the current codebase.
