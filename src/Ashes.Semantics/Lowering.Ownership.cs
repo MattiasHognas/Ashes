@@ -481,6 +481,12 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
     {
+        if (IsRuntimeManagedScalarResult(named))
+        {
+            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            return;
+        }
+
         if (IsRuntimeManagedBigIntParseResult(named))
         {
             EmitRuntimeManagedBigIntParseResultDrop(valueTemp, named);
@@ -530,6 +536,14 @@ public sealed partial class Lowering
             && named.TypeArgs.Count == 2
             && named.TypeArgs[0] is TypeRef.TStr
             && named.TypeArgs[1] is TypeRef.TBigInt;
+    }
+
+    private static bool IsRuntimeManagedScalarResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Result", StringComparison.Ordinal)
+            && named.TypeArgs.Count == 2
+            && named.TypeArgs[0] is TypeRef.TStr
+            && named.TypeArgs[1] is TypeRef.TInt or TypeRef.TFloat;
     }
 
     private void EmitRuntimeManagedBigIntParseResultDrop(int valueTemp, TypeRef.TNamedType named)

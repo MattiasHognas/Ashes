@@ -2044,7 +2044,8 @@ public sealed partial class Lowering
     private bool TryLowerRuntimeRcScalarResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcScalarResultProducer(let.Value)
-            || !IsImmediateAdtMatchUse(let.Name, let.Body))
+            || (!IsImmediateAdtMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
         {
             lowered = default;
             return false;

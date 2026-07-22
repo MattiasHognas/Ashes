@@ -237,6 +237,24 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_scalar_result_containers_transfer_runtime_ownership()
+    {
+        IrProgram parsedInt = LowerProgram("let escaped = (let parsed = Ashes.Text.parseInt(\"123\") in parsed) in 1");
+        IrProgram parsedFloat = LowerProgram("let escaped = (let parsed = Ashes.Text.parseFloat(\"1.5\") in parsed) in 1");
+        IrProgram convertedBigInt = LowerProgram("let escaped = (let converted = Ashes.Number.BigInt.toInt(123N) in converted) in 1");
+
+        parsedInt.EntryFunction.Instructions.Any(inst => inst is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+        parsedFloat.EntryFunction.Instructions.Any(inst => inst is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+        convertedBigInt.EntryFunction.Instructions.Any(inst => inst is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { parsedInt, parsedFloat, convertedBigInt })
+        {
+            ir.EntryFunction.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+            ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        }
+    }
+
+    [Test]
     public void Direct_function_alias_preserves_runtime_result_ownership_provenance()
     {
         IrProgram ir = LowerProgram(

@@ -684,7 +684,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseInt(\"123\") in parsed");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -707,7 +707,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseFloat(\"1.5\") in parsed");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -730,7 +730,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let converted = Ashes.Number.BigInt.toInt(123N) in converted");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5602,8 +5602,9 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let value =
-                        let parsed = Ashes.Text.parseInt("123") in
-                        match parsed with
+                        let escaped =
+                            let parsed = Ashes.Text.parseInt("123") in parsed
+                        in match escaped with
                             | Ok(number) -> number
                             | Error(_message) -> 0
                     in loop(n - 1)(total + value)
@@ -5617,8 +5618,9 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let value =
-                        let parsed = Ashes.Text.parseFloat("1.5") in
-                        match parsed with
+                        let escaped =
+                            let parsed = Ashes.Text.parseFloat("1.5") in parsed
+                        in match escaped with
                             | Ok(number) -> if number == 1.5 then 1 else 0
                             | Error(_message) -> 0
                     in loop(n - 1)(total + value)
@@ -5634,8 +5636,9 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let converted =
-                        let result = Ashes.Number.BigInt.toInt(value) in
-                        match result with
+                        let escaped =
+                            let result = Ashes.Number.BigInt.toInt(value) in result
+                        in match escaped with
                             | Ok(number) -> number
                             | Error(_message) -> 0
                     in loop(n - 1)(total + converted)

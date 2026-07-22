@@ -416,6 +416,9 @@ Scratch-free `BigInt.fromInt` results also transfer across a direct nested-let r
 values and division scratch arena-scoped; direct `add`, `sub`, `mul`, `div`, and `mod` results can
 therefore transfer while the enclosing watermark reclaims that scratch. Parse-result escapes remain
 gated pending child/provenance support.
+Container-only `Text.parseInt`, `Text.parseFloat`, and `BigInt.toInt` results now transfer directly.
+Their success payloads are inline and error Strings are interned, so the type-directed escape drop
+releases only the RC `Result` cell rather than treating either payload as an owned child.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure
