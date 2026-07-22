@@ -284,7 +284,7 @@ public abstract record IrInst
     public sealed record FileReadLine(int Target, int HandleTemp) : IrInst;
     public sealed record FileClose(int Target, int HandleTemp) : IrInst;
     public sealed record TextUncons(int Target, int TextTemp) : IrInst;
-    public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
+    public sealed record TextParseInt(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;
     public sealed record TextFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record TextFromFloat(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;

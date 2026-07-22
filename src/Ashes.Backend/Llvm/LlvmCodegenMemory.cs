@@ -2062,16 +2062,16 @@ internal static partial class LlvmCodegen
         return EmitAllocAdt(state, 0, 0);
     }
 
-    private static LlvmValueHandle EmitResultOk(LlvmCodegenState state, LlvmValueHandle value)
+    private static LlvmValueHandle EmitResultOk(LlvmCodegenState state, LlvmValueHandle value, bool runtimeManaged = false)
     {
-        LlvmValueHandle result = EmitAllocAdt(state, 0, 1);
+        LlvmValueHandle result = EmitAllocAdt(state, 0, 1, runtimeManaged);
         StoreAdtField(state, result, 0, value, "result_ok_value");
         return result;
     }
 
-    private static LlvmValueHandle EmitResultError(LlvmCodegenState state, LlvmValueHandle errorStringRef)
+    private static LlvmValueHandle EmitResultError(LlvmCodegenState state, LlvmValueHandle errorStringRef, bool runtimeManaged = false)
     {
-        LlvmValueHandle result = EmitAllocAdt(state, 1, 1);
+        LlvmValueHandle result = EmitAllocAdt(state, 1, 1, runtimeManaged);
         StoreAdtField(state, result, 0, errorStringRef, "result_error_value");
         return result;
     }

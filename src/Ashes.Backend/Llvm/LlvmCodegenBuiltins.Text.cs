@@ -89,7 +89,7 @@ internal static partial class LlvmCodegen
         return (new IntParseSlots(indexSlot, accSlot, negativeSlot, resultSlot), blocks, maxPositive, maxNegativeMagnitude);
     }
 
-    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_int_len");
@@ -123,7 +123,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isDigit, updateBlock, invalidBlock);
 
         EmitTextParseIntUpdateBlock(state, index, currentByte, accSlot, negativeSlot, indexSlot, maxPositive, maxNegativeMagnitude, updateBlock, overflowBlock, loopCheckBlock);
-        EmitTextParseIntTerminalBlocks(state, accSlot, negativeSlot, resultSlot, finishBlock, invalidBlock, overflowBlock, continueBlock);
+        EmitTextParseIntTerminalBlocks(state, accSlot, negativeSlot, resultSlot, finishBlock, invalidBlock, overflowBlock, continueBlock, runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_parse_int_result_value");
@@ -150,7 +150,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopCheckBlock);
     }
 
-    private static void EmitTextParseIntTerminalBlocks(LlvmCodegenState state, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock)
+    private static void EmitTextParseIntTerminalBlocks(LlvmCodegenState state, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
@@ -158,15 +158,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalNegativeFlag = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "text_parse_int_final_negative_flag");
         LlvmValueHandle finalIsNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, finalNegativeFlag, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_int_final_is_negative");
         LlvmValueHandle signedValue = LlvmApi.BuildSelect(builder, finalIsNegative, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), magnitude, "text_parse_int_negated"), magnitude, "text_parse_int_final_value");
-        LlvmApi.BuildStore(builder, EmitResultOk(state, signedValue), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, signedValue, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntInvalidMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntInvalidMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntOverflowMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntOverflowMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
     }
 

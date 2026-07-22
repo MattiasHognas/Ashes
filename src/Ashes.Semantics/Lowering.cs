@@ -440,6 +440,7 @@ public sealed partial class Lowering
     private bool _runtimeRcBytesAllocationRequested;
     private bool _runtimeRcBigIntAllocationRequested;
     private bool _runtimeRcClosureAllocationRequested;
+    private bool _runtimeRcScalarResultAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1917,6 +1918,11 @@ public sealed partial class Lowering
             return loweredString;
         }
 
+        if (TryLowerRuntimeRcScalarResultLet(let, out (int Temp, TypeRef Type) loweredResult))
+        {
+            return loweredResult;
+        }
+
         if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
         {
             bool savedRequest = _runtimeRcBytesAllocationRequested;
@@ -1975,6 +1981,35 @@ public sealed partial class Lowering
         {
             _runtimeRcStringAllocationRequested = savedRequest;
         }
+    }
+
+    private bool TryLowerRuntimeRcScalarResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcScalarResultProducer(let.Value)
+            || !IsImmediateAdtMatchUse(let.Name, let.Body))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcScalarResultAllocationRequested;
+        _runtimeRcScalarResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcScalarResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcScalarResultProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal);
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -2881,6 +2916,7 @@ public sealed partial class Lowering
                 IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
