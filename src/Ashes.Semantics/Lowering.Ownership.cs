@@ -32,6 +32,7 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => "String",
             TypeRef.TBytes => "Bytes",
+            TypeRef.TBigInt => "BigInt",
             TypeRef.TList => "List",
             TypeRef.TTuple => "Tuple",
             TypeRef.TFun => "Function",

@@ -2633,7 +2633,7 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntFromInt(target, valueTemp));
+        Emit(new IrInst.BigIntFromInt(target, valueTemp, _runtimeRcBigIntAllocationRequested));
         return (target, new TypeRef.TBigInt());
     }
 

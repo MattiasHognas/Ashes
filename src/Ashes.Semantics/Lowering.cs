@@ -438,6 +438,7 @@ public sealed partial class Lowering
     private readonly HashSet<int> _runtimeManagedResultTemps = [];
     private bool _runtimeRcStringAllocationRequested;
     private bool _runtimeRcBytesAllocationRequested;
+    private bool _runtimeRcBigIntAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1953,7 +1954,30 @@ public sealed partial class Lowering
             return loweredAdtValue;
         }
 
-        return LowerExpr(let.Value);
+        return TryLowerRuntimeRcBigIntLet(let, out (int Temp, TypeRef Type) loweredBigInt)
+            ? loweredBigInt
+            : LowerExpr(let.Value);
+    }
+
+    private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcBigIntProducer(let.Value) || !IsImmediateRuntimeBigIntUse(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBigIntAllocationRequested;
+        _runtimeRcBigIntAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBigIntAllocationRequested = savedRequest;
+        }
     }
 
     private bool TryLowerRuntimeRcRecordLet(
@@ -2087,6 +2111,30 @@ public sealed partial class Lowering
 
         return string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
             && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
+    }
+
+    private bool IsRuntimeRcBigIntProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
+    {
+        if (body is not Expr.Call(
+                Expr.Call(Expr.QualifiedVar qualified, Expr left),
+                Expr right)
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            || !string.Equals(qualified.Name, "compare", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return left is Expr.Var leftVariable
+                && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
+            || right is Expr.Var rightVariable
+                && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -2662,6 +2710,7 @@ public sealed partial class Lowering
                 IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

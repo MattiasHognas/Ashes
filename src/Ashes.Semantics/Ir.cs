@@ -143,7 +143,7 @@ public abstract record IrInst
     // Ashes.Number.BigInt operations, backed by emitted LLVM-IR runtime helpers.
     // BigInt values are heap pointers (i64). The codegen pre-sizes result buffers from operand limb
     // counts and calls the allocation-free C helpers.
-    public sealed record BigIntFromInt(int Target, int ValueTemp) : IrInst;      // Int -> BigInt
+    public sealed record BigIntFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // Int -> BigInt
     public sealed record BigIntToString(int Target, int ValueTemp) : IrInst;     // BigInt -> Str
     public sealed record BigIntToInt(int Target, int ValueTemp) : IrInst;        // BigInt -> Result(Str, Int)
     public sealed record BigIntFromString(int Target, int ValueTemp) : IrInst;   // Str -> Result(Str, BigInt)

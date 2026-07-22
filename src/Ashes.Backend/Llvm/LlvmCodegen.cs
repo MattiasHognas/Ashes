@@ -1714,7 +1714,10 @@ internal static partial class LlvmCodegen
                 asciiCase.Upper,
                 "text_ascii_case",
                 asciiCase.RuntimeManaged)),
-            IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(state, LoadTemp(state, bigIntFromInt.ValueTemp))),
+            IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(
+                state,
+                LoadTemp(state, bigIntFromInt.ValueTemp),
+                bigIntFromInt.RuntimeManaged)),
             IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
             IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),
             IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),

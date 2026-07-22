@@ -38,12 +38,17 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle BigIntAddConst(LlvmCodegenState state, LlvmValueHandle value, ulong amount)
         => LlvmApi.BuildAdd(state.Target.Builder, value, LlvmApi.ConstInt(state.I64, amount, 0), "bigint_words");
 
-    private static LlvmValueHandle EmitBigIntFromInt(LlvmCodegenState state, LlvmValueHandle value)
+    private static LlvmValueHandle EmitBigIntFromInt(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        bool runtimeManaged = false)
     {
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I64, state.I8Ptr]);
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, BigIntFromI64);
-        LlvmValueHandle outAddress = EmitAlloc(state, 16); // header + one limb
+        LlvmValueHandle outAddress = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, 16, "rc_bigint_from_int")
+            : EmitAlloc(state, 16); // header + one limb
         LlvmApi.BuildCall2(state.Target.Builder, fnType, fn, [value, BigIntAsPtr(state, outAddress, "bigint_from_out")], "");
         return outAddress;
     }

@@ -311,9 +311,11 @@ digit buffer remains transient; `Ashes.Text.toHex` uses the same stack-buffer-to
 Fresh `Ashes.Text.asciiUpper` and `asciiLower` copies use the same direct-consumer RC boundary.
 `Ashes.Text.fromFloat` and `formatFloat` keep their intermediate fragments as arena scratch but place
 their one final result on the direct-consumer RC path in both fixed and scientific notation.
+`Ashes.Number.BigInt.fromInt` now places a directly compared local result behind an RC header and
+drops it after `Ashes.Number.BigInt.compare`; escaping conversion results remain arena-managed.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
-accumulators, literals, views, other builtin-produced strings and Bytes values, and BigInts remain
-arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
+accumulators, literals, views, other builtin-produced strings and Bytes values, and all other BigInt
+results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
 Native correctness and separate 2K/10K/50K RSS-slope tests cover String and Byte allocation,
 exact-size free-list reuse, and final `RcDrop` behavior.
 
