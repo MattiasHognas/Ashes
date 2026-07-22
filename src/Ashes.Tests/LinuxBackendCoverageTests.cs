@@ -456,6 +456,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_transfers_direct_known_function_runtime_bytes_and_bigint_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        program.Functions.Any(function =>
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true })
+            && function.Instructions.Any(instruction =>
+                instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true })
+            && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("9\n");
+    }
+
+    [Test]
     public async Task Linux_backend_transfers_directly_escaping_runtime_bytes_without_copy_out()
     {
         if (!OperatingSystem.IsLinux())
@@ -2113,6 +2138,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC known-function String result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_known_function_bytes_and_bigint_results_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcKnownFunctionBytesAndBigIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC known-function Bytes and BigInt results", samples);
     }
 
     [Test]
@@ -4541,6 +4580,31 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcKnownFunctionBytesAndBigIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            ir.Functions.Any(function =>
+                function.Instructions.Any(instruction =>
+                    instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true })
+                && function.Instructions.Any(instruction =>
+                    instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true })
+                && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 9L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingBytesMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5193,6 +5257,26 @@ public sealed class LinuxBackendCoverageTests
                     let value = make("left")("right") in
                     let length = Ashes.Text.byteLength(value) in
                     loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(int iterations)
+        => $$"""
+            let makeBytes unit =
+                let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes
+
+            let makeBigInt number =
+                let big = Ashes.Number.BigInt.fromInt(number) in big
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let bytes = makeBytes(0) in
+                    let byteCount = Ashes.Byte.length(bytes) in
+                    let big = makeBigInt(n) in
+                    let comparison = Ashes.Number.BigInt.compare(big)(big) in
+                    loop(n - 1)(total + byteCount + comparison + 1)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

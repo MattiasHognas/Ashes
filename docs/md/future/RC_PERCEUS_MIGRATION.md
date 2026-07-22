@@ -413,7 +413,8 @@ directly. The caller restores and reclaims the call's arena window without copyi
 result, propagates ownership to the receiving let, and emits the final drop there. Saturated curried
 calls follow the statically known returned-closure label chain to the innermost result. Higher-order
 values that lose this label provenance and functions returning arena-backed values retain the
-conservative copy-out path.
+conservative copy-out path. Native and RSS-slope coverage exercises this boundary for String, Bytes,
+and BigInt results so the provenance channel is not coupled to one payload representation.
 
 Deliverables:
 

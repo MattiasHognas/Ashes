@@ -139,6 +139,26 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Direct_known_function_results_transfer_runtime_bytes_and_bigint_ownership()
+    {
+        IrProgram bytes = LowerProgram(
+            "let make = given (unit) -> (let value = Ashes.Byte.u64Le(72623859790382856u64) in value) in let value = make(0) in Ashes.Byte.length(value)");
+        IrProgram bigInt = LowerProgram(
+            "let make = given (number) -> (let value = Ashes.Number.BigInt.fromInt(number) in value) in let value = make(42) in Ashes.Number.BigInt.compare(value)(value)");
+
+        bytes.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        bytes.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        bytes.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        bigInt.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");
