@@ -859,7 +859,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextAsciiCase(target, textTemp, upper));
+        Emit(new IrInst.TextAsciiCase(target, textTemp, upper, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 

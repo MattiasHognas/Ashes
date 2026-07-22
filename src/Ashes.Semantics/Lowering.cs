@@ -2018,6 +2018,14 @@ public sealed partial class Lowering
             return true;
         }
 
+        if (expression is Expr.Call(Expr.QualifiedVar caseProducer, _)
+            && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
+                || string.Equals(caseProducer.Name, "asciiLower", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
         return expression is Expr.Call(
                 Expr.Call(
                     Expr.Call(Expr.QualifiedVar qualified, _),
@@ -2635,6 +2643,7 @@ public sealed partial class Lowering
                 IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

@@ -2952,12 +2952,17 @@ internal static partial class LlvmCodegen
     /// UTF-8 sequence is >= 0x80 and never matches the letter range, so non-ASCII text passes
     /// through byte-identical — the transform is UTF-8 safe without decoding.
     /// </summary>
-    private static LlvmValueHandle EmitAsciiCaseString(LlvmCodegenState state, LlvmValueHandle sourceRef, bool upper, string prefix)
+    private static LlvmValueHandle EmitAsciiCaseString(
+        LlvmCodegenState state,
+        LlvmValueHandle sourceRef,
+        bool upper,
+        string prefix,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, sourceRef, prefix + "_len");
         LlvmValueHandle srcBytes = GetStringBytesPointer(state, sourceRef, prefix + "_src");
-        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, srcBytes, len, prefix);
+        LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, srcBytes, len, prefix, runtimeManaged);
         LlvmValueHandle destBytes = GetStringBytesPointer(state, result, prefix + "_dest");
 
         LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx_slot");

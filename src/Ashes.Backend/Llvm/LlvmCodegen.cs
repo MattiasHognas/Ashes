@@ -1708,7 +1708,12 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, textToHex.ValueTemp),
                 "text_to_hex",
                 textToHex.RuntimeManaged)),
-            IrInst.TextAsciiCase asciiCase => StoreTemp(state, asciiCase.Target, EmitAsciiCaseString(state, LoadTemp(state, asciiCase.SourceTemp), asciiCase.Upper, "text_ascii_case")),
+            IrInst.TextAsciiCase asciiCase => StoreTemp(state, asciiCase.Target, EmitAsciiCaseString(
+                state,
+                LoadTemp(state, asciiCase.SourceTemp),
+                asciiCase.Upper,
+                "text_ascii_case",
+                asciiCase.RuntimeManaged)),
             IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(state, LoadTemp(state, bigIntFromInt.ValueTemp))),
             IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
             IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),

@@ -590,6 +590,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_ascii_case_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcAsciiCaseTextProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2);
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.asciiUpper(\"hello\") in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("HELLO\nhello\n1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1810,6 +1833,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC Text.toHex", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_ascii_case_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcAsciiCaseTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC ASCII case text", samples);
     }
 
     [Test]
@@ -3971,6 +4008,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcAsciiCaseTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcAsciiCaseTextProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 12) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4283,6 +4338,27 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then 0
                 else
                     let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcAsciiCaseTextProgram(int iterations)
+        => $$"""
+            let emitUpper unit =
+                let text = Ashes.Text.asciiUpper("hello") in
+                Ashes.IO.print(text)
+
+            let emitLower unit =
+                let text = Ashes.Text.asciiLower("HELLO") in
+                Ashes.IO.print(text)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignoredUpper = emitUpper(0) in
+                    let ignoredLower = emitLower(0) in
                     loop(n - 1)
 
             let ignored = loop({{iterations}})
