@@ -188,6 +188,28 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_releases_incompatible_runtime_reuse_token()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Empty
+                | One(Int)
+
+            let choice = Empty
+            match choice with
+                | Empty -> One(1)
+                | One(_) -> Empty
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())

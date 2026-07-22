@@ -41,7 +41,7 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
-    public void Runtime_reuse_declines_when_rebuilt_constructor_has_incompatible_layout()
+    public void Runtime_reuse_releases_token_when_rebuilt_constructor_has_incompatible_layout()
     {
         IrProgram program = LowerProgram("""
             type Choice =
@@ -54,12 +54,39 @@ public sealed class ReuseTokenTests
                 | One(_) -> Empty
             """);
 
-        program.EntryFunction.Instructions.Any(instruction =>
-            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
         program.EntryFunction.Instructions.Any(instruction =>
             instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
-        program.EntryFunction.Instructions.Any(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeTrue();
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(3);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
+    public void Runtime_token_skips_same_sized_arena_managed_constructor()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            type Box =
+                | Box(String)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> let box = Box("left") in Right(value)
+                | Right(value) -> let box = Box("right") in Left(value)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: false }).ShouldBeGreaterThanOrEqualTo(2);
     }
 
     [Test]

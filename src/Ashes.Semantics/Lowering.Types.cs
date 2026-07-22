@@ -375,6 +375,18 @@ public sealed partial class Lowering
         public int ActiveBorrows { get; set; }
     }
 
+    private sealed record RuntimeReuseCleanup(
+        TypeRef.TNamedType Type,
+        ConstructorSymbol Constructor);
+
+    private sealed record ReuseToken(
+        int Temp,
+        int FieldCount,
+        RuntimeReuseCleanup? RuntimeCleanup)
+    {
+        public bool RuntimeManaged => RuntimeCleanup is not null;
+    }
+
     /// <summary>
     /// Describes the kind of arena copy-out to emit for a given result type.
     /// </summary>

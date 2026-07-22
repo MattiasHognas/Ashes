@@ -586,10 +586,16 @@ public sealed partial class Lowering
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
+        bool runtimeManagedCandidate = _runtimeRcCopyAdtAllocationRequested
+            && (CanRuntimeManageCopyAdt(resultType) || CanRuntimeManageRecursiveCopyAdt(resultType));
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        if (!stackAllocate && TryConsumeReuseToken(0, out int reuseTokenTemp, out bool runtimeManagedReuse))
+        if (!stackAllocate && TryConsumeReuseToken(
+                0,
+                runtimeManagedCandidate,
+                out int reuseTokenTemp,
+                out bool runtimeManagedReuse))
         {
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
@@ -610,9 +616,7 @@ public sealed partial class Lowering
         }
         else
         {
-            bool runtimeManaged = _runtimeRcCopyAdtAllocationRequested
-                && (CanRuntimeManageCopyAdt(resultType) || CanRuntimeManageRecursiveCopyAdt(resultType));
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManaged));
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManagedCandidate));
         }
         return (ptrTemp, resultType);
     }
@@ -766,6 +770,7 @@ public sealed partial class Lowering
         consumedTokenTemp = -1;
         if (!stackAllocate && TryConsumeReuseToken(
                 ctor.Arity,
+                runtimeManagedCandidate,
                 out int reuseTokenTemp,
                 out bool runtimeManagedReuse))
         {

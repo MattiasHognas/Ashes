@@ -251,13 +251,14 @@ arena-backed path lowers `DropReuse` as an identity operation, preserving today'
 behavior. The runtime-managed path now implements the Perceus contract: `DropReuse` retains a unique
 cell as its token, but decrements a shared cell and produces a null token; `AllocReusing` overwrites a
 non-null token or allocates a fresh RC cell for null. Native backend tests cover both outcomes.
-Lowering now emits runtime-managed tokens for its first deliberately narrow source boundary: an
-exhaustive, guard-free match over a live copy-only RC ADT whose scrutinee is dead and whose every arm
-directly rebuilds a same-sized constructor. This proves that every token is consumed and avoids
-requiring abandoned-token or recursive-child cleanup. Incompatible layouts retain the ordinary RC
-drop/fresh-allocation path. Recursive-accumulator IR tests assert the complete `DropReuse` to
-`AllocReusing` path, and representative constant-memory and shared-value reuse programs remain
-unchanged. Pointer-bearing and recursive ADTs remain for a later slice with type-directed token cleanup.
+Lowering now emits runtime-managed tokens for an exhaustive, guard-free match over a live copy-only
+RC ADT whose scrutinee is dead. A same-sized runtime-manageable constructor consumes the token;
+otherwise the constructor allocates a fresh RC cell and the arm null-guards and releases its
+unconsumed token with constructor-specialized cleanup. Allocation-regime checks prevent a runtime
+token from being consumed by a same-sized arena-managed constructor. Recursive-accumulator IR tests
+assert the complete `DropReuse` to `AllocReusing` path, and representative constant-memory and
+shared-value reuse programs remain unchanged. Pointer-bearing and recursive ADTs remain for a later
+slice that enables their already-described recursive-child token cleanup metadata at the source gate.
 
 Deliverables:
 
@@ -318,12 +319,21 @@ Deliverables:
 - After the implementation and paper verification are complete, audit and update all documentation
   under `docs/md/` so specifications, guides, architecture notes, testing instructions, and future
   documents describe the final ownership, RC, reuse, and arena behavior accurately.
+- Give RC Perceus thorough permanent coverage, especially in `docs/md/internals/architecture.md`:
+  document ownership placement, `dup`/`drop`, uniqueness, reuse tokens and fresh fallbacks, runtime
+  layouts and allocator/free-list behavior, remaining arena regions, parallel/thread boundaries, and
+  the invariants that prevent leaks, double-free, and use-after-free.
+- Update the root `README.md` as part of the same audit, including its memory-management overview and
+  documentation links, and add **Koka** under **Inspirations** with a concise attribution such as:
+  "Perceus reference counting and reuse analysis for precise, non-tracing memory management."
 - Remove or clearly mark superseded migration-era explanations and stale arena assumptions.
 
 Validation:
 
 - Run the full documentation build/check suite and search `docs/md/` for stale terminology and
   obsolete lifetime claims.
+- Verify the root `README.md` agrees with the final architecture and links to the authoritative RC
+  Perceus documentation.
 - Cross-check user-facing documentation examples against the final compiler and runtime behavior.
 - Do not mark the RC Perceus migration complete until the repository-wide documentation audit is
   finished.

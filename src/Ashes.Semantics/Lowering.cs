@@ -166,7 +166,7 @@ public sealed partial class Lowering
     // token temp, field count, and allocation regime; a same-arity constructor in the arm consumes
     // one through the matching arena/runtime AllocReusing path. See LowerConstructorApplication /
     // LowerMatch.
-    private readonly List<(int Temp, int FieldCount, bool RuntimeManaged)> _reuseTokens = new();
+    private readonly List<ReuseToken> _reuseTokens = new();
 
     // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
     private readonly Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> _reuseTokenFieldBindings = new();
@@ -2772,7 +2772,7 @@ public sealed partial class Lowering
         // In-place reuse: only one branch runs at a time, so a live reuse token is available to each
         // independently. Snapshot before Then, restore before Else, so both branches may reuse the
         // same dead cell (at runtime only one does).
-        var reuseTokensAtIf = new List<(int, int, bool)>(_reuseTokens);
+        var reuseTokensAtIf = new List<ReuseToken>(_reuseTokens);
 
         int slot = NewLocal();
         var thenCredits = BeginExclusiveBranch([iff.Else]);
@@ -2978,7 +2978,7 @@ public sealed partial class Lowering
         Dictionary<int, string> LocalNames,
         Dictionary<int, TypeRef> LocalTypes,
         HashSet<string> LinearReuseNames,
-        List<(int, int, bool)> ReuseTokens,
+        List<ReuseToken> ReuseTokens,
         HashSet<string> SpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
@@ -3018,7 +3018,7 @@ public sealed partial class Lowering
         // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
         // tokens (frame-local temps) or linear accumulators, and vice versa.
         var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
-        var savedReuseTokens = new List<(int, int, bool)>(_reuseTokens);
+        var savedReuseTokens = new List<ReuseToken>(_reuseTokens);
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
