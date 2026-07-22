@@ -199,14 +199,24 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_bytes_append_remains_arena_managed()
+    public void Directly_escaping_scratch_free_bytes_append_transfers_runtime_ownership()
     {
-        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in bytes");
+        IrProgram ir = LowerProgram("let escaped = (let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in bytes) in Ashes.Byte.length(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Escaping_bytes_append_with_allocating_operand_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromList([1u8, 2u8]))(Ashes.Byte.fromText(\"cd\")) in bytes");
 
         ir.EntryFunction.Instructions.Any(inst =>
             inst is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
     }
 
     [Test]

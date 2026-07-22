@@ -2558,6 +2558,16 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
     {
+        if (expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar binary, Expr left),
+                Expr right)
+            && string.Equals(ResolveModuleAlias(binary.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(binary.Name, "append", StringComparison.Ordinal))
+        {
+            return IsArenaAllocationFreeBytesOperand(left)
+                && IsArenaAllocationFreeBytesOperand(right);
+        }
+
         if (expression is not Expr.Call(Expr.QualifiedVar qualified, _)
             || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
         {
@@ -2569,6 +2579,15 @@ public sealed partial class Lowering
             || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
             || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+    }
+
+    private bool IsArenaAllocationFreeBytesOperand(Expr expression)
+    {
+        return expression is Expr.Var or Expr.QualifiedVar
+            || expression is Expr.Call(Expr.QualifiedVar fromText, Expr text)
+                && string.Equals(ResolveModuleAlias(fromText.Module), "Ashes.Byte", StringComparison.Ordinal)
+                && string.Equals(fromText.Name, "fromText", StringComparison.Ordinal)
+                && IsArenaAllocationFreeStringOperand(text);
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
