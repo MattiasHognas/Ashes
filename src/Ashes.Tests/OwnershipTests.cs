@@ -125,6 +125,20 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Saturated_curried_known_function_result_transfers_runtime_string_ownership_without_copy_out()
+    {
+        IrProgram ir = LowerProgram(
+            "let make : Str -> Str -> Str = given (left) -> given (right) -> (let ignored = Ashes.Text.byteLength(left) in let text = \"ab\" + \"cd\" in text) in let value = make(\"left\")(\"right\") in Ashes.Text.byteLength(value)");
+
+        ir.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.CallClosure or IrInst.CallKnown).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");

@@ -393,11 +393,15 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
-    // Empty-environment, single-argument top-level function labels whose return value is proven to be
-    // runtime-managed. A direct call to one of these functions may restore its arena window without
-    // copying the result out: the returned RC allocation is independent of the arena being reclaimed.
+    // Function labels whose return value is proven to be runtime-managed. A statically traced,
+    // saturated call rooted at an empty-environment top-level function may restore its arena window
+    // without copying the result out: the returned RC allocation is independent of the reclaimed arena.
     // This is intentionally label-based and does not infer ownership through higher-order calls.
     private readonly HashSet<string> _runtimeManagedFunctionResultLabels = new(StringComparer.Ordinal);
+    // Curried functions return the next lambda as a closure. Preserve that statically known label chain
+    // so a saturated direct call can reach the innermost function's result provenance without treating
+    // an arbitrary closure value as known.
+    private readonly Dictionary<string, string> _functionReturnedClosureLabels = new(StringComparer.Ordinal);
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -3713,7 +3717,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
 
         Unify(bodyType, retTy);
-        RecordRuntimeManagedFunctionResult(label, bodyTemp);
+        RecordFunctionResultProvenance(label, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
         LowerLambdaCoreFinishFunction(label);
@@ -3723,11 +3727,31 @@ public sealed partial class Lowering
         return (closureTemp, funTy);
     }
 
-    private void RecordRuntimeManagedFunctionResult(string label, int bodyTemp)
+    private void RecordFunctionResultProvenance(string label, int bodyTemp)
     {
+        RecordReturnedClosureLabel(label, bodyTemp);
         if (IsRuntimeManagedResultTemp(bodyTemp))
         {
             _runtimeManagedFunctionResultLabels.Add(label);
+        }
+    }
+
+    private void RecordReturnedClosureLabel(string label, int bodyTemp)
+    {
+        string? returnedLabel = _inst.LastOrDefault(instruction => instruction switch
+        {
+            IrInst.MakeClosure { Target: var target } => target == bodyTemp,
+            IrInst.MakeClosureStack { Target: var target } => target == bodyTemp,
+            _ => false,
+        }) switch
+        {
+            IrInst.MakeClosure closure => closure.FuncLabel,
+            IrInst.MakeClosureStack closure => closure.FuncLabel,
+            _ => null,
+        };
+        if (returnedLabel is not null)
+        {
+            _functionReturnedClosureLabels[label] = returnedLabel;
         }
     }
 
@@ -5438,10 +5462,25 @@ public sealed partial class Lowering
 
     private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
     {
-        return argumentCount == 1
-            && rootExpr is Expr.Var variable
-            && _topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction)
-            && _runtimeManagedFunctionResultLabels.Contains(topLevelFunction.Label);
+        if (argumentCount == 0
+            || rootExpr is not Expr.Var variable
+            || !_topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction))
+        {
+            return false;
+        }
+
+        string resultLabel = topLevelFunction.Label;
+        for (int i = 1; i < argumentCount; i++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
+            {
+                return false;
+            }
+
+            resultLabel = nextLabel;
+        }
+
+        return _runtimeManagedFunctionResultLabels.Contains(resultLabel);
     }
 
     // Applies the collected arguments one closure call at a time, unifying each parameter and

@@ -5183,13 +5183,14 @@ public sealed class LinuxBackendCoverageTests
 
     private static string BuildRuntimeRcKnownFunctionStringProgram(int iterations)
         => $$"""
-            let make = given (unit) ->
+            let make : Str -> Str -> Str = given (left) -> given (right) ->
+                let ignored = Ashes.Text.byteLength(left) in
                 let text = "ab" + "cd" in text
 
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let value = make(0) in
+                    let value = make("left")("right") in
                     let length = Ashes.Text.byteLength(value) in
                     loop(n - 1)(total + length)
 
