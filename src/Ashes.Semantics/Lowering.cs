@@ -429,6 +429,9 @@ public sealed partial class Lowering
     // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
     private bool _runtimeRcCopyAdtAllocationRequested;
 
+    // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
+    private bool _runtimeRcListAllocationRequested;
+
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -1909,7 +1912,21 @@ public sealed partial class Lowering
             }
         }
 
-        if (IsConstructorExpression(let.Value) && IsImmediateAdtMatchUse(let.Name, let.Body))
+        if (IsFreshListConstructionExpression(let.Value) && IsImmediateCopyListMatchUse(let.Name, let.Body))
+        {
+            bool savedRequest = _runtimeRcListAllocationRequested;
+            _runtimeRcListAllocationRequested = true;
+            try
+            {
+                return LowerExpr(let.Value);
+            }
+            finally
+            {
+                _runtimeRcListAllocationRequested = savedRequest;
+            }
+        }
+
+        if (IsConstructorExpression(let.Value) && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body))
         {
             bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
             _runtimeRcCopyAdtAllocationRequested = true;
@@ -1924,6 +1941,136 @@ public sealed partial class Lowering
         }
 
         return LowerExpr(let.Value);
+    }
+
+    private static bool IsFreshListConstructionExpression(Expr expression)
+        => expression switch
+        {
+            Expr.ListLit => true,
+            Expr.Cons cons => IsFreshListConstructionExpression(cons.Tail),
+            _ => false,
+        };
+
+    private static bool IsImmediateCopyListMatchUse(string name, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(name, body) || body is not Expr.Match(_, var cases, _))
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in cases)
+        {
+            if (MatchCaseReferencesAnyBinding(matchCase, ListTailBindings(matchCase.Pattern)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IEnumerable<string> ListTailBindings(Pattern pattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.Var variable:
+                yield return variable.Name;
+                break;
+            case Pattern.Cons cons:
+                foreach (string name in ListTailBindings(cons.Tail))
+                {
+                    yield return name;
+                }
+                break;
+        }
+    }
+
+    private bool IsImmediateSafeAdtMatchUse(string name, Expr value, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(name, body)
+            || body is not Expr.Match(_, var cases, _)
+            || !TryGetConstructorExpressionType(value, out TypeSymbol? type)
+            || type is null)
+        {
+            return false;
+        }
+
+        bool recursiveType = type.Constructors.Any(constructor => constructor.ParameterTypes.Any(fieldType =>
+            fieldType is TypeRef.TNamedType child
+            && string.Equals(child.Symbol.Name, type.Name, StringComparison.Ordinal)));
+        if (!recursiveType)
+        {
+            return true;
+        }
+
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Pattern is not Pattern.Constructor pattern
+                || !_constructorSymbols.TryGetValue(pattern.Name, out ConstructorSymbol? constructor)
+                || constructor is null)
+            {
+                bool nullaryConstructor = matchCase.Pattern is Pattern.Var variable
+                    && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? nullary)
+                    && nullary is not null
+                    && nullary.Arity == 0;
+                if (!nullaryConstructor)
+                {
+                    if (MatchCaseReferencesAnyBinding(matchCase, PatternBindings(matchCase.Pattern)))
+                    {
+                        return false;
+                    }
+                }
+
+                continue;
+            }
+
+            for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
+            {
+                TypeRef fieldType = constructor.ParameterTypes[i];
+                if (fieldType is not TypeRef.TNamedType child
+                    || !string.Equals(child.Symbol.Name, type.Name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (MatchCaseReferencesAnyBinding(matchCase, PatternBindings(pattern.Patterns[i])))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchCaseReferencesAnyBinding(MatchCase matchCase, IEnumerable<string> bindings)
+    {
+        foreach (string binding in bindings)
+        {
+            if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, binding, shadowed: false))
+                || ExprReferencesName(matchCase.Body, binding, shadowed: false))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryGetConstructorExpressionType(Expr expression, out TypeSymbol? type)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is Expr.Var variable
+            && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? constructor)
+            && constructor is not null
+            && _typeSymbols.TryGetValue(constructor.ParentType, out type))
+        {
+            return true;
+        }
+
+        type = null;
+        return false;
     }
 
     private static bool IsImmediateAdtMatchUse(string name, Expr body)
@@ -2018,8 +2165,10 @@ public sealed partial class Lowering
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
                 bool runtimeManaged = _inst.Any(instruction =>
-                    instruction is IrInst.AllocAdt { Target: var target, RuntimeManaged: true }
-                    && target == valueTemp);
+                    (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
+                        && adtTarget == valueTemp)
+                    || (instruction is IrInst.Alloc { Target: var allocationTarget, RuntimeManaged: true }
+                        && allocationTarget == valueTemp));
                 TrackOwnedValue(
                     let.Name,
                     slot,

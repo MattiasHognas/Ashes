@@ -324,6 +324,13 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
         if (info.RuntimeManaged
             && info.Type is not null
+            && Prune(info.Type) is TypeRef.TList runtimeList
+            && CanArenaReset(Prune(runtimeList.Element)))
+        {
+            EmitRuntimeManagedListDrop(loadTemp);
+        }
+        else if (info.RuntimeManaged
+            && info.Type is not null
             && Prune(info.Type) is TypeRef.TNamedType runtimeAdt
             && HasRuntimeManagedChildFields(runtimeAdt))
         {
@@ -347,6 +354,46 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
+    }
+
+    /// <summary>
+    /// Iteratively releases a runtime-managed list spine. A unique cell releases its tail ownership
+    /// and permits the walk to continue; a shared cell is decremented and retains the remaining tail.
+    /// The initial list boundary admits only inline copy heads, so no head drop is required.
+    /// </summary>
+    private void EmitRuntimeManagedListDrop(int listTemp)
+    {
+        int currentSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(currentSlot, listTemp));
+        string loopLabel = NewLabel("rcdrop_list");
+        string sharedLabel = NewLabel("rcdrop_list_shared");
+        string endLabel = NewLabel("rcdrop_list_end");
+
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, currentTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(endLabel));
     }
 
     private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)

@@ -353,7 +353,8 @@
         Label: lambda_0,
         Instructions: [
           {
-            SizeBytes: 8
+            SizeBytes: 8,
+            RuntimeManaged: false
           },
           {
             Target: 1,

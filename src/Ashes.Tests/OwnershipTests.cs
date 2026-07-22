@@ -251,6 +251,63 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Fully_fresh_copy_list_consumed_by_match_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pointer_element_list_consumed_by_match_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let values = [\"one\", \"two\"] in match values with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Copy_list_capturing_existing_tail_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let tail = [2, 3] in let values = 1 :: tail in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Copy_list_with_used_tail_binding_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let values = [1, 2] in match values with | [] -> Ashes.IO.print(0) | _ :: tail -> match tail with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Runtime_copy_list_is_dropped_before_tco_back_edge()
+    {
+        IrProgram ir = LowerProgram("let recursive loop n total = if n <= 0 then total else let values = [1, 2, 3] in match values with | [] -> loop(n - 1)(total) | head :: _ -> loop(n - 1)(total + head)\nAshes.IO.print(loop(3)(0))");
+
+        IrFunction loop = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }));
+        int backEdge = loop.Instructions.FindLastIndex(inst => inst is IrInst.Jump);
+        backEdge.ShouldBeGreaterThan(0);
+        loop.Instructions.Take(backEdge).Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_user_adt_with_used_child_binding_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(left, _, _) -> match left with | Leaf -> Ashes.IO.print(1) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

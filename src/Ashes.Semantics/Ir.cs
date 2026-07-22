@@ -194,7 +194,9 @@ public abstract record IrInst
     // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
     public sealed record CallKnown(int Target, string FuncLabel, int EnvTemp, int ArgTemp) : IrInst;
 
-    public sealed record Alloc(int Target, int SizeBytes) : IrInst;
+    // Generic fixed-size allocation. RuntimeManaged is currently emitted only for built-in list
+    // cells; tuples, closure environments, and runtime buffers remain arena-managed.
+    public sealed record Alloc(int Target, int SizeBytes, bool RuntimeManaged = false) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
     // ADT heap cell: layout is described by HeapLayouts.Adt. Runtime-managed cells carry an

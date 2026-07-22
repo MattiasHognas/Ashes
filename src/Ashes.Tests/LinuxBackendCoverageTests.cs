@@ -1022,6 +1022,47 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_runtime_rc_copy_lists()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let values = [42, 2, 1]
+            match values with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(head)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_runtime_rc_copy_lists()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let values = [1, 2, 3] in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("20000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_local_runtime_rc_record()
     {
         if (!OperatingSystem.IsLinux())

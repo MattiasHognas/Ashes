@@ -108,27 +108,26 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false)
     {
         int valueSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(fieldCount);
-        LlvmValueHandle ptr;
-        if (runtimeManaged)
-        {
-            int allocationSizeBytes = HeapLayouts.RcHeader.TotalAllocationSizeBytes(valueSizeBytes);
-            LlvmValueHandle allocationSize = LlvmApi.ConstInt(state.I64, (ulong)allocationSizeBytes, 0);
-            LlvmValueHandle allocationBase = EmitAllocateOsMemory(state, allocationSize, "rc_adt");
-            EmitHeapChunkInitCheck(state, allocationBase);
-            StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
-                LlvmApi.ConstInt(state.I64, 1, 0), "rc_adt_count");
-            StoreMemory(state, allocationBase, HeapLayouts.RcHeader.AllocationSizeOffsetBytes,
-                allocationSize, "rc_adt_size");
-            ptr = LlvmApi.BuildAdd(state.Target.Builder, allocationBase,
-                LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_adt_value");
-        }
-        else
-        {
-            ptr = EmitAlloc(state, valueSizeBytes);
-        }
+        LlvmValueHandle ptr = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, valueSizeBytes, "rc_adt")
+            : EmitAlloc(state, valueSizeBytes);
 
         StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
         return ptr;
+    }
+
+    private static LlvmValueHandle EmitRuntimeRcAlloc(LlvmCodegenState state, int valueSizeBytes, string name)
+    {
+        int allocationSizeBytes = HeapLayouts.RcHeader.TotalAllocationSizeBytes(valueSizeBytes);
+        LlvmValueHandle allocationSize = LlvmApi.ConstInt(state.I64, (ulong)allocationSizeBytes, 0);
+        LlvmValueHandle allocationBase = EmitAllocateOsMemory(state, allocationSize, name);
+        EmitHeapChunkInitCheck(state, allocationBase);
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            LlvmApi.ConstInt(state.I64, 1, 0), name + "_count");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.AllocationSizeOffsetBytes,
+            allocationSize, name + "_size");
+        return LlvmApi.BuildAdd(state.Target.Builder, allocationBase,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), name + "_value");
     }
 
     private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)

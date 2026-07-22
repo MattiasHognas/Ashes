@@ -478,7 +478,8 @@ public sealed partial class Lowering
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes));
+        bool runtimeManaged = _runtimeRcListAllocationRequested && CanArenaReset(headType);
+        Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         return (nodeTemp, Prune(listType));
