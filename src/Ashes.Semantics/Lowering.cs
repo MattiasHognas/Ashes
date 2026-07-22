@@ -1925,18 +1925,9 @@ public sealed partial class Lowering
             return loweredBuiltinResult;
         }
 
-        if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
+        if (TryLowerRuntimeRcBytesLet(let, out (int Temp, TypeRef Type) loweredBytes))
         {
-            bool savedRequest = _runtimeRcBytesAllocationRequested;
-            _runtimeRcBytesAllocationRequested = true;
-            try
-            {
-                return LowerExpr(let.Value);
-            }
-            finally
-            {
-                _runtimeRcBytesAllocationRequested = savedRequest;
-            }
+            return loweredBytes;
         }
 
         if (TryLowerRuntimeRcRecordLet(let, out (int Temp, TypeRef Type) loweredRecord))
@@ -1982,6 +1973,34 @@ public sealed partial class Lowering
         finally
         {
             _runtimeRcStringAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool TryLowerRuntimeRcBytesLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcBytesProducer(let.Value)
+            || !IsImmediateRuntimeBytesUse(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && !IsRuntimeRcClosureCaptureSafeBytesProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBytesAllocationRequested;
+        _runtimeRcBytesAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBytesAllocationRequested = savedRequest;
         }
     }
 
@@ -2278,7 +2297,8 @@ public sealed partial class Lowering
                 return false;
             }
             if (owned.RuntimeManaged
-                && owned.Type is not TypeRef.TStr)
+                && owned.Type is not TypeRef.TStr
+                && owned.Type is not TypeRef.TBytes)
             {
                 return false;
             }
@@ -2493,18 +2513,34 @@ public sealed partial class Lowering
             || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
     }
 
-    private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
+    private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
     {
-        if (body is not Expr.Call(
-                Expr.QualifiedVar qualified,
-                Expr.Var argument)
-            || !string.Equals(argument.Name, bindingName, StringComparison.Ordinal))
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _)
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
         {
             return false;
         }
 
-        return string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
+        return string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
+    {
+        if (body is Expr.Call(
+                Expr.QualifiedVar qualified,
+                Expr.Var argument)
+            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "length", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
     }
 
     private bool IsRuntimeRcBigIntProducer(Expr expression)

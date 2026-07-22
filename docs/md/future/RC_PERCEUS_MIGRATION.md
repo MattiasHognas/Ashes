@@ -339,6 +339,9 @@ known copy result (`Text.length` or `Text.byteLength`). A synthesized closure dr
 captured owner before the environment and closure cell. Producers with nested arena allocations,
 escaping closures, and resource-bearing shapes remain outside this boundary; a negative IR test pins
 the nested-producer gate because admitting it strands scratch at a TCO jump.
+Scratch-free RC Bytes producers (`empty`, `singleton`, and the fixed-width encoders) use the same
+immediately-called closure transfer when the closure returns `Byte.length`. Append and list-conversion
+producers remain gated because their nested operands can introduce arena scratch.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and other BigInt
 results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
