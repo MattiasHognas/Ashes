@@ -2697,7 +2697,11 @@ public sealed partial class Lowering
             && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body);
         bool consumedByParent = IsConstructorExpression(let.Value)
             && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
-        if (!immediateMatch && !consumedByParent)
+        bool directCopyEscape = IsDirectBindingResult(let.Body, let.Name)
+            && TryDescribeConstructorExpression(let.Value, out _, out _, out TypeRef.TNamedType? resultType)
+            && resultType is not null
+            && CanRuntimeManageCopyAdt(resultType);
+        if (!immediateMatch && !consumedByParent && !directCopyEscape)
         {
             lowered = default;
             return false;

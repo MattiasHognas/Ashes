@@ -269,6 +269,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_copy_field_adt_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("type Pair = | Pair(Int, Int)\nlet escaped = (let pair = Pair(40)(2) in pair) in match escaped with | Pair(left, right) -> left + right");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Direct_function_alias_preserves_runtime_result_ownership_provenance()
     {
         IrProgram ir = LowerProgram(

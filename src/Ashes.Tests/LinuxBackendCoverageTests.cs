@@ -2089,7 +2089,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 41).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
-            outputPerIteration: 62).ConfigureAwait(false);
+            outputPerIteration: 104).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -5135,17 +5135,24 @@ public sealed class LinuxBackendCoverageTests
                 | Leaf
                 | Node(Tree, Int, Tree)
 
+            type Pair =
+                | Pair(Int, Int)
+
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let child = Node(Leaf)(20)(Leaf) in
-                    let tree = Node(child)(42)(Leaf) in
-                    match tree with
-                        | Leaf -> loop(n - 1)(total)
-                        | Node(_, value, _) ->
-                            match child with
-                                | Leaf -> loop(n - 1)(total + value)
-                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+                    let escaped =
+                        let pair = Pair(40)(2) in pair
+                    in match escaped with
+                        | Pair(left, right) ->
+                            let child = Node(Leaf)(20)(Leaf) in
+                            let tree = Node(child)(42)(Leaf) in
+                            match tree with
+                                | Leaf -> loop(n - 1)(total + left + right)
+                                | Node(_, value, _) ->
+                                    match child with
+                                        | Leaf -> loop(n - 1)(total + left + right + value)
+                                        | Node(_, childValue, _) -> loop(n - 1)(total + left + right + value + childValue)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
