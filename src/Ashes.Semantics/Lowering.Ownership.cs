@@ -157,7 +157,8 @@ public sealed partial class Lowering
         bool isResource,
         TextSpan? definitionSpan,
         TypeRef? type = null,
-        bool runtimeManaged = false)
+        bool runtimeManaged = false,
+        ConstructorSymbol? runtimeConstructor = null)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -171,7 +172,8 @@ public sealed partial class Lowering
                 definitionSpan,
                 type is null ? null : Prune(type),
                 isResourceBearing,
-                runtimeManaged);
+                runtimeManaged,
+                runtimeConstructor);
         }
     }
 
@@ -336,7 +338,14 @@ public sealed partial class Lowering
         {
             // Keep this recursive program together at lexical scope for now. The ordinary precise
             // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
-            EmitRuntimeManagedAdtDrop(loadTemp, runtimeAdt);
+            if (info.RuntimeConstructor is { } constructor)
+            {
+                EmitKnownConstructorRuntimeManagedAdtDrop(loadTemp, runtimeAdt, constructor);
+            }
+            else
+            {
+                EmitRuntimeManagedAdtDrop(loadTemp, runtimeAdt);
+            }
         }
         else if (info.IsResourceBearing && info.Type is not null)
         {
@@ -452,6 +461,43 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(sharedLabel));
         }
 
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private void EmitKnownConstructorRuntimeManagedAdtDrop(
+        int valueTemp,
+        TypeRef.TNamedType named,
+        ConstructorSymbol constructor)
+    {
+        List<int> recursiveFields = [];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (fieldType is TypeRef.TNamedType child
+                && string.Equals(child.Symbol.Name, named.Symbol.Name, StringComparison.Ordinal))
+            {
+                recursiveFields.Add(i);
+            }
+        }
+
+        if (recursiveFields.Count == 0)
+        {
+            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            return;
+        }
+
+        int uniqueTemp = NewTemp();
+        string sharedLabel = NewLabel("rc_drop_known_shared");
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        foreach (int fieldIndex in recursiveFields)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
+            EmitRecursiveRuntimeManagedAdtDrop(childTemp, named);
+        }
+
+        Emit(new IrInst.Label(sharedLabel));
         Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 

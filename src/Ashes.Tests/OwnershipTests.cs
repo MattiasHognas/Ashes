@@ -242,6 +242,28 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Known_nullary_recursive_constructor_uses_specialized_drop()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Leaf in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeTrue();
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Known_recursive_node_specializes_root_but_keeps_child_dropper()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
+            && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Test]
     public void Recursive_user_adt_transfers_existing_runtime_child_without_dup()
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Leaf in let tree = Node(child)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");

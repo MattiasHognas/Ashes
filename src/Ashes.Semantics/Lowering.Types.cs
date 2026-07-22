@@ -305,7 +305,8 @@ public sealed partial class Lowering
         TextSpan? definitionSpan,
         TypeRef? type = null,
         bool isResourceBearing = false,
-        bool runtimeManaged = false)
+        bool runtimeManaged = false,
+        ConstructorSymbol? runtimeConstructor = null)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -322,6 +323,12 @@ public sealed partial class Lowering
         public bool IsResourceBearing { get; } = isResourceBearing;
 
         public bool RuntimeManaged { get; } = runtimeManaged;
+
+        /// <summary>
+        /// Statically known constructor for a directly-bound runtime-managed ADT value. Allows its
+        /// root drop to bypass generic tag dispatch; null means the constructor is not proven.
+        /// </summary>
+        public ConstructorSymbol? RuntimeConstructor { get; } = runtimeConstructor;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The

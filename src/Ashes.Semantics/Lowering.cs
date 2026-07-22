@@ -2347,6 +2347,13 @@ public sealed partial class Lowering
                         && adtTarget == valueTemp)
                     || (instruction is IrInst.Alloc { Target: var allocationTarget, RuntimeManaged: true }
                         && allocationTarget == valueTemp));
+                ConstructorSymbol? runtimeConstructor = null;
+                if (runtimeManaged
+                    && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))
+                {
+                    runtimeConstructor = constructor;
+                }
+
                 TrackOwnedValue(
                     let.Name,
                     slot,
@@ -2354,7 +2361,8 @@ public sealed partial class Lowering
                     isResource,
                     AstSpans.GetLetNameOrDefault(let),
                     prunedValueType,
-                    runtimeManaged);
+                    runtimeManaged,
+                    runtimeConstructor);
             }
         }
     }
