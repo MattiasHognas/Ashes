@@ -342,6 +342,8 @@ the nested-producer gate because admitting it strands scratch at a TCO jump.
 Scratch-free RC Bytes producers (`empty`, `singleton`, and the fixed-width encoders) use the same
 immediately-called closure transfer when the closure returns `Byte.length`. Append and list-conversion
 producers remain gated because their nested operands can introduce arena scratch.
+Scratch-free `BigInt.fromInt` results likewise transfer into an immediately-called closure whose
+copy result is `BigInt.compare`; arithmetic-produced captures remain gated at this boundary.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and other BigInt
 results remain arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.

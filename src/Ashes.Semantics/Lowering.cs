@@ -2298,7 +2298,8 @@ public sealed partial class Lowering
             }
             if (owned.RuntimeManaged
                 && owned.Type is not TypeRef.TStr
-                && owned.Type is not TypeRef.TBytes)
+                && owned.Type is not TypeRef.TBytes
+                && owned.Type is not TypeRef.TBigInt)
             {
                 return false;
             }
@@ -2310,22 +2311,32 @@ public sealed partial class Lowering
 
     private bool IsKnownCopyClosureResult(Expr expression)
     {
-        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _))
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, _))
         {
-            return false;
+            string module = ResolveModuleAlias(qualified.Module);
+            return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                    && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                        || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal))
+                || string.Equals(module, "Ashes.Byte", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
         }
 
-        string module = ResolveModuleAlias(qualified.Module);
-        return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
-                && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
-                    || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal))
-            || string.Equals(module, "Ashes.Byte", StringComparison.Ordinal)
-                && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
+        return expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar bigInt, _),
+                _)
+            && string.Equals(ResolveModuleAlias(bigInt.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(bigInt.Name, "compare", StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcBigIntProducer(let.Value) || !IsImmediateRuntimeBigIntUse(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && !IsRuntimeRcClosureCaptureSafeBigIntProducer(let.Value))
         {
             lowered = default;
             return false;
@@ -2567,19 +2578,27 @@ public sealed partial class Lowering
 
     private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
     {
-        if (body is not Expr.Call(
+        if (body is Expr.Call(
                 Expr.Call(Expr.QualifiedVar qualified, Expr left),
                 Expr right)
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
-            || !string.Equals(qualified.Name, "compare", StringComparison.Ordinal))
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "compare", StringComparison.Ordinal)
+            && (left is Expr.Var leftVariable
+                    && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
+                || right is Expr.Var rightVariable
+                    && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal)))
         {
-            return false;
+            return true;
         }
 
-        return left is Expr.Var leftVariable
-                && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
-            || right is Expr.Var rightVariable
-                && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
+    }
+
+    private bool IsRuntimeRcClosureCaptureSafeBigIntProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)

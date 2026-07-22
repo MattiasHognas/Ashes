@@ -899,6 +899,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_owned_bigint_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcOwnedBigIntClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram arithmeticProducer = LowerProgram(BuildRejectedRcOwnedBigIntClosureScratchProgram());
+        AllInstructions(arithmeticProducer).Any(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -2301,6 +2326,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC owned-Bytes-capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_bigint_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcOwnedBigIntClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC owned-BigInt-capture closure", samples);
     }
 
     [Test]
@@ -4723,6 +4762,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcOwnedBigIntClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcOwnedBigIntClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRegionManagedTaskFrameMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5312,6 +5368,33 @@ public sealed class LinuxBackendCoverageTests
                 if Ashes.Byte.length(bytes) > 0
                 then given (unit) -> Ashes.Byte.length(bytes)
                 else given (unit) -> Ashes.Byte.length(bytes)
+            in f(0)
+            """;
+
+    private static string BuildRuntimeRcOwnedBigIntClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let comparison =
+                        let value = Ashes.Number.BigInt.fromInt(n) in
+                        let f =
+                            if n > 0
+                            then given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                            else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                        in f(0)
+                    in loop(n - 1)(total + comparison + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRejectedRcOwnedBigIntClosureScratchProgram()
+        => """
+            let value = Ashes.Number.BigInt.add(1N)(2N) in
+            let f =
+                if Ashes.Number.BigInt.compare(value)(value) == 0
+                then given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
             in f(0)
             """;
 
