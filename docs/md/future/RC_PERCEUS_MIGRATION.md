@@ -495,9 +495,10 @@ Focused tests:
    pass on linux-x64, and resource diagnostics remain unchanged.
 
    Current validation includes native peak-RSS slope checks at 2K, 10K, and 50K iterations for
-   shared-tail lists and shared-child recursive ADTs, plus an initial legacy arena-managed pointer-list
-   control. These tests found and now guard a branch-lowering leak where the first TCO match arm's
-   compiler-only release state suppressed RC cleanup in later arms.
+   shared-tail lists and shared-child recursive ADTs. Legacy arena controls currently cover pointer
+   lists, transient strings, and pointer-bearing records. These tests found and now guard a
+   branch-lowering leak where the first TCO match arm's compiler-only release state suppressed RC
+   cleanup in later arms.
 
 ## 8. Test And Measurement Strategy
 

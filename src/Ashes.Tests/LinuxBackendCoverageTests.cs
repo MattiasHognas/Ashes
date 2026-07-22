@@ -1151,6 +1151,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaStringMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> records = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaRecordMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena string", strings);
+        AssertMemoryPlateaus("legacy arena pointer record", records);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
@@ -3066,6 +3085,36 @@ public sealed class LinuxBackendCoverageTests
                             if head == "a"
                             then loop(n - 1)(total + 1)
                             else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaStringMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n) in
+                    if Ashes.Text.byteLength(text) > 0
+                    then loop(n - 1)(total + 1)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaRecordMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | text: String
+                | value: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let box = Box(text = "value-" + Ashes.Text.fromInt(n), value = 1) in
+                    if Ashes.Text.byteLength(box.text) > 0
+                    then loop(n - 1)(total + box.value)
+                    else loop(n - 1)(total)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
