@@ -633,19 +633,21 @@ public sealed partial class Lowering
     /// <paramref name="fieldCount"/> fields (so it is the same size as the constructor being built).
     /// Returns the dead cell's address temp to overwrite, or false if no matching token is available.
     /// </summary>
-    private bool TryConsumeReuseToken(int fieldCount, out int tokenTemp)
+    private bool TryConsumeReuseToken(int fieldCount, out int tokenTemp, out bool runtimeManaged)
     {
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
             if (_reuseTokens[i].FieldCount == fieldCount)
             {
                 tokenTemp = _reuseTokens[i].Temp;
+                runtimeManaged = _reuseTokens[i].RuntimeManaged;
                 _reuseTokens.RemoveAt(i);
                 return true;
             }
         }
 
         tokenTemp = -1;
+        runtimeManaged = false;
         return false;
     }
 

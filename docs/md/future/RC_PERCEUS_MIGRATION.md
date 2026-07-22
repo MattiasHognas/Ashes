@@ -251,10 +251,13 @@ arena-backed path lowers `DropReuse` as an identity operation, preserving today'
 behavior. The runtime-managed path now implements the Perceus contract: `DropReuse` retains a unique
 cell as its token, but decrements a shared cell and produces a null token; `AllocReusing` overwrites a
 non-null token or allocates a fresh RC cell for null. Native backend tests cover both outcomes.
-Lowering remains conservative and emits runtime-managed reuse tokens only after a later slice proves
-the dead-scrutinee and compatible-layout conditions. Recursive-accumulator IR tests assert the complete
-`DropReuse` to `AllocReusing` path, and representative constant-memory and shared-value reuse programs
-remain unchanged.
+Lowering now emits runtime-managed tokens for its first deliberately narrow source boundary: an
+exhaustive, guard-free match over a live copy-only RC ADT whose scrutinee is dead and whose every arm
+directly rebuilds a same-sized constructor. This proves that every token is consumed and avoids
+requiring abandoned-token or recursive-child cleanup. Incompatible layouts retain the ordinary RC
+drop/fresh-allocation path. Recursive-accumulator IR tests assert the complete `DropReuse` to
+`AllocReusing` path, and representative constant-memory and shared-value reuse programs remain
+unchanged. Pointer-bearing and recursive ADTs remain for a later slice with type-directed token cleanup.
 
 Deliverables:
 

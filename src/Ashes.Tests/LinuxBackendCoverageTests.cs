@@ -166,6 +166,28 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_lowers_copy_adt_rebuild_to_runtime_reuse()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Right(value + 1)
+                | Right(value) -> Left(value - 1)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())

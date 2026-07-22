@@ -41,17 +41,16 @@ public sealed partial class Lowering
         // In-place reuse (#2): if we're matching a linear (uniquely-owned, deep-copied-at-entry)
         // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
         // arms that don't reference the accumulator again (so its cell is dead).
-        string? reuseScrutineeName = match.Value is Expr.Var rv && _linearReuseNames.Contains(rv.Name)
-            ? rv.Name
-            : null;
+        (string? reuseScrutineeName, bool runtimeManagedReuse) =
+            GetMatchReuseScrutinee(match, valueType);
 
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
+            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeManagedReuse);
         }
         else
         {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeManagedReuse);
         }
 
         Emit(new IrInst.Label(noMatchLabel));
@@ -67,12 +66,84 @@ public sealed partial class Lowering
         return (resultTemp, Prune(resultType));
     }
 
+    private (string? Name, bool RuntimeManaged) GetMatchReuseScrutinee(
+        Expr.Match match,
+        TypeRef valueType)
+    {
+        if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name))
+        {
+            return (variable.Name, false);
+        }
+
+        if (!TryGetRuntimeManagedReuseScrutinee(match, valueType, out string runtimeScrutineeName))
+        {
+            return (null, false);
+        }
+
+        LookupOwnedValue(runtimeScrutineeName)!.ReleaseKind = ResourceReleaseKind.Moved;
+        return (runtimeScrutineeName, true);
+    }
+
+    /// <summary>
+    /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
+    /// runtime-managed copy-only ADT, and the match must exhaustively rebuild that same ADT with a
+    /// direct, same-sized constructor in every guard-free arm. Consequently every published token
+    /// is consumed, and neither abandoned-token cleanup nor recursive child ownership is required.
+    /// </summary>
+    private bool TryGetRuntimeManagedReuseScrutinee(
+        Expr.Match match,
+        TypeRef valueType,
+        out string scrutineeName)
+    {
+        scrutineeName = string.Empty;
+        if (match.Value is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not
+            {
+                RuntimeManaged: true,
+                IsDropped: false,
+                Type: TypeRef.TNamedType ownedType,
+            }
+            || Prune(valueType) is not TypeRef.TNamedType matchedType
+            || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
+            || !CanRuntimeManageCopyAdt(matchedType)
+            || match.Cases.Count != matchedType.Symbol.Constructors.Count)
+        {
+            return false;
+        }
+
+        var matchedConstructors = new HashSet<string>(StringComparer.Ordinal);
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            if (matchCase.Guard is not null
+                || ExprReferencesName(matchCase.Body, variable.Name, shadowed: false)
+                || !TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol matchedConstructor)
+                || !string.Equals(matchedConstructor.ParentType, matchedType.Symbol.Name, StringComparison.Ordinal)
+                || !matchedConstructors.Add(matchedConstructor.Name)
+                || !TryDescribeConstructorExpression(
+                    matchCase.Body,
+                    out ConstructorSymbol? rebuiltConstructor,
+                    out _,
+                    out TypeRef.TNamedType? rebuiltType)
+                || rebuiltConstructor is null
+                || rebuiltType is null
+                || !string.Equals(rebuiltConstructor.ParentType, matchedType.Symbol.Name, StringComparison.Ordinal)
+                || rebuiltConstructor.Arity != matchedConstructor.Arity
+                || !CanRuntimeManageCopyAdt(rebuiltType))
+            {
+                return false;
+            }
+        }
+
+        scrutineeName = variable.Name;
+        return true;
+    }
+
     /// <summary>
     /// Lowers match arms as a linear chain of per-arm pattern tests, each falling through to the
     /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
     /// patterns, and nested refinements.
     /// </summary>
-    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null)
+    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null, bool runtimeManagedReuse = false)
     {
         for (int i = 0; i < match.Cases.Count; i++)
         {
@@ -88,7 +159,12 @@ public sealed partial class Lowering
 
             EmitLinearArmPatternAndGuard(match, i, valueTemp, valueType, armCleanupLabel);
 
-            int reuseTokensBefore = PublishLinearArmReuseToken(match, i, valueTemp, reuseScrutineeName);
+            int reuseTokensBefore = PublishLinearArmReuseToken(
+                match,
+                i,
+                valueTemp,
+                reuseScrutineeName,
+                runtimeManagedReuse);
 
             LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
 
@@ -139,7 +215,12 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token
     /// the arm body didn't consume.
     /// </summary>
-    private int PublishLinearArmReuseToken(Expr.Match match, int i, int valueTemp, string? reuseScrutineeName)
+    private int PublishLinearArmReuseToken(
+        Expr.Match match,
+        int i,
+        int valueTemp,
+        string? reuseScrutineeName,
+        bool runtimeManagedReuse)
     {
         // In-place reuse (#2): publish the dead accumulator node as a reuse token for a same-arity
         // constructor in this arm's body. Only when the body doesn't reference the accumulator
@@ -158,8 +239,8 @@ public sealed partial class Lowering
             && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
         {
             int tokenTemp = NewTemp();
-            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, reuseArityVal));
-            _reuseTokens.Add((tokenTemp, reuseArityVal));
+            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, reuseArityVal, runtimeManagedReuse));
+            _reuseTokens.Add((tokenTemp, reuseArityVal, runtimeManagedReuse));
             RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
         }
 
@@ -183,6 +264,9 @@ public sealed partial class Lowering
         // Drop any reuse token this arm published that the body didn't consume.
         if (_reuseTokens.Count > reuseTokensBefore)
         {
+            Debug.Assert(
+                !_reuseTokens.Skip(reuseTokensBefore).Any(token => token.RuntimeManaged),
+                "Runtime reuse eligibility must prove that every published token is consumed.");
             _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
         }
 
@@ -365,7 +449,8 @@ public sealed partial class Lowering
         string endLabel,
         string noMatchLabel,
         bool savedTailPos,
-        string? reuseScrutineeName = null)
+        string? reuseScrutineeName = null,
+        bool runtimeManagedReuse = false)
     {
         int tagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
@@ -391,7 +476,13 @@ public sealed partial class Lowering
 
             EmitTagSwitchArmPattern(cases, plan, i, valueTemp, valueType, noMatchLabel);
 
-            int reuseTokensBefore = PublishTagSwitchArmReuseToken(cases, plan, i, valueTemp, reuseScrutineeName);
+            int reuseTokensBefore = PublishTagSwitchArmReuseToken(
+                cases,
+                plan,
+                i,
+                valueTemp,
+                reuseScrutineeName,
+                runtimeManagedReuse);
 
             LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
 
@@ -422,7 +513,13 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token the
     /// arm body didn't consume.
     /// </summary>
-    private int PublishTagSwitchArmReuseToken(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, string? reuseScrutineeName)
+    private int PublishTagSwitchArmReuseToken(
+        IReadOnlyList<MatchCase> cases,
+        List<(ConstructorSymbol Ctor, long Tag)> plan,
+        int i,
+        int valueTemp,
+        string? reuseScrutineeName,
+        bool runtimeManagedReuse)
     {
         // In-place reuse (#2): make this arm's dead accumulator node available as a reuse token
         // for a same-arity constructor in the body. Only when the body doesn't reference the
@@ -436,8 +533,8 @@ public sealed partial class Lowering
             && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
         {
             int tokenTemp = NewTemp();
-            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, plan[i].Ctor.Arity));
-            _reuseTokens.Add((tokenTemp, plan[i].Ctor.Arity));
+            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, plan[i].Ctor.Arity, runtimeManagedReuse));
+            _reuseTokens.Add((tokenTemp, plan[i].Ctor.Arity, runtimeManagedReuse));
             RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 

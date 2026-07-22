@@ -7,6 +7,62 @@ namespace Ashes.Tests;
 public sealed class ReuseTokenTests
 {
     [Test]
+    public void Exhaustive_copy_adt_rebuild_uses_runtime_reuse_tokens()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Right(value + 1)
+                | Right(value) -> Left(value - 1)
+            """);
+
+        IrInst.DropReuse[] tokens = program.EntryFunction.Instructions
+            .OfType<IrInst.DropReuse>()
+            .Where(token => token.RuntimeManaged)
+            .ToArray();
+        IrInst.AllocReusing[] allocations = program.EntryFunction.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .Where(allocation => allocation.RuntimeManaged)
+            .ToArray();
+
+        tokens.Length.ShouldBe(2);
+        allocations.Length.ShouldBe(2);
+        foreach (IrInst.AllocReusing allocation in allocations)
+        {
+            IrInst.DropReuse token = tokens.Single(candidate => candidate.Target == allocation.TokenTemp);
+            token.FieldCount.ShouldBe(allocation.FieldCount);
+        }
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Runtime_reuse_declines_when_rebuilt_constructor_has_incompatible_layout()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Empty
+                | One(Int)
+
+            let choice = Empty
+            match choice with
+                | Empty -> One(1)
+                | One(_) -> Empty
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Recursive_adt_accumulator_routes_alloc_reusing_through_drop_reuse()
     {
         IrProgram program = LowerProgram("""

@@ -589,11 +589,11 @@ public sealed partial class Lowering
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        if (!stackAllocate && TryConsumeReuseToken(0, out int reuseTokenTemp))
+        if (!stackAllocate && TryConsumeReuseToken(0, out int reuseTokenTemp, out bool runtimeManagedReuse))
         {
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
-            Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp));
+            Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp, runtimeManagedReuse));
             _reuseResultTemps.Add(ptrTemp);
         }
         else if (stackAllocate)
@@ -764,13 +764,21 @@ public sealed partial class Lowering
         int ptrTemp = NewTemp();
         reuseNode = false;
         consumedTokenTemp = -1;
-        if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
+        if (!stackAllocate && TryConsumeReuseToken(
+                ctor.Arity,
+                out int reuseTokenTemp,
+                out bool runtimeManagedReuse))
         {
             consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // by the caller, so overwriting the cell now is safe.
-            Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
+            Emit(new IrInst.AllocReusing(
+                ptrTemp,
+                tag,
+                ctor.Arity,
+                reuseTokenTemp,
+                runtimeManagedReuse));
             _reuseResultTemps.Add(ptrTemp);
             reuseNode = true;
         }
