@@ -138,6 +138,24 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_scalar_text_conversions_transfer_runtime_ownership()
+    {
+        IrProgram hex = LowerProgram("let escaped = (let text = Ashes.Text.toHex(48879) in text) in Ashes.Text.byteLength(escaped)");
+        IrProgram floating = LowerProgram("let escaped = (let text = Ashes.Text.fromFloat(12.25) in text) in Ashes.Text.byteLength(escaped)");
+        IrProgram fixedFloat = LowerProgram("let escaped = (let text = Ashes.Text.formatFloat(12.25)(3) in text) in Ashes.Text.byteLength(escaped)");
+
+        hex.EntryFunction.Instructions.Any(inst => inst is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeTrue();
+        floating.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+        fixedFloat.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFormatFloat { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { hex, floating, fixedFloat })
+        {
+            ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+            ir.EntryFunction.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        }
+    }
+
+    [Test]
     public void Direct_known_function_result_transfers_runtime_string_ownership_without_copy_out()
     {
         IrProgram ir = LowerProgram(

@@ -2444,10 +2444,22 @@ public sealed partial class Lowering
 
     private static bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
     {
-        return expression is Expr.Add
-            || expression is Expr.Call(Expr.QualifiedVar qualified, _)
-                && string.Equals(qualified.Module, "Ashes.Text", StringComparison.Ordinal)
-                && string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal);
+        if (expression is Expr.Add)
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(qualified.Module, "Ashes.Text", StringComparison.Ordinal))
+        {
+            return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "fromFloat", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "toHex", StringComparison.Ordinal);
+        }
+
+        return expression is Expr.Call(Expr.Call(Expr.QualifiedVar format, _), _)
+            && string.Equals(format.Module, "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(format.Name, "formatFloat", StringComparison.Ordinal);
     }
 
     private static bool IsArenaAllocationFreeStringOperand(Expr expression)

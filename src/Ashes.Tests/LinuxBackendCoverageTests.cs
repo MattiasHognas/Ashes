@@ -801,7 +801,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let text = Ashes.Text.toHex(48879) in text");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -847,7 +847,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let text = Ashes.Text.fromFloat(12.25) in text");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5462,8 +5462,9 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildRuntimeRcTextToHexMemoryProgram(int iterations)
         => $$"""
             let emit unit =
-                let text = Ashes.Text.toHex(48879) in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.toHex(48879) in text
+                in Ashes.IO.print(escaped)
 
             let recursive loop n =
                 if n <= 0 then 0
@@ -5499,12 +5500,14 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildRuntimeRcFloatTextProgram(int iterations)
         => $$"""
             let emitFloat unit =
-                let text = Ashes.Text.fromFloat(12.25) in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.fromFloat(12.25) in text
+                in Ashes.IO.print(escaped)
 
             let emitFixed unit =
-                let text = Ashes.Text.formatFloat(12.25)(3) in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.formatFloat(12.25)(3) in text
+                in Ashes.IO.print(escaped)
 
             let recursive loop n =
                 if n <= 0 then 0

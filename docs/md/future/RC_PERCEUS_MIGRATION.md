@@ -419,6 +419,8 @@ independent RC concat is formed. This supports both direct result transfer and i
 capture without stranding nested allocations.
 `Text.fromInt` results now use the same direct transfer boundary; their temporary digit storage is
 stack/scoped scratch, while the independently allocated RC String is dropped by the receiving scope.
+The scalar `Text.toHex`, `Text.fromFloat`, and `Text.formatFloat` producers now transfer likewise;
+formatter fragments remain scoped scratch and are reclaimed after the RC result escapes.
 An empty-environment top-level function can now return one of these proven runtime-managed values
 directly. The caller restores and reclaims the call's arena window without copying the independent RC
 result, propagates ownership to the receiving let, and emits the final drop there. Saturated curried
