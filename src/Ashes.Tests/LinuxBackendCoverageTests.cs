@@ -1019,7 +1019,7 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             WriteSelfSignedServerPems(tmpDir);
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             foreach (var payload in new[] { "tls-one", "tls-two" })
             {
@@ -1097,7 +1097,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             await AssertHttpRoutingResponsesAsync(port).ConfigureAwait(false);
             await AssertHttpBufferingAndPipeliningAsync(port).ConfigureAwait(false);
@@ -1204,7 +1204,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
             warm.ShouldContain("HTTP/1.1 200 OK");
@@ -1388,7 +1388,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Wait until it accepts, then send SIGTERM and assert a clean stop.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1451,7 +1451,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // One client connects and sends; the handler replies, then requests stop.
             var reply = await ConnectSendReceiveWithRetryAsync(port, "now").ConfigureAwait(false);
@@ -1504,7 +1504,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Open a connection and send; the handler sleeps 700 ms before replying.
             using var client = new TcpClient();
@@ -1581,7 +1581,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Wait for a worker to accept, then SIGTERM the parent only.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1660,7 +1660,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             using var client = new TcpClient();
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1731,7 +1731,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1791,7 +1791,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var raw = await HttpGetRawWithRetryAsync(port, "/stream").ConfigureAwait(false);
             raw.ShouldContain("Transfer-Encoding: chunked");
@@ -1848,7 +1848,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1915,7 +1915,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             await AssertChunkedFramesDecodedAcrossManyWritesAsync(port).ConfigureAwait(false);
         }
@@ -2004,7 +2004,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Readiness.
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
@@ -2071,7 +2071,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             int served = 0;
@@ -2144,7 +2144,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -2224,7 +2224,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Wait for the listener, then open the four measured connections.
             _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
@@ -2342,7 +2342,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             foreach (var payload in new[] { "linux-one", "linux-two", "linux-three" })
             {
@@ -2357,16 +2357,16 @@ public sealed class LinuxBackendCoverageTests
     }
 
     // Writes the compiled ELF image to exePath and starts it with redirected stdio.
-    private static Process StartServerProcess(string exePath, string tmpDir, byte[] elfBytes)
+    private static async Task<Process> StartServerProcessAsync(string exePath, string tmpDir, byte[] elfBytes)
     {
         TestProcessHelper.WriteExecutable(exePath, elfBytes);
-        return Process.Start(new ProcessStartInfo(exePath)
+        return await TestProcessHelper.StartProcessAsync(new ProcessStartInfo(exePath)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             WorkingDirectory = tmpDir,
-        })!;
+        }).ConfigureAwait(false);
     }
 
     private static void CleanUpServerProcess(Process? proc, string exePath, string tmpDir)
