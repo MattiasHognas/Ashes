@@ -2010,6 +2010,13 @@ public sealed partial class Lowering
             return true;
         }
 
+        if (expression is Expr.Call(Expr.QualifiedVar textProducer, _)
+            && string.Equals(ResolveModuleAlias(textProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         return expression is Expr.Call(
                 Expr.Call(
                     Expr.Call(Expr.QualifiedVar qualified, _),
@@ -2625,6 +2632,7 @@ public sealed partial class Lowering
                 IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

@@ -725,7 +725,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromInt(target, valueTemp));
+        Emit(new IrInst.TextFromInt(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 

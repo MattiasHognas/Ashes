@@ -544,6 +544,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_text_from_int()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let emit unit = let text = Ashes.Text.fromInt(-42) in Ashes.IO.print(text)\nemit(0)");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromInt(-42) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("-42\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1736,6 +1759,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC byte subText", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_from_int_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextFromIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.fromInt", samples);
     }
 
     [Test]
@@ -3861,6 +3898,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextFromIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextFromIntMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 4) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4135,6 +4190,22 @@ public sealed class LinuxBackendCoverageTests
         => $$"""
             let emit unit =
                 let text = Ashes.Byte.subText(Ashes.Byte.fromText("abcdef"))(1)(3) in
+                Ashes.IO.print(text)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcTextFromIntMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let text = Ashes.Text.fromInt(-42) in
                 Ashes.IO.print(text)
 
             let recursive loop n =

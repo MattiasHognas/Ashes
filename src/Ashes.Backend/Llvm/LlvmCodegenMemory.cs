@@ -2391,7 +2391,11 @@ internal static partial class LlvmCodegen
         return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
     }
 
-    private static LlvmValueHandle EmitSignedIntToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+    private static LlvmValueHandle EmitSignedIntToString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        string prefix,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
@@ -2427,7 +2431,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
         LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
         LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
-        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string", runtimeManaged);
     }
 
     /// <summary>Digit loop of <see cref="EmitSignedIntToString"/>: writes the magnitude's decimal digits back-to-front.</summary>
@@ -2821,14 +2825,23 @@ internal static partial class LlvmCodegen
         }
     }
 
-    private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
+    private static LlvmValueHandle EmitHeapStringSliceFromBytesPointer(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesPtr,
+        LlvmValueHandle len,
+        string prefix,
+        bool runtimeManaged = false)
     {
         // Copy the backing bytes into a fresh OWNED string. Used where the bytes are a transient
         // buffer (e.g. Ashes.Text.fromInt), so a view would dangle. uncons/substring instead build
         // views (EmitStringView) directly, since their backing is a live string.
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, normalizedLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
+        LlvmValueHandle valueSize = LlvmApi.BuildAdd(builder, normalizedLen,
+            LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size");
+        LlvmValueHandle stringRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, valueSize, "rc_" + prefix)
+            : EmitAllocDynamic(state, valueSize);
         StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
         EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");

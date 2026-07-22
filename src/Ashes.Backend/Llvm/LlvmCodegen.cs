@@ -1696,7 +1696,11 @@ internal static partial class LlvmCodegen
             IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp))),
             IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp))),
             IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp))),
-            IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(state, LoadTemp(state, textFromInt.ValueTemp), "text_from_int")),
+            IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(
+                state,
+                LoadTemp(state, textFromInt.ValueTemp),
+                "text_from_int",
+                textFromInt.RuntimeManaged)),
             IrInst.TextFromFloat textFromFloat => StoreTemp(state, textFromFloat.Target, EmitFloatToString(state, LoadTempAsFloat(state, textFromFloat.ValueTemp), "text_from_float")),
             IrInst.TextFormatFloat textFormatFloat => StoreTemp(state, textFormatFloat.Target, EmitFloatToFixedString(state, LoadTempAsFloat(state, textFormatFloat.ValueTemp), LoadTemp(state, textFormatFloat.DecimalsTemp), "text_format_float")),
             IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(state, LoadTemp(state, textToHex.ValueTemp), "text_to_hex")),
