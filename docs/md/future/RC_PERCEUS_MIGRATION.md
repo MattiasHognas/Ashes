@@ -220,7 +220,13 @@ drop loop and unique tree roots omit their root check, while any explicit child/
 the fact and keeps guarded cleanup. Optimizer regressions now name and cover the paper's map-shaped
 match diamond as well as Ashes' curried stdlib `List.map` shape. The latter still has erased legacy
 lifetime markers because polymorphic function-owned lists have not entered the runtime-RC family;
-the test makes that boundary explicit rather than implying partial generic RC support.
+the test makes that boundary explicit rather than implying partial generic RC support. A native
+linux-x64 CPU-time comparison now measures the optimized shared-list RC path against the same IR
+converted to arena allocation. The initial measurement exposes a remaining Phase 4 blocker: 500K
+iterations take about 1.5 seconds of process CPU on the RC path while the arena path is below the
+timer's 10 ms resolution, because every RC cell currently performs an OS map/unmap. A fixed ceiling
+guards the measured regression while the next slice adds a bounded reusable RC allocator; the
+relative performance validation below is not satisfied yet.
 
 Deliverables:
 

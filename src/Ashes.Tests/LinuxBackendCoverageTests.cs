@@ -42,7 +42,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
     {
-        if (!OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
         {
             return;
         }
@@ -1133,6 +1133,36 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_list_performance_has_fixed_regression_ceiling()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const int iterations = 500_000;
+        IrProgram lowered = LowerProgram(BuildRuntimeRcListMemoryProgram(iterations));
+        IrProgram runtimeRc = IrOptimizer.Optimize(lowered);
+        IrProgram arenaBaseline = IrOptimizer.Optimize(ConvertRuntimeRcToArenaBaseline(lowered));
+
+        AllInstructions(runtimeRc).Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.Alloc { RuntimeManaged: false }).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.RestoreArenaState).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.RcDrop { RuntimeManaged: true }
+            or IrInst.RcDup { RuntimeManaged: true }
+            or IrInst.RcIsUnique).ShouldBeFalse();
+
+        string expectedOutput = $"{iterations * 41L}\n";
+        double runtimeRcMedianMs = await CompileAndMeasureMedianCpuTimeAsync(runtimeRc, expectedOutput).ConfigureAwait(false);
+        double arenaMedianMs = await CompileAndMeasureMedianCpuTimeAsync(arenaBaseline, expectedOutput).ConfigureAwait(false);
+        const double maximumRuntimeRcMedianMs = 2_000.0;
+
+        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(maximumRuntimeRcMedianMs,
+            $"runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
+            $"{arenaMedianMs:F1} ms (fixed regression ceiling {maximumRuntimeRcMedianMs:F1} ms)");
     }
 
     [Test]
@@ -3291,6 +3321,95 @@ public sealed class LinuxBackendCoverageTests
             DeleteFileIfExists(exePath);
             DeleteDirectoryIfExists(tmpDir);
         }
+    }
+
+    private static IrProgram ConvertRuntimeRcToArenaBaseline(IrProgram program)
+    {
+        return program with
+        {
+            EntryFunction = ConvertFunction(program.EntryFunction),
+            Functions = program.Functions.Select(ConvertFunction).ToList()
+        };
+
+        static IrFunction ConvertFunction(IrFunction function)
+        {
+            List<IrInst> instructions = function.Instructions.Select(ConvertInstruction).ToList();
+            return function with { Instructions = instructions };
+        }
+
+        static IrInst ConvertInstruction(IrInst instruction)
+            => instruction switch
+            {
+                IrInst.Alloc allocation when allocation.RuntimeManaged => allocation with { RuntimeManaged = false },
+                IrInst.AllocAdt allocation when allocation.RuntimeManaged => allocation with { RuntimeManaged = false },
+                IrInst.RcDup duplicate when duplicate.RuntimeManaged => duplicate with { RuntimeManaged = false },
+                IrInst.RcDrop drop when drop.RuntimeManaged => drop with { RuntimeManaged = false },
+                IrInst.RcIsUnique unique => new IrInst.LoadConstBool(unique.Target, true) { Location = unique.Location },
+                _ => instruction
+            };
+    }
+
+    private static IEnumerable<IrInst> AllInstructions(IrProgram program)
+        => program.Functions.Prepend(program.EntryFunction).SelectMany(function => function.Instructions);
+
+    private static async Task<double> CompileAndMeasureMedianCpuTimeAsync(IrProgram program, string expectedOutput)
+    {
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(program);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_perf_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            _ = await RunAndMeasureCpuTimeAsync(exePath, expectedOutput).ConfigureAwait(false);
+
+            const int sampleCount = 3;
+            double[] samples = new double[sampleCount];
+            for (int i = 0; i < samples.Length; i++)
+            {
+                samples[i] = await RunAndMeasureCpuTimeAsync(exePath, expectedOutput).ConfigureAwait(false);
+            }
+
+            Array.Sort(samples);
+            return samples[samples.Length / 2];
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<double> RunAndMeasureCpuTimeAsync(string exePath, string expectedOutput)
+    {
+        const string cpuMarker = "__ASHES_CPU_SECONDS__=";
+        ProcessStartInfo startInfo = new("/usr/bin/time")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add("-f");
+        startInfo.ArgumentList.Add(cpuMarker + "%U|%S");
+        startInfo.ArgumentList.Add(exePath);
+        using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
+        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+        stdout.ShouldBe(expectedOutput);
+        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith(cpuMarker, StringComparison.Ordinal))
+            {
+                string[] fields = line[cpuMarker.Length..].Split('|');
+                fields.Length.ShouldBe(2);
+                double userSeconds = double.Parse(fields[0], CultureInfo.InvariantCulture);
+                double systemSeconds = double.Parse(fields[1], CultureInfo.InvariantCulture);
+                return (userSeconds + systemSeconds) * 1_000.0;
+            }
+        }
+
+        throw new InvalidOperationException($"GNU time did not report user CPU time. stderr: {stderr}");
     }
 
     private static long ParsePeakRssKb(string stderr, string marker)
