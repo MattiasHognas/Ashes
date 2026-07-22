@@ -810,9 +810,12 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
 
-        IrProgram escaping = LowerProgram("let value = Ashes.Number.BigInt.fromInt(42) in value");
+        IrProgram escaping = LowerProgram("let escaped = (let value = Ashes.Number.BigInt.fromInt(42) in value) in Ashes.Number.BigInt.compare(escaped)(escaped)");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(escaping).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -2254,6 +2257,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt.fromInt", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_bigint_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEscapingBigIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC directly escaping BigInt", samples);
     }
 
     [Test]
@@ -4692,6 +4709,24 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingBigIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEscapingBigIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextParseIntMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5299,6 +5334,19 @@ public sealed class LinuxBackendCoverageTests
                         let value = Ashes.Number.BigInt.fromInt(n) in
                         Ashes.Number.BigInt.compare(value)(value)
                     in loop(n - 1)(total + comparison)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingBigIntProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let value = Ashes.Number.BigInt.fromInt(n) in value
+                    in let comparison = Ashes.Number.BigInt.compare(escaped)(escaped)
+                    in loop(n - 1)(total + comparison + 1)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

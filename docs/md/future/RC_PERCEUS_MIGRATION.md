@@ -406,6 +406,8 @@ the receiving scope place the final drop; the old `CopyOutArena` path is absent 
 Scratch-free Bytes singletons, empties, and fixed-width encoders now use the same direct-result
 transfer. Append and list-conversion escapes remain on the arena path until nested producer ownership
 is carried with them.
+Scratch-free `BigInt.fromInt` results also transfer across a direct nested-let result and avoid
+`CopyOutArena`; arithmetic and parse-result escapes remain gated pending child/provenance support.
 
 Deliverables:
 

@@ -2342,12 +2342,14 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
-        if (!IsRuntimeRcBigIntProducer(let.Value) || !IsImmediateRuntimeBigIntUse(let.Body, let.Name))
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if (!IsRuntimeRcBigIntProducer(let.Value)
+            || (!IsImmediateRuntimeBigIntUse(let.Body, let.Name) && !directEscape))
         {
             lowered = default;
             return false;
         }
-        if (IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
             && !IsRuntimeRcClosureCaptureSafeBigIntProducer(let.Value))
         {
             lowered = default;
