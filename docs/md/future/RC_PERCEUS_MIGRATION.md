@@ -416,8 +416,9 @@ values that lose this label provenance and functions returning arena-backed valu
 conservative copy-out path. Native and RSS-slope coverage exercises this boundary for String, Bytes,
 and BigInt results so the provenance channel is not coupled to one payload representation.
 An exact let alias of a statically known function now retains that label provenance by local-slot
-identity, including curried saturation. Function parameters and arbitrary closure-producing control
-flow still lose the label and therefore keep the conservative higher-order copy-out boundary.
+identity, including curried saturation. The exact label also follows that alias into a closure
+environment by its capture index. Function parameters and arbitrary closure-producing control flow
+still lose the label and therefore keep the conservative higher-order copy-out boundary.
 
 Deliverables:
 

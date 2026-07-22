@@ -173,6 +173,21 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Captured_function_alias_preserves_runtime_result_ownership_provenance()
+    {
+        IrProgram ir = LowerProgram(
+            "let make = given (unit) -> (let text = \"ab\" + \"cd\" in text) in let alias = make in let invoke = given (unit) -> (let value = alias(0) in Ashes.Text.byteLength(value)) in invoke(0)");
+
+        ir.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        ir.Functions.Any(function =>
+            function.Instructions.Any(inst => inst is IrInst.CallClosure)
+            && function.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true })
+            && function.Instructions.All(inst => inst is not IrInst.CopyOutArena)).ShouldBeTrue();
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");

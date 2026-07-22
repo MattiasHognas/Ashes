@@ -405,6 +405,7 @@ public sealed partial class Lowering
     // Local slots that are exact aliases of a statically known function closure. Slot identity keeps
     // shadowing precise while allowing a direct let alias to retain call-result ownership provenance.
     private readonly Dictionary<int, string> _knownFunctionLabelsBySlot = new();
+    private readonly Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -3687,7 +3688,7 @@ public sealed partial class Lowering
         LowerLambdaCoreSeedParamType(lam, paramTy);
 
         // Compute free variables for capture, then allocate and fill the env at the creation site.
-        var (free, captures, envPtrTemp) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
+        var (free, captures, envPtrTemp, knownCaptureLabels) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
 
         // Create lambda function label
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
@@ -3696,7 +3697,7 @@ public sealed partial class Lowering
         var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
         int argSlot = LowerLambdaCoreResetFrame();
         RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
-        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
 
         // TCO: for the innermost lambda in a recursive chain, create local copies of captured params
         // and emit a loop start label so tail self-calls can jump back (see the loop-entry helper).
@@ -3792,7 +3793,7 @@ public sealed partial class Lowering
         }
     }
 
-    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
+    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
     {
         var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
         if (selfName is not null)
@@ -3809,6 +3810,14 @@ public sealed partial class Lowering
         var captures = recursiveGroup is not null
             ? recursiveGroup.SharedCaptures
             : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct(StringComparer.Ordinal).ToList();
+        var knownCaptureLabels = new Dictionary<int, string>();
+        for (int i = 0; i < captures.Count; i++)
+        {
+            if (TryResolveKnownFunctionLabel(captures[i], out string knownLabel))
+            {
+                knownCaptureLabels[i] = knownLabel;
+            }
+        }
 
         // At lambda creation site: allocate env if needed
         int envPtrTemp;
@@ -3844,7 +3853,7 @@ public sealed partial class Lowering
             }
         }
 
-        return (free, captures, envPtrTemp);
+        return (free, captures, envPtrTemp, knownCaptureLabels);
     }
 
     // The enclosing function's lowering state snapshotted around a lambda body (restored by
@@ -3864,6 +3873,7 @@ public sealed partial class Lowering
         HashSet<int> ReuseResultTemps,
         HashSet<int> RuntimeManagedResultTemps,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
+        Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
         Dictionary<int, Expr> LetBindingValues);
 
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
@@ -3906,6 +3916,7 @@ public sealed partial class Lowering
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
+        var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
@@ -3914,13 +3925,15 @@ public sealed partial class Lowering
         _reuseResultTemps.Clear();
         _runtimeManagedResultTemps.Clear();
         _knownFunctionLabelsBySlot.Clear();
+        _knownFunctionLabelsByEnvIndex.Clear();
         _letBindingValues.Clear();
 
         return new LowerLambdaCoreFrame(
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
-            savedRuntimeManagedResultTemps, savedKnownFunctionLabelsBySlot, savedLetBindingValues);
+            savedRuntimeManagedResultTemps, savedKnownFunctionLabelsBySlot,
+            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -3964,7 +3977,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
+    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, IReadOnlyDictionary<int, string> knownCaptureLabels, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
     {
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
@@ -3986,6 +3999,11 @@ public sealed partial class Lowering
             else
             {
                 scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
+            }
+
+            if (knownCaptureLabels.TryGetValue(i, out string? knownLabel))
+            {
+                _knownFunctionLabelsByEnvIndex[i] = knownLabel;
             }
         }
         if (recursiveGroup is not null)
@@ -4480,12 +4498,19 @@ public sealed partial class Lowering
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         _runtimeManagedResultTemps.Clear();
         foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
-        _knownFunctionLabelsBySlot.Clear();
-        foreach (var kv in frame.KnownFunctionLabelsBySlot) _knownFunctionLabelsBySlot[kv.Key] = kv.Value;
+        RestoreKnownFunctionLabels(frame);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
         foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+    }
+
+    private void RestoreKnownFunctionLabels(LowerLambdaCoreFrame frame)
+    {
+        _knownFunctionLabelsBySlot.Clear();
+        foreach (var kv in frame.KnownFunctionLabelsBySlot) _knownFunctionLabelsBySlot[kv.Key] = kv.Value;
+        _knownFunctionLabelsByEnvIndex.Clear();
+        foreach (var kv in frame.KnownFunctionLabelsByEnvIndex) _knownFunctionLabelsByEnvIndex[kv.Key] = kv.Value;
     }
 
     private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
@@ -5496,19 +5521,27 @@ public sealed partial class Lowering
 
     private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
     {
-        label = "";
         if (expression is not Expr.Var variable)
         {
+            label = "";
             return false;
         }
 
-        if (_topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction))
+        return TryResolveKnownFunctionLabel(variable.Name, out label);
+    }
+
+    private bool TryResolveKnownFunctionLabel(string variableName, out string label)
+    {
+        label = "";
+
+        if (_topLevelFunctionRefs.TryGetValue(variableName, out var topLevelFunction))
         {
             label = topLevelFunction.Label;
             return true;
         }
 
-        int? slot = Lookup(variable.Name) switch
+        Binding? binding = Lookup(variableName);
+        int? slot = binding switch
         {
             Binding.Local local => local.Slot,
             Binding.Scheme scheme => scheme.Slot,
@@ -5517,6 +5550,18 @@ public sealed partial class Lowering
         if (slot is not null && _knownFunctionLabelsBySlot.TryGetValue(slot.Value, out string? slotLabel))
         {
             label = slotLabel;
+            return true;
+        }
+
+        int? envIndex = binding switch
+        {
+            Binding.Env env => env.Index,
+            Binding.EnvScheme envScheme => envScheme.Index,
+            _ => null,
+        };
+        if (envIndex is not null && _knownFunctionLabelsByEnvIndex.TryGetValue(envIndex.Value, out string? envLabel))
+        {
+            label = envLabel;
             return true;
         }
 
