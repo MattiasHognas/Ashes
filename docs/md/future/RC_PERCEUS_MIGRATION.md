@@ -251,10 +251,10 @@ arena-backed path lowers `DropReuse` as an identity operation, preserving today'
 behavior. The runtime-managed path now implements the Perceus contract: `DropReuse` retains a unique
 cell as its token, but decrements a shared cell and produces a null token; `AllocReusing` overwrites a
 non-null token or allocates a fresh RC cell for null. Native backend tests cover both outcomes.
-Lowering now emits runtime-managed tokens for an exhaustive, guard-free match over a live copy-only
-or supported self-recursive RC ADT whose scrutinee is dead. A same-sized runtime-manageable
-constructor consumes the token; otherwise the constructor allocates a fresh RC cell and the arm
-null-guards and releases its
+Lowering now emits runtime-managed tokens for an exhaustive, guard-free match over a live copy-only,
+supported self-recursive, nested-record, or narrow pointer-variant RC ADT whose scrutinee is dead. A
+same-sized runtime-manageable constructor consumes the token; otherwise the constructor allocates a
+fresh RC cell and the arm null-guards and releases its
 unconsumed token with constructor-specialized cleanup. Allocation-regime checks prevent a runtime
 token from being consumed by a same-sized arena-managed constructor. Before a unique recursive node
 is overwritten, constructor-specific lowering releases its dead old child ownership. A recursive
@@ -262,12 +262,17 @@ pattern binding used exactly once as a rebuilt field transfers that ownership wi
 non-null reuse path; the null/fresh path conditionally `dup`s it because the shared old node retains
 its ownership. The same cleanup and transfer rules now cover monomorphic single-constructor records
 whose pointer fields are recursively runtime-manageable records. Additional uses conservatively
-decline reuse. A tail-position match is eligible only when every arm consumes its token before the TCO
-jump, so cleanup cannot become unreachable. Native RSS slope measurements for recursive reuse with a
-transferred subtree and nested-record reuse at 2K, 10K, and 50K iterations plateau within the
-established budget. Recursive-accumulator IR tests assert the complete `DropReuse` to `AllocReusing`
-path, and representative constant-memory and shared-value reuse programs remain unchanged. Other
-pointer-bearing ADTs remain for later slices.
+decline reuse. Monomorphic multi-constructor variants may now join that boundary when every pointer
+field is a fresh runtime-manageable record; synthesized tag-dispatch droppers recursively release
+heterogeneous record children. Runtime ownership also propagates through an eligible match result, so
+a reused value cannot lose its eventual RC drop merely because it is loaded from the match result
+slot. A tail-position match is eligible only when every arm consumes its token before the TCO jump,
+so cleanup cannot become unreachable. Native RSS slope measurements for recursive reuse with a
+transferred subtree, nested-record reuse, and record-child pointer variants at 2K, 10K, and 50K
+iterations plateau within the established budget. Recursive-accumulator IR tests assert the complete
+`DropReuse` to `AllocReusing` path, and representative constant-memory and shared-value reuse programs
+remain unchanged. Generic, resource-bearing, mutually recursive, and other unsupported pointer ADTs
+remain for later slices.
 
 Deliverables:
 

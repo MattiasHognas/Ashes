@@ -434,6 +434,8 @@ public sealed partial class Lowering
     // managed and cannot consume the token merely because their layouts happen to match.
     private TypeRef.TNamedType? _runtimeRcReuseAllocationTypeRequested;
     private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
+    private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
+    private readonly HashSet<int> _runtimeManagedResultTemps = [];
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -2360,7 +2362,8 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                bool runtimeManaged = _inst.Any(instruction =>
+                bool runtimeManaged = _runtimeManagedResultTemps.Contains(valueTemp)
+                    || _inst.Any(instruction =>
                     (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
                         && adtTarget == valueTemp)
                     || (instruction is IrInst.AllocReusing { Target: var reusedTarget, RuntimeManaged: true }

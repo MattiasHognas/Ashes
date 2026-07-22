@@ -467,7 +467,8 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
     {
-        if (CanRuntimeManageRecursiveCopyAdt(named))
+        if (CanRuntimeManageRecursiveCopyAdt(named)
+            || CanRuntimeManageRecordChildAdt(named))
         {
             EmitRecursiveRuntimeManagedAdtDrop(valueTemp, named);
             return;
@@ -657,18 +658,15 @@ public sealed partial class Lowering
             for (int i = 0; i < constructor.Arity; i++)
             {
                 TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (fieldType is not TypeRef.TNamedType child
-                    || !string.Equals(child.Symbol.Name, named.Symbol.Name, StringComparison.Ordinal))
+                if (CanArenaReset(fieldType)
+                    || fieldType is not TypeRef.TNamedType child)
                 {
                     continue;
                 }
 
                 int childTemp = NewTemp();
                 Emit(new IrInst.GetAdtField(childTemp, valueTemp, i));
-                int envTemp = NewTemp();
-                Emit(new IrInst.LoadConstInt(envTemp, 0));
-                int childResultTemp = NewTemp();
-                Emit(new IrInst.CallKnown(childResultTemp, label, envTemp, childTemp));
+                EmitRuntimeManagedAdtDrop(childTemp, child);
             }
 
             Emit(new IrInst.Jump(sharedLabel));
@@ -1415,6 +1413,68 @@ public sealed partial class Lowering
                 {
                     return false;
                 }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// A narrow heterogeneous ADT boundary: monomorphic variants may own fresh runtime-managed
+    /// record children, but not strings, lists, resources, recursive variants, or generic payloads.
+    /// </summary>
+    private bool CanRuntimeManageRecordChildAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || symbol.Constructors.Count < 2
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool hasRecordChild = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                if (fieldType is not TypeRef.TNamedType child || !CanRuntimeManageAdt(child))
+                {
+                    return false;
+                }
+
+                hasRecordChild = true;
+            }
+        }
+
+        return hasRecordChild;
+    }
+
+    private bool CanRuntimeManageRecordChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageRecordChildAdt(resultType)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanArenaReset(fieldType) && arguments[i] is not Expr.RecordLit)
+            {
+                return false;
             }
         }
 

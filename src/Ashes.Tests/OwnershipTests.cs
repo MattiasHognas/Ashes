@@ -229,6 +229,31 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Fresh_record_child_variant_consumed_by_match_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Choice = | Empty | Full(Leaf, Int)\nlet choice = Full(Leaf(value = 40))(2) in match choice with | Empty -> Ashes.IO.print(0) | Full(_, value) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Unknown_record_child_variant_constructor_uses_heterogeneous_dropper()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Choice = | Empty | Full(Leaf, Int)\nlet rebuilt = let choice = Full(Leaf(value = 40))(2) in match choice with | Empty -> Empty | Full(child, value) -> Full(child)(value + 1) in Ashes.IO.print(1)");
+
+        IrFunction dropper = ir.Functions.Single(function =>
+            function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal));
+        dropper.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+        dropper.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Fully_fresh_recursive_user_adt_consumed_by_match_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");

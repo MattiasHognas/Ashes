@@ -232,6 +232,82 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
+    public void Pointer_variant_reuse_releases_old_record_child_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(_, bonus) -> Full(Leaf(value = bonus))(bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pointer_variant_reuse_transfers_record_child_with_null_fallback_dup()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(child, bonus) -> Full(child)(bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pointer_variant_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(child, bonus) ->
+                    let childValue = match child with
+                        | Leaf(value) -> value
+                    in Full(child)(bonus + childValue)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Runtime_reuse_declines_when_tail_arm_would_leave_token_unconsumed()
     {
         IrProgram program = LowerProgram("""

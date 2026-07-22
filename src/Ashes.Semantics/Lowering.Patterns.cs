@@ -44,14 +44,13 @@ public sealed partial class Lowering
         (string? reuseScrutineeName, TypeRef.TNamedType? runtimeReuseType) =
             GetMatchReuseScrutinee(match, valueType, savedTailPos);
 
-        if (TryPlanTagSwitch(match.Cases, out var switchPlan))
-        {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
-        }
-        else
-        {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
-        }
+        List<bool>? runtimeManagedResultArms = LowerMatchArms(
+            match, valueTemp, valueType, resultType, resultSlot,
+            endLabel,
+            noMatchLabel,
+            savedTailPos,
+            reuseScrutineeName,
+            runtimeReuseType);
 
         Emit(new IrInst.Label(noMatchLabel));
         EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
@@ -63,7 +62,47 @@ public sealed partial class Lowering
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        MarkRuntimeManagedMatchResult(resultTemp, runtimeManagedResultArms, match.Cases.Count);
         return (resultTemp, Prune(resultType));
+    }
+
+    private void MarkRuntimeManagedMatchResult(
+        int resultTemp,
+        IReadOnlyList<bool>? runtimeManagedResultArms,
+        int caseCount)
+    {
+        if (runtimeManagedResultArms is not null
+            && runtimeManagedResultArms.Count == caseCount
+            && runtimeManagedResultArms.All(runtimeManaged => runtimeManaged))
+        {
+            _runtimeManagedResultTemps.Add(resultTemp);
+        }
+    }
+
+    private List<bool>? LowerMatchArms(
+        Expr.Match match,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType)
+    {
+        List<bool>? runtimeManagedResultArms = runtimeReuseType is null ? null : [];
+        _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
+        if (TryPlanTagSwitch(match.Cases, out var switchPlan))
+        {
+            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
+        }
+        else
+        {
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
+        }
+        _runtimeManagedMatchResultArms.Pop();
+        return runtimeManagedResultArms;
     }
 
     private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(
@@ -94,8 +133,8 @@ public sealed partial class Lowering
     /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
     /// runtime-managed copy-only, nested-record, or supported self-recursive ADT, and the guard-free
     /// match must exhaustively consume it. Runtime-managed payload bindings may be dead or
-    /// transferred exactly once.
-    /// into the compatible rebuild. A same-sized constructor may consume the token; otherwise the
+    /// transferred exactly once into the compatible rebuild. A same-sized constructor may consume
+    /// the token; otherwise the
     /// arm releases a non-null token with constructor-specialized cleanup after evaluating its body.
     /// </summary>
     private bool TryGetRuntimeManagedReuseScrutinee(
@@ -118,6 +157,7 @@ public sealed partial class Lowering
             || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
             || (!CanRuntimeManageCopyAdt(matchedType)
                 && !CanRuntimeManageAdt(matchedType)
+                && !CanRuntimeManageRecordChildAdt(matchedType)
                 && !CanRuntimeManageRecursiveCopyAdt(matchedType))
             || match.Cases.Count != matchedType.Symbol.Constructors.Count)
         {
@@ -180,6 +220,7 @@ public sealed partial class Lowering
             && ReferenceEquals(resultType.Symbol, matchedType.Symbol)
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageAdt(resultType)
+                || CanRuntimeManageRecordChildAdt(resultType)
                 || CanRuntimeManageRecursiveCopyAdt(resultType)))
         {
             arguments = constructorArguments;
@@ -295,7 +336,9 @@ public sealed partial class Lowering
             if (CanArenaReset(fieldType)
                 || (CanRuntimeManageRecursiveCopyAdt(matchedType)
                     && IsFreshConstructorTree(rebuildArguments[i], matchedType.Symbol))
-                || (CanRuntimeManageAdt(matchedType) && rebuildArguments[i] is Expr.RecordLit)
+                || ((CanRuntimeManageAdt(matchedType)
+                        || CanRuntimeManageRecordChildAdt(matchedType))
+                    && rebuildArguments[i] is Expr.RecordLit)
                 || (rebuildArguments[i] is Expr.Var variable
                     && transferableBindings.Contains(variable.Name)))
             {
@@ -457,6 +500,17 @@ public sealed partial class Lowering
         {
             // Copy-out occurred: update the result slot with the freshly allocated copy.
             Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
+        }
+        if (_runtimeManagedMatchResultArms.TryPeek(out List<bool>? runtimeManagedArms)
+            && runtimeManagedArms is not null)
+        {
+            bool runtimeManaged = _runtimeManagedResultTemps.Contains(armFinalTemp)
+                || _inst.Any(instruction =>
+                    (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
+                        && adtTarget == armFinalTemp)
+                    || (instruction is IrInst.AllocReusing { Target: var reusedTarget, RuntimeManaged: true }
+                        && reusedTarget == armFinalTemp));
+            runtimeManagedArms.Add(runtimeManaged);
         }
         Emit(new IrInst.Jump(endLabel));
     }

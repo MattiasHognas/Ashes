@@ -590,6 +590,7 @@ public sealed partial class Lowering
                 || RuntimeReuseAllocationMatches(resultType))
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageAdt(resultType)
+                || CanRuntimeManageRecordChildAdt(resultType)
                 || CanRuntimeManageRecursiveCopyAdt(resultType));
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
@@ -671,6 +672,7 @@ public sealed partial class Lowering
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
                 || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
                     && (CanRuntimeManageCopyAdt(named)
+                        || CanRuntimeManageRecordChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
                         || (runtimeReuseRequest
                             && CanRuntimeReuseAdtConstructorApplication(
@@ -716,6 +718,7 @@ public sealed partial class Lowering
         TypeRef.TNamedType resultType)
     {
         if ((!CanRuntimeManageAdt(resultType)
+                && !CanRuntimeManageRecordChildAdt(resultType)
                 && !CanRuntimeManageRecursiveCopyAdt(resultType))
             || arguments.Count != constructor.Arity)
         {
@@ -728,7 +731,9 @@ public sealed partial class Lowering
             if (CanArenaReset(fieldType)
                 || (CanRuntimeManageRecursiveCopyAdt(resultType)
                     && IsFreshConstructorTree(arguments[i], resultType.Symbol))
-                || (CanRuntimeManageAdt(resultType) && arguments[i] is Expr.RecordLit))
+                || ((CanRuntimeManageAdt(resultType)
+                        || CanRuntimeManageRecordChildAdt(resultType))
+                    && arguments[i] is Expr.RecordLit))
             {
                 continue;
             }

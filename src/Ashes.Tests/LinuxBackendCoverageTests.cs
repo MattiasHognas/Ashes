@@ -308,7 +308,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+        IrProgram program = LowerProgram("""
             type Leaf =
                 | value: Int
 
@@ -316,12 +316,50 @@ public sealed class LinuxBackendCoverageTests
                 | child: Leaf
                 | bonus: Int
 
-            let node = Node(child = Leaf(value = 40), bonus = 2)
-            let rebuilt = match node with
-                | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
+            let rebuilt =
+                let node = Node(child = Leaf(value = 40), bonus = 2) in
+                match node with
+                    | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
             match rebuilt with
                 | Node(Leaf(value), bonus) -> Ashes.IO.print(value + bonus)
-            """)).ConfigureAwait(false);
+            """);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_pointer_variant_with_record_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let rebuilt =
+                let choice = Full(Leaf(value = 40))(2) in
+                match choice with
+                    | Empty -> Empty
+                    | Full(child, bonus) -> Full(child)(bonus + 1)
+            match rebuilt with
+                | Empty -> Ashes.IO.print(0)
+                | Full(Leaf(value), bonus) -> Ashes.IO.print(value + bonus)
+            """);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("43\n");
     }
@@ -1394,11 +1432,15 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> nestedRecordReuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcNestedRecordReuseMemoryProgram,
             outputPerIteration: 42).ConfigureAwait(false);
+        List<MemoryExecutionResult> pointerVariantReuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcPointerVariantReuseMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
+        AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
     }
 
     [Test]
@@ -3495,6 +3537,30 @@ public sealed class LinuxBackendCoverageTests
                     match node with
                         | Node(child, bonus) ->
                             let rebuilt = Node(child = child, bonus = bonus + 1) in
+                            loop(n - 1)(total + bonus + 40)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcPointerVariantReuseMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let choice = Full(Leaf(value = 40))(2) in
+                    match choice with
+                        | Empty ->
+                            let rebuilt = Empty in
+                            loop(n - 1)(total)
+                        | Full(child, bonus) ->
+                            let rebuilt = Full(child)(bonus + 1) in
                             loop(n - 1)(total + bonus + 40)
 
             Ashes.IO.print(loop({{iterations}})(0))
