@@ -5254,7 +5254,8 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let value = make("left")("right") in
+                    let alias = make in
+                    let value = alias("left")("right") in
                     let length = Ashes.Text.byteLength(value) in
                     loop(n - 1)(total + length)
 

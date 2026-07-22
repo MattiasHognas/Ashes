@@ -402,6 +402,9 @@ public sealed partial class Lowering
     // so a saturated direct call can reach the innermost function's result provenance without treating
     // an arbitrary closure value as known.
     private readonly Dictionary<string, string> _functionReturnedClosureLabels = new(StringComparer.Ordinal);
+    // Local slots that are exact aliases of a statically known function closure. Slot identity keeps
+    // shadowing precise while allowing a direct let alias to retain call-result ownership provenance.
+    private readonly Dictionary<int, string> _knownFunctionLabelsBySlot = new();
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -1864,6 +1867,11 @@ public sealed partial class Lowering
         if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1 && _lastLoweredLambdaEmptyEnv)
         {
             _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+        }
+        else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
+        {
+            _knownFunctionLabelsBySlot[slot] = aliasedFunctionLabel;
         }
 
         PushLetScope(let, slot, scheme);
@@ -3855,6 +3863,7 @@ public sealed partial class Lowering
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
         HashSet<int> RuntimeManagedResultTemps,
+        Dictionary<int, string> KnownFunctionLabelsBySlot,
         Dictionary<int, Expr> LetBindingValues);
 
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
@@ -3896,6 +3905,7 @@ public sealed partial class Lowering
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
@@ -3903,13 +3913,14 @@ public sealed partial class Lowering
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
         _runtimeManagedResultTemps.Clear();
+        _knownFunctionLabelsBySlot.Clear();
         _letBindingValues.Clear();
 
         return new LowerLambdaCoreFrame(
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
-            savedRuntimeManagedResultTemps, savedLetBindingValues);
+            savedRuntimeManagedResultTemps, savedKnownFunctionLabelsBySlot, savedLetBindingValues);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -4469,6 +4480,8 @@ public sealed partial class Lowering
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         _runtimeManagedResultTemps.Clear();
         foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
+        _knownFunctionLabelsBySlot.Clear();
+        foreach (var kv in frame.KnownFunctionLabelsBySlot) _knownFunctionLabelsBySlot[kv.Key] = kv.Value;
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
@@ -5463,13 +5476,11 @@ public sealed partial class Lowering
     private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
     {
         if (argumentCount == 0
-            || rootExpr is not Expr.Var variable
-            || !_topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction))
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel))
         {
             return false;
         }
 
-        string resultLabel = topLevelFunction.Label;
         for (int i = 1; i < argumentCount; i++)
         {
             if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
@@ -5481,6 +5492,35 @@ public sealed partial class Lowering
         }
 
         return _runtimeManagedFunctionResultLabels.Contains(resultLabel);
+    }
+
+    private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
+    {
+        label = "";
+        if (expression is not Expr.Var variable)
+        {
+            return false;
+        }
+
+        if (_topLevelFunctionRefs.TryGetValue(variable.Name, out var topLevelFunction))
+        {
+            label = topLevelFunction.Label;
+            return true;
+        }
+
+        int? slot = Lookup(variable.Name) switch
+        {
+            Binding.Local local => local.Slot,
+            Binding.Scheme scheme => scheme.Slot,
+            _ => null,
+        };
+        if (slot is not null && _knownFunctionLabelsBySlot.TryGetValue(slot.Value, out string? slotLabel))
+        {
+            label = slotLabel;
+            return true;
+        }
+
+        return false;
     }
 
     // Applies the collected arguments one closure call at a time, unifying each parameter and
