@@ -2686,9 +2686,7 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcClosureCaptureSafeBigIntProducer(Expr expression)
     {
-        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal);
+        return IsRuntimeRcBigIntProducer(expression);
     }
 
     private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)

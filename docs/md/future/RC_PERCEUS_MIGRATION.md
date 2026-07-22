@@ -412,7 +412,10 @@ transfers when its input is a fresh copy-element list: the result is RC-managed 
 restores its arena watermark to reclaim the temporary list spine. Borrowed/list-variable inputs remain
 arena-managed because their ownership is not transferred by this boundary.
 Scratch-free `BigInt.fromInt` results also transfer across a direct nested-let result and avoid
-`CopyOutArena`; arithmetic and parse-result escapes remain gated pending child/provenance support.
+`CopyOutArena`. BigInt arithmetic now applies the RC request only to the final result, leaving operand
+values and division scratch arena-scoped; direct `add`, `sub`, `mul`, `div`, and `mod` results can
+therefore transfer while the enclosing watermark reclaims that scratch. Parse-result escapes remain
+gated pending child/provenance support.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure

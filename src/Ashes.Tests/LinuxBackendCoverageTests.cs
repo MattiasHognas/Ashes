@@ -896,7 +896,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let value = Ashes.Number.BigInt.add(40N)(2N) in value");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -1017,9 +1017,11 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
 
-        IrProgram arithmeticProducer = LowerProgram(BuildRejectedRcOwnedBigIntClosureScratchProgram());
+        IrProgram arithmeticProducer = LowerProgram(BuildRuntimeRcOwnedBigIntClosureScratchProgram());
         AllInstructions(arithmeticProducer).Any(instruction =>
-            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(arithmeticProducer).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeFalse();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5558,8 +5560,9 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let addComparison =
-                        let value = Ashes.Number.BigInt.add(left)(right) in
-                        Ashes.Number.BigInt.compare(value)(value)
+                        let escaped =
+                            let value = Ashes.Number.BigInt.add(left)(right) in value
+                        in Ashes.Number.BigInt.compare(escaped)(escaped)
                     in let subComparison =
                         let value = Ashes.Number.BigInt.sub(left)(right) in
                         Ashes.Number.BigInt.compare(value)(value)
@@ -5768,7 +5771,7 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
-    private static string BuildRejectedRcOwnedBigIntClosureScratchProgram()
+    private static string BuildRuntimeRcOwnedBigIntClosureScratchProgram()
         => """
             let value = Ashes.Number.BigInt.add(1N)(2N) in
             let f =

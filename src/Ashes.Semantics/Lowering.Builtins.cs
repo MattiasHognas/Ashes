@@ -2662,12 +2662,11 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerBigIntBinary(Expr leftArg, Expr rightArg, string op, string display, bool resultIsInt)
     {
-        var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+        var (leftTemp, leftType, rightTemp, rightType) = LowerBigIntBinaryOperands(leftArg, rightArg, display);
         if (Prune(leftType) is TypeRef.TNever)
         {
             return (leftTemp, Prune(leftType));
         }
-        var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
         if (Prune(rightType) is TypeRef.TNever)
         {
             return (rightTemp, Prune(rightType));
@@ -2680,6 +2679,22 @@ public sealed partial class Lowering
         }
         Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op, _runtimeRcBigIntAllocationRequested));
         return (target, new TypeRef.TBigInt());
+    }
+
+    private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerBigIntBinaryOperands(Expr leftArg, Expr rightArg, string display)
+    {
+        bool savedRuntimeRequest = _runtimeRcBigIntAllocationRequested;
+        _runtimeRcBigIntAllocationRequested = false;
+        try
+        {
+            var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+            var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
+            return (leftTemp, leftType, rightTemp, rightType);
+        }
+        finally
+        {
+            _runtimeRcBigIntAllocationRequested = savedRuntimeRequest;
+        }
     }
 
     private (int, TypeRef) LowerBigIntOperand(Expr arg, string display)

@@ -222,6 +222,21 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_bigint_arithmetic_reclaims_operand_scratch()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let value = Ashes.Number.BigInt.add(Ashes.Number.BigInt.fromInt(40))(2N) in value) in Ashes.Number.BigInt.compare(escaped)(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BigIntBinary { Op: "add", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RestoreArenaState).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Direct_function_alias_preserves_runtime_result_ownership_provenance()
     {
         IrProgram ir = LowerProgram(
