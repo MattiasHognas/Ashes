@@ -19,11 +19,16 @@ internal static partial class LlvmCodegen
         return bytesRef;
     }
 
-    private static LlvmValueHandle EmitBytesSingleton(LlvmCodegenState state, LlvmValueHandle byteVal)
+    private static LlvmValueHandle EmitBytesSingleton(
+        LlvmCodegenState state,
+        LlvmValueHandle byteVal,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // Allocate 16 bytes: 8 for length + 8 aligned for 1 data byte.
-        LlvmValueHandle bytesRef = EmitAlloc(state, 16);
+        LlvmValueHandle bytesRef = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, 16, "rc_bytes_singleton")
+            : EmitAlloc(state, 16);
         StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_singleton_len");
         LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_singleton_data");
         // byteVal is an i64 (Ashes uniform representation); truncate to i8 for storage.

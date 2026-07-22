@@ -1724,7 +1724,10 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpListen tcpListen => StoreTemp(state, tcpListen.Target, EmitTcpListenAbiCall(state, LoadTemp(state, tcpListen.PortTemp))),
             IrInst.NetTcpAccept tcpAccept => StoreTemp(state, tcpAccept.Target, EmitTcpAcceptAbiCall(state, LoadTemp(state, tcpAccept.SocketTemp))),
             IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state)),
-            IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(state, LoadTemp(state, bytesSingleton.ByteTemp))),
+            IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(
+                state,
+                LoadTemp(state, bytesSingleton.ByteTemp),
+                bytesSingleton.RuntimeManaged)),
             IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
             IrInst.BytesGet bytesGet => StoreTemp(state, bytesGet.Target, EmitBytesGet(state, LoadTemp(state, bytesGet.BytesTemp), LoadTemp(state, bytesGet.IndexTemp))),
             IrInst.BytesIndexOf bytesIndexOf => StoreTemp(state, bytesIndexOf.Target, EmitBytesIndexOf(state, LoadTemp(state, bytesIndexOf.BytesTemp), LoadTemp(state, bytesIndexOf.NeedleTemp), LoadTemp(state, bytesIndexOf.FromTemp))),

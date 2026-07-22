@@ -297,7 +297,7 @@ public abstract record IrInst
 
     // Ashes.Byte operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
     public sealed record BytesEmpty(int Target) : IrInst;
-    public sealed record BytesSingleton(int Target, int ByteTemp) : IrInst;
+    public sealed record BytesSingleton(int Target, int ByteTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
     public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
     public sealed record BytesIndexOf(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;

@@ -3204,7 +3204,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesSingleton(target, byteTemp));
+        Emit(new IrInst.BytesSingleton(target, byteTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 

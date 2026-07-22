@@ -176,6 +176,28 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_byte_singleton_consumed_by_length_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.singleton(7u8) in Ashes.Byte.length(bytes)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Escaping_byte_singleton_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let bytes = Ashes.Byte.singleton(7u8) in bytes");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");
