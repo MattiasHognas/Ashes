@@ -588,7 +588,9 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
         bool runtimeManagedCandidate = (_runtimeRcCopyAdtAllocationRequested
                 || RuntimeReuseAllocationMatches(resultType))
-            && (CanRuntimeManageCopyAdt(resultType) || CanRuntimeManageRecursiveCopyAdt(resultType));
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageAdt(resultType)
+                || CanRuntimeManageRecursiveCopyAdt(resultType));
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
@@ -671,7 +673,7 @@ public sealed partial class Lowering
                     && (CanRuntimeManageCopyAdt(named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
                         || (runtimeReuseRequest
-                            && CanRuntimeReuseRecursiveAdtConstructorApplication(
+                            && CanRuntimeReuseAdtConstructorApplication(
                                 ctor,
                                 args,
                                 named)))));
@@ -708,12 +710,14 @@ public sealed partial class Lowering
         => _runtimeRcReuseAllocationTypeRequested is { } requested
             && ReferenceEquals(requested.Symbol, resultType.Symbol);
 
-    private bool CanRuntimeReuseRecursiveAdtConstructorApplication(
+    private bool CanRuntimeReuseAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType)
     {
-        if (!CanRuntimeManageRecursiveCopyAdt(resultType) || arguments.Count != constructor.Arity)
+        if ((!CanRuntimeManageAdt(resultType)
+                && !CanRuntimeManageRecursiveCopyAdt(resultType))
+            || arguments.Count != constructor.Arity)
         {
             return false;
         }
@@ -721,7 +725,10 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (CanArenaReset(fieldType) || IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            if (CanArenaReset(fieldType)
+                || (CanRuntimeManageRecursiveCopyAdt(resultType)
+                    && IsFreshConstructorTree(arguments[i], resultType.Symbol))
+                || (CanRuntimeManageAdt(resultType) && arguments[i] is Expr.RecordLit))
             {
                 continue;
             }

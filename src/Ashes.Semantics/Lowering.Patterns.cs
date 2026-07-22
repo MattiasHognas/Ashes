@@ -92,8 +92,9 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
-    /// runtime-managed copy-only or supported self-recursive ADT, and the guard-free match must
-    /// exhaustively consume it. Recursive payload bindings may be dead or transferred exactly once
+    /// runtime-managed copy-only, nested-record, or supported self-recursive ADT, and the guard-free
+    /// match must exhaustively consume it. Runtime-managed payload bindings may be dead or
+    /// transferred exactly once.
     /// into the compatible rebuild. A same-sized constructor may consume the token; otherwise the
     /// arm releases a non-null token with constructor-specialized cleanup after evaluating its body.
     /// </summary>
@@ -116,6 +117,7 @@ public sealed partial class Lowering
             || Prune(valueType) is not TypeRef.TNamedType matchedType
             || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
             || (!CanRuntimeManageCopyAdt(matchedType)
+                && !CanRuntimeManageAdt(matchedType)
                 && !CanRuntimeManageRecursiveCopyAdt(matchedType))
             || match.Cases.Count != matchedType.Symbol.Constructors.Count)
         {
@@ -149,8 +151,8 @@ public sealed partial class Lowering
         }
 
         if (!hasReusableArm
-            || (CanRuntimeManageRecursiveCopyAdt(matchedType)
-                && !RuntimeReuseRecursiveFieldsAreSafe(match.Cases, matchedType)))
+            || (!CanRuntimeManageCopyAdt(matchedType)
+                && !RuntimeReusePointerFieldsAreSafe(match.Cases, matchedType)))
         {
             return false;
         }
@@ -177,6 +179,7 @@ public sealed partial class Lowering
             && constructor.Arity == fieldCount
             && ReferenceEquals(resultType.Symbol, matchedType.Symbol)
             && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageAdt(resultType)
                 || CanRuntimeManageRecursiveCopyAdt(resultType)))
         {
             arguments = constructorArguments;
@@ -202,57 +205,104 @@ public sealed partial class Lowering
         return false;
     }
 
-    private bool RuntimeReuseRecursiveFieldsAreSafe(
+    private bool RuntimeReusePointerFieldsAreSafe(
         IReadOnlyList<MatchCase> cases,
         TypeRef.TNamedType matchedType)
     {
         foreach (MatchCase matchCase in cases)
         {
-            if (matchCase.Pattern is not Pattern.Constructor pattern
-                || !TryGetConstructorSymbol(pattern, out ConstructorSymbol constructor))
+            if (!RuntimeReusePointerFieldsAreSafe(matchCase, matchedType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool RuntimeReusePointerFieldsAreSafe(
+        MatchCase matchCase,
+        TypeRef.TNamedType matchedType)
+    {
+        if (matchCase.Pattern is not Pattern.Constructor pattern
+            || !TryGetConstructorSymbol(pattern, out ConstructorSymbol constructor))
+        {
+            return true;
+        }
+
+        TryFindRuntimeReuseConstructorArguments(
+            matchCase.Body,
+            constructor.Arity,
+            matchedType,
+            out IReadOnlyList<Expr> rebuildArguments);
+
+        HashSet<string> transferableBindings = new(StringComparer.Ordinal);
+        for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                constructor,
+                i,
+                matchedType));
+            if (CanArenaReset(fieldType)
+                || fieldType is not TypeRef.TNamedType)
             {
                 continue;
             }
 
-            TryFindRuntimeReuseConstructorArguments(
-                matchCase.Body,
-                constructor.Arity,
-                matchedType,
-                out IReadOnlyList<Expr> rebuildArguments);
-
-            for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
+            if (pattern.Patterns[i] is not Pattern.Var binding
+                || _constructorSymbols.ContainsKey(binding.Name))
             {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(
-                    constructor,
-                    i,
-                    matchedType));
-                if (fieldType is not TypeRef.TNamedType child
-                    || !string.Equals(child.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (pattern.Patterns[i] is not Pattern.Var binding
-                    || _constructorSymbols.ContainsKey(binding.Name))
-                {
-                    if (MatchCaseReferencesAnyBinding(
-                        matchCase,
-                        PatternBindings(pattern.Patterns[i])))
-                    {
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                int references = CountNameOccurrences(matchCase.Body, binding.Name);
-                int transfers = rebuildArguments.Count(argument => argument is Expr.Var variable
-                    && string.Equals(variable.Name, binding.Name, StringComparison.Ordinal));
-                if (references != transfers || transfers > 1)
+                if (MatchCaseReferencesAnyBinding(
+                    matchCase,
+                    PatternBindings(pattern.Patterns[i])))
                 {
                     return false;
                 }
+
+                continue;
             }
+
+            int references = CountNameOccurrences(matchCase.Body, binding.Name);
+            int transfers = rebuildArguments.Count(argument => argument is Expr.Var variable
+                && string.Equals(variable.Name, binding.Name, StringComparison.Ordinal));
+            if (references != transfers || transfers > 1)
+            {
+                return false;
+            }
+
+            transferableBindings.Add(binding.Name);
+        }
+
+        return RuntimeReuseRebuildPointerFieldsAreSafe(
+            constructor,
+            rebuildArguments,
+            matchedType,
+            transferableBindings);
+    }
+
+    private bool RuntimeReuseRebuildPointerFieldsAreSafe(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> rebuildArguments,
+        TypeRef.TNamedType matchedType,
+        IReadOnlySet<string> transferableBindings)
+    {
+        for (int i = 0; i < Math.Min(rebuildArguments.Count, constructor.Arity); i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                constructor,
+                i,
+                matchedType));
+            if (CanArenaReset(fieldType)
+                || (CanRuntimeManageRecursiveCopyAdt(matchedType)
+                    && IsFreshConstructorTree(rebuildArguments[i], matchedType.Symbol))
+                || (CanRuntimeManageAdt(matchedType) && rebuildArguments[i] is Expr.RecordLit)
+                || (rebuildArguments[i] is Expr.Var variable
+                    && transferableBindings.Contains(variable.Name)))
+            {
+                continue;
+            }
+
+            return false;
         }
 
         return true;
@@ -737,8 +787,8 @@ public sealed partial class Lowering
                     constructor,
                     i,
                     runtimeType));
-                if (fieldType is TypeRef.TNamedType child
-                    && string.Equals(child.Symbol.Name, runtimeType.Symbol.Name, StringComparison.Ordinal)
+                if (!CanArenaReset(fieldType)
+                    && fieldType is TypeRef.TNamedType
                     && constructorPattern.Patterns[i] is Pattern.Var binding
                     && !_constructorSymbols.ContainsKey(binding.Name))
                 {

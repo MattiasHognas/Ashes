@@ -159,6 +159,79 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
+    public void Nested_record_reuse_releases_old_child_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) -> Node(child = Leaf(value = bonus), bonus = bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_record_reuse_transfers_child_with_null_fallback_dup()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_record_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) ->
+                    let childValue = match child with
+                        | Leaf(value) -> value
+                    in Node(child = child, bonus = bonus + childValue)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Runtime_reuse_declines_when_tail_arm_would_leave_token_unconsumed()
     {
         IrProgram program = LowerProgram("""

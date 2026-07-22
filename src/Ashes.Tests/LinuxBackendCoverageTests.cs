@@ -301,6 +301,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_reuses_nested_record_with_transferred_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            let rebuilt = match node with
+                | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
+            match rebuilt with
+                | Node(Leaf(value), bonus) -> Ashes.IO.print(value + bonus)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1365,10 +1391,14 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedRecordReuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNestedRecordReuseMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
+        AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
     }
 
     [Test]
@@ -3445,6 +3475,27 @@ public sealed class LinuxBackendCoverageTests
                         | Node(left, value, _) ->
                             let rebuilt = Node(left)(value + 1)(Leaf) in
                             loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcNestedRecordReuseMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let node = Node(child = Leaf(value = 40), bonus = 2) in
+                    match node with
+                        | Node(child, bonus) ->
+                            let rebuilt = Node(child = child, bonus = bonus + 1) in
+                            loop(n - 1)(total + bonus + 40)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

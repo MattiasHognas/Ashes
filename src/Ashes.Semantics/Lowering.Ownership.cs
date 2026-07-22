@@ -474,7 +474,7 @@ public sealed partial class Lowering
         }
 
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
-        var childFields = new List<(int Index, TypeRef.TNamedType Type)>();
+        List<(int Index, TypeRef.TNamedType Type)> childFields = [];
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
@@ -509,18 +509,17 @@ public sealed partial class Lowering
         ConstructorSymbol constructor,
         bool knownUnique)
     {
-        List<int> recursiveFields = [];
+        List<(int Index, TypeRef.TNamedType Type)> childFields = [];
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (fieldType is TypeRef.TNamedType child
-                && string.Equals(child.Symbol.Name, named.Symbol.Name, StringComparison.Ordinal))
+            if (!CanArenaReset(fieldType) && fieldType is TypeRef.TNamedType child)
             {
-                recursiveFields.Add(i);
+                childFields.Add((i, child));
             }
         }
 
-        if (recursiveFields.Count == 0)
+        if (childFields.Count == 0)
         {
             Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
             return;
@@ -534,11 +533,11 @@ public sealed partial class Lowering
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
         }
 
-        foreach (int fieldIndex in recursiveFields)
+        foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
-            EmitRecursiveRuntimeManagedAdtDrop(childTemp, named);
+            EmitRuntimeManagedAdtDrop(childTemp, childType);
         }
 
         if (!knownUnique)
@@ -559,22 +558,22 @@ public sealed partial class Lowering
             return;
         }
 
-        List<int> recursiveFields = [];
+        var childFields = new List<(int Index, TypeRef.TNamedType Type)>();
         for (int i = 0; i < cleanup.Constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(
                 cleanup.Constructor,
                 i,
                 cleanup.Type));
-            if (fieldType is TypeRef.TNamedType child
-                && string.Equals(child.Symbol.Name, cleanup.Type.Symbol.Name, StringComparison.Ordinal)
+            if (!CanArenaReset(fieldType)
+                && fieldType is TypeRef.TNamedType child
                 && (transferredFields is null || !transferredFields.Contains(i)))
             {
-                recursiveFields.Add(i);
+                childFields.Add((i, child));
             }
         }
 
-        if (recursiveFields.Count == 0)
+        if (childFields.Count == 0)
         {
             return;
         }
@@ -585,11 +584,11 @@ public sealed partial class Lowering
         Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
         string endLabel = NewLabel("reuse_children_released");
         Emit(new IrInst.JumpIfFalse(hasTokenTemp, endLabel));
-        foreach (int fieldIndex in recursiveFields)
+        foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, tokenTemp, fieldIndex));
-            EmitRecursiveRuntimeManagedAdtDrop(childTemp, cleanup.Type);
+            EmitRuntimeManagedAdtDrop(childTemp, childType);
         }
         Emit(new IrInst.Label(endLabel));
     }

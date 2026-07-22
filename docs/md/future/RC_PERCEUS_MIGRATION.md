@@ -260,12 +260,14 @@ token from being consumed by a same-sized arena-managed constructor. Before a un
 is overwritten, constructor-specific lowering releases its dead old child ownership. A recursive
 pattern binding used exactly once as a rebuilt field transfers that ownership without a `dup` on the
 non-null reuse path; the null/fresh path conditionally `dup`s it because the shared old node retains
-its ownership. Additional uses conservatively decline reuse. A tail-position match is eligible only
-when every arm consumes its token before the TCO jump, so cleanup cannot become unreachable. Native
-RSS slope measurements for recursive reuse with a transferred subtree at 2K, 10K, and 50K iterations
-plateau within the established budget. Recursive-accumulator IR tests assert the complete `DropReuse`
-to `AllocReusing` path, and representative constant-memory and shared-value reuse programs remain
-unchanged. Other pointer-bearing ADTs remain for later slices.
+its ownership. The same cleanup and transfer rules now cover monomorphic single-constructor records
+whose pointer fields are recursively runtime-manageable records. Additional uses conservatively
+decline reuse. A tail-position match is eligible only when every arm consumes its token before the TCO
+jump, so cleanup cannot become unreachable. Native RSS slope measurements for recursive reuse with a
+transferred subtree and nested-record reuse at 2K, 10K, and 50K iterations plateau within the
+established budget. Recursive-accumulator IR tests assert the complete `DropReuse` to `AllocReusing`
+path, and representative constant-memory and shared-value reuse programs remain unchanged. Other
+pointer-bearing ADTs remain for later slices.
 
 Deliverables:
 

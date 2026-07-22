@@ -1906,7 +1906,9 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        if (let.Value is Expr.RecordLit && IsImmediateCopyUseOfRecord(let.Body, let.Name))
+        if (let.Value is Expr.RecordLit
+            && (IsImmediateCopyUseOfRecord(let.Body, let.Name)
+                || IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)))
         {
             bool savedRequest = _runtimeRcRecordAllocationRequested;
             _runtimeRcRecordAllocationRequested = true;
@@ -2091,7 +2093,7 @@ public sealed partial class Lowering
                 out _,
                 out TypeRef.TNamedType? resultType)
             && resultType is not null
-            && RuntimeReuseRecursiveFieldsAreSafe(cases, resultType);
+            && RuntimeReusePointerFieldsAreSafe(cases, resultType);
     }
 
     private static bool MatchCaseReferencesAnyBinding(MatchCase matchCase, IEnumerable<string> bindings)
@@ -2209,6 +2211,39 @@ public sealed partial class Lowering
         out List<Expr>? arguments,
         out TypeRef.TNamedType? resultType)
     {
+        if (expression is Expr.RecordLit record
+            && _constructorSymbols.TryGetValue(record.TypeName, out constructor)
+            && constructor is not null
+            && constructor.DeclaringSyntax.FieldNames.Count == constructor.Arity)
+        {
+            Dictionary<string, Expr> providedFields = new(StringComparer.Ordinal);
+            foreach ((string name, Expr value) in record.Fields)
+            {
+                if (!providedFields.TryAdd(name, value))
+                {
+                    arguments = null;
+                    resultType = null;
+                    return false;
+                }
+            }
+
+            arguments = [];
+            foreach (string fieldName in constructor.DeclaringSyntax.FieldNames)
+            {
+                if (!providedFields.TryGetValue(fieldName, out Expr? value))
+                {
+                    arguments = null;
+                    resultType = null;
+                    return false;
+                }
+
+                arguments.Add(value);
+            }
+
+            resultType = InstantiateAdtType(constructor);
+            return arguments.Count == record.Fields.Count;
+        }
+
         arguments = [];
         Expr root = CollectCallArgs(expression, arguments);
         if (root is Expr.Var variable
@@ -2246,6 +2281,15 @@ public sealed partial class Lowering
         }
 
         return true;
+    }
+
+    private static bool IsImmediateRuntimeRecordMatchUse(Expr body, string recordName)
+    {
+        return body is Expr.Match(Expr.Var value, [MatchCase matchCase], _)
+            && string.Equals(value.Name, recordName, StringComparison.Ordinal)
+            && matchCase.Pattern is Pattern.Constructor
+            && matchCase.Guard is null
+            && !ExprReferencesName(matchCase.Body, recordName, shadowed: false);
     }
 
     /// <summary>
