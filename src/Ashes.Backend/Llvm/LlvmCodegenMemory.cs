@@ -2569,10 +2569,20 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, finishBlock);
     }
 
-    private static LlvmValueHandle EmitFloatToString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
-        => EmitFloatToDecimalString(state, value, LlvmApi.ConstInt(state.I64, 6, 0), trimTrailingZeros: true, prefix);
+    private static LlvmValueHandle EmitFloatToString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        string prefix,
+        bool runtimeManaged = false)
+        => EmitFloatToDecimalString(state, value, LlvmApi.ConstInt(state.I64, 6, 0),
+            trimTrailingZeros: true, prefix, runtimeManaged);
 
-    private static LlvmValueHandle EmitFloatToFixedString(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle decimals, string prefix)
+    private static LlvmValueHandle EmitFloatToFixedString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        LlvmValueHandle decimals,
+        string prefix,
+        bool runtimeManaged = false)
     {
         // Fixed-precision formatting keeps trailing zeros. decimals is clamped to [0, 18] so the
         // 10^decimals fraction scale stays representable in signed i64.
@@ -2583,10 +2593,16 @@ internal static partial class LlvmCodegen
         LlvmValueHandle clampedLow = LlvmApi.BuildSelect(builder, belowZero, zero, decimals, prefix + "_clamped_low");
         LlvmValueHandle aboveMax = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, clampedLow, maxDecimals, prefix + "_above_max");
         LlvmValueHandle clamped = LlvmApi.BuildSelect(builder, aboveMax, maxDecimals, clampedLow, prefix + "_clamped");
-        return EmitFloatToDecimalString(state, value, clamped, trimTrailingZeros: false, prefix);
+        return EmitFloatToDecimalString(state, value, clamped, trimTrailingZeros: false, prefix, runtimeManaged);
     }
 
-    private static LlvmValueHandle EmitFloatToDecimalString(LlvmCodegenState state, LlvmValueHandle value, LlvmValueHandle decimals, bool trimTrailingZeros, string prefix)
+    private static LlvmValueHandle EmitFloatToDecimalString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        LlvmValueHandle decimals,
+        bool trimTrailingZeros,
+        string prefix,
+        bool runtimeManaged)
     {
         // Caller must ensure 0 <= decimals <= 18.
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -2613,11 +2629,12 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, fixedBlock);
         LlvmValueHandle fixedUnsigned = EmitUnsignedFloatToDecimalString(state, absValue, decimals, trimTrailingZeros, prefix + "_fixed_unsigned");
-        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned), resultSlot);
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, fixedUnsigned, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
 
         EmitFloatToDecimalStringScientific(state, absValue, decimals, trimTrailingZeros, signText, resultSlot, normalizedSlot, exponentSlot,
-            scientificInitBlock, scientificLoopCheckBlock, scientificLoopBodyBlock, scientificFinishBlock, mergeBlock, prefix);
+            scientificInitBlock, scientificLoopCheckBlock, scientificLoopBodyBlock, scientificFinishBlock, mergeBlock, prefix,
+            runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, prefix + "_result_value");
@@ -2642,7 +2659,8 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle scientificLoopBodyBlock,
         LlvmBasicBlockHandle scientificFinishBlock,
         LlvmBasicBlockHandle mergeBlock,
-        string prefix)
+        string prefix,
+        bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, scientificInitBlock);
@@ -2668,7 +2686,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle exponentText = EmitNonNegativeIntToString(state, exponentFinal, prefix + "_scientific_exponent");
         LlvmValueHandle scientificResult = EmitStringConcat(state, mantissaText, EmitHeapStringLiteral(state, "e+"));
         scientificResult = EmitStringConcat(state, scientificResult, exponentText);
-        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, scientificResult), resultSlot);
+        LlvmApi.BuildStore(builder, EmitStringConcat(state, signText, scientificResult, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, mergeBlock);
     }
 

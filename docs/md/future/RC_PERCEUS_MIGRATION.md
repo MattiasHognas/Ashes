@@ -309,6 +309,8 @@ The fixed-width `Ashes.Byte.u16Le`, `u32Le`, and `u64Le` encoders use the same b
 boundary. Fresh `Ashes.Text.fromInt` results now use that boundary as well, while its internal stack
 digit buffer remains transient; `Ashes.Text.toHex` uses the same stack-buffer-to-RC-result path.
 Fresh `Ashes.Text.asciiUpper` and `asciiLower` copies use the same direct-consumer RC boundary.
+`Ashes.Text.fromFloat` and `formatFloat` keep their intermediate fragments as arena scratch but place
+their one final result on the direct-consumer RC path in both fixed and scientific notation.
 Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
 accumulators, literals, views, other builtin-produced strings and Bytes values, and BigInts remain
 arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.

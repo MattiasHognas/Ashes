@@ -613,6 +613,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_float_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcFloatTextProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFormatFloat { RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromFloat(12.25) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("12.25\n12.250\n1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1847,6 +1870,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC ASCII case text", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_float_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcFloatTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC float text", samples);
     }
 
     [Test]
@@ -4026,6 +4063,26 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcFloatTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcFloatTextProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFormatFloat { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 13) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4359,6 +4416,27 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let ignoredUpper = emitUpper(0) in
                     let ignoredLower = emitLower(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcFloatTextProgram(int iterations)
+        => $$"""
+            let emitFloat unit =
+                let text = Ashes.Text.fromFloat(12.25) in
+                Ashes.IO.print(text)
+
+            let emitFixed unit =
+                let text = Ashes.Text.formatFloat(12.25)(3) in
+                Ashes.IO.print(text)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignoredFloat = emitFloat(0) in
+                    let ignoredFixed = emitFixed(0) in
                     loop(n - 1)
 
             let ignored = loop({{iterations}})

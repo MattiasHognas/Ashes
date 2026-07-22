@@ -753,7 +753,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromFloat(target, valueTemp));
+        Emit(new IrInst.TextFromFloat(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -802,7 +802,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp));
+        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 

@@ -2018,6 +2018,22 @@ public sealed partial class Lowering
             return true;
         }
 
+        if (expression is Expr.Call(Expr.QualifiedVar floatProducer, _)
+            && string.Equals(ResolveModuleAlias(floatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(floatProducer.Name, "fromFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar formatProducer, _),
+                _)
+            && string.Equals(ResolveModuleAlias(formatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(formatProducer.Name, "formatFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         if (expression is Expr.Call(Expr.QualifiedVar caseProducer, _)
             && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
             && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
@@ -2644,6 +2660,8 @@ public sealed partial class Lowering
                 IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

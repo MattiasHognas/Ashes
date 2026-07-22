@@ -1701,8 +1701,8 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, textFromInt.ValueTemp),
                 "text_from_int",
                 textFromInt.RuntimeManaged)),
-            IrInst.TextFromFloat textFromFloat => StoreTemp(state, textFromFloat.Target, EmitFloatToString(state, LoadTempAsFloat(state, textFromFloat.ValueTemp), "text_from_float")),
-            IrInst.TextFormatFloat textFormatFloat => StoreTemp(state, textFormatFloat.Target, EmitFloatToFixedString(state, LoadTempAsFloat(state, textFormatFloat.ValueTemp), LoadTemp(state, textFormatFloat.DecimalsTemp), "text_format_float")),
+            IrInst.TextFromFloat textFromFloat => EmitTextFromFloatInstruction(state, textFromFloat),
+            IrInst.TextFormatFloat textFormatFloat => EmitTextFormatFloatInstruction(state, textFormatFloat),
             IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(
                 state,
                 LoadTemp(state, textToHex.ValueTemp),
@@ -1722,6 +1722,25 @@ internal static partial class LlvmCodegen
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
             _ => (bool?)null,
         };
+    }
+
+    private static bool EmitTextFromFloatInstruction(LlvmCodegenState state, IrInst.TextFromFloat instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitFloatToString(
+            state,
+            LoadTempAsFloat(state, instruction.ValueTemp),
+            "text_from_float",
+            instruction.RuntimeManaged));
+    }
+
+    private static bool EmitTextFormatFloatInstruction(LlvmCodegenState state, IrInst.TextFormatFloat instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitFloatToFixedString(
+            state,
+            LoadTempAsFloat(state, instruction.ValueTemp),
+            LoadTemp(state, instruction.DecimalsTemp),
+            "text_format_float",
+            instruction.RuntimeManaged));
     }
 
     private static bool? EmitInstructionGroup2(LlvmCodegenState state, IrInst instruction)

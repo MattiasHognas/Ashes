@@ -281,8 +281,8 @@ public abstract record IrInst
     public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
     public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;
     public sealed record TextFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
-    public sealed record TextFromFloat(int Target, int ValueTemp) : IrInst;
-    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp) : IrInst;
+    public sealed record TextFromFloat(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record TextToHex(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
     // ASCII-only case map (a-z <-> A-Z by flipping bit 0x20); multibyte UTF-8 (>= 0x80) untouched.
     public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper, bool RuntimeManaged = false) : IrInst;
