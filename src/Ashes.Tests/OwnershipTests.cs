@@ -164,12 +164,34 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Existing_child_binding_keeps_parent_and_child_on_arena()
+    public void Existing_runtime_record_child_moves_into_parent_without_dup()
     {
         IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet leaf = Leaf(value = 40) in let node = Node(child = leaf, bonus = 2) in Ashes.IO.print(node.bonus)");
 
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
+    public void Existing_runtime_record_child_is_duped_when_original_remains_live()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet leaf = Leaf(value = 40) in let node = Node(child = leaf, bonus = 2) in Ashes.IO.print(node.bonus + leaf.value)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(3);
+    }
+
+    [Test]
+    public void Existing_runtime_record_child_moves_into_pointer_variant()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Choice = | Empty | Full(Leaf, Int)\nlet leaf = Leaf(value = 40) in let choice = Full(leaf)(2) in match choice with | Empty -> Ashes.IO.print(0) | Full(_, bonus) -> Ashes.IO.print(bonus)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]

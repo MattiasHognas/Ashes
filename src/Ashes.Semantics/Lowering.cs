@@ -1908,20 +1908,9 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        if (let.Value is Expr.RecordLit
-            && (IsImmediateCopyUseOfRecord(let.Body, let.Name)
-                || IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)))
+        if (TryLowerRuntimeRcRecordLet(let, out (int Temp, TypeRef Type) loweredRecord))
         {
-            bool savedRequest = _runtimeRcRecordAllocationRequested;
-            _runtimeRcRecordAllocationRequested = true;
-            try
-            {
-                return LowerExpr(let.Value);
-            }
-            finally
-            {
-                _runtimeRcRecordAllocationRequested = savedRequest;
-            }
+            return loweredRecord;
         }
 
         if (TryLowerRuntimeRcListLet(let, out (int Temp, TypeRef Type) loweredList))
@@ -1935,6 +1924,36 @@ public sealed partial class Lowering
         }
 
         return LowerExpr(let.Value);
+    }
+
+    private bool TryLowerRuntimeRcRecordLet(
+        Expr.Let let,
+        out (int Temp, TypeRef Type) lowered)
+    {
+        if (let.Value is not Expr.RecordLit
+            || (!IsImmediateCopyUseOfRecord(let.Body, let.Name)
+                && !IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)
+                && !IsRuntimeManagedRecordChildConsumedByImmediateParent(let.Name, let.Body)))
+        {
+            lowered = default;
+            return false;
+        }
+
+        TryCollectRuntimeRcRecordChildBindings(let.Value, let.Body, out Dictionary<string, bool>? childBindings);
+        bool savedRequest = _runtimeRcRecordAllocationRequested;
+        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
+        _runtimeRcRecordAllocationRequested = true;
+        _runtimeRcAdtChildBindings = childBindings;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcRecordAllocationRequested = savedRequest;
+            _runtimeRcAdtChildBindings = savedChildBindings;
+        }
     }
 
     private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -1952,7 +1971,10 @@ public sealed partial class Lowering
         Dictionary<string, bool>? childBindings = null;
         if (immediateMatch)
         {
-            TryCollectRuntimeRcAdtChildBindings(let.Name, let.Value, let.Body, out childBindings);
+            if (!TryCollectRuntimeRcAdtChildBindings(let.Name, let.Value, let.Body, out childBindings))
+            {
+                TryCollectRuntimeRcRecordChildBindings(let.Value, let.Body, out childBindings);
+            }
         }
 
         bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
@@ -2165,6 +2187,55 @@ public sealed partial class Lowering
         return consumed;
     }
 
+    private bool IsRuntimeManagedRecordChildConsumedByImmediateParent(string name, Expr body)
+    {
+        if (body is not Expr.Let parent
+            || !TryDescribeConstructorExpression(
+                parent.Value,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? parentType)
+            || constructor is null
+            || arguments is null
+            || parentType is null
+            || (!CanRuntimeManageAdt(parentType)
+                && !CanRuntimeManageRecordChildAdt(parentType))
+            || !IsImmediateRuntimeManagedParentUse(parent))
+        {
+            return false;
+        }
+
+        bool consumed = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, parentType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (arguments[i] is Expr.Var variable
+                && string.Equals(variable.Name, name, StringComparison.Ordinal))
+            {
+                consumed = true;
+            }
+            else if (arguments[i] is not Expr.RecordLit)
+            {
+                return false;
+            }
+        }
+
+        return consumed;
+    }
+
+    private bool IsImmediateRuntimeManagedParentUse(Expr.Let parent)
+    {
+        return parent.Value is Expr.RecordLit
+            ? IsImmediateCopyUseOfRecord(parent.Body, parent.Name)
+                || IsImmediateRuntimeRecordMatchUse(parent.Body, parent.Name)
+            : IsImmediateSafeAdtMatchUse(parent.Name, parent.Value, parent.Body);
+    }
+
     private bool TryCollectRuntimeRcAdtChildBindings(
         string name,
         Expr value,
@@ -2201,6 +2272,57 @@ public sealed partial class Lowering
             }
 
             collected[variable.Name] = ExprReferencesName(body, variable.Name, shadowed: false);
+        }
+
+        bindings = collected.Count == 0 ? null : collected;
+        return collected.Count > 0;
+    }
+
+    private bool TryCollectRuntimeRcRecordChildBindings(
+        Expr value,
+        Expr body,
+        out Dictionary<string, bool>? bindings)
+    {
+        bindings = null;
+        if (!TryDescribeConstructorExpression(
+                value,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? resultType)
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || (!CanRuntimeManageAdt(resultType)
+                && !CanRuntimeManageRecordChildAdt(resultType)))
+        {
+            return false;
+        }
+
+        Dictionary<string, bool> collected = new(StringComparer.Ordinal);
+        HashSet<string> referencedNames = FreeVars(body, []);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType) || arguments[i] is Expr.RecordLit)
+            {
+                continue;
+            }
+
+            if (fieldType is not TypeRef.TNamedType child
+                || arguments[i] is not Expr.Var variable
+                || collected.ContainsKey(variable.Name)
+                || LookupOwnedValue(variable.Name) is not
+                {
+                    RuntimeManaged: true,
+                    IsDropped: false,
+                    Type: TypeRef.TNamedType ownedChild,
+                }
+                || !ReferenceEquals(ownedChild.Symbol, child.Symbol))
+            {
+                return false;
+            }
+
+            collected[variable.Name] = referencedNames.Contains(variable.Name);
         }
 
         bindings = collected.Count == 0 ? null : collected;

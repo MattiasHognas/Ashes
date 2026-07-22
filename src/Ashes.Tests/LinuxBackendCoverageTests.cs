@@ -365,6 +365,34 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_shares_existing_runtime_record_child_with_parent()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let leaf = Leaf(value = 40)
+            let node = Node(child = leaf, bonus = 2)
+            Ashes.IO.print(node.bonus + leaf.value)
+            """);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1435,12 +1463,16 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> pointerVariantReuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcPointerVariantReuseMemoryProgram,
             outputPerIteration: 42).ConfigureAwait(false);
+        List<MemoryExecutionResult> sharedRecordChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcSharedRecordChildMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
         AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
+        AssertMemoryPlateaus("runtime-RC shared record child", sharedRecordChild);
     }
 
     [Test]
@@ -3562,6 +3594,25 @@ public sealed class LinuxBackendCoverageTests
                         | Full(child, bonus) ->
                             let rebuilt = Full(child)(bonus + 1) in
                             loop(n - 1)(total + bonus + 40)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcSharedRecordChildMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let leaf = Leaf(value = 40) in
+                    let node = Node(child = leaf, bonus = 2) in
+                    loop(n - 1)(total + node.bonus + leaf.value)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

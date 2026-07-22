@@ -1472,7 +1472,10 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (!CanArenaReset(fieldType) && arguments[i] is not Expr.RecordLit)
+            if (!CanArenaReset(fieldType)
+                && (fieldType is not TypeRef.TNamedType child
+                    || (arguments[i] is not Expr.RecordLit
+                        && !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol))))
             {
                 return false;
             }
@@ -1599,8 +1602,8 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Owned child fields must be fresh nested record literals. This prevents an RC parent from
-    /// capturing an arena pointer or taking ownership of an independently tracked value.
+    /// Owned child fields must be fresh nested record literals or explicitly tracked runtime-managed
+    /// bindings. Existing bindings are moved or duplicated by <see cref="PrepareRuntimeManagedAdtChildArguments"/>.
     /// </summary>
     private bool CanRuntimeManageConstructorApplication(
         ConstructorSymbol constructor,
@@ -1615,7 +1618,10 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (!CanArenaReset(fieldType) && arguments[i] is not Expr.RecordLit)
+            if (!CanArenaReset(fieldType)
+                && (fieldType is not TypeRef.TNamedType child
+                    || (arguments[i] is not Expr.RecordLit
+                        && !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol))))
             {
                 return false;
             }

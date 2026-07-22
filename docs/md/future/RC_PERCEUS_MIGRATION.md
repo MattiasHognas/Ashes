@@ -266,13 +266,16 @@ decline reuse. Monomorphic multi-constructor variants may now join that boundary
 field is a fresh runtime-manageable record; synthesized tag-dispatch droppers recursively release
 heterogeneous record children. Runtime ownership also propagates through an eligible match result, so
 a reused value cannot lose its eventual RC drop merely because it is loaded from the match result
-slot. A tail-position match is eligible only when every arm consumes its token before the TCO jump,
-so cleanup cannot become unreachable. Native RSS slope measurements for recursive reuse with a
-transferred subtree, nested-record reuse, and record-child pointer variants at 2K, 10K, and 50K
-iterations plateau within the established budget. Recursive-accumulator IR tests assert the complete
-`DropReuse` to `AllocReusing` path, and representative constant-memory and shared-value reuse programs
-remain unchanged. Generic, resource-bearing, mutually recursive, and other unsupported pointer ADTs
-remain for later slices.
+slot. Direct parent construction may now move an existing runtime-managed record child into a nested
+record or pointer variant; when the original child binding remains live, the parent receives exactly
+one `RcDup` instead. Binder-aware receiver analysis covers both ordinary variable uses and
+`record.field` reads. A tail-position match is eligible only when every arm consumes its token before
+the TCO jump, so cleanup cannot become unreachable. Native RSS slope measurements for recursive reuse
+with a transferred subtree, nested-record reuse, record-child pointer variants, and shared existing
+record children at 2K, 10K, and 50K iterations plateau within the established budget.
+Recursive-accumulator IR tests assert the complete `DropReuse` to `AllocReusing` path, and
+representative constant-memory and shared-value reuse programs remain unchanged. Generic,
+resource-bearing, mutually recursive, and other unsupported pointer ADTs remain for later slices.
 
 Deliverables:
 
