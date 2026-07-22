@@ -1733,7 +1733,7 @@ internal static partial class LlvmCodegen
             IrInst.BytesIndexOf bytesIndexOf => StoreTemp(state, bytesIndexOf.Target, EmitBytesIndexOf(state, LoadTemp(state, bytesIndexOf.BytesTemp), LoadTemp(state, bytesIndexOf.NeedleTemp), LoadTemp(state, bytesIndexOf.FromTemp))),
             IrInst.BytesCompare bytesCompare => StoreTemp(state, bytesCompare.Target, EmitBytesCompare(state, LoadTemp(state, bytesCompare.LeftTemp), LoadTemp(state, bytesCompare.RightTemp))),
             IrInst.BytesScanHash bytesScanHash => StoreTemp(state, bytesScanHash.Target, EmitBytesScanHash(state, LoadTemp(state, bytesScanHash.BytesTemp), LoadTemp(state, bytesScanHash.NeedleTemp), LoadTemp(state, bytesScanHash.FromTemp))),
-            IrInst.BytesSubText bytesSubText => StoreTemp(state, bytesSubText.Target, EmitBytesSubText(state, LoadTemp(state, bytesSubText.BytesTemp), LoadTemp(state, bytesSubText.StartTemp), LoadTemp(state, bytesSubText.LenTemp))),
+            IrInst.BytesSubText bytesSubText => EmitBytesSubTextInstruction(state, bytesSubText),
             IrInst.BytesSubView bytesSubView => StoreTemp(state, bytesSubView.Target, EmitBytesSubView(state, LoadTemp(state, bytesSubView.BytesTemp), LoadTemp(state, bytesSubView.StartTemp), LoadTemp(state, bytesSubView.LenTemp))),
             IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(
                 state,
@@ -1771,6 +1771,16 @@ internal static partial class LlvmCodegen
             IrInst.RcDrop => false,
             _ => (bool?)null,
         };
+    }
+
+    private static bool EmitBytesSubTextInstruction(LlvmCodegenState state, IrInst.BytesSubText instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitBytesSubText(
+            state,
+            LoadTemp(state, instruction.BytesTemp),
+            LoadTemp(state, instruction.StartTemp),
+            LoadTemp(state, instruction.LenTemp),
+            instruction.RuntimeManaged));
     }
 
     private static bool? EmitInstructionGroup3(LlvmCodegenState state, IrInst instruction)

@@ -1910,7 +1910,7 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        if (let.Value is Expr.Add && IsImmediateRuntimeStringUse(let.Body, let.Name))
+        if (IsRuntimeRcStringProducer(let.Value) && IsImmediateRuntimeStringUse(let.Body, let.Name))
         {
             bool savedRequest = _runtimeRcStringAllocationRequested;
             _runtimeRcStringAllocationRequested = true;
@@ -2001,6 +2001,22 @@ public sealed partial class Lowering
                 && string.Equals(qualified.Name, "length", StringComparison.Ordinal))
             || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
                 && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
+    }
+
+    private bool IsRuntimeRcStringProducer(Expr expression)
+    {
+        if (expression is Expr.Add)
+        {
+            return true;
+        }
+
+        return expression is Expr.Call(
+                Expr.Call(
+                    Expr.Call(Expr.QualifiedVar qualified, _),
+                    _),
+                _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "subText", StringComparison.Ordinal);
     }
 
     private bool IsRuntimeRcBytesProducer(Expr expression)
@@ -2608,6 +2624,7 @@ public sealed partial class Lowering
                 IrInst.AllocReusing { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

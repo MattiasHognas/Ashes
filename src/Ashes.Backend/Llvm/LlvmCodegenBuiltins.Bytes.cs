@@ -452,7 +452,12 @@ internal static partial class LlvmCodegen
         return EmitStringView(state, srcStart, viewLen, "bytes_subv");
     }
 
-    private static LlvmValueHandle EmitBytesSubText(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle startVal, LlvmValueHandle lenVal)
+    private static LlvmValueHandle EmitBytesSubText(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesRef,
+        LlvmValueHandle startVal,
+        LlvmValueHandle lenVal,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcLen = LoadStringLength(state, bytesRef, "bytes_sub_srclen");
@@ -472,7 +477,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle copyLen = LlvmApi.BuildSelect(builder, lenBig, avail, len0, "bytes_sub_copylen");
 
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, copyLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_sub_total");
-        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
+        LlvmValueHandle destRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_subtext")
+            : EmitAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, copyLen, "bytes_sub_len");
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_sub_dest");
         LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_sub_src");

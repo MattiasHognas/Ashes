@@ -249,6 +249,28 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Local_byte_subtext_consumed_by_print_uses_runtime_rc()
+    {
+        IrProgram ir = LowerProgram("let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in Ashes.IO.print(text)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Escaping_byte_subtext_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in text");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");
