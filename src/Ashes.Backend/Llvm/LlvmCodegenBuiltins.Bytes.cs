@@ -474,23 +474,14 @@ internal static partial class LlvmCodegen
         return destRef;
     }
 
-    private static LlvmValueHandle EmitBytesAppend(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef)
+    private static LlvmValueHandle EmitBytesAppend(
+        LlvmCodegenState state,
+        LlvmValueHandle leftRef,
+        LlvmValueHandle rightRef,
+        bool runtimeManaged = false)
     {
-        // Identical to EmitStringConcat — same heap layout.
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "bytes_app_left_len");
-        LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "bytes_app_right_len");
-        LlvmValueHandle totalLen = LlvmApi.BuildAdd(builder, leftLen, rightLen, "bytes_app_total_len");
-        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_app_total_bytes");
-        LlvmValueHandle destRef = EmitAllocDynamic(state, totalBytes);
-        StoreMemory(state, destRef, 0, totalLen, "bytes_app_len");
-        LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_app_dest");
-        LlvmValueHandle leftData = GetStringBytesPointer(state, leftRef, "bytes_app_left");
-        LlvmValueHandle rightData = GetStringBytesPointer(state, rightRef, "bytes_app_right");
-        EmitCopyBytes(state, destData, leftData, leftLen, "bytes_app_copy_left");
-        LlvmValueHandle rightDest = LlvmApi.BuildGEP2(builder, state.I8, destData, [leftLen], "bytes_app_right_dest");
-        EmitCopyBytes(state, rightDest, rightData, rightLen, "bytes_app_copy_right");
-        return destRef;
+        // Bytes and String share the same {length, data} payload layout.
+        return EmitStringConcat(state, leftRef, rightRef, runtimeManaged);
     }
 
     private static LlvmValueHandle EmitBytesAppendByte(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle byteVal)

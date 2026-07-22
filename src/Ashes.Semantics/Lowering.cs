@@ -437,6 +437,7 @@ public sealed partial class Lowering
     private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
     private readonly HashSet<int> _runtimeManagedResultTemps = [];
     private bool _runtimeRcStringAllocationRequested;
+    private bool _runtimeRcBytesAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1923,6 +1924,20 @@ public sealed partial class Lowering
             }
         }
 
+        if (IsBytesAppendExpression(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
+        {
+            bool savedRequest = _runtimeRcBytesAllocationRequested;
+            _runtimeRcBytesAllocationRequested = true;
+            try
+            {
+                return LowerExpr(let.Value);
+            }
+            finally
+            {
+                _runtimeRcBytesAllocationRequested = savedRequest;
+            }
+        }
+
         if (TryLowerRuntimeRcRecordLet(let, out (int Temp, TypeRef Type) loweredRecord))
         {
             return loweredRecord;
@@ -1986,6 +2001,29 @@ public sealed partial class Lowering
                 && string.Equals(qualified.Name, "length", StringComparison.Ordinal))
             || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
                 && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
+    }
+
+    private bool IsBytesAppendExpression(Expr expression)
+    {
+        return expression is Expr.Call(
+            Expr.Call(Expr.QualifiedVar qualified, _),
+            _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "append", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
+    {
+        if (body is not Expr.Call(
+                Expr.QualifiedVar qualified,
+                Expr.Var argument)
+            || !string.Equals(argument.Name, bindingName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
     }
 
     private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -2525,7 +2563,9 @@ public sealed partial class Lowering
                     || (instruction is IrInst.Alloc { Target: var allocationTarget, RuntimeManaged: true }
                         && allocationTarget == valueTemp)
                     || (instruction is IrInst.ConcatStr { Target: var concatTarget, RuntimeManaged: true }
-                        && concatTarget == valueTemp));
+                        && concatTarget == valueTemp)
+                    || (instruction is IrInst.BytesAppend { Target: var bytesTarget, RuntimeManaged: true }
+                        && bytesTarget == valueTemp));
                 ConstructorSymbol? runtimeConstructor = null;
                 if (runtimeManaged
                     && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))

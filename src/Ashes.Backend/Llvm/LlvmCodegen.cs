@@ -1732,7 +1732,11 @@ internal static partial class LlvmCodegen
             IrInst.BytesScanHash bytesScanHash => StoreTemp(state, bytesScanHash.Target, EmitBytesScanHash(state, LoadTemp(state, bytesScanHash.BytesTemp), LoadTemp(state, bytesScanHash.NeedleTemp), LoadTemp(state, bytesScanHash.FromTemp))),
             IrInst.BytesSubText bytesSubText => StoreTemp(state, bytesSubText.Target, EmitBytesSubText(state, LoadTemp(state, bytesSubText.BytesTemp), LoadTemp(state, bytesSubText.StartTemp), LoadTemp(state, bytesSubText.LenTemp))),
             IrInst.BytesSubView bytesSubView => StoreTemp(state, bytesSubView.Target, EmitBytesSubView(state, LoadTemp(state, bytesSubView.BytesTemp), LoadTemp(state, bytesSubView.StartTemp), LoadTemp(state, bytesSubView.LenTemp))),
-            IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
+            IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(
+                state,
+                LoadTemp(state, bytesAppend.LeftTemp),
+                LoadTemp(state, bytesAppend.RightTemp),
+                bytesAppend.RuntimeManaged)),
             IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
             IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
             IrInst.BytesHash bytesHash => StoreTemp(state, bytesHash.Target, EmitBytesHash(state, LoadTemp(state, bytesHash.BytesTemp))),
