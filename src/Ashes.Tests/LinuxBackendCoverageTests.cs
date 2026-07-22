@@ -992,6 +992,34 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_release_nested_runtime_rc_records_at_tco_back_edges()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let node = Node(child = Leaf(value = 40), bonus = 2)
+                    in loop(n - 1)(total + node.bonus)
+
+            Ashes.IO.print(loop(2000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("4000\n");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         AssertLinuxLlvmCompiles(LowerExpression("Ashes.IO.panic(\"boom\")"));

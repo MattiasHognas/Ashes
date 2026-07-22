@@ -3567,10 +3567,10 @@ public sealed partial class Lowering
 
         LowerCallTcoMarkMovedArgs(collectedArgs);
 
-        // Close iteration-local resources (open files/sockets/processes bound this iteration)
-        // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
-        // after the jump as dead code and the resource leaks every iteration.
-        EmitTcoBackEdgeResourceDrops(tco);
+        // Release iteration-local resources and runtime-RC values before the arena reset and
+        // back-edge jump. Without this the lexical drop is emitted after the jump as dead code and
+        // leaks every iteration.
+        EmitTcoBackEdgeOwnedDrops(tco);
 
         // Arena reset: restore heap state to loop-iteration watermark before
         // jumping back.
@@ -3612,7 +3612,7 @@ public sealed partial class Lowering
     // An owned value passed by name as a self-call argument moves to the next iteration —
     // it must not be dropped at this back-edge (a resource would be closed, a closure with a
     // dropper would close its captured resource). Mark it consumed so
-    // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
+    // EmitTcoBackEdgeOwnedDrops (and the dead-code arm Drops after the jump) skip it.
     private void LowerCallTcoMarkMovedArgs(List<Expr> collectedArgs)
     {
         foreach (var arg in collectedArgs)

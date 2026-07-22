@@ -173,6 +173,17 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Nested_runtime_record_is_dropped_before_tco_back_edge()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet recursive loop n total = if n <= 0 then total else let node = Node(child = Leaf(value = 40), bonus = 2) in loop(n - 1)(total + node.bonus)\nAshes.IO.print(loop(3)(0))");
+
+        IrFunction loop = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }));
+        int backEdge = loop.Instructions.FindLastIndex(inst => inst is IrInst.Jump);
+        backEdge.ShouldBeGreaterThan(0);
+        loop.Instructions.Take(backEdge).Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
     public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");

@@ -269,14 +269,14 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Emits Drop instructions for every alive resource in the ownership scopes pushed since the
+    /// Emits drops for every alive resource or runtime-RC value in ownership scopes pushed since the
     /// TCO loop body started (those above <see cref="TcoContext.OwnershipDepthAtEntry"/>). Called at
     /// the tail-call back-edge so iteration-local resources are closed before the jump back, instead
     /// of leaking via the per-arm Drop that the jump turns into dead code. Resources moved into the
     /// next iteration (passed as a self-call argument) are marked dropped by the caller and skipped.
     /// Accumulators are loop parameters, not ownership-scope entries, so they are unaffected.
     /// </summary>
-    private void EmitTcoBackEdgeResourceDrops(TcoContext tco)
+    private void EmitTcoBackEdgeOwnedDrops(TcoContext tco)
     {
         if (tco.OwnershipDepthAtEntry < 0)
         {
@@ -294,10 +294,14 @@ public sealed partial class Lowering
 
             foreach (var (_, info) in scope)
             {
-                // Resources/resource-bearing aggregates close their handles; closures ("Function")
-                // may carry a resource dropper (closure+24) set when they captured-and-escaped a
-                // resource (Gap B), so drop them too — it's a cheap no-op for ordinary closures.
-                if ((info.IsResource || info.IsResourceBearing || string.Equals(info.TypeName, "Function", StringComparison.Ordinal)) && !info.IsDropped)
+                // Runtime-managed values must release before the jump because their lexical drop is
+                // unreachable on this path. Resources and resource-bearing values retain the same
+                // deterministic cleanup behavior.
+                if ((info.RuntimeManaged
+                        || info.IsResource
+                        || info.IsResourceBearing
+                        || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+                    && !info.IsDropped)
                 {
                     EmitOwnedValueDrop(info);
                     info.ReleaseKind = ResourceReleaseKind.AutoDropped;

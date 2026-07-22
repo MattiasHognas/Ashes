@@ -652,10 +652,7 @@ public sealed partial class Lowering
         var resultType = InstantiateAdtType(ctor);
         bool runtimeManagedCandidate = _runtimeRcRecordAllocationRequested
             && resultType is TypeRef.TNamedType named
-            && CanRuntimeManageConstructorApplication(ctor, args, named)
-            // Recursive drops currently stay together at lexical scope. A TCO back-edge can bypass
-            // that scope exit, so nested RC trees remain arena-managed in recursive loop bodies.
-            && (!HasRuntimeManagedChildFields(named) || _tcoCtx is null);
+            && CanRuntimeManageConstructorApplication(ctor, args, named);
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
