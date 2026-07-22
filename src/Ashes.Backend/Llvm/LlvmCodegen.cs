@@ -1723,7 +1723,7 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, bigIntToString.ValueTemp),
                 bigIntToString.RuntimeManaged)),
             IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp), bigIntToInt.RuntimeManaged)),
-            IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
+            IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp), bigIntFromString.RuntimeManaged)),
             IrInst.BigIntBinary bigIntBinary => EmitBigIntBinaryInstruction(state, bigIntBinary),
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
             _ => (bool?)null,

@@ -640,6 +640,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_compared_bigint_parse_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntParseResultProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseBigInt(\"123\") in parsed");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_manages_immediately_consumed_text_to_hex()
     {
         if (!OperatingSystem.IsLinux())
@@ -2130,6 +2155,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt.toInt Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_parse_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntParseResultMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt parse Result", samples);
     }
 
     [Test]
@@ -4487,6 +4526,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntParseResultMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntParseResultProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5034,6 +5090,26 @@ public sealed class LinuxBackendCoverageTests
                             | Ok(number) -> number
                             | Error(_message) -> 0
                     in loop(n - 1)(total + converted)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntParseResultProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let valid =
+                        let result = Ashes.Text.parseBigInt("123") in
+                        match result with
+                            | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
+                            | Error(_message) -> 1
+                    in let invalid =
+                        let result = Ashes.Text.parseBigInt("bad") in
+                        match result with
+                            | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
+                            | Error(_message) -> 1
+                    in loop(n - 1)(total + valid + invalid)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

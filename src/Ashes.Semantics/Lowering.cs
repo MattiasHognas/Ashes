@@ -441,6 +441,7 @@ public sealed partial class Lowering
     private bool _runtimeRcBigIntAllocationRequested;
     private bool _runtimeRcClosureAllocationRequested;
     private bool _runtimeRcScalarResultAllocationRequested;
+    private bool _runtimeRcBigIntParseResultAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1923,6 +1924,11 @@ public sealed partial class Lowering
             return loweredResult;
         }
 
+        if (TryLowerRuntimeRcBigIntParseResultLet(let, out (int Temp, TypeRef Type) loweredBigIntResult))
+        {
+            return loweredBigIntResult;
+        }
+
         if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
         {
             bool savedRequest = _runtimeRcBytesAllocationRequested;
@@ -2018,6 +2024,97 @@ public sealed partial class Lowering
                     || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal))
             || string.Equals(module, "Ashes.Number.BigInt", StringComparison.Ordinal)
                 && string.Equals(qualified.Name, "toInt", StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcBigIntParseResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcBigIntParseResultProducer(let.Value)
+            || !IsImmediateRuntimeBigIntParseMatchUse(let.Name, let.Body))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBigIntParseResultAllocationRequested;
+        _runtimeRcBigIntParseResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBigIntParseResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcBigIntParseResultProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "parseBigInt", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBigIntParseMatchUse(string bindingName, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(bindingName, body)
+            || body is not Expr.Match(_, IReadOnlyList<MatchCase> cases, _))
+        {
+            return false;
+        }
+
+        bool sawOk = false;
+        bool sawError = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null
+                || matchCase.Pattern is not Pattern.Constructor constructor
+                || constructor.Patterns.Count != 1)
+            {
+                return false;
+            }
+
+            if (string.Equals(constructor.Name, "Ok", StringComparison.Ordinal)
+                && constructor.Patterns[0] is Pattern.Var okBinding)
+            {
+                sawOk = IsDirectBigIntCompareUse(matchCase.Body, okBinding.Name);
+                if (!sawOk)
+                {
+                    return false;
+                }
+            }
+            else if (string.Equals(constructor.Name, "Error", StringComparison.Ordinal))
+            {
+                sawError = matchCase.Body is Expr.IntLit;
+                if (!sawError)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        return sawOk && sawError;
+    }
+
+    private bool IsDirectBigIntCompareUse(Expr expression, string bindingName)
+    {
+        if (expression is not Expr.Call(
+                Expr.Call(Expr.QualifiedVar qualified, Expr left),
+                Expr right)
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            || !string.Equals(qualified.Name, "compare", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return left is Expr.Var leftVariable
+                && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
+            || right is Expr.Var rightVariable
+                && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -2927,6 +3024,7 @@ public sealed partial class Lowering
                 IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntFromString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,

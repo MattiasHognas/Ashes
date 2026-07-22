@@ -481,6 +481,12 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
     {
+        if (IsRuntimeManagedBigIntParseResult(named))
+        {
+            EmitRuntimeManagedBigIntParseResultDrop(valueTemp, named);
+            return;
+        }
+
         if (CanRuntimeManageRecursiveCopyAdt(named)
             || CanRuntimeManageRecordChildAdt(named))
         {
@@ -515,6 +521,38 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(sharedLabel));
         }
 
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private static bool IsRuntimeManagedBigIntParseResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Result", StringComparison.Ordinal)
+            && named.TypeArgs.Count == 2
+            && named.TypeArgs[0] is TypeRef.TStr
+            && named.TypeArgs[1] is TypeRef.TBigInt;
+    }
+
+    private void EmitRuntimeManagedBigIntParseResultDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol okConstructor = named.Symbol.Constructors.First(constructor =>
+            string.Equals(constructor.Name, "Ok", StringComparison.Ordinal));
+        string sharedLabel = NewLabel("rc_drop_bigint_result_shared");
+        string okLabel = NewLabel("rc_drop_bigint_result_ok");
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.SwitchTag(
+            tagTemp,
+            [(GetConstructorTag(okConstructor), okLabel)],
+            sharedLabel));
+        Emit(new IrInst.Label(okLabel));
+        int childTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(childTemp, valueTemp, 0));
+        Emit(new IrInst.RcDrop(childTemp, "BigInt", RuntimeManaged: true));
+        Emit(new IrInst.Label(sharedLabel));
         Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 

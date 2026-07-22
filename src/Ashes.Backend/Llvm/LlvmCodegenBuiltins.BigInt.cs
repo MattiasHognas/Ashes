@@ -226,14 +226,17 @@ internal static partial class LlvmCodegen
     }
 
     // Str -> Result(Str, BigInt): parse decimal; Err on empty / non-digit input.
-    private static LlvmValueHandle EmitBigIntFromString(LlvmCodegenState state, LlvmValueHandle strRef)
+    private static LlvmValueHandle EmitBigIntFromString(LlvmCodegenState state, LlvmValueHandle strRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, strRef, "bi_parse_len");
         LlvmValueHandle bytesPtr = GetStringBytesPointer(state, strRef, "bi_parse_bytes");
         // result magnitude fits in len + 2 words (header + limbs + slack).
         LlvmValueHandle words = LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 2, 0), "bi_parse_words");
-        LlvmValueHandle outAddr = EmitAllocDynamic(state, LlvmApi.BuildMul(builder, words, LlvmApi.ConstInt(state.I64, 8, 0), "bi_parse_sz"));
+        LlvmValueHandle outBytes = LlvmApi.BuildMul(builder, words, LlvmApi.ConstInt(state.I64, 8, 0), "bi_parse_sz");
+        LlvmValueHandle outAddr = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, outBytes, "rc_bigint_parse")
+            : EmitAllocDynamic(state, outBytes);
 
         LlvmTypeHandle fnType = LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I64, state.I8Ptr]);
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, "bignum_from_decimal");
@@ -247,11 +250,15 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, success, LlvmApi.ConstInt(state.I64, 0, 0), "bi_parse_succeeded"), okBlk, errBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, okBlk);
-        LlvmApi.BuildStore(builder, EmitResultOk(state, outAddr), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, outAddr, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, doneBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, errBlk);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "invalid decimal integer")), resultSlot);
+        if (runtimeManaged)
+        {
+            EmitRuntimeRcDrop(state, outAddr);
+        }
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "invalid decimal integer"), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, doneBlk);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlk);

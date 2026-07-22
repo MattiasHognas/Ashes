@@ -323,6 +323,9 @@ payloads are interned read-only literals, so dropping the container must not rec
 escaping parse results remain arena-managed.
 Immediately matched `Ashes.Number.BigInt.toInt` results use the same container-only boundary because
 their success payload is also inline and their error payload is an interned read-only literal.
+`Ashes.Text.parseBigInt` uses a narrower immediate-match boundary: the `Ok(BigInt)` payload must be
+consumed directly by `BigInt.compare`. Both the `Result` cell and successful BigInt payload are then
+RC-managed; failed-parse output scratch is released before returning the RC-managed error container.
 The first closure slice RC-manages both closure cells and non-empty environments when every capture
 is a copy value and an `if`-selected closure is called immediately. Direct lambdas keep their existing
 stack allocation, while escaping closures and closures with runtime-managed or resource-bearing
