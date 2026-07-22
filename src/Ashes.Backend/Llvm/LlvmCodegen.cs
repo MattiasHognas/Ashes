@@ -77,6 +77,9 @@ internal static partial class LlvmCodegen
     // variable-size blobs (interleaving corrupts the in-place reuse rebuild). Lazily initialized (both 0).
     private const ulong TcbBlobCursorOffset = 40;
     private const ulong TcbBlobEndOffset = 48;
+    // Head of this thread's released runtime-RC block list. A released block stores its next pointer
+    // in the reference-count word while retaining its allocation-size word for exact-size reuse.
+    private const ulong TcbRcFreeListOffset = 56;
     private const int MainTcbSizeBytes = 512;
     private const long LinuxErrWouldBlock = -11;
     private const long LinuxErrAlready = -114;
@@ -735,6 +738,7 @@ internal static partial class LlvmCodegen
             LlvmValueHandle blobEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_blob_end");
             LlvmApi.SetLinkage(blobEndGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(blobEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            LlvmValueHandle rcFreeListGlobal = AddZeroInitializedI64Global(target, i64, "__ashes_rc_free_list");
 
             // arm64 has no spare thread register (linux-x64 uses GS, win-x64 uses the TEB), so its
             // per-thread arena is real ELF TLS: mark the six arena cursors thread-local and LLVM
@@ -745,7 +749,7 @@ internal static partial class LlvmCodegen
             // win-x64 keeps these as ordinary globals (overridden by the TEB-TCB slots).
             if (arm64UsesTlsArena)
             {
-                foreach (var g in new[] { heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal, blobCursorGlobal, blobEndGlobal })
+                foreach (LlvmValueHandle g in new[] { heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal, blobCursorGlobal, blobEndGlobal, rcFreeListGlobal })
                 {
                     LlvmApi.SetThreadLocal(g, 1);
                 }
@@ -761,6 +765,17 @@ internal static partial class LlvmCodegen
             LlvmApi.SetInitializer(capabilityGlobal, LlvmApi.ConstInt(i64, 0, 0));
         }
         return new EmitProgramModuleArena(heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal);
+    }
+
+    private static LlvmValueHandle AddZeroInitializedI64Global(
+        LlvmTargetContext target,
+        LlvmTypeHandle i64,
+        string name)
+    {
+        LlvmValueHandle global = LlvmApi.AddGlobal(target.Module, i64, name);
+        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(global, LlvmApi.ConstInt(i64, 0, 0));
+        return global;
     }
 
     private static void EmitProgramModuleImportsStdio(
@@ -1437,6 +1452,7 @@ internal static partial class LlvmCodegen
             // at the per-thread TCB just below, so the (null) lookup result here is overwritten.
             BlobCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_cursor"),
             BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
+            RcFreeListSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_free_list"),
             UseRunQueueScheduler = useRunQueueScheduler,
         };
 
@@ -1568,6 +1584,7 @@ internal static partial class LlvmCodegen
         (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
         (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
         (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
+        LlvmValueHandle rcFreeListSlot = BuildLinuxTcbSlot(state, tcbBase, TcbRcFreeListOffset, "rc_free_list");
         return state with
         {
             HeapCursorSlot = cursorSlot,
@@ -1576,6 +1593,7 @@ internal static partial class LlvmCodegen
             ToSpaceEndSlot = toEndSlot,
             BlobCursorSlot = blobCursorSlot,
             BlobEndSlot = blobEndSlot,
+            RcFreeListSlot = rcFreeListSlot,
         };
     }
 
@@ -2105,6 +2123,7 @@ internal static partial class LlvmCodegen
         public LlvmValueHandle ToSpaceEndSlot { get; init; }
         public LlvmValueHandle BlobCursorSlot { get; init; }
         public LlvmValueHandle BlobEndSlot { get; init; }
+        public LlvmValueHandle RcFreeListSlot { get; init; }
 
         // When true, RunTask drives the top-level task through the run-queue scheduler
         // (ashes_scheduler_run) instead of the legacy recursive driver. Set for every async program

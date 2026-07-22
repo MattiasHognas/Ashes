@@ -208,7 +208,7 @@ Validation:
 
 ### Phase 4: Drop Specialization And Fusion
 
-Current status: in progress. The first optimizer slice fuses adjacent runtime-managed `dup`/`drop`
+Current status: complete. The first optimizer slice fuses adjacent runtime-managed `dup`/`drop`
 pairs, including ownership-transfer pairs, while preserving pairs separated by operations such as
 `is_unique` that can observe the temporary reference-count change. Statically known recursive ADT
 root constructors now use constructor-specialized drops: nullary cells drop directly, while known
@@ -222,11 +222,14 @@ match diamond as well as Ashes' curried stdlib `List.map` shape. The latter stil
 lifetime markers because polymorphic function-owned lists have not entered the runtime-RC family;
 the test makes that boundary explicit rather than implying partial generic RC support. A native
 linux-x64 CPU-time comparison now measures the optimized shared-list RC path against the same IR
-converted to arena allocation. The initial measurement exposes a remaining Phase 4 blocker: 500K
-iterations take about 1.5 seconds of process CPU on the RC path while the arena path is below the
-timer's 10 ms resolution, because every RC cell currently performs an OS map/unmap. A fixed ceiling
-guards the measured regression while the next slice adds a bounded reusable RC allocator; the
-relative performance validation below is not satisfied yet.
+converted to arena allocation. That comparison initially exposed a severe blocker: 500K iterations
+took about 1.5 seconds of process CPU because every RC cell performed an OS map/unmap. Runtime RC now
+uses an exact-size per-thread free list: a last-reference drop links the released block through its
+header, and allocation reuses a matching block before requesting more OS memory. Retained blocks are
+bounded by the thread's high-water demand for each statically occurring allocation size. Parallel
+workers publish and unmap their cached blocks before their TCB is destroyed. Mixed-size reuse,
+memory-slope, structured-parallel, and arena-relative CPU regressions pass, so the temporary fixed
+performance ceiling has been replaced by the relative Phase 4 gate.
 
 Deliverables:
 

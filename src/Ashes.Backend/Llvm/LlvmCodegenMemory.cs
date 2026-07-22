@@ -120,7 +120,7 @@ internal static partial class LlvmCodegen
     {
         int allocationSizeBytes = HeapLayouts.RcHeader.TotalAllocationSizeBytes(valueSizeBytes);
         LlvmValueHandle allocationSize = LlvmApi.ConstInt(state.I64, (ulong)allocationSizeBytes, 0);
-        LlvmValueHandle allocationBase = EmitAllocateOsMemory(state, allocationSize, name);
+        LlvmValueHandle allocationBase = EmitAcquireRuntimeRcBlock(state, allocationSize, name);
         EmitHeapChunkInitCheck(state, allocationBase);
         StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
             LlvmApi.ConstInt(state.I64, 1, 0), name + "_count");
@@ -128,6 +128,68 @@ internal static partial class LlvmCodegen
             allocationSize, name + "_size");
         return LlvmApi.BuildAdd(state.Target.Builder, allocationBase,
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), name + "_value");
+    }
+
+    private static LlvmValueHandle EmitAcquireRuntimeRcBlock(
+        LlvmCodegenState state,
+        LlvmValueHandle allocationSize,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_result_slot");
+        LlvmValueHandle linkAddressSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_link_slot");
+        LlvmValueHandle freeListAddress = LlvmApi.BuildPtrToInt(builder, state.RcFreeListSlot, state.I64, name + "_free_list_addr");
+        LlvmApi.BuildStore(builder, freeListAddress, linkAddressSlot);
+
+        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_scan");
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_check");
+        LlvmBasicBlockHandle nextBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_next");
+        LlvmBasicBlockHandle reuseBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_reuse");
+        LlvmBasicBlockHandle freshBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_fresh");
+        LlvmBasicBlockHandle initializeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_initialize");
+        LlvmApi.BuildBr(builder, scanBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
+        LlvmValueHandle linkAddress = LlvmApi.BuildLoad2(builder, state.I64, linkAddressSlot, name + "_link_addr");
+        LlvmValueHandle linkPointer = LlvmApi.BuildIntToPtr(builder, linkAddress, state.I64Ptr, name + "_link_ptr");
+        LlvmValueHandle candidate = LlvmApi.BuildLoad2(builder, state.I64, linkPointer, name + "_candidate");
+        LlvmValueHandle candidateIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, candidate,
+            LlvmApi.ConstInt(state.I64, 0, 0), name + "_candidate_null");
+        LlvmApi.BuildCondBr(builder, candidateIsNull, freshBlock, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle candidateSize = LoadMemory(state, candidate,
+            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, name + "_candidate_size");
+        LlvmValueHandle sizeMatches = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            candidateSize, allocationSize, name + "_size_matches");
+        LlvmApi.BuildCondBr(builder, sizeMatches, reuseBlock, nextBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nextBlock);
+        // A released block's reference-count word is its next pointer, so the candidate address is
+        // also the address of the link which must be followed (and potentially rewritten).
+        LlvmApi.BuildStore(builder, candidate, linkAddressSlot);
+        LlvmApi.BuildBr(builder, scanBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
+        LlvmValueHandle next = LoadMemory(state, candidate,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, name + "_reuse_next");
+        LlvmApi.BuildStore(builder, next, linkPointer);
+        LlvmApi.BuildStore(builder, candidate, resultSlot);
+        LlvmApi.BuildBr(builder, initializeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle fresh = EmitAllocateOsMemory(state, allocationSize, name + "_os");
+        LlvmApi.BuildStore(builder, fresh, resultSlot);
+        LlvmApi.BuildBr(builder, initializeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
     }
 
     private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)
@@ -178,13 +240,46 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
-        LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
-            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
-        EmitFreeOsMemory(state, allocationBase, allocationSize, "rc_drop");
+        LlvmValueHandle freeListHead = LlvmApi.BuildLoad2(builder, state.I64,
+            state.RcFreeListSlot, "rc_drop_free_list");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            freeListHead, "rc_drop_next");
+        LlvmApi.BuildStore(builder, allocationBase, state.RcFreeListSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return false;
+    }
+
+    private static void EmitReleaseRuntimeRcFreeList(LlvmCodegenState state, LlvmValueHandle head)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle currentSlot = LlvmApi.BuildAlloca(builder, state.I64, "rc_free_current_slot");
+        LlvmApi.BuildStore(builder, head, currentSlot);
+        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_free_check");
+        LlvmBasicBlockHandle releaseBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_free_release");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_free_done");
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
+        LlvmValueHandle current = LlvmApi.BuildLoad2(builder, state.I64, currentSlot, "rc_free_current");
+        LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, current,
+            LlvmApi.ConstInt(state.I64, 0, 0), "rc_free_is_done");
+        LlvmApi.BuildCondBr(builder, isDone, doneBlock, releaseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
+        LlvmValueHandle next = LoadMemory(state, current,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_free_next");
+        LlvmValueHandle size = LoadMemory(state, current,
+            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_free_size");
+        EmitFreeOsMemory(state, current, size, "rc_free_cached");
+        LlvmApi.BuildStore(builder, next, currentSlot);
+        LlvmApi.BuildBr(builder, checkBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
 
     private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
@@ -597,6 +692,7 @@ internal static partial class LlvmCodegen
         ToSpaceEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_tospace_end"),
         BlobCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_cursor"),
         BlobEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_end"),
+        RcFreeListSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_rc_free_list"),
     };
 
     // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
@@ -636,7 +732,8 @@ internal static partial class LlvmCodegen
         }
 
         (LlvmValueHandle cursor, LlvmValueHandle end) = BuildLinuxArenaSlots(state, tcbBase);
-        return state with { HeapCursorSlot = cursor, HeapEndSlot = end };
+        LlvmValueHandle rcFreeListSlot = BuildLinuxTcbSlot(state, tcbBase, TcbRcFreeListOffset, "rc_free_list");
+        return state with { HeapCursorSlot = cursor, HeapEndSlot = end, RcFreeListSlot = rcFreeListSlot };
     }
 
     /// <summary>
@@ -661,6 +758,17 @@ internal static partial class LlvmCodegen
         return (
             LlvmApi.BuildIntToPtr(builder, cursorAddr, state.I64Ptr, "tcb_cursor_ptr"),
             LlvmApi.BuildIntToPtr(builder, endAddr, state.I64Ptr, "tcb_end_ptr"));
+    }
+
+    private static LlvmValueHandle BuildLinuxTcbSlot(
+        LlvmCodegenState state,
+        LlvmValueHandle tcbBase,
+        ulong offset,
+        string name)
+    {
+        LlvmValueHandle address = LlvmApi.BuildAdd(state.Target.Builder, tcbBase,
+            LlvmApi.ConstInt(state.I64, offset, 0), name + "_addr");
+        return LlvmApi.BuildIntToPtr(state.Target.Builder, address, state.I64Ptr, name + "_ptr");
     }
 
     // Each OS chunk carries an 8-byte header (at its base) and an 8-byte footer (at its usable end):

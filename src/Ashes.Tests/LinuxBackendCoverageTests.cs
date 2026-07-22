@@ -1038,6 +1038,37 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_allocator_reuses_mixed_size_blocks()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Small =
+                | Small(Int)
+
+            type Large =
+                | Large(Int, Int, Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let small = Small(1) in
+                    match small with
+                        | Small(a) ->
+                            let large = Large(1)(1)(1) in
+                            match large with
+                                | Large(b, c, d) -> loop(n - 1)(total + a + b + c + d)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("80000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_release_fresh_recursive_runtime_rc_adts()
     {
         if (!OperatingSystem.IsLinux())
@@ -1136,7 +1167,7 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_runtime_rc_list_performance_has_fixed_regression_ceiling()
+    public async Task Linux_backend_llvm_runtime_rc_list_performance_stays_within_arena_baseline_budget()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -1158,11 +1189,11 @@ public sealed class LinuxBackendCoverageTests
         string expectedOutput = $"{iterations * 41L}\n";
         double runtimeRcMedianMs = await CompileAndMeasureMedianCpuTimeAsync(runtimeRc, expectedOutput).ConfigureAwait(false);
         double arenaMedianMs = await CompileAndMeasureMedianCpuTimeAsync(arenaBaseline, expectedOutput).ConfigureAwait(false);
-        const double maximumRuntimeRcMedianMs = 2_000.0;
+        double allowedRuntimeRcMedianMs = Math.Max(arenaMedianMs * 8.0, arenaMedianMs + 100.0);
 
-        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(maximumRuntimeRcMedianMs,
+        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(allowedRuntimeRcMedianMs,
             $"runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
-            $"{arenaMedianMs:F1} ms (fixed regression ceiling {maximumRuntimeRcMedianMs:F1} ms)");
+            $"{arenaMedianMs:F1} ms (relative budget {allowedRuntimeRcMedianMs:F1} ms)");
     }
 
     [Test]
