@@ -166,6 +166,53 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_reuse_child_transfer_dups_for_null_token()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
+            new IrInst.SetAdtField(1, 0, 0),
+            new IrInst.RcDup(2, 1, RuntimeManaged: true),
+            new IrInst.GetAdtField(3, 1, 0),
+            new IrInst.DropReuse(4, 1, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(5, 0),
+            new IrInst.CmpIntNe(6, 4, 5),
+            new IrInst.JumpIfFalse(6, "transfer_dup"),
+            new IrInst.StoreLocal(0, 3),
+            new IrInst.Jump("transfer_continue"),
+            new IrInst.Label("transfer_dup"),
+            new IrInst.RcDup(7, 3, RuntimeManaged: true),
+            new IrInst.StoreLocal(0, 7),
+            new IrInst.Label("transfer_continue"),
+            new IrInst.LoadLocal(8, 0),
+            new IrInst.AllocReusing(9, 1, 1, 4, RuntimeManaged: true),
+            new IrInst.SetAdtField(9, 0, 8),
+            new IrInst.RcIsUnique(10, 3),
+            new IrInst.PrintBool(10),
+            new IrInst.RcDrop(3, "Child", RuntimeManaged: true),
+            new IrInst.RcDrop(2, "Parent", RuntimeManaged: true),
+            new IrInst.RcIsUnique(11, 8),
+            new IrInst.PrintBool(11),
+            new IrInst.RcDrop(8, "Child", RuntimeManaged: true),
+            new IrInst.RcDrop(9, "Parent", RuntimeManaged: true),
+            new IrInst.LoadConstInt(12, 0),
+            new IrInst.Return(12),
+        };
+        IrFunction function = new("entry", instructions, 1, 13, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("false\ntrue\n");
+    }
+
+    [Test]
     public async Task Linux_backend_lowers_copy_adt_rebuild_to_runtime_reuse()
     {
         if (!OperatingSystem.IsLinux())
@@ -226,6 +273,28 @@ public sealed class LinuxBackendCoverageTests
             match tree with
                 | Leaf -> Leaf
                 | Node(_, value, _) -> Node(Leaf)(value + 1)(Leaf)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_recursive_adt_with_transferred_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) -> Node(left)(value + 1)(Leaf)
             """)).ConfigureAwait(false);
 
         result.Stdout.ShouldBe(string.Empty);
@@ -3368,13 +3437,13 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let tree = Node(Leaf)(1)(Leaf) in
+                    let tree = Node(Node(Leaf)(2)(Leaf))(1)(Leaf) in
                     match tree with
                         | Leaf ->
                             let rebuilt = Leaf in
                             loop(n - 1)(total)
-                        | Node(_, value, _) ->
-                            let rebuilt = Node(Leaf)(value + 1)(Leaf) in
+                        | Node(left, value, _) ->
+                            let rebuilt = Node(left)(value + 1)(Leaf) in
                             loop(n - 1)(total + value)
 
             Ashes.IO.print(loop({{iterations}})(0))

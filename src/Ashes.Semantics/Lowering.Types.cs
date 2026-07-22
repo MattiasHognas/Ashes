@@ -377,7 +377,8 @@ public sealed partial class Lowering
 
     private sealed record RuntimeReuseCleanup(
         TypeRef.TNamedType Type,
-        ConstructorSymbol Constructor);
+        ConstructorSymbol Constructor,
+        IReadOnlyDictionary<string, int> TransferableFields);
 
     private sealed record ReuseToken(
         int Temp,

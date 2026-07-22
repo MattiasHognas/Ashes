@@ -663,11 +663,18 @@ public sealed partial class Lowering
         }
 
         var resultType = InstantiateAdtType(ctor);
+        bool runtimeReuseRequest = resultType is TypeRef.TNamedType reuseNamed
+            && RuntimeReuseAllocationMatches(reuseNamed);
         bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
-                || ((_runtimeRcCopyAdtAllocationRequested || RuntimeReuseAllocationMatches(named))
+                || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
                     && (CanRuntimeManageCopyAdt(named)
-                        || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named))));
+                        || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
+                        || (runtimeReuseRequest
+                            && CanRuntimeReuseRecursiveAdtConstructorApplication(
+                                ctor,
+                                args,
+                                named)))));
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
@@ -684,6 +691,8 @@ public sealed partial class Lowering
             tag,
             stackAllocate,
             runtimeManagedCandidate,
+            args,
+            argTemps,
             out bool reuseNode,
             out int consumedTokenTemp);
         for (int i = 0; i < argTemps.Count; i++)
@@ -698,6 +707,37 @@ public sealed partial class Lowering
     private bool RuntimeReuseAllocationMatches(TypeRef.TNamedType resultType)
         => _runtimeRcReuseAllocationTypeRequested is { } requested
             && ReferenceEquals(requested.Symbol, resultType.Symbol);
+
+    private bool CanRuntimeReuseRecursiveAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageRecursiveCopyAdt(resultType) || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType) || IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            {
+                continue;
+            }
+
+            if (arguments[i] is not Expr.Var variable
+                || !_reuseTokens.Any(token => token.FieldCount == constructor.Arity
+                    && token.RuntimeCleanup is { } cleanup
+                    && ReferenceEquals(cleanup.Type.Symbol, resultType.Symbol)
+                    && cleanup.TransferableFields.ContainsKey(variable.Name)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private void PrepareRuntimeManagedAdtChildArguments(IReadOnlyList<Expr> arguments, List<int> argumentTemps)
     {
@@ -773,6 +813,8 @@ public sealed partial class Lowering
         int tag,
         bool stackAllocate,
         bool runtimeManagedCandidate,
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
         out bool reuseNode,
         out int consumedTokenTemp)
     {
@@ -789,7 +831,15 @@ public sealed partial class Lowering
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // by the caller, so overwriting the cell now is safe.
-            EmitRuntimeReuseTokenChildrenDrop(reuseTokenTemp, runtimeCleanup);
+            HashSet<int> transferredFields = PrepareRuntimeReuseTransferredChildren(
+                arguments,
+                argumentTemps,
+                reuseTokenTemp,
+                runtimeCleanup);
+            EmitRuntimeReuseTokenChildrenDrop(
+                reuseTokenTemp,
+                runtimeCleanup,
+                transferredFields);
             Emit(new IrInst.AllocReusing(
                 ptrTemp,
                 tag,
@@ -819,6 +869,61 @@ public sealed partial class Lowering
         }
 
         return ptrTemp;
+    }
+
+    private HashSet<int> PrepareRuntimeReuseTransferredChildren(
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
+        int tokenTemp,
+        RuntimeReuseCleanup? runtimeCleanup)
+    {
+        var transferredFields = new HashSet<int>();
+        if (runtimeCleanup is not { } cleanup)
+        {
+            return transferredFields;
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i] is not Expr.Var variable
+                || !cleanup.TransferableFields.TryGetValue(variable.Name, out int sourceField))
+            {
+                continue;
+            }
+
+            argumentTemps[i] = EmitRuntimeReuseTransferredChild(
+                argumentTemps[i],
+                tokenTemp);
+            transferredFields.Add(sourceField);
+            if (LookupOwnedValue(variable.Name) is { IsDropped: false } info)
+            {
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
+
+        return transferredFields;
+    }
+
+    private int EmitRuntimeReuseTransferredChild(int childTemp, int tokenTemp)
+    {
+        int resultSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasTokenTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
+        string duplicateLabel = NewLabel("reuse_child_duplicate");
+        string continueLabel = NewLabel("reuse_child_continue");
+        Emit(new IrInst.JumpIfFalse(hasTokenTemp, duplicateLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, childTemp));
+        Emit(new IrInst.Jump(continueLabel));
+        Emit(new IrInst.Label(duplicateLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, childTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(continueLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     /// <summary>

@@ -113,7 +113,7 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
-    public void Recursive_adt_reuse_declines_when_recursive_field_remains_live()
+    public void Recursive_adt_reuse_transfers_child_with_null_fallback_dup()
     {
         IrProgram program = LowerProgram("""
             type Tree =
@@ -124,6 +124,32 @@ public sealed class ReuseTokenTests
             match tree with
                 | Leaf -> Leaf
                 | Node(left, value, _) -> Node(left)(value + 1)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) ->
+                    let bonus = match left with
+                        | Leaf -> 0
+                        | Node(_, childValue, _) -> childValue
+                    in Node(left)(value + bonus)(Leaf)
             """);
 
         program.EntryFunction.Instructions.Any(instruction =>

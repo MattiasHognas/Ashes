@@ -93,9 +93,9 @@ public sealed partial class Lowering
     /// <summary>
     /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
     /// runtime-managed copy-only or supported self-recursive ADT, and the guard-free match must
-    /// exhaustively consume it. Recursive payload bindings must be dead. A same-sized constructor
-    /// may consume the token; otherwise the arm releases a non-null token with
-    /// constructor-specialized cleanup after evaluating its body.
+    /// exhaustively consume it. Recursive payload bindings may be dead or transferred exactly once
+    /// into the compatible rebuild. A same-sized constructor may consume the token; otherwise the
+    /// arm releases a non-null token with constructor-specialized cleanup after evaluating its body.
     /// </summary>
     private bool TryGetRuntimeManagedReuseScrutinee(
         Expr.Match match,
@@ -126,17 +126,21 @@ public sealed partial class Lowering
         bool hasReusableArm = false;
         foreach (MatchCase matchCase in match.Cases)
         {
-            bool armConsumesToken = matchCase.Pattern is Pattern.Constructor or Pattern.Var
-                && TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol candidateConstructor)
-                && MatchArmBeginsWithRuntimeReuseConstructor(
-                    matchCase.Body,
-                    candidateConstructor.Arity);
             if (matchCase.Guard is not null
                 || ExprReferencesName(matchCase.Body, variable.Name, shadowed: false)
                 || !TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol matchedConstructor)
                 || !string.Equals(matchedConstructor.ParentType, matchedType.Symbol.Name, StringComparison.Ordinal)
-                || !matchedConstructors.Add(matchedConstructor.Name)
-                || (matchIsInTailPosition && !armConsumesToken))
+                || !matchedConstructors.Add(matchedConstructor.Name))
+            {
+                return false;
+            }
+
+            bool armConsumesToken = TryFindRuntimeReuseConstructorArguments(
+                matchCase.Body,
+                matchedConstructor.Arity,
+                matchedType,
+                out _);
+            if (matchIsInTailPosition && !armConsumesToken)
             {
                 return false;
             }
@@ -146,8 +150,7 @@ public sealed partial class Lowering
 
         if (!hasReusableArm
             || (CanRuntimeManageRecursiveCopyAdt(matchedType)
-            && !RuntimeReuseRecursiveFieldsAreDead(match.Cases, matchedType))
-            )
+                && !RuntimeReuseRecursiveFieldsAreSafe(match.Cases, matchedType)))
         {
             return false;
         }
@@ -157,28 +160,49 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool MatchArmBeginsWithRuntimeReuseConstructor(Expr body, int fieldCount)
+    private bool TryFindRuntimeReuseConstructorArguments(
+        Expr body,
+        int fieldCount,
+        TypeRef.TNamedType matchedType,
+        out IReadOnlyList<Expr> arguments)
     {
         if (TryDescribeConstructorExpression(
                 body,
                 out ConstructorSymbol? constructor,
-                out _,
+                out List<Expr>? constructorArguments,
                 out TypeRef.TNamedType? resultType)
             && constructor is not null
+            && constructorArguments is not null
             && resultType is not null
             && constructor.Arity == fieldCount
+            && ReferenceEquals(resultType.Symbol, matchedType.Symbol)
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageRecursiveCopyAdt(resultType)))
+        {
+            arguments = constructorArguments;
+            return true;
+        }
+
+        if (body is Expr.Let let
+            && (TryFindRuntimeReuseConstructorArguments(
+                    let.Value,
+                    fieldCount,
+                    matchedType,
+                    out arguments)
+                || TryFindRuntimeReuseConstructorArguments(
+                    let.Body,
+                    fieldCount,
+                    matchedType,
+                    out arguments)))
         {
             return true;
         }
 
-        return body is Expr.Let let
-            && (MatchArmBeginsWithRuntimeReuseConstructor(let.Value, fieldCount)
-                || MatchArmBeginsWithRuntimeReuseConstructor(let.Body, fieldCount));
+        arguments = [];
+        return false;
     }
 
-    private bool RuntimeReuseRecursiveFieldsAreDead(
+    private bool RuntimeReuseRecursiveFieldsAreSafe(
         IReadOnlyList<MatchCase> cases,
         TypeRef.TNamedType matchedType)
     {
@@ -190,15 +214,41 @@ public sealed partial class Lowering
                 continue;
             }
 
+            TryFindRuntimeReuseConstructorArguments(
+                matchCase.Body,
+                constructor.Arity,
+                matchedType,
+                out IReadOnlyList<Expr> rebuildArguments);
+
             for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
             {
                 TypeRef fieldType = Prune(InstantiateConstructorParameterType(
                     constructor,
                     i,
                     matchedType));
-                if (fieldType is TypeRef.TNamedType child
-                    && string.Equals(child.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
-                    && MatchCaseReferencesAnyBinding(matchCase, PatternBindings(pattern.Patterns[i])))
+                if (fieldType is not TypeRef.TNamedType child
+                    || !string.Equals(child.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (pattern.Patterns[i] is not Pattern.Var binding
+                    || _constructorSymbols.ContainsKey(binding.Name))
+                {
+                    if (MatchCaseReferencesAnyBinding(
+                        matchCase,
+                        PatternBindings(pattern.Patterns[i])))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                int references = CountNameOccurrences(matchCase.Body, binding.Name);
+                int transfers = rebuildArguments.Count(argument => argument is Expr.Var variable
+                    && string.Equals(variable.Name, binding.Name, StringComparison.Ordinal));
+                if (references != transfers || transfers > 1)
                 {
                     return false;
                 }
@@ -310,7 +360,10 @@ public sealed partial class Lowering
         {
             RuntimeReuseCleanup? runtimeCleanup = runtimeReuseType is not null
                 && TryGetConstructorSymbol(match.Cases[i].Pattern, out ConstructorSymbol runtimeConstructor)
-                    ? new RuntimeReuseCleanup(runtimeReuseType, runtimeConstructor)
+                    ? CreateRuntimeReuseCleanup(
+                        runtimeReuseType,
+                        runtimeConstructor,
+                        match.Cases[i].Pattern)
                     : null;
             int tokenTemp = NewTemp();
             Emit(new IrInst.DropReuse(
@@ -653,7 +706,10 @@ public sealed partial class Lowering
         {
             RuntimeReuseCleanup? runtimeCleanup = runtimeReuseType is null
                 ? null
-                : new RuntimeReuseCleanup(runtimeReuseType, plan[i].Ctor);
+                : CreateRuntimeReuseCleanup(
+                    runtimeReuseType,
+                    plan[i].Ctor,
+                    cases[i].Pattern);
             int tokenTemp = NewTemp();
             Emit(new IrInst.DropReuse(
                 tokenTemp,
@@ -665,6 +721,33 @@ public sealed partial class Lowering
         }
 
         return reuseTokensBefore;
+    }
+
+    private RuntimeReuseCleanup CreateRuntimeReuseCleanup(
+        TypeRef.TNamedType runtimeType,
+        ConstructorSymbol constructor,
+        Pattern pattern)
+    {
+        var transferableFields = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (pattern is Pattern.Constructor constructorPattern)
+        {
+            for (int i = 0; i < Math.Min(constructorPattern.Patterns.Count, constructor.Arity); i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                    constructor,
+                    i,
+                    runtimeType));
+                if (fieldType is TypeRef.TNamedType child
+                    && string.Equals(child.Symbol.Name, runtimeType.Symbol.Name, StringComparison.Ordinal)
+                    && constructorPattern.Patterns[i] is Pattern.Var binding
+                    && !_constructorSymbols.ContainsKey(binding.Name))
+                {
+                    transferableFields[binding.Name] = i;
+                }
+            }
+        }
+
+        return new RuntimeReuseCleanup(runtimeType, constructor, transferableFields);
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)

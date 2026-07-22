@@ -2085,44 +2085,13 @@ public sealed partial class Lowering
             return true;
         }
 
-        foreach (MatchCase matchCase in cases)
-        {
-            if (matchCase.Pattern is not Pattern.Constructor pattern
-                || !_constructorSymbols.TryGetValue(pattern.Name, out ConstructorSymbol? constructor)
-                || constructor is null)
-            {
-                bool nullaryConstructor = matchCase.Pattern is Pattern.Var variable
-                    && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? nullary)
-                    && nullary is not null
-                    && nullary.Arity == 0;
-                if (!nullaryConstructor)
-                {
-                    if (MatchCaseReferencesAnyBinding(matchCase, PatternBindings(matchCase.Pattern)))
-                    {
-                        return false;
-                    }
-                }
-
-                continue;
-            }
-
-            for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
-            {
-                TypeRef fieldType = constructor.ParameterTypes[i];
-                if (fieldType is not TypeRef.TNamedType child
-                    || !string.Equals(child.Symbol.Name, type.Name, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (MatchCaseReferencesAnyBinding(matchCase, PatternBindings(pattern.Patterns[i])))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        return TryDescribeConstructorExpression(
+                value,
+                out _,
+                out _,
+                out TypeRef.TNamedType? resultType)
+            && resultType is not null
+            && RuntimeReuseRecursiveFieldsAreSafe(cases, resultType);
     }
 
     private static bool MatchCaseReferencesAnyBinding(MatchCase matchCase, IEnumerable<string> bindings)

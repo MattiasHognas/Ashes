@@ -551,7 +551,8 @@ public sealed partial class Lowering
 
     private void EmitRuntimeReuseTokenChildrenDrop(
         int tokenTemp,
-        RuntimeReuseCleanup? runtimeCleanup)
+        RuntimeReuseCleanup? runtimeCleanup,
+        IReadOnlySet<int>? transferredFields = null)
     {
         if (runtimeCleanup is not { } cleanup)
         {
@@ -566,7 +567,8 @@ public sealed partial class Lowering
                 i,
                 cleanup.Type));
             if (fieldType is TypeRef.TNamedType child
-                && string.Equals(child.Symbol.Name, cleanup.Type.Symbol.Name, StringComparison.Ordinal))
+                && string.Equals(child.Symbol.Name, cleanup.Type.Symbol.Name, StringComparison.Ordinal)
+                && (transferredFields is null || !transferredFields.Contains(i)))
             {
                 recursiveFields.Add(i);
             }
