@@ -5145,11 +5145,12 @@ public sealed class LinuxBackendCoverageTests
                         let pair = Pair(40)(2) in pair
                     in match escaped with
                         | Pair(left, right) ->
-                            let child = Node(Leaf)(20)(Leaf) in
-                            let tree = Node(child)(42)(Leaf) in
+                            let tree =
+                                let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
+                            in
                             match tree with
                                 | Leaf -> loop(n - 1)(total + left + right)
-                                | Node(_, value, _) ->
+                                | Node(child, value, _) ->
                                     match child with
                                         | Leaf -> loop(n - 1)(total + left + right + value)
                                         | Node(_, childValue, _) -> loop(n - 1)(total + left + right + value + childValue)

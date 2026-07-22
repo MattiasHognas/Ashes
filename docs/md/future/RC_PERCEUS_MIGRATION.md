@@ -422,7 +422,9 @@ releases only the RC `Result` cell rather than treating either payload as an own
 `Text.parseBigInt` results now transfer as well. The existing tag-aware drop releases an `Ok` BigInt
 child only when the Result cell is unique, while the interned `Error` String remains non-owning.
 Fresh user-ADT constructors whose fields are all copy values now transfer directly as a single RC
-cell. Pointer-bearing and polymorphic constructors remain gated until child ownership is proven.
+cell. A fully fresh monomorphic recursive ADT tree may transfer as well: nested children are allocated
+as RC cells in the same expression and ownership moves into the parent. Borrowed recursive children,
+other pointer-bearing shapes, and polymorphic constructors remain gated until child ownership is proven.
 Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
 boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
 entire transferred spine at the receiving scope.

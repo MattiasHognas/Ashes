@@ -281,6 +281,29 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_fresh_recursive_adt_transfers_child_ownership()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet escaped = (let tree = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in tree) in match escaped with | Leaf -> 0 | Node(left, value, _) -> match left with | Leaf -> value | Node(_, childValue, _) -> value + childValue");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(5);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
+            && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
+        ir.Functions.Any(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal)
+            && function.Instructions.Any(inst => inst is IrInst.RcIsUnique)
+            && function.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true })).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_recursive_adt_with_borrowed_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet child = Node(Leaf)(20)(Leaf) in let escaped = (let tree = Node(child)(42)(Leaf) in tree) in match escaped with | Leaf -> 0 | Node(_, value, _) -> value");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(0);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Direct_function_alias_preserves_runtime_result_ownership_provenance()
     {
         IrProgram ir = LowerProgram(
