@@ -148,7 +148,7 @@ public abstract record IrInst
     public sealed record BigIntToInt(int Target, int ValueTemp) : IrInst;        // BigInt -> Result(Str, Int)
     public sealed record BigIntFromString(int Target, int ValueTemp) : IrInst;   // Str -> Result(Str, BigInt)
     // Op ∈ { "add", "sub", "mul", "div", "mod" }: BigInt -> BigInt -> BigInt.
-    public sealed record BigIntBinary(int Target, int Left, int Right, string Op) : IrInst;
+    public sealed record BigIntBinary(int Target, int Left, int Right, string Op, bool RuntimeManaged = false) : IrInst;
     public sealed record BigIntCompare(int Target, int Left, int Right) : IrInst; // BigInt -> BigInt -> Int
 
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;

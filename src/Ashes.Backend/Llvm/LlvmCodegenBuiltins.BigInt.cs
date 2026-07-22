@@ -53,13 +53,21 @@ internal static partial class LlvmCodegen
         return outAddress;
     }
 
-    private static LlvmValueHandle EmitBigIntArith(LlvmCodegenState state, LlvmValueHandle left, LlvmValueHandle right, string fnName)
+    private static LlvmValueHandle EmitBigIntArith(
+        LlvmCodegenState state,
+        LlvmValueHandle left,
+        LlvmValueHandle right,
+        string fnName,
+        bool runtimeManaged)
     {
         LlvmValueHandle la = BigIntLimbCount(state, left, "bigint_l");
         LlvmValueHandle lb = BigIntLimbCount(state, right, "bigint_r");
         // add/sub/mul all fit in la + lb + 3 words (header + magnitude + slack).
         LlvmValueHandle words = BigIntAddConst(state, LlvmApi.BuildAdd(state.Target.Builder, la, lb, "bigint_la_lb"), 3);
-        LlvmValueHandle outAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, words));
+        LlvmValueHandle resultBytes = BigIntBytesForWords(state, words);
+        LlvmValueHandle outAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, resultBytes, "rc_bigint_arith")
+            : EmitAllocDynamic(state, resultBytes);
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr]);
@@ -69,16 +77,30 @@ internal static partial class LlvmCodegen
         return outAddress;
     }
 
-    private static LlvmValueHandle EmitBigIntDivMod(LlvmCodegenState state, LlvmValueHandle left, LlvmValueHandle right, bool returnQuotient)
+    private static LlvmValueHandle EmitBigIntDivMod(
+        LlvmCodegenState state,
+        LlvmValueHandle left,
+        LlvmValueHandle right,
+        bool returnQuotient,
+        bool runtimeManaged)
     {
         LlvmValueHandle la = BigIntLimbCount(state, left, "bigint_dl");
         LlvmValueHandle lb = BigIntLimbCount(state, right, "bigint_dr");
-        LlvmValueHandle qAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, la, 2)));
-        LlvmValueHandle rAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, lb, 2)));
+        LlvmValueHandle qBytes = BigIntBytesForWords(state, BigIntAddConst(state, la, 2));
+        LlvmValueHandle rBytes = BigIntBytesForWords(state, BigIntAddConst(state, lb, 2));
+        LlvmValueHandle qAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, qBytes, "rc_bigint_quotient")
+            : EmitAllocDynamic(state, qBytes);
+        LlvmValueHandle rAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, rBytes, "rc_bigint_remainder")
+            : EmitAllocDynamic(state, rBytes);
         // Algorithm D scratch: normalized divisor (2*lb digits) + working dividend (2*la + 1 digits),
         // as 32-bit digits — la + lb + 4 words covers both with slack.
         LlvmValueHandle laLb = LlvmApi.BuildAdd(state.Target.Builder, la, lb, "bigint_dsw");
-        LlvmValueHandle scratchAddress = EmitAllocDynamic(state, BigIntBytesForWords(state, BigIntAddConst(state, laLb, 4)));
+        LlvmValueHandle scratchBytes = BigIntBytesForWords(state, BigIntAddConst(state, laLb, 4));
+        LlvmValueHandle scratchAddress = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, scratchBytes, "rc_bigint_div_scratch")
+            : EmitAllocDynamic(state, scratchBytes);
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr, state.I8Ptr]);
@@ -87,18 +109,28 @@ internal static partial class LlvmCodegen
             [BigIntAsPtr(state, left, "bigint_da"), BigIntAsPtr(state, right, "bigint_db"),
              BigIntAsPtr(state, qAddress, "bigint_q"), BigIntAsPtr(state, rAddress, "bigint_r"),
              BigIntAsPtr(state, scratchAddress, "bigint_dscratch")], "");
+        if (runtimeManaged)
+        {
+            EmitRuntimeRcDrop(state, returnQuotient ? rAddress : qAddress);
+            EmitRuntimeRcDrop(state, scratchAddress);
+        }
         return returnQuotient ? qAddress : rAddress;
     }
 
-    private static LlvmValueHandle EmitBigIntBinary(LlvmCodegenState state, LlvmValueHandle left, LlvmValueHandle right, string op) => op switch
-    {
-        "add" => EmitBigIntArith(state, left, right, BigIntAddFn),
-        "sub" => EmitBigIntArith(state, left, right, BigIntSubFn),
-        "mul" => EmitBigIntArith(state, left, right, BigIntMulFn),
-        "div" => EmitBigIntDivMod(state, left, right, returnQuotient: true),
-        "mod" => EmitBigIntDivMod(state, left, right, returnQuotient: false),
-        _ => throw new InvalidOperationException($"Unknown BigInt binary op '{op}'.")
-    };
+    private static LlvmValueHandle EmitBigIntBinary(
+        LlvmCodegenState state,
+        LlvmValueHandle left,
+        LlvmValueHandle right,
+        string op,
+        bool runtimeManaged = false) => op switch
+        {
+            "add" => EmitBigIntArith(state, left, right, BigIntAddFn, runtimeManaged),
+            "sub" => EmitBigIntArith(state, left, right, BigIntSubFn, runtimeManaged),
+            "mul" => EmitBigIntArith(state, left, right, BigIntMulFn, runtimeManaged),
+            "div" => EmitBigIntDivMod(state, left, right, returnQuotient: true, runtimeManaged),
+            "mod" => EmitBigIntDivMod(state, left, right, returnQuotient: false, runtimeManaged),
+            _ => throw new InvalidOperationException($"Unknown BigInt binary op '{op}'.")
+        };
 
     private static LlvmValueHandle EmitBigIntCompare(LlvmCodegenState state, LlvmValueHandle left, LlvmValueHandle right)
     {

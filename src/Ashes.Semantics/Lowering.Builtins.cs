@@ -2678,7 +2678,7 @@ public sealed partial class Lowering
             Emit(new IrInst.BigIntCompare(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
-        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op));
+        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op, _runtimeRcBigIntAllocationRequested));
         return (target, new TypeRef.TBigInt());
     }
 

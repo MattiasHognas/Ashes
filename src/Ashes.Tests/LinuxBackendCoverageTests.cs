@@ -659,6 +659,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_compared_bigint_arithmetic()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntArithmeticProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBe(5);
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(5);
+
+        IrProgram escaping = LowerProgram("let value = Ashes.Number.BigInt.add(40N)(2N) in value");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
     {
         if (!OperatingSystem.IsLinux())
@@ -1921,6 +1944,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt.fromInt", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_arithmetic_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt arithmetic", samples);
     }
 
     [Test]
@@ -4137,6 +4174,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntArithmeticProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBe(5);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
     {
         samples.Count.ShouldBe(3);
@@ -4506,6 +4560,34 @@ public sealed class LinuxBackendCoverageTests
                         let value = Ashes.Number.BigInt.fromInt(n) in
                         Ashes.Number.BigInt.compare(value)(value)
                     in loop(n - 1)(total + comparison)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntArithmeticProgram(int iterations)
+        => $$"""
+            let left = 123456789012345678901234567890N
+            let right = 987654321N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let addComparison =
+                        let value = Ashes.Number.BigInt.add(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let subComparison =
+                        let value = Ashes.Number.BigInt.sub(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let mulComparison =
+                        let value = Ashes.Number.BigInt.mul(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let divComparison =
+                        let value = Ashes.Number.BigInt.div(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let modComparison =
+                        let value = Ashes.Number.BigInt.mod(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in loop(n - 1)(total + addComparison + subComparison + mulComparison + divComparison + modComparison)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

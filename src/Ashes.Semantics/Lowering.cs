@@ -2115,9 +2115,24 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcBigIntProducer(Expr expression)
     {
-        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal);
+        Expr.QualifiedVar? qualified = expression switch
+        {
+            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
+            Expr.Call(Expr.QualifiedVar unary, _) => unary,
+            _ => null,
+        };
+        if (qualified is null
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "add", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "sub", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "mul", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "div", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "mod", StringComparison.Ordinal);
     }
 
     private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
@@ -2711,6 +2726,7 @@ public sealed partial class Lowering
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntBinary { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

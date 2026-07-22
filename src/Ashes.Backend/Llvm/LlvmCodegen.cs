@@ -1721,7 +1721,7 @@ internal static partial class LlvmCodegen
             IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
             IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),
             IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
-            IrInst.BigIntBinary bigIntBinary => StoreTemp(state, bigIntBinary.Target, EmitBigIntBinary(state, LoadTemp(state, bigIntBinary.Left), LoadTemp(state, bigIntBinary.Right), bigIntBinary.Op)),
+            IrInst.BigIntBinary bigIntBinary => EmitBigIntBinaryInstruction(state, bigIntBinary),
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
             _ => (bool?)null,
         };
@@ -1733,6 +1733,16 @@ internal static partial class LlvmCodegen
             state,
             LoadTempAsFloat(state, instruction.ValueTemp),
             "text_from_float",
+            instruction.RuntimeManaged));
+    }
+
+    private static bool EmitBigIntBinaryInstruction(LlvmCodegenState state, IrInst.BigIntBinary instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitBigIntBinary(
+            state,
+            LoadTemp(state, instruction.Left),
+            LoadTemp(state, instruction.Right),
+            instruction.Op,
             instruction.RuntimeManaged));
     }
 
