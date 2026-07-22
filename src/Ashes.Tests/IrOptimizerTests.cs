@@ -448,8 +448,11 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Runtime_dup_is_sunk_out_of_unused_else_branch()
+    public void Paper_map_shape_sinks_runtime_dup_out_of_nil_branch()
     {
+        // The paper's map shape duplicates the input list for its Cons branch, while the Nil branch
+        // immediately drops that ownership. Model the match diamond directly: the duplicate belongs
+        // after the tag branch, and the Nil-side drop becomes unnecessary.
         List<IrInst> instructions = new()
         {
             new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
@@ -554,6 +557,32 @@ public sealed class IrOptimizerTests
 
         CountRuntimeRcOperations(optimized).ShouldBe(3);
         optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Stdlib_list_map_shape_erases_legacy_rc_markers()
+    {
+        IrProgram lowered = LowerProgram("""
+            let map : (Int -> Int) -> List(Int) -> List(Int) =
+                given (f) ->
+                    (let recursive mapGo : List(Int) -> List(Int) =
+                        given (xs) ->
+                            match xs with
+                                | [] -> []
+                                | head :: tail -> f(head) :: mapGo(tail)
+                    in mapGo)
+
+            let mapped = map(given (x) -> x + 1)([1, 2, 3])
+            in match mapped with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(head)
+            """);
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountErasedRcOperations(lowered).ShouldBeGreaterThan(0);
+        CountErasedRcOperations(optimized).ShouldBe(0);
+        CountRuntimeRcOperations(optimized).ShouldBe(0);
     }
 
     [Test]
@@ -1149,6 +1178,16 @@ public sealed class IrOptimizerTests
             => function.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }
                 or IrInst.RcDup { RuntimeManaged: true }
                 or IrInst.RcIsUnique);
+    }
+
+    private static int CountErasedRcOperations(IrProgram program)
+    {
+        return Count(program.EntryFunction)
+            + program.Functions.Sum(Count);
+
+        static int Count(IrFunction function)
+            => function.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: false }
+                or IrInst.RcDup { RuntimeManaged: false });
     }
 
     [Test]

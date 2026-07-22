@@ -217,7 +217,10 @@ diamond optimization sinks a pre-branch `dup` into the only branch that consumes
 other branch's dead drop, but only when that branch cannot observe the source count. Fully fresh
 list spines and recursive ADT roots carry a deep-uniqueness fact: unique lists lower to one unchecked
 drop loop and unique tree roots omit their root check, while any explicit child/tail sharing clears
-the fact and keeps guarded cleanup.
+the fact and keeps guarded cleanup. Optimizer regressions now name and cover the paper's map-shaped
+match diamond as well as Ashes' curried stdlib `List.map` shape. The latter still has erased legacy
+lifetime markers because polymorphic function-owned lists have not entered the runtime-RC family;
+the test makes that boundary explicit rather than implying partial generic RC support.
 
 Deliverables:
 
