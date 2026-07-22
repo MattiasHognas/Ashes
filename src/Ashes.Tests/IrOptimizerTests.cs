@@ -360,10 +360,48 @@ public sealed class IrOptimizerTests
         optimized.UsesClosures.ShouldBe(unoptimized.UsesClosures);
     }
 
-    // Drop elision tests
+    // Erased RC marker and resource-cleanup tests
 
     [Test]
-    public void Drop_elision_removes_non_resource_string_drop()
+    public void Rc_dup_and_drop_markers_are_erased_by_the_optimizer()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),
+            new IrInst.RcDup(1, 0),
+            new IrInst.PrintStr(1),
+            new IrInst.RcDrop(1, "String"),
+            new IrInst.Return(1),
+        };
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [new IrStringLiteral("lbl_hello", "hello")], false, false, false, false, false, false);
+
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup or IrInst.RcDrop).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.PrintStr { Source: 0 }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Resource_cleanup_is_never_erased_by_the_optimizer()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.CleanupResource(0, "Socket"),
+            new IrInst.Return(0),
+        };
+        var fn = new IrFunction("entry", instructions, 0, 1, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(inst => inst is IrInst.CleanupResource { TypeName: "Socket" }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Rc_drop_elision_removes_string_marker()
     {
         // String drops are no-ops in codegen (arena handles deallocation).
         // The optimizer should elide them.
@@ -372,24 +410,24 @@ public sealed class IrOptimizerTests
             """;
         var unoptimized = Lower(source);
         unoptimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .Any(i => i is IrInst.RcDrop { TypeName: "String" })
             .ShouldBeTrue("Unoptimized IR should have a String Drop.");
 
         var optimized = IrOptimizer.Optimize(unoptimized);
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .Any(i => i is IrInst.RcDrop { TypeName: "String" })
             .ShouldBeFalse("String Drop should be elided by the optimizer.");
     }
 
     [Test]
-    public void Drop_elision_removes_non_resource_list_drop()
+    public void Rc_drop_elision_removes_list_marker()
     {
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 0),   // dummy list ptr
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "List"),
+            new IrInst.RcDrop(1, "List"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -399,12 +437,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("List Drop should be elided — not a resource type.");
     }
 
     [Test]
-    public void Drop_elision_removes_plain_non_resource_drop()
+    public void Rc_drop_elision_removes_plain_marker()
     {
         // String/List/Tuple/ADT drops are arena-reclaimed no-ops and are still elided.
         var instructions = new List<IrInst>
@@ -412,7 +450,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -422,12 +460,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("String Drop should be elided — not a resource type, no cleanup behavior.");
     }
 
     [Test]
-    public void Drop_elision_preserves_function_drop()
+    public void Cleanup_elision_preserves_function_cleanup()
     {
         // Closure (Function) drops must NOT be elided: a closure may carry a resource dropper at
         // closure+24 (set when it captured-and-escaped a resource).
@@ -436,7 +474,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),   // dummy closure ptr
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "Function"),
+            new IrInst.CleanupResource(1, "Function"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -446,12 +484,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "Function" })
+            .Any(i => i is IrInst.CleanupResource { TypeName: "Function" })
             .ShouldBeTrue("Function Drop must be preserved — a closure may carry a resource dropper.");
     }
 
     [Test]
-    public void Drop_elision_preserves_resource_type_drop()
+    public void Cleanup_elision_preserves_resource_cleanup()
     {
         // Socket drops must NEVER be elided — they route to TCP close.
         var instructions = new List<IrInst>
@@ -459,7 +497,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),   // dummy socket handle
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "Socket"),
+            new IrInst.CleanupResource(1, "Socket"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -469,7 +507,7 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "Socket" })
+            .Any(i => i is IrInst.CleanupResource { TypeName: "Socket" })
             .ShouldBeTrue("Socket Drop must be preserved — resource types need cleanup.");
     }
 
@@ -483,7 +521,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),    // only used by the Drop below
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -508,7 +546,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstStr(0, "lbl_hello"),
             new IrInst.StoreLocal(0, 0),    // only load of slot 0 is the Drop below
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 42),
             new IrInst.Return(2),
         };
@@ -534,7 +572,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadLocal(1, 0),      // used by PrintStr
             new IrInst.PrintStr(1),
             new IrInst.LoadLocal(2, 0),      // used only by the Drop
-            new IrInst.Drop(2, "String"),
+            new IrInst.RcDrop(2, "String"),
             new IrInst.LoadConstInt(3, 0),
             new IrInst.Return(3),
         };
@@ -545,7 +583,7 @@ public sealed class IrOptimizerTests
 
         // Drop and its LoadLocal(2,0) should be removed.
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("String Drop should be elided.");
 
         // But StoreLocal and the other LoadLocal must remain.

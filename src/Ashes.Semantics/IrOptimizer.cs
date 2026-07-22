@@ -41,13 +41,13 @@ public static class IrOptimizer
         var instructions = function.Instructions;
 
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
-        instructions = ElideTrivialBorrows(instructions);
+        instructions = ElideTrivialOwnershipCopies(instructions);
         instructions = DevirtualizeKnownClosureCalls(instructions);
         instructions = FoldConstants(instructions);
         instructions = ReduceIdentitiesAndStrength(instructions);
         instructions = ElideUnreachableCode(instructions);
         instructions = ElideDeadCode(instructions);
-        instructions = ElideRedundantDrops(instructions);
+        instructions = ElideErasedRcDrops(instructions);
 
         return function with
         {
@@ -85,7 +85,7 @@ public static class IrOptimizer
             or IrInst.CmpFloatEq or IrInst.CmpFloatNe
             or IrInst.CmpStrEq or IrInst.CmpStrNe
             or IrInst.LoadFuncAddr or IrInst.GetAdtTag or IrInst.GetAdtField or IrInst.SetAdtField
-            or IrInst.Borrow
+            or IrInst.Borrow or IrInst.RcDup or IrInst.RcDrop
             or IrInst.BytesLength or IrInst.BytesGet or IrInst.BytesCompare or IrInst.BytesIndexOf
             or IrInst.BytesHash or IrInst.BytesGetU16Le or IrInst.BytesGetU32Le or IrInst.BytesGetU64Le
             or IrInst.TextByteLength
@@ -275,9 +275,9 @@ public static class IrOptimizer
         return changed ? result : instructions;
     }
 
-    // Trivial borrow elision
-    // Remove Borrow instructions and remap all uses of the borrow target
-    // back to the original source temp, eliminating trivial borrows.
+    // Trivial ownership-copy elision
+    // Remove erased RcDup markers and eligible Borrow instructions, remapping all uses of their
+    // targets back to the original source temp.
     //
     // Elidable borrows:
     // (a) Copy-type sources: when the source temp is produced by
@@ -290,7 +290,7 @@ public static class IrOptimizer
     // Chains of borrows (Borrow(t2, t1) where t1 itself was remapped) are
     // resolved transitively so that all uses point back to the original source.
 
-    private static List<IrInst> ElideTrivialBorrows(List<IrInst> instructions)
+    private static List<IrInst> ElideTrivialOwnershipCopies(List<IrInst> instructions)
     {
         // Build use-def information.
         var (copyTypeProducers, useCount) = CollectBorrowElisionInfo(instructions);
@@ -300,7 +300,11 @@ public static class IrOptimizer
 
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Borrow b)
+            if (inst is IrInst.RcDup dup)
+            {
+                remap[dup.Target] = ResolveTemp(remap, dup.SourceTemp);
+            }
+            else if (inst is IrInst.Borrow b)
             {
                 // Follow chains: if the source was already remapped, resolve transitively.
                 int source = ResolveTemp(remap, b.SourceTemp);
@@ -326,6 +330,11 @@ public static class IrOptimizer
 
         foreach (var inst in instructions)
         {
+            if (inst is IrInst.RcDup dup && remap.ContainsKey(dup.Target))
+            {
+                continue; // erased marker
+            }
+
             if (inst is IrInst.Borrow b && remap.ContainsKey(b.Target))
             {
                 continue; // elide this Borrow
@@ -580,7 +589,9 @@ public static class IrOptimizer
 
             // Ownership.
             // NOTE: Keep these source-temp users in sync with CollectUsedTemps().
-            IrInst.Drop d => d with { SourceTemp = R(d.SourceTemp) },
+            IrInst.CleanupResource d => d with { SourceTemp = R(d.SourceTemp) },
+            IrInst.RcDrop d => d with { SourceTemp = R(d.SourceTemp) },
+            IrInst.RcDup d => d with { SourceTemp = R(d.SourceTemp) },
             IrInst.Borrow b => b with { SourceTemp = R(b.SourceTemp) },
             IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutArenaToSpace co => co with { SrcTemp = R(co.SrcTemp) },
@@ -1468,23 +1479,11 @@ public static class IrOptimizer
         return false;
     }
 
-    // Drop elision
-    // Remove Drop instructions that perform no useful work.
-    //
-    // Elidable drops:
-    // (a) Non-resource types: Drop for String, List, Tuple, Function,
-    //     and non-resource ADTs is a no-op in current codegen — arena-based
-    //     deallocation handles bulk memory reclamation via RestoreArenaState.
-    //
-    // Resource-type drops (Socket) are NEVER elided — they route to
-    // platform-specific cleanup (e.g. TCP close).
-    //
-    // When a Drop is elided, the LoadLocal that feeds it is also removed
-    // if its target temp is used only by the Drop. StoreLocal instructions
-    // to slots with no remaining LoadLocal are also removed by subsequent
-    // dead code cleanup, enabling a cascade of instruction elimination.
-
-    private static List<IrInst> ElideRedundantDrops(List<IrInst> instructions)
+    // Erased RC marker elision
+    // RcDrop has no runtime behavior while arenas own ordinary heap reclamation. Remove each marker
+    // and its otherwise-dead LoadLocal, then remove stores to slots with no remaining loads.
+    // CleanupResource is a separate instruction and can never enter this pass.
+    private static List<IrInst> ElideErasedRcDrops(List<IrInst> instructions)
     {
         // Build analysis data.
 
@@ -1499,7 +1498,7 @@ public static class IrOptimizer
         {
             var inst = instructions[i];
 
-            // Track definitions from LoadLocal (these feed Drops).
+            // Track definitions from LoadLocal (these feed RcDrop markers).
             if (inst is IrInst.LoadLocal ll)
             {
                 tempDefinedAt[ll.Target] = i;
@@ -1513,7 +1512,7 @@ public static class IrOptimizer
             }
         }
 
-        // Identify elidable Drops and their feeding LoadLocals.
+        // Identify erased RcDrop markers and their feeding LoadLocals.
         var toRemove = CollectElidableDropRemovals(instructions, tempDefinedAt, useCount);
 
         if (toRemove.Count == 0)
@@ -1537,7 +1536,7 @@ public static class IrOptimizer
     }
 
     /// <summary>
-    /// Finds the instruction indices of elidable Drops and of the LoadLocals that feed
+    /// Finds the instruction indices of erased RcDrop markers and of the LoadLocals that feed
     /// them and have no other use.
     /// </summary>
     private static HashSet<int> CollectElidableDropRemovals(List<IrInst> instructions, Dictionary<int, int> tempDefinedAt, Dictionary<int, int> useCount)
@@ -1546,17 +1545,9 @@ public static class IrOptimizer
 
         for (int i = 0; i < instructions.Count; i++)
         {
-            if (instructions[i] is not IrInst.Drop drop) continue;
+            if (instructions[i] is not IrInst.RcDrop drop) continue;
 
-            // Never elide resource-type drops — they have real cleanup behavior.
-            if (BuiltinRegistry.IsResourceTypeName(drop.TypeName)) continue;
-
-            // Never elide closure drops: a closure may carry a resource dropper at closure+24 (set
-            // when it captured-and-escaped a resource). The drop is a
-            // cheap runtime no-op when there is no dropper, but eliding it would leak the resource.
-            if (string.Equals(drop.TypeName, "Function", StringComparison.Ordinal)) continue;
-
-            // Non-resource drop → safe to elide (no-op in codegen).
+            // Erased ordinary-value marker: safe to elide while arenas own reclamation.
             toRemove.Add(i);
 
             // If the LoadLocal feeding this Drop has its target used only here,
@@ -1822,7 +1813,9 @@ public static class IrOptimizer
     {
         switch (inst)
         {
-            case IrInst.Drop d: usedTemps.Add(d.SourceTemp); break;
+            case IrInst.CleanupResource d: usedTemps.Add(d.SourceTemp); break;
+            case IrInst.RcDrop d: usedTemps.Add(d.SourceTemp); break;
+            case IrInst.RcDup d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
             case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutArenaToSpace c: usedTemps.Add(c.SrcTemp); break;

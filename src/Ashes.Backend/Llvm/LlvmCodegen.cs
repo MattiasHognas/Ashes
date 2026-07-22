@@ -654,7 +654,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
                 || ProgramUsesInstruction<IrInst.FileReadLine>(program)
                 || ProgramUsesInstruction<IrInst.FileClose>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program);
+                || ProgramUsesInstruction<IrInst.CleanupResource>(program);
     }
 
     private static bool EmitProgramModuleUsesNetworking(IrProgram program)
@@ -687,7 +687,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
                 || ProgramUsesInstruction<IrInst.AsyncRace>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program);
+                || ProgramUsesInstruction<IrInst.CleanupResource>(program);
     }
 
     private static bool EmitProgramModuleUsesProcess(IrProgram program)
@@ -1733,7 +1733,9 @@ internal static partial class LlvmCodegen
             IrInst.ProcessReadStderrLine procReadStderr => StoreTemp(state, procReadStderr.Target, EmitProcessReadLine(state, LoadTemp(state, procReadStderr.ProcessTemp), stdoutFd: false)),
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
-            IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
+            IrInst.CleanupResource cleanup => EmitResourceCleanup(state, LoadTemp(state, cleanup.SourceTemp), cleanup.TypeName),
+            // Ordinary-value RC is not active yet. Arena restoration still owns reclamation.
+            IrInst.RcDrop => false,
             _ => (bool?)null,
         };
     }
@@ -1746,6 +1748,8 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
+            // Erased Perceus marker: identity-preserving until runtime RC is enabled.
+            IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),

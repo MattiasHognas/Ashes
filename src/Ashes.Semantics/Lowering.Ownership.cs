@@ -246,7 +246,7 @@ public sealed partial class Lowering
         }
 
         // Attach a dropper to the escaping closure that closes the moved resources when the closure
-        // is itself dropped (EmitDrop "Function" invokes closure+24). This gives the escaped resource
+        // is itself cleaned up (CleanupResource "Function" invokes closure+24). This gives the escaped resource
         // a deterministic close at the closure's death rather than leaking it to program exit.
         string dropperLabel = SynthesizeClosureResourceDropper(escaping);
         int dropperCodeTemp = NewTemp();
@@ -297,8 +297,8 @@ public sealed partial class Lowering
     /// <summary>
     /// Emits the drop for a single owned value: a type-directed recursive walk closing nested
     /// resources for a resource-bearing aggregate (Result(_, FileHandle), tuples/lists of resources,
-    /// …), or the plain <see cref="IrInst.Drop"/> otherwise (which closes a direct resource and is a
-    /// no-op for ordinary heap values reclaimed by the arena).
+    /// …), <see cref="IrInst.CleanupResource"/> for a direct resource or possibly-resource-owning
+    /// closure, or <see cref="IrInst.RcDrop"/> for an ordinary heap value reclaimed by the arena.
     /// </summary>
     private void EmitOwnedValueDrop(OwnershipInfo info)
     {
@@ -307,16 +307,24 @@ public sealed partial class Lowering
         if (info.IsResourceBearing && info.Type is not null)
         {
             EmitResourceBearingDrop(loadTemp, info.Type);
+            // The recursive walk above handles deterministic cleanup of nested resources. The
+            // aggregate cell also has an ordinary heap lifetime, represented separately so later
+            // RC insertion can reclaim the container without conflating it with resource closing.
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName));
+        }
+        else if (info.IsResource || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+        {
+            Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
         }
         else
         {
-            Emit(new IrInst.Drop(loadTemp, info.TypeName));
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName));
         }
     }
 
     /// <summary>
     /// Walks <paramref name="temp"/> (of <paramref name="type"/>) and closes every resource nested
-    /// in it. Handles a direct resource (Drop), an ADT (tag switch → drop resource-bearing fields of
+    /// in it. Handles a direct resource (CleanupResource), an ADT (tag switch → clean up resource-bearing fields of
     /// the live constructor), a tuple (drop resource-bearing elements), and a list (loop, drop each
     /// resource-bearing element). A self-recursive resource-bearing ADT (one that nests both itself
     /// and a resource) is walked at runtime by a synthesized recursive dropper
@@ -332,7 +340,7 @@ public sealed partial class Lowering
         switch (pruned)
         {
             case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
-                Emit(new IrInst.Drop(temp, named.Symbol.Name));
+                Emit(new IrInst.CleanupResource(temp, named.Symbol.Name));
                 return;
 
             case TypeRef.TNamedType named when IsSelfRecursiveResourceBearingAdt(named):
@@ -1290,7 +1298,7 @@ public sealed partial class Lowering
     /// <summary>
     /// Synthesizes (once per layout, cached) a function that closes the resources an escaping
     /// closure carries. It is stored at the closure's dropper slot (closure+24) and invoked when the
-    /// closure is dropped (see EmitDrop "Function"). Called as <c>dropper(ownEnv, targetEnv)</c> — it
+    /// closure is cleaned up (see CleanupResource "Function"). Called as <c>dropper(ownEnv, targetEnv)</c> — it
     /// ignores its own (empty) env and reads the closure's env (the arg), then closes each moved
     /// resource at its recorded offset. Returns the function label.
     /// </summary>

@@ -44,20 +44,37 @@ public sealed class ResourceLifecycleTests
         BuiltinRegistry.IsResourceTypeName("Maybe").ShouldBeFalse();
     }
 
-    // --- Drop IR instruction ---
+    // --- Resource cleanup IR instruction ---
 
     [Test]
-    public void Drop_ir_instruction_carries_type_name()
+    public void Cleanup_resource_ir_instruction_carries_type_name()
     {
-        var drop = new IrInst.Drop(0, "Socket");
+        var drop = new IrInst.CleanupResource(0, "Socket");
         drop.SourceTemp.ShouldBe(0);
         drop.TypeName.ShouldBe("Socket");
     }
 
-    // --- Scope drop: socket bound via pattern match gets Drop at scope exit ---
+    [Test]
+    public void Resource_bearing_aggregate_emits_cleanup_and_ordinary_lifetime_marker()
+    {
+        var ir = LowerProgram(
+            """
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
+                    let wrapped = Some(sock)
+                    in "ok")
+            """);
+        var instructions = ir.EntryFunction.Instructions.Concat(ir.Functions.SelectMany(function => function.Instructions));
+
+        instructions.Any(inst => inst is IrInst.CleanupResource { TypeName: "Socket" }).ShouldBeTrue();
+        instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Maybe" }).ShouldBeTrue();
+    }
+
+    // --- Scope cleanup: socket bound via pattern match gets CleanupResource at scope exit ---
 
     [Test]
-    public void Socket_binding_in_match_emits_drop_instruction()
+    public void Socket_binding_in_match_emits_cleanup_instruction()
     {
         var ir = LowerProgram(
             """
@@ -429,7 +446,8 @@ public sealed class ResourceLifecycleTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
+            if (inst is IrInst.CleanupResource cleanup && string.Equals(cleanup.TypeName, typeName, StringComparison.Ordinal)
+                || inst is IrInst.RcDrop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
                 return true;
         }
         return false;
@@ -457,7 +475,7 @@ public sealed class ResourceLifecycleTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop)
+            if (inst is IrInst.CleanupResource or IrInst.RcDrop)
                 return true;
         }
         return false;

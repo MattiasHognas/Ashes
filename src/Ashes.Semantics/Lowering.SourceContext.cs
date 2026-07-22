@@ -76,7 +76,9 @@ public sealed partial class Lowering
             or IrInst.ReclaimArenaChunks
             or IrInst.CopyOutArena
             or IrInst.CopyOutArenaToSpace
-            or IrInst.Drop
+            or IrInst.CleanupResource
+            or IrInst.RcDrop
+            or IrInst.RcDup
             or IrInst.Borrow;
     }
 

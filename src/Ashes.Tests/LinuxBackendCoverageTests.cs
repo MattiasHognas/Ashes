@@ -18,6 +18,28 @@ namespace Ashes.Tests;
 public sealed class LinuxBackendCoverageTests
 {
     [Test]
+    public void Linux_backend_accepts_unoptimized_erased_rc_markers()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.RcDup(1, 0),
+            new IrInst.RcDrop(1, "String"),
+            new IrInst.Return(1),
+        };
+        var function = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(function, [], [], false, false, false, false, false, false);
+
+        var bytes = new LinuxX64LlvmBackend().Compile(program);
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
     public void Linux_backend_compile_should_emit_elf_header_for_int_program()
     {
         var bytes = CompileForLinux("Ashes.IO.print(40 + 2)");

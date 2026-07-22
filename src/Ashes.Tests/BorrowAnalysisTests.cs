@@ -107,7 +107,7 @@ public sealed class BorrowAnalysisTests
         {
             if (insts[i] is IrInst.Borrow)
                 lastBorrowIdx = i;
-            if (insts[i] is IrInst.Drop && firstDropIdx < 0)
+            if (insts[i] is IrInst.RcDrop && firstDropIdx < 0)
                 firstDropIdx = i;
         }
 
@@ -208,7 +208,7 @@ public sealed class BorrowAnalysisTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
+            if (inst is IrInst.RcDrop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
                 return true;
         }
         return false;

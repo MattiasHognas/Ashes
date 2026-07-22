@@ -74,45 +74,63 @@ public sealed class OwnershipTests
         BuiltinRegistry.IsCopyType(new TypeRef.TList(new TypeRef.TInt())).ShouldBeFalse();
     }
 
-    // --- Drop insertion for owned types ---
+    // --- Lifetime marker and resource cleanup insertion ---
 
     [Test]
-    public void String_binding_emits_drop()
+    public void String_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");
-        HasDropInstruction(ir.EntryFunction.Instructions, "String").ShouldBeTrue();
+        HasRcDropInstruction(ir.EntryFunction.Instructions, "String").ShouldBeTrue();
     }
 
     [Test]
-    public void List_binding_emits_drop()
+    public void List_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let xs = [1, 2, 3] in Ashes.IO.print(1)");
-        HasDropInstruction(ir.EntryFunction.Instructions, "List").ShouldBeTrue();
+        HasRcDropInstruction(ir.EntryFunction.Instructions, "List").ShouldBeTrue();
     }
 
     [Test]
-    public void Function_binding_emits_drop()
+    public void Function_binding_emits_resource_cleanup()
     {
         var ir = LowerProgram("let f = given (x) -> x + 1 in Ashes.IO.print(f(42))");
-        HasDropInstruction(ir.EntryFunction.Instructions, "Function").ShouldBeTrue();
+        HasCleanupResourceInstruction(ir.EntryFunction.Instructions, "Function").ShouldBeTrue();
     }
 
     [Test]
-    public void Tuple_binding_emits_drop()
+    public void Tuple_binding_emits_rc_drop()
     {
         var ir = LowerProgram("let t = (1, 2) in Ashes.IO.print(1)");
-        HasDropInstruction(ir.EntryFunction.Instructions, "Tuple").ShouldBeTrue();
+        HasRcDropInstruction(ir.EntryFunction.Instructions, "Tuple").ShouldBeTrue();
     }
 
     [Test]
-    public void Result_adt_binding_emits_drop()
+    public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT
         var ir = LowerProgram("let r = Ashes.IO.File.exists(\"test.txt\") in Ashes.IO.print(1)");
-        HasDropInstruction(ir.EntryFunction.Instructions, "Result").ShouldBeTrue();
+        HasRcDropInstruction(ir.EntryFunction.Instructions, "Result").ShouldBeTrue();
     }
 
-    // --- Copy types do NOT get Drop ---
+    [Test]
+    public void Ordinary_heap_binding_emits_rc_drop_not_resource_cleanup()
+    {
+        var ir = LowerProgram("let s = \"hello\" in Ashes.IO.print(s)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String" }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CleanupResource { TypeName: "String" }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Closure_binding_emits_resource_cleanup_not_rc_drop()
+    {
+        var ir = LowerProgram("let f = given (x) -> x + 1 in Ashes.IO.print(f(42))");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CleanupResource { TypeName: "Function" }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Function" }).ShouldBeFalse();
+    }
+
+    // --- Copy types do not get lifetime markers or cleanup ---
 
     [Test]
     public void Int_binding_does_not_emit_drop()
@@ -147,8 +165,8 @@ public sealed class OwnershipTests
             Ashes.IO.print(s1)
             """);
         var insts = ir.EntryFunction.Instructions;
-        // Both s1 and s2 should get Drop("String")
-        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
+        // Both s1 and s2 should get RcDrop("String")
+        var dropCount = insts.Count(i => i is IrInst.RcDrop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(2, "Each owned String binding should get its own Drop.");
     }
 
@@ -162,9 +180,9 @@ public sealed class OwnershipTests
             Ashes.IO.print(x)
             """);
         var insts = ir.EntryFunction.Instructions;
-        HasDropInstruction(insts, "String").ShouldBeTrue("String binding should be dropped.");
-        // Int binding should not produce a Drop
-        var intDropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "Int", StringComparison.Ordinal));
+        HasRcDropInstruction(insts, "String").ShouldBeTrue("String binding should be dropped.");
+        // Int binding should not produce an RcDrop
+        var intDropCount = insts.Count(i => i is IrInst.RcDrop d && string.Equals(d.TypeName, "Int", StringComparison.Ordinal));
         intDropCount.ShouldBe(0, "Int (copy type) should not produce Drop.");
     }
 
@@ -180,7 +198,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(a)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
+        var dropCount = insts.Count(i => i is IrInst.RcDrop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(1, "Aliasing an owned value should produce exactly one Drop (on the original owner).");
     }
 
@@ -195,7 +213,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(b)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
+        var dropCount = insts.Count(i => i is IrInst.RcDrop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(1, "Chained aliases should still produce exactly one Drop.");
     }
 
@@ -209,7 +227,7 @@ public sealed class OwnershipTests
             Ashes.IO.print(s1)
             """);
         var insts = ir.EntryFunction.Instructions;
-        var dropCount = insts.Count(i => i is IrInst.Drop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
+        var dropCount = insts.Count(i => i is IrInst.RcDrop d && string.Equals(d.TypeName, "String", StringComparison.Ordinal));
         dropCount.ShouldBe(2, "Non-alias fresh values should each get their own Drop.");
     }
 
@@ -226,7 +244,7 @@ public sealed class OwnershipTests
             """);
         var insts = ir.EntryFunction.Instructions;
         // The Ok(content) and Error(msg) bindings are String-typed — should get drops
-        HasDropInstruction(insts, "String").ShouldBeTrue();
+        HasRcDropInstruction(insts, "String").ShouldBeTrue();
     }
 
     // --- Resource types still work correctly ---
@@ -256,30 +274,30 @@ public sealed class OwnershipTests
                 | Error(msg) -> msg
                 | Ok(sock) -> "connected")
             """);
-        HasDropInstruction(ir, "Socket").ShouldBeTrue();
+        HasCleanupResourceInstruction(ir, "Socket").ShouldBeTrue();
     }
 
-    // --- Drop IR instruction structure ---
+    // --- Lifetime and cleanup IR instruction structure ---
 
     [Test]
-    public void Drop_instruction_has_type_name_field()
+    public void Rc_drop_instruction_has_type_name_field()
     {
-        var drop = new IrInst.Drop(5, "String");
+        var drop = new IrInst.RcDrop(5, "String");
         drop.SourceTemp.ShouldBe(5);
         drop.TypeName.ShouldBe("String");
     }
 
     [Test]
-    public void Drop_instruction_for_list()
+    public void Rc_drop_instruction_for_list()
     {
-        var drop = new IrInst.Drop(3, "List");
+        var drop = new IrInst.RcDrop(3, "List");
         drop.TypeName.ShouldBe("List");
     }
 
     [Test]
-    public void Drop_instruction_for_function()
+    public void Cleanup_resource_instruction_for_function()
     {
-        var drop = new IrInst.Drop(7, "Function");
+        var drop = new IrInst.CleanupResource(7, "Function");
         drop.TypeName.ShouldBe("Function");
     }
 
@@ -295,26 +313,32 @@ public sealed class OwnershipTests
         return ir;
     }
 
-    private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
+    private static bool HasRcDropInstruction(List<IrInst> instructions, string typeName)
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
+            if (inst is IrInst.RcDrop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal))
                 return true;
         }
         return false;
     }
 
-    private static bool HasDropInstruction(IrProgram program, string typeName)
+    private static bool HasCleanupResourceInstruction(List<IrInst> instructions, string typeName)
     {
-        if (HasDropInstruction(program.EntryFunction.Instructions, typeName))
+        return instructions.Any(inst => inst is IrInst.CleanupResource cleanup
+            && string.Equals(cleanup.TypeName, typeName, StringComparison.Ordinal));
+    }
+
+    private static bool HasCleanupResourceInstruction(IrProgram program, string typeName)
+    {
+        if (HasCleanupResourceInstruction(program.EntryFunction.Instructions, typeName))
         {
             return true;
         }
 
         foreach (var func in program.Functions)
         {
-            if (HasDropInstruction(func.Instructions, typeName))
+            if (HasCleanupResourceInstruction(func.Instructions, typeName))
             {
                 return true;
             }
@@ -327,7 +351,7 @@ public sealed class OwnershipTests
     {
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Drop)
+            if (inst is IrInst.RcDrop or IrInst.CleanupResource)
                 return true;
         }
         return false;

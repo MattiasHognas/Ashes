@@ -107,4 +107,28 @@ public sealed class StateMachineTransformTests
 
         Should.NotThrow(() => StateMachineTransform.Transform(body, captureCount: 0));
     }
+
+    [Test]
+    public void Lifetime_marker_temps_live_across_await_are_saved_and_restored()
+    {
+        var body = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(5, 7),
+            new IrInst.RcDup(6, 5),
+        };
+        EmitCompletedTask(body, valueTemp: 8, taskTemp: 7);
+        body.Add(new IrInst.AwaitTask(9, 7));
+        body.Add(new IrInst.RcDrop(6, "String"));
+        body.Add(new IrInst.CleanupResource(5, "Function"));
+        body.Add(new IrInst.Return(9));
+
+        var result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        var suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5);
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 6);
+        var resume = result.Instructions.OfType<IrInst.Resume>().ShouldHaveSingleItem();
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 6);
+    }
 }

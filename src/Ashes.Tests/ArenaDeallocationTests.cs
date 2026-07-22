@@ -1420,6 +1420,7 @@ public sealed class ArenaDeallocationTests
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
     {
-        return instructions.Any(i => i is IrInst.Drop d && string.Equals(d.TypeName, typeName, StringComparison.Ordinal));
+        return instructions.Any(i => i is IrInst.CleanupResource cleanup && string.Equals(cleanup.TypeName, typeName, StringComparison.Ordinal)
+            || i is IrInst.RcDrop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal));
     }
 }

@@ -34,7 +34,7 @@ internal static partial class LlvmCodegen
     // Closure layout: {code@0, env@8, env_size@16, dropper@24}. The dropper is a code pointer that
     // closes resources moved into the closure's env (set only when a captured resource escapes with
     // the closure — see SetClosureDropper); 0 for ordinary closures. Invoked when the closure is
-    // dropped (EmitDrop "Function").
+    // cleaned up (CleanupResource "Function").
     private const int ClosureSizeBytes = 32;
 
     private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)

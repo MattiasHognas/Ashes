@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    private static bool EmitDrop(LlvmCodegenState state, LlvmValueHandle value, string typeName)
+    private static bool EmitResourceCleanup(LlvmCodegenState state, LlvmValueHandle value, string typeName)
     {
         switch (typeName)
         {
@@ -18,7 +18,7 @@ internal static partial class LlvmCodegen
 
             case "Socket":
                 // Drop a socket by routing cleanup through the networking ABI.
-                // The result (Result[Unit, Str]) is discarded — Drop is
+                // The result (Result[Unit, Str]) is discarded — cleanup is
                 // fire-and-forget; runtime errors during cleanup are ignored.
                 EmitTcpCloseAbiCall(state, value);
                 return false;
@@ -42,11 +42,8 @@ internal static partial class LlvmCodegen
                 return false;
 
             default:
-                // Owned heap types (String, List, ADTs, etc.):
-                // No-op per-object — bulk deallocation is handled by
-                // RestoreArenaState which resets the heap cursor at scope
-                // exit for copy-type scopes. The Drop instruction is kept
-                // in IR for semantic correctness and resource cleanup routing.
+                // CleanupResource should only carry a direct resource type or Function. Keep the
+                // conservative no-op fallback while migration tests pin every producer.
                 return false;
         }
     }

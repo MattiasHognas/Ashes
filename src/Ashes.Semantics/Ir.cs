@@ -304,15 +304,25 @@ public abstract record IrInst
     public sealed record ProcessKill(int Target, int ProcessTemp) : IrInst;
 
     /// <summary>
-    /// Drop instruction for deterministic cleanup of owned values.
-    /// Emitted by the compiler at scope exit for owned bindings.
-    /// SourceTemp is the temp holding the owned value to clean up.
-    /// For resource types (Socket), routes to platform-specific cleanup.
-    /// For other owned types (String, List, ADTs, Closures), a no-op in
-    /// the current bump allocator — actual deallocation is handled by
-    /// RestoreArenaState which resets the heap cursor for copy-type scopes.
+    /// Deterministic cleanup of a resource value. Unlike ordinary heap lifetime markers, this has
+    /// observable runtime behavior: files, sockets, processes, and resource-owning closures must be
+    /// released even while ordinary heap values remain arena-managed.
     /// </summary>
-    public sealed record Drop(int SourceTemp, string TypeName) : IrInst;
+    public sealed record CleanupResource(int SourceTemp, string TypeName) : IrInst;
+
+    /// <summary>
+    /// Perceus lifetime marker for an ordinary owned heap value whose ownership dies here. During
+    /// the erased-marker migration stage this is a backend no-op and is removed by the optimizer;
+    /// arena restoration remains responsible for actual memory reclamation.
+    /// </summary>
+    public sealed record RcDrop(int SourceTemp, string TypeName) : IrInst;
+
+    /// <summary>
+    /// Perceus lifetime marker for splitting ownership of an ordinary heap value. The target is an
+    /// identity-preserving alias of <paramref name="SourceTemp"/> until runtime reference counting is
+    /// enabled; the optimizer erases the marker and remaps uses to the source.
+    /// </summary>
+    public sealed record RcDup(int Target, int SourceTemp) : IrInst;
 
     /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.
