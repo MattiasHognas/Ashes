@@ -212,7 +212,9 @@ Current status: in progress. The first optimizer slice fuses adjacent runtime-ma
 pairs, including ownership-transfer pairs, while preserving pairs separated by operations such as
 `is_unique` that can observe the temporary reference-count change. Statically known recursive ADT
 root constructors now use constructor-specialized drops: nullary cells drop directly, while known
-recursive constructors skip root tag dispatch and retain uniqueness-guarded child cleanup.
+recursive constructors skip root tag dispatch and retain uniqueness-guarded child cleanup. A narrow
+diamond optimization sinks a pre-branch `dup` into the only branch that consumes it and removes the
+other branch's dead drop, but only when that branch cannot observe the source count.
 
 Deliverables:
 

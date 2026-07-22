@@ -42,6 +42,7 @@ public static class IrOptimizer
 
         // Pass ordering matters — each pass may enable further optimizations in subsequent passes.
         instructions = ElideTrivialOwnershipCopies(instructions);
+        instructions = SinkRuntimeRcDupsIntoDiamonds(instructions);
         instructions = FuseAdjacentRuntimeRcPairs(instructions);
         instructions = DevirtualizeKnownClosureCalls(instructions);
         instructions = FoldConstants(instructions);
@@ -54,6 +55,188 @@ public static class IrOptimizer
         {
             Instructions = instructions,
         };
+    }
+
+    private readonly record struct RuntimeRcDupSinkPlan(
+        int DupIndex,
+        int InsertIndex,
+        int DeadDropIndex,
+        IrInst.RcDup Dup);
+
+    // Sink a runtime duplicate from immediately before a simple if/else diamond into the only
+    // branch that meaningfully consumes it. The other branch must merely drop the duplicate and
+    // must not use the source, since doing so could observe the reference-count change.
+    private static List<IrInst> SinkRuntimeRcDupsIntoDiamonds(List<IrInst> instructions)
+    {
+        List<IrInst> current = instructions;
+        while (TryFindRuntimeRcDupSink(current, out RuntimeRcDupSinkPlan plan))
+        {
+            List<IrInst> rewritten = new(current.Count - 1);
+            for (int i = 0; i < current.Count; i++)
+            {
+                if (i == plan.InsertIndex)
+                {
+                    rewritten.Add(plan.Dup);
+                }
+
+                if (i != plan.DupIndex && i != plan.DeadDropIndex)
+                {
+                    rewritten.Add(current[i]);
+                }
+            }
+
+            current = rewritten;
+        }
+
+        return current;
+    }
+
+    private static bool TryFindRuntimeRcDupSink(
+        List<IrInst> instructions,
+        out RuntimeRcDupSinkPlan plan)
+    {
+        for (int i = 0; i + 2 < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.RcDup { RuntimeManaged: true } dup
+                || instructions[i + 1] is not IrInst.JumpIfFalse branch
+                || !TryDescribeDiamond(instructions, i + 2, branch.Target, out int elseIndex, out int endIndex))
+            {
+                continue;
+            }
+
+            int thenStart = i + 2;
+            int thenEnd = elseIndex - 1;
+            int elseStart = elseIndex + 1;
+            int elseEnd = endIndex;
+            List<int> thenDrops = FindRuntimeRcDrops(instructions, thenStart, thenEnd, dup.Target);
+            List<int> elseDrops = FindRuntimeRcDrops(instructions, elseStart, elseEnd, dup.Target);
+            bool thenUses = HasMeaningfulTempUse(instructions, thenStart, thenEnd, dup.Target);
+            bool elseUses = HasMeaningfulTempUse(instructions, elseStart, elseEnd, dup.Target);
+            if (thenDrops.Count != 1 || elseDrops.Count != 1 || thenUses == elseUses
+                || IsTempUsedInRange(instructions, endIndex + 1, instructions.Count, dup.Target))
+            {
+                continue;
+            }
+
+            int unusedStart = thenUses ? elseStart : thenStart;
+            int unusedEnd = thenUses ? elseEnd : thenEnd;
+            if (!IsRuntimeRcDropOnlyBranch(instructions, unusedStart, unusedEnd, dup.Target))
+            {
+                continue;
+            }
+
+            plan = thenUses
+                ? new RuntimeRcDupSinkPlan(i, thenStart, elseDrops[0], dup)
+                : new RuntimeRcDupSinkPlan(i, elseStart, thenDrops[0], dup);
+            return true;
+        }
+
+        plan = default;
+        return false;
+    }
+
+    private static bool IsRuntimeRcDropOnlyBranch(
+        List<IrInst> instructions,
+        int start,
+        int end,
+        int temp)
+    {
+        for (int i = start; i < end; i++)
+        {
+            if (instructions[i] is not IrInst.RcDrop { SourceTemp: var source, RuntimeManaged: true }
+                || source != temp)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryDescribeDiamond(
+        List<IrInst> instructions,
+        int thenStart,
+        string elseLabel,
+        out int elseIndex,
+        out int endIndex)
+    {
+        elseIndex = instructions.FindIndex(thenStart, inst => inst is IrInst.Label { Name: var name }
+            && string.Equals(name, elseLabel, StringComparison.Ordinal));
+        if (elseIndex <= thenStart
+            || instructions[elseIndex - 1] is not IrInst.Jump endJump)
+        {
+            endIndex = -1;
+            return false;
+        }
+
+        endIndex = instructions.FindIndex(elseIndex + 1, inst => inst is IrInst.Label { Name: var name }
+            && string.Equals(name, endJump.Target, StringComparison.Ordinal));
+        return endIndex > elseIndex;
+    }
+
+    private static List<int> FindRuntimeRcDrops(
+        List<IrInst> instructions,
+        int start,
+        int end,
+        int temp)
+    {
+        List<int> drops = [];
+        for (int i = start; i < end; i++)
+        {
+            if (instructions[i] is IrInst.RcDrop { SourceTemp: var source, RuntimeManaged: true }
+                && source == temp)
+            {
+                drops.Add(i);
+            }
+        }
+
+        return drops;
+    }
+
+    private static bool HasMeaningfulTempUse(
+        List<IrInst> instructions,
+        int start,
+        int end,
+        int temp)
+    {
+        HashSet<int> usedTemps = [];
+        for (int i = start; i < end; i++)
+        {
+            if (instructions[i] is IrInst.RcDrop { SourceTemp: var source, RuntimeManaged: true }
+                && source == temp)
+            {
+                continue;
+            }
+
+            usedTemps.Clear();
+            CollectUsedTemps(instructions[i], usedTemps);
+            if (usedTemps.Contains(temp))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTempUsedInRange(
+        List<IrInst> instructions,
+        int start,
+        int end,
+        int temp)
+    {
+        HashSet<int> usedTemps = [];
+        for (int i = start; i < end; i++)
+        {
+            usedTemps.Clear();
+            CollectUsedTemps(instructions[i], usedTemps);
+            if (usedTemps.Contains(temp))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Adjacent runtime dup/drop fusion. No instruction may occur between the pair because an

@@ -448,6 +448,93 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
+    public void Runtime_dup_is_sunk_out_of_unused_else_branch()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int branchIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.JumpIfFalse);
+        int dupIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.RcDup);
+        dupIndex.ShouldBeGreaterThan(branchIndex);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Runtime_dup_is_sunk_into_consuming_else_branch()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, false),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int elseIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.Label { Name: "else" });
+        optimized.EntryFunction.Instructions[elseIndex + 1].ShouldBeOfType<IrInst.RcDup>();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Runtime_dup_is_not_sunk_when_unused_branch_observes_source()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 5, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int branchIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.JumpIfFalse);
+        int dupIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.RcDup);
+        dupIndex.ShouldBeLessThan(branchIndex);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
     public void Resource_cleanup_is_never_erased_by_the_optimizer()
     {
         var instructions = new List<IrInst>

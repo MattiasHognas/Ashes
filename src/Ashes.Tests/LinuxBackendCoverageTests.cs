@@ -130,6 +130,41 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runs_optimized_branch_sunk_runtime_rc_dup()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.PrintBool(3),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1 }).ShouldBe(1);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(optimized).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("false\n");
+    }
+
+    [Test]
     public async Task Linux_backend_keeps_runtime_rc_child_while_parent_is_shared()
     {
         if (!OperatingSystem.IsLinux())
