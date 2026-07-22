@@ -8,7 +8,7 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [Affine/Linear Ownership](OWNERSHIP.md) | Planned | Turn best-effort ownership analysis into a type-checked affine/linear discipline with borrow inference |
+| [RC Perceus Memory Model](RC_PERCEUS_MIGRATION.md) | Planned | Replace arena/copy-out memory handling with precise RC Perceus while preserving Ashes syntax and native LLVM targets |
 | [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
 | [Package Registry Website](REGISTRY_WEBSITE.md) | Planned | Server-rendered browse/search UI over the existing registry API, surfacing per-package capability requirements |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
