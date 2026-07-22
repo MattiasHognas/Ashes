@@ -1703,7 +1703,11 @@ internal static partial class LlvmCodegen
                 textFromInt.RuntimeManaged)),
             IrInst.TextFromFloat textFromFloat => StoreTemp(state, textFromFloat.Target, EmitFloatToString(state, LoadTempAsFloat(state, textFromFloat.ValueTemp), "text_from_float")),
             IrInst.TextFormatFloat textFormatFloat => StoreTemp(state, textFormatFloat.Target, EmitFloatToFixedString(state, LoadTempAsFloat(state, textFormatFloat.ValueTemp), LoadTemp(state, textFormatFloat.DecimalsTemp), "text_format_float")),
-            IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(state, LoadTemp(state, textToHex.ValueTemp), "text_to_hex")),
+            IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(
+                state,
+                LoadTemp(state, textToHex.ValueTemp),
+                "text_to_hex",
+                textToHex.RuntimeManaged)),
             IrInst.TextAsciiCase asciiCase => StoreTemp(state, asciiCase.Target, EmitAsciiCaseString(state, LoadTemp(state, asciiCase.SourceTemp), asciiCase.Upper, "text_ascii_case")),
             IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(state, LoadTemp(state, bigIntFromInt.ValueTemp))),
             IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),

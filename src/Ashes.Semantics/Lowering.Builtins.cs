@@ -830,7 +830,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextToHex(target, valueTemp));
+        Emit(new IrInst.TextToHex(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 

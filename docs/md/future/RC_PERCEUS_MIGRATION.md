@@ -307,11 +307,12 @@ The first Byte slices apply the same dynamic RC layout to local `Ashes.Byte.appe
 The fixed-width `Ashes.Byte.u16Le`, `u32Le`, and `u64Le` encoders use the same boundary. Escaping
 `Ashes.Byte.subText` results are runtime-managed under the corresponding direct String-consumer
 boundary. Fresh `Ashes.Text.fromInt` results now use that boundary as well, while its internal stack
-digit buffer remains transient. Escaping string concatenations and migrated Byte/String producer
-results, affine `ConcatStrTip` accumulators, literals, views, other builtin-produced strings and Bytes
-values, and BigInts remain arena-managed. Compile-time evaluation may not fold a runtime-managed
-concat into an arena literal. Native correctness and separate 2K/10K/50K RSS-slope tests cover
-String and Byte allocation, exact-size free-list reuse, and final `RcDrop` behavior.
+digit buffer remains transient; `Ashes.Text.toHex` uses the same stack-buffer-to-RC-result path.
+Escaping string concatenations and migrated Byte/String producer results, affine `ConcatStrTip`
+accumulators, literals, views, other builtin-produced strings and Bytes values, and BigInts remain
+arena-managed. Compile-time evaluation may not fold a runtime-managed concat into an arena literal.
+Native correctness and separate 2K/10K/50K RSS-slope tests cover String and Byte allocation,
+exact-size free-list reuse, and final `RcDrop` behavior.
 
 Deliverables:
 

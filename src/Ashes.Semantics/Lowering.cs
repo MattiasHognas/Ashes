@@ -2012,7 +2012,8 @@ public sealed partial class Lowering
 
         if (expression is Expr.Call(Expr.QualifiedVar textProducer, _)
             && string.Equals(ResolveModuleAlias(textProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal))
+            && (string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal)
+                || string.Equals(textProducer.Name, "toHex", StringComparison.Ordinal)))
         {
             return true;
         }
@@ -2633,6 +2634,7 @@ public sealed partial class Lowering
                 IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,

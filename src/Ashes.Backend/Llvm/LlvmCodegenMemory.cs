@@ -2472,7 +2472,11 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, finishBlock);
     }
 
-    private static LlvmValueHandle EmitIntToHexString(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+    private static LlvmValueHandle EmitIntToHexString(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        string prefix,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
@@ -2509,7 +2513,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, prefix + "_count");
         LlvmValueHandle startIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 32, 0), count, prefix + "_start_index");
         LlvmValueHandle startPtr = GetArrayElementPointer(state, bufferType, buffer, startIndex, prefix + "_start_ptr");
-        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string");
+        return EmitHeapStringSliceFromBytesPointer(state, startPtr, count, prefix + "_string", runtimeManaged);
     }
 
     /// <summary>Digit loop of <see cref="EmitIntToHexString"/>: writes the magnitude's hex digits back-to-front.</summary>
