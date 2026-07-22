@@ -660,7 +660,8 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let text = Ashes.Text.fromInt(-42) in text");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(escaping).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5444,8 +5445,9 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildRuntimeRcTextFromIntMemoryProgram(int iterations)
         => $$"""
             let emit unit =
-                let text = Ashes.Text.fromInt(-42) in
-                Ashes.IO.print(text)
+                let escaped =
+                    let text = Ashes.Text.fromInt(-42) in text
+                in Ashes.IO.print(escaped)
 
             let recursive loop n =
                 if n <= 0 then 0

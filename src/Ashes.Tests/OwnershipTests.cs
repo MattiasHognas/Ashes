@@ -126,6 +126,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_text_from_int_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let text = Ashes.Text.fromInt(-42) in text) in Ashes.Text.byteLength(escaped)");
+
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Direct_known_function_result_transfers_runtime_string_ownership_without_copy_out()
     {
         IrProgram ir = LowerProgram(
