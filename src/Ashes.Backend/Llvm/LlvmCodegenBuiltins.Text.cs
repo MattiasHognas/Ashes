@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_uncons_len");
@@ -21,7 +21,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isEmpty, emptyBlock, nonEmptyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
-        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0), resultSlot);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, nonEmptyBlock);
@@ -45,7 +45,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle tupleRef = EmitAlloc(state, 16);
         StoreMemory(state, tupleRef, 0, headRef, "text_uncons_tuple_head");
         StoreMemory(state, tupleRef, 8, tailRef, "text_uncons_tuple_tail");
-        LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);
+        LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1, runtimeManaged);
         StoreMemory(state, someRef, 8, tupleRef, "text_uncons_some_value");
         LlvmApi.BuildStore(builder, someRef, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);

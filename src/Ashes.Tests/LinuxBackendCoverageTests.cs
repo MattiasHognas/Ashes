@@ -665,6 +665,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_measured_text_uncons_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcTextUnconsProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Maybe", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let split = Ashes.Text.uncons(\"abc\") in split");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("6\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_manages_immediately_consumed_text_to_hex()
     {
         if (!OperatingSystem.IsLinux())
@@ -2169,6 +2192,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC BigInt parse Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_uncons_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextUnconsMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.uncons Maybe", samples);
     }
 
     [Test]
@@ -4543,6 +4580,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextUnconsMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextUnconsProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 6L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -5110,6 +5164,26 @@ public sealed class LinuxBackendCoverageTests
                             | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
                             | Error(_message) -> 1
                     in loop(n - 1)(total + valid + invalid)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTextUnconsProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let nonEmpty =
+                        let split = Ashes.Text.uncons("abcdef") in
+                        match split with
+                            | None -> 0
+                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                    in let empty =
+                        let split = Ashes.Text.uncons("") in
+                        match split with
+                            | None -> 0
+                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                    in loop(n - 1)(total + nonEmpty + empty)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

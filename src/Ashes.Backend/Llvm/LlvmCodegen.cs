@@ -1693,7 +1693,7 @@ internal static partial class LlvmCodegen
             IrInst.FileClose fileClose => StoreTemp(state, fileClose.Target, EmitFileClose(state, LoadTemp(state, fileClose.HandleTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
-            IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp))),
+            IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp), textUncons.RuntimeManaged)),
             IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp), textParseInt.RuntimeManaged)),
             IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp), textParseFloat.RuntimeManaged)),
             IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(

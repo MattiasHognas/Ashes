@@ -559,7 +559,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextUncons(target, textTemp));
+        Emit(new IrInst.TextUncons(target, textTemp, _runtimeRcTextUnconsResultAllocationRequested));
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 

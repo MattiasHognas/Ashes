@@ -326,6 +326,9 @@ their success payload is also inline and their error payload is an interned read
 `Ashes.Text.parseBigInt` uses a narrower immediate-match boundary: the `Ok(BigInt)` payload must be
 consumed directly by `BigInt.compare`. Both the `Result` cell and successful BigInt payload are then
 RC-managed; failed-parse output scratch is released before returning the RC-managed error container.
+`Ashes.Text.uncons` RC-manages its outer `Maybe` cell only when an immediate match measures both
+String views and returns a copy value. The tuple and view descriptors remain scoped arena scratch and
+are reclaimed by the enclosing watermark after the RC container is dropped.
 The first closure slice RC-manages both closure cells and non-empty environments when every capture
 is a copy value and an `if`-selected closure is called immediately. Direct lambdas keep their existing
 stack allocation, while escaping closures and closures with runtime-managed or resource-bearing

@@ -442,6 +442,7 @@ public sealed partial class Lowering
     private bool _runtimeRcClosureAllocationRequested;
     private bool _runtimeRcScalarResultAllocationRequested;
     private bool _runtimeRcBigIntParseResultAllocationRequested;
+    private bool _runtimeRcTextUnconsResultAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1919,14 +1920,9 @@ public sealed partial class Lowering
             return loweredString;
         }
 
-        if (TryLowerRuntimeRcScalarResultLet(let, out (int Temp, TypeRef Type) loweredResult))
+        if (TryLowerRuntimeRcBuiltinResultLet(let, out (int Temp, TypeRef Type) loweredBuiltinResult))
         {
-            return loweredResult;
-        }
-
-        if (TryLowerRuntimeRcBigIntParseResultLet(let, out (int Temp, TypeRef Type) loweredBigIntResult))
-        {
-            return loweredBigIntResult;
+            return loweredBuiltinResult;
         }
 
         if (IsRuntimeRcBytesProducer(let.Value) && IsImmediateRuntimeBytesUse(let.Body, let.Name))
@@ -1987,6 +1983,13 @@ public sealed partial class Lowering
         {
             _runtimeRcStringAllocationRequested = savedRequest;
         }
+    }
+
+    private bool TryLowerRuntimeRcBuiltinResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        return TryLowerRuntimeRcScalarResultLet(let, out lowered)
+            || TryLowerRuntimeRcBigIntParseResultLet(let, out lowered)
+            || TryLowerRuntimeRcTextUnconsResultLet(let, out lowered);
     }
 
     private bool TryLowerRuntimeRcScalarResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
@@ -2115,6 +2118,101 @@ public sealed partial class Lowering
                 && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
             || right is Expr.Var rightVariable
                 && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcTextUnconsResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcTextUnconsResultProducer(let.Value)
+            || !IsImmediateRuntimeTextUnconsMatchUse(let.Name, let.Body))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcTextUnconsResultAllocationRequested;
+        _runtimeRcTextUnconsResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcTextUnconsResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcTextUnconsResultProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "uncons", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeTextUnconsMatchUse(string bindingName, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(bindingName, body)
+            || body is not Expr.Match(_, var cases, _))
+        {
+            return false;
+        }
+
+        bool sawNone = false;
+        bool sawSome = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null)
+            {
+                return false;
+            }
+
+            if (matchCase.Pattern is Pattern.Var none
+                && string.Equals(none.Name, "None", StringComparison.Ordinal))
+            {
+                sawNone = matchCase.Body is Expr.IntLit;
+                if (!sawNone)
+                {
+                    return false;
+                }
+            }
+            else if (matchCase.Pattern is Pattern.Constructor constructor
+                && string.Equals(constructor.Name, "Some", StringComparison.Ordinal)
+                && constructor.Patterns is [Pattern.Tuple { Elements: [Pattern.Var head, Pattern.Var tail] }]
+                && matchCase.Body is Expr.Add add
+                && TryGetDirectTextLengthBinding(add.Left, out string? leftBinding)
+                && TryGetDirectTextLengthBinding(add.Right, out string? rightBinding))
+            {
+                sawSome = string.Equals(leftBinding, head.Name, StringComparison.Ordinal)
+                        && string.Equals(rightBinding, tail.Name, StringComparison.Ordinal)
+                    || string.Equals(leftBinding, tail.Name, StringComparison.Ordinal)
+                        && string.Equals(rightBinding, head.Name, StringComparison.Ordinal);
+                if (!sawSome)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        return sawNone && sawSome;
+    }
+
+    private bool TryGetDirectTextLengthBinding(Expr expression, out string? bindingName)
+    {
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, Expr.Var variable)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
+        {
+            bindingName = variable.Name;
+            return true;
+        }
+
+        bindingName = null;
+        return false;
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -3025,6 +3123,7 @@ public sealed partial class Lowering
                 IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromString { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextUncons { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
