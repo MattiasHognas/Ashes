@@ -1063,6 +1063,55 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_share_runtime_rc_copy_list_tails()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let tail = [40, 2]
+            let values = 1 :: tail
+            match values with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ ->
+                    match tail with
+                        | [] -> Ashes.IO.print(0)
+                        | tailHead :: _ -> Ashes.IO.print(head + tailHead)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("41\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_share_runtime_rc_copy_list_tails()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = [40, 2] in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("820000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_local_runtime_rc_record()
     {
         if (!OperatingSystem.IsLinux())

@@ -431,6 +431,8 @@ public sealed partial class Lowering
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
+    private string? _runtimeRcListTailBinding;
+    private bool _runtimeRcListTailShared;
 
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
@@ -1912,18 +1914,9 @@ public sealed partial class Lowering
             }
         }
 
-        if (IsFreshListConstructionExpression(let.Value) && IsImmediateCopyListMatchUse(let.Name, let.Body))
+        if (TryLowerRuntimeRcListLet(let, out (int Temp, TypeRef Type) loweredList))
         {
-            bool savedRequest = _runtimeRcListAllocationRequested;
-            _runtimeRcListAllocationRequested = true;
-            try
-            {
-                return LowerExpr(let.Value);
-            }
-            finally
-            {
-                _runtimeRcListAllocationRequested = savedRequest;
-            }
+            return loweredList;
         }
 
         if (IsConstructorExpression(let.Value) && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body))
@@ -1943,6 +1936,38 @@ public sealed partial class Lowering
         return LowerExpr(let.Value);
     }
 
+    private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool freshRuntimeList = IsFreshListConstructionExpression(let.Value)
+            && (IsImmediateCopyListMatchUse(let.Name, let.Body)
+                || IsTailConsumedByImmediateListMatch(let.Name, let.Body));
+        bool extendsRuntimeList = TryGetRuntimeRcListTailExtension(let.Name, let.Value, let.Body, out string? tailBinding);
+        if (!freshRuntimeList && !extendsRuntimeList)
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcListAllocationRequested;
+        string? savedTailBinding = _runtimeRcListTailBinding;
+        bool savedTailShared = _runtimeRcListTailShared;
+        _runtimeRcListAllocationRequested = true;
+        _runtimeRcListTailBinding = extendsRuntimeList ? tailBinding : null;
+        _runtimeRcListTailShared = tailBinding is not null
+            && ExprReferencesName(let.Body, tailBinding, shadowed: false);
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcListAllocationRequested = savedRequest;
+            _runtimeRcListTailBinding = savedTailBinding;
+            _runtimeRcListTailShared = savedTailShared;
+        }
+    }
+
     private static bool IsFreshListConstructionExpression(Expr expression)
         => expression switch
         {
@@ -1950,6 +1975,32 @@ public sealed partial class Lowering
             Expr.Cons cons => IsFreshListConstructionExpression(cons.Tail),
             _ => false,
         };
+
+    private static bool IsTailConsumedByImmediateListMatch(string name, Expr body)
+        => body is Expr.Let child
+            && child.Value is Expr.Cons { Tail: Expr.Var tail }
+            && string.Equals(tail.Name, name, StringComparison.Ordinal)
+            && IsImmediateCopyListMatchUse(child.Name, child.Body);
+
+    private bool TryGetRuntimeRcListTailExtension(string name, Expr value, Expr body, out string? tailBinding)
+    {
+        tailBinding = null;
+        if (value is not Expr.Cons { Tail: Expr.Var tail }
+            || !IsImmediateCopyListMatchUse(name, body))
+        {
+            return false;
+        }
+
+        OwnershipInfo? info = LookupOwnedValue(tail.Name);
+        if (info is not { RuntimeManaged: true, IsDropped: false, Type: TypeRef.TList list }
+            || !CanArenaReset(Prune(list.Element)))
+        {
+            return false;
+        }
+
+        tailBinding = tail.Name;
+        return true;
+    }
 
     private static bool IsImmediateCopyListMatchUse(string name, Expr body)
     {
@@ -4773,12 +4824,37 @@ public sealed partial class Lowering
 
         var (headTemp, headType) = LowerExpr(cons.Head);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        if (_runtimeRcListAllocationRequested && CanArenaReset(headType))
+        {
+            tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp);
+        }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return LowerConsCell(headTemp, tailTemp, headType, tailType);
+    }
+
+    private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
+    {
+        if (tailExpression is not Expr.Var tail
+            || _runtimeRcListTailBinding is null
+            || !string.Equals(tail.Name, _runtimeRcListTailBinding, StringComparison.Ordinal)
+            || LookupOwnedValue(tail.Name) is not { RuntimeManaged: true, IsDropped: false } info)
+        {
+            return tailTemp;
+        }
+
+        if (_runtimeRcListTailShared)
+        {
+            int duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, tailTemp, RuntimeManaged: true));
+            return duplicatedTemp;
+        }
+
+        info.ReleaseKind = ResourceReleaseKind.Moved;
+        return tailTemp;
     }
 
 

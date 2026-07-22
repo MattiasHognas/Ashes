@@ -270,12 +270,23 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Copy_list_capturing_existing_tail_remains_arena_managed()
+    public void Copy_list_transfers_existing_runtime_tail_without_dup()
     {
         IrProgram ir = LowerProgram("let tail = [2, 3] in let values = 1 :: tail in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
 
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Copy_list_dups_existing_runtime_tail_when_original_remains_live()
+    {
+        IrProgram ir = LowerProgram("let tail = [40, 2] in let values = 1 :: tail in match values with | [] -> Ashes.IO.print(0) | head :: _ -> match tail with | [] -> Ashes.IO.print(0) | tailHead :: _ -> Ashes.IO.print(head + tailHead)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]
