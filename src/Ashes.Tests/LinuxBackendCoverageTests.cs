@@ -594,6 +594,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_manages_immediately_matched_text_parse_float_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcTextParseFloatProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseFloat(\"1.5\") in parsed");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_manages_immediately_consumed_text_to_hex()
     {
         if (!OperatingSystem.IsLinux())
@@ -2056,6 +2079,20 @@ public sealed class LinuxBackendCoverageTests
             .ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC Text.parseInt Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_parse_float_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextParseFloatMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.parseFloat Result", samples);
     }
 
     [Test]
@@ -4379,6 +4416,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextParseFloatMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextParseFloatProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -4892,6 +4946,21 @@ public sealed class LinuxBackendCoverageTests
                         let parsed = Ashes.Text.parseInt("123") in
                         match parsed with
                             | Ok(number) -> number
+                            | Error(_message) -> 0
+                    in loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTextParseFloatProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value =
+                        let parsed = Ashes.Text.parseFloat("1.5") in
+                        match parsed with
+                            | Ok(number) -> if number == 1.5 then 1 else 0
                             | Error(_message) -> 0
                     in loop(n - 1)(total + value)
 

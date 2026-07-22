@@ -2009,7 +2009,8 @@ public sealed partial class Lowering
     {
         return expression is Expr.Call(Expr.QualifiedVar qualified, _)
             && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal);
+            && (string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal));
     }
 
     private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
@@ -2917,6 +2918,7 @@ public sealed partial class Lowering
                 IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,

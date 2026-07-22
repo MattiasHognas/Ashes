@@ -317,9 +317,9 @@ results use dynamically sized RC buffers as well; division and modulo reclaim th
 buffer and runtime scratch immediately. Escaping conversion and arithmetic results remain arena-managed.
 `Ashes.Text.fromBigInt` likewise reclaims its decimal-conversion scratch immediately and places its
 final String on the direct-consumer RC path; escaping text results remain arena-managed.
-Immediately matched `Ashes.Text.parseInt` results now place the `Result` container behind an RC
-header on both success and error paths. Its success payload is inline and its error payload is an
-interned read-only literal, so dropping the container must not recursively release either child;
+Immediately matched `Ashes.Text.parseInt` and `parseFloat` results now place the `Result` container
+behind an RC header on both success and error paths. Their success payloads are inline and their error
+payloads are interned read-only literals, so dropping the container must not recursively release either child;
 escaping parse results remain arena-managed.
 The first closure slice RC-manages both closure cells and non-empty environments when every capture
 is a copy value and an `if`-selected closure is called immediately. Direct lambdas keep their existing

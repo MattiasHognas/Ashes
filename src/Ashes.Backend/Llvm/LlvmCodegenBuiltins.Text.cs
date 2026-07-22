@@ -186,7 +186,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle ExponentDivCheckBlock, LlvmBasicBlockHandle ExponentDivBodyBlock, LlvmBasicBlockHandle FinishBlock,
         LlvmBasicBlockHandle ContinueBlock);
 
-    private static LlvmValueHandle EmitTextParseFloat(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextParseFloat(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_float_len");
@@ -205,7 +205,7 @@ internal static partial class LlvmCodegen
         EmitTextParseFloatExponentFirstDigit(state, bytesPtr, slots, blocks);
         EmitTextParseFloatExponentLoopPhase(state, len, bytesPtr, maxFloat, slots, blocks);
         EmitTextParseFloatExponentApplyPhase(state, maxFloat, slots, blocks);
-        EmitTextParseFloatTerminals(state, slots, blocks);
+        EmitTextParseFloatTerminals(state, slots, blocks, runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, blocks.ContinueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, slots.ResultSlot, "text_parse_float_result_value");
@@ -513,7 +513,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, exponentDivCheckBlock);
     }
 
-    private static void EmitTextParseFloatTerminals(LlvmCodegenState state, FloatParseSlots slots, FloatParseBlocks blocks)
+    private static void EmitTextParseFloatTerminals(LlvmCodegenState state, FloatParseSlots slots, FloatParseBlocks blocks, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
@@ -524,15 +524,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalIsNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, signFlag, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_float_final_is_negative");
         LlvmValueHandle unsignedValue = LlvmApi.BuildLoad2(builder, state.F64, valueSlot, "text_parse_float_unsigned_value");
         LlvmValueHandle finalValue = LlvmApi.BuildSelect(builder, finalIsNegative, LlvmApi.BuildFSub(builder, LlvmApi.ConstReal(state.F64, 0.0), unsignedValue, "text_parse_float_negated_value"), unsignedValue, "text_parse_float_final_value");
-        LlvmApi.BuildStore(builder, EmitResultOk(state, finalValue), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, finalValue, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatInvalidMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatInvalidMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, rangeBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatRangeMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatRangeMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
     }
 
