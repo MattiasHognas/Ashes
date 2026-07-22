@@ -297,7 +297,8 @@ Validation:
 
 ### Phase 6: Broaden RC Coverage
 
-Current status: in progress. The first string slice adds a runtime-managed flag to plain `ConcatStr`
+Current status: complete as the coverage-expansion phase; Phase 7 owns the remaining escape and
+arena-retirement work. The first string slice adds a runtime-managed flag to plain `ConcatStr`
 results and a dynamically sized RC allocation path that preserves the existing `{length, bytes}`
 payload pointer behind the standard RC header. Lowering enables it only for a local concatenation
 immediately consumed by a known non-retaining builtin (`Ashes.Text.length` or `Ashes.IO.print`).
@@ -378,7 +379,27 @@ arenas and per-thread RC free lists reclaimed during join. An IR/native regressi
 gate for a shared-list `Task.Parallel.both` workload. Atomic RC or an explicit thread-shared marker
 must land before this eligibility boundary is widened; no atomic overhead is added to thread-local RC.
 
+Phase 6 exit audit:
+
+- User ADTs, records, lists, Strings, Bytes, BigInts, closures/environments, and builtin result
+  containers each have at least one native-correct, runtime-managed ownership path with focused
+  2K/10K/50K RSS-slope coverage.
+- Task/coroutine frames and structured-parallel sharing have explicit region/thread decisions and
+  regression coverage rather than accidental RC participation.
+- Runtime-managed closure capture now covers scratch-free String, Bytes, and BigInt owners with a
+  synthesized type-directed capture dropper.
+- The remaining arena-backed ordinary-value paths are not accepted as the final design. Escaping
+  producers, generic pointer ADTs, polymorphic/function-owned lists, borrowed views, higher-order
+  call results, and legacy to-space/blob reuse are the concrete Phase 7 retirement ledger.
+- Scoped formatter/parser/BigInt scratch, OS/runtime payload buffers, task regions, and per-worker
+  regions may remain arenas only where Phase 7 verifies that they do not represent escaping language
+  values and their RSS slopes stay bounded.
+
 ### Phase 7: Retire Obsolete Arena/Reuse Paths
+
+Current status: in progress. The Phase 6 exit audit above is the blocking ledger. Phase 7 must first
+carry runtime-managed provenance across escaping let results and direct function-result boundaries,
+then remove the copy-out/to-space machinery made unreachable by each broadened ownership boundary.
 
 Deliverables:
 
