@@ -1117,55 +1117,37 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_runtime_rc_hot_loops_should_have_bounded_peak_rss()
+    public async Task Linux_backend_llvm_runtime_rc_hot_loop_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
         {
             return;
         }
 
-        MemoryExecutionResult list = await CompileRunWithLinuxLlvmPeakRssAsync(LowerProgram("""
-            let recursive loop n total =
-                if n <= 0 then total
-                else
-                    let tail = [40, 2] in
-                    let values = 1 :: tail in
-                    match values with
-                        | [] -> loop(n - 1)(total)
-                        | head :: _ ->
-                            match tail with
-                                | [] -> loop(n - 1)(total)
-                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+        List<MemoryExecutionResult> list = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcListMemoryProgram,
+            outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcAdtMemoryProgram,
+            outputPerIteration: 62).ConfigureAwait(false);
 
-            Ashes.IO.print(loop(20000)(0))
-            """)).ConfigureAwait(false);
+        AssertMemoryPlateaus("runtime-RC list", list);
+        AssertMemoryPlateaus("runtime-RC ADT", adt);
+    }
 
-        MemoryExecutionResult adt = await CompileRunWithLinuxLlvmPeakRssAsync(LowerProgram("""
-            type Tree =
-                | Leaf
-                | Node(Tree, Int, Tree)
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_list_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
 
-            let recursive loop n total =
-                if n <= 0 then total
-                else
-                    let child = Node(Leaf)(20)(Leaf) in
-                    let tree = Node(child)(42)(Leaf) in
-                    match tree with
-                        | Leaf -> loop(n - 1)(total)
-                        | Node(_, value, _) ->
-                            match child with
-                                | Leaf -> loop(n - 1)(total + value)
-                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaListMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
-            Ashes.IO.print(loop(20000)(0))
-            """)).ConfigureAwait(false);
-
-        list.Stdout.ShouldBe("820000\n");
-        adt.Stdout.ShouldBe("1240000\n");
-        list.MaxRssKb.ShouldBeGreaterThan(0);
-        adt.MaxRssKb.ShouldBeGreaterThan(0);
-        list.MaxRssKb.ShouldBeLessThan(64_000, $"runtime-RC list loop peaked at {list.MaxRssKb} KB");
-        adt.MaxRssKb.ShouldBeLessThan(64_000, $"runtime-RC ADT loop peaked at {adt.MaxRssKb} KB");
+        AssertMemoryPlateaus("legacy arena list", samples);
     }
 
     [Test]
@@ -2999,6 +2981,94 @@ public sealed class LinuxBackendCoverageTests
             DeleteDirectoryIfExists(tmpDir);
         }
     }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(sourceFactory(iterations));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
+    {
+        samples.Count.ShouldBe(3);
+        foreach (MemoryExecutionResult sample in samples)
+        {
+            sample.MaxRssKb.ShouldBeGreaterThan(0);
+            sample.MaxRssKb.ShouldBeLessThan(64_000, $"{workload} peaked at {sample.MaxRssKb} KB");
+        }
+
+        long totalGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[0].MaxRssKb);
+        long lateGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[1].MaxRssKb);
+        totalGrowthKb.ShouldBeLessThan(8_192,
+            $"{workload} RSS grew {totalGrowthKb} KB from 2K to 50K iterations");
+        lateGrowthKb.ShouldBeLessThan(8_192,
+            $"{workload} RSS grew {lateGrowthKb} KB from 10K to 50K iterations");
+    }
+
+    private static string BuildRuntimeRcListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = [40, 2] in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcAdtMemoryProgram(int iterations)
+        => $$"""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let child = Node(Leaf)(20)(Leaf) in
+                    let tree = Node(child)(42)(Leaf) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) ->
+                            match child with
+                                | Leaf -> loop(n - 1)(total + value)
+                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let values = ["a", "b", "c"] in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            if head == "a"
+                            then loop(n - 1)(total + 1)
+                            else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
 
     private static async Task<MemoryExecutionResult> CompileRunWithLinuxLlvmPeakRssAsync(IrProgram ir)
     {

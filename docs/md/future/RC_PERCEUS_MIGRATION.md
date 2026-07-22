@@ -494,9 +494,10 @@ Focused tests:
    drop, and basic uniqueness checks. Acceptance: small native runs pass, targeted leak/UAF checks
    pass on linux-x64, and resource diagnostics remain unchanged.
 
-   Current validation includes bounded peak-RSS native hot loops for shared-tail lists and shared-child
-   recursive ADTs. These tests found and now guard a branch-lowering leak where the first TCO match
-   arm's compiler-only release state suppressed RC cleanup in later arms.
+   Current validation includes native peak-RSS slope checks at 2K, 10K, and 50K iterations for
+   shared-tail lists and shared-child recursive ADTs, plus an initial legacy arena-managed pointer-list
+   control. These tests found and now guard a branch-lowering leak where the first TCO match arm's
+   compiler-only release state suppressed RC cleanup in later arms.
 
 ## 8. Test And Measurement Strategy
 
@@ -514,6 +515,14 @@ Memory safety and memory behavior must be measured explicitly:
 
 - Add focused stress programs for each migrated heap family.
 - Track RSS/peak allocation for hot loops that previously depended on arenas or reuse.
+- Measure memory-growth slopes, not only one-run ceilings: execute representative native workloads
+  at increasing iteration counts (for example 2K, 10K, and 50K), subtract process-startup noise, and
+  require peak RSS to plateau within a fixed tolerance instead of growing proportionally with work.
+- Keep slope regressions for legacy arena-managed families as well as migrated RC families. An old
+  arena/copy-out leak is still a release blocker while that path remains executable, and each known
+  leak must gain a regression before or alongside its fix.
+- Maintain a workload matrix covering unique and shared lists/trees first, then records, strings,
+  bytes, bigints, closures, async/server loops, and parallel workers as those families enter scope.
 - Use available native tooling per host/target where practical: ASAN-like instrumentation if it
   becomes available, Valgrind or equivalent on linux-x64, Wine-compatible checks for win-x64 where
   feasible, and focused qemu runs for linux-arm64.
