@@ -162,9 +162,9 @@ public sealed partial class Lowering
     // once at loop entry) and are therefore safe to reuse in place.
     private readonly HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
 
-    // Available reuse tokens (dead ADT cells from matching a linear value), innermost last. Each is
-    // the cell's address temp + its field count; a same-arity constructor in the arm consumes one,
-    // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
+    // Available reuse tokens (dead ADT cells converted by DropReuse), innermost last. Each is the
+    // token temp + its field count; a same-arity constructor in the arm consumes one, emitting
+    // AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
     private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
 
     // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.

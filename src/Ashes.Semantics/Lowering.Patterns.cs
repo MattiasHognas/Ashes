@@ -157,8 +157,10 @@ public sealed partial class Lowering
             && reuseArity is int reuseArityVal
             && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
         {
-            _reuseTokens.Add((valueTemp, reuseArityVal));
-            RecordReuseTokenFieldBindings(valueTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+            int tokenTemp = NewTemp();
+            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, reuseArityVal));
+            _reuseTokens.Add((tokenTemp, reuseArityVal));
+            RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
         }
 
         return reuseTokensBefore;
@@ -433,8 +435,10 @@ public sealed partial class Lowering
         if (reuseScrutineeName is not null
             && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
         {
-            _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
-            RecordReuseTokenFieldBindings(valueTemp, cases[i].Pattern, cases[i].Body);
+            int tokenTemp = NewTemp();
+            Emit(new IrInst.DropReuse(tokenTemp, valueTemp, plan[i].Ctor.Arity));
+            _reuseTokens.Add((tokenTemp, plan[i].Ctor.Arity));
+            RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
         return reuseTokensBefore;

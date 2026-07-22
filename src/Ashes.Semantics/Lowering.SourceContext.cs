@@ -77,6 +77,7 @@ public sealed partial class Lowering
             or IrInst.CopyOutArena
             or IrInst.CopyOutArenaToSpace
             or IrInst.CleanupResource
+            or IrInst.DropReuse
             or IrInst.RcDrop
             or IrInst.RcDup
             or IrInst.RcIsUnique

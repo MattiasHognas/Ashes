@@ -216,6 +216,19 @@ public abstract record IrInst
     public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
+    /// Converts a dead ADT cell into an explicit reuse token. <c>FieldCount</c> describes the
+    /// compatible allocation layout. The initial arena-backed path is statically unique, so this is
+    /// an identity operation in codegen; runtime-managed values will later use the same instruction
+    /// to perform the Perceus uniqueness check and produce a null token when reuse is unavailable.
+    /// </summary>
+    public sealed record DropReuse(
+        int Target,
+        int SourceTemp,
+        int FieldCount,
+        bool RuntimeManaged = false
+    ) : IrInst;
+
+    /// <summary>
     /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
     /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
     /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node

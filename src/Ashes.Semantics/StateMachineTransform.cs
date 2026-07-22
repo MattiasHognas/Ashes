@@ -840,6 +840,7 @@ public static class StateMachineTransform
         return inst switch
         {
             IrInst.Borrow i => [i.Target],
+            IrInst.DropReuse i => [i.Target],
             IrInst.RcDup i => [i.Target],
             IrInst.RcIsUnique i => [i.Target],
             IrInst.CreateTask i => [i.Target],
@@ -1023,6 +1024,7 @@ public static class StateMachineTransform
         return inst switch
         {
             IrInst.CleanupResource d => [d.SourceTemp],
+            IrInst.DropReuse d => [d.SourceTemp],
             IrInst.RcDrop d => [d.SourceTemp],
             IrInst.RcDup d => [d.SourceTemp],
             IrInst.RcIsUnique u => [u.SourceTemp],

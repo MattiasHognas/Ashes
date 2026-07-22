@@ -1767,6 +1767,8 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
+            IrInst.DropReuse { RuntimeManaged: false } token =>
+                StoreTemp(state, token.Target, LoadTemp(state, token.SourceTemp)),
             IrInst.RcDup { RuntimeManaged: true } dup => StoreTemp(state, dup.Target,
                 EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
             // Erased Perceus marker: identity-preserving for arena-managed values.
