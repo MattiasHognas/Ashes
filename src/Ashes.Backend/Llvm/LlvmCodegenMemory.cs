@@ -144,6 +144,16 @@ internal static partial class LlvmCodegen
         return valuePtr;
     }
 
+    private static LlvmValueHandle EmitRuntimeRcIsUnique(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    {
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(state.Target.Builder, valuePtr,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_unique_base");
+        LlvmValueHandle count = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_unique_count");
+        return LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_is_unique");
+    }
+
     private static bool EmitRuntimeRcDrop(LlvmCodegenState state, LlvmValueHandle valuePtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

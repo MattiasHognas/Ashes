@@ -330,6 +330,12 @@ public abstract record IrInst
     public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false) : IrInst;
 
     /// <summary>
+    /// Tests whether a runtime-managed value has exactly one owning reference. This operation is
+    /// valid only for values whose allocation carries <see cref="HeapLayouts.RcHeader"/>.
+    /// </summary>
+    public sealed record RcIsUnique(int Target, int SourceTemp) : IrInst;
+
+    /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.
     /// Produces a non-owning reference to the owned value held in SourceTemp.
     /// The borrowed reference carries no drop responsibility — the owning scope

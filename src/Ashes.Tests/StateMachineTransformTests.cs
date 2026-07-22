@@ -131,4 +131,25 @@ public sealed class StateMachineTransformTests
         resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
         resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 6);
     }
+
+    [Test]
+    public void Rc_uniqueness_source_live_across_await_is_saved_and_restored()
+    {
+        var body = new List<IrInst>
+        {
+            new IrInst.AllocAdt(5, 0, 0, RuntimeManaged: true),
+        };
+        EmitCompletedTask(body, valueTemp: 7, taskTemp: 6);
+        body.Add(new IrInst.AwaitTask(8, 6));
+        body.Add(new IrInst.RcIsUnique(9, 5));
+        body.Add(new IrInst.RcDrop(5, "UnitBox", RuntimeManaged: true));
+        body.Add(new IrInst.Return(9));
+
+        StateMachineResult result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        IrInst.Suspend suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5);
+        IrInst.Resume resume = result.Instructions.OfType<IrInst.Resume>().ShouldHaveSingleItem();
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
+    }
 }

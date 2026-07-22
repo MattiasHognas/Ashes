@@ -79,6 +79,7 @@ public sealed partial class Lowering
             or IrInst.CleanupResource
             or IrInst.RcDrop
             or IrInst.RcDup
+            or IrInst.RcIsUnique
             or IrInst.Borrow;
     }
 

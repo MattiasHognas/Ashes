@@ -85,7 +85,7 @@ public static class IrOptimizer
             or IrInst.CmpFloatEq or IrInst.CmpFloatNe
             or IrInst.CmpStrEq or IrInst.CmpStrNe
             or IrInst.LoadFuncAddr or IrInst.GetAdtTag or IrInst.GetAdtField or IrInst.SetAdtField
-            or IrInst.Borrow or IrInst.RcDup or IrInst.RcDrop
+            or IrInst.Borrow or IrInst.RcDup or IrInst.RcDrop or IrInst.RcIsUnique
             or IrInst.BytesLength or IrInst.BytesGet or IrInst.BytesCompare or IrInst.BytesIndexOf
             or IrInst.BytesHash or IrInst.BytesGetU16Le or IrInst.BytesGetU32Le or IrInst.BytesGetU64Le
             or IrInst.TextByteLength
@@ -592,6 +592,7 @@ public static class IrOptimizer
             IrInst.CleanupResource d => d with { SourceTemp = R(d.SourceTemp) },
             IrInst.RcDrop d => d with { SourceTemp = R(d.SourceTemp) },
             IrInst.RcDup d => d with { SourceTemp = R(d.SourceTemp) },
+            IrInst.RcIsUnique u => u with { SourceTemp = R(u.SourceTemp) },
             IrInst.Borrow b => b with { SourceTemp = R(b.SourceTemp) },
             IrInst.CopyOutArena co => co with { SrcTemp = R(co.SrcTemp) },
             IrInst.CopyOutArenaToSpace co => co with { SrcTemp = R(co.SrcTemp) },
@@ -1816,6 +1817,7 @@ public static class IrOptimizer
             case IrInst.CleanupResource d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.RcDrop d: usedTemps.Add(d.SourceTemp); break;
             case IrInst.RcDup d: usedTemps.Add(d.SourceTemp); break;
+            case IrInst.RcIsUnique u: usedTemps.Add(u.SourceTemp); break;
             case IrInst.Borrow b: usedTemps.Add(b.SourceTemp); break;
             case IrInst.CopyOutArena c: usedTemps.Add(c.SrcTemp); break;
             case IrInst.CopyOutArenaToSpace c: usedTemps.Add(c.SrcTemp); break;

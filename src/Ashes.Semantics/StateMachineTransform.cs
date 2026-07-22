@@ -841,6 +841,7 @@ public static class StateMachineTransform
         {
             IrInst.Borrow i => [i.Target],
             IrInst.RcDup i => [i.Target],
+            IrInst.RcIsUnique i => [i.Target],
             IrInst.CreateTask i => [i.Target],
             IrInst.CreateCompletedTask i => [i.Target],
             IrInst.AwaitTask i => [i.Target],
@@ -1024,6 +1025,7 @@ public static class StateMachineTransform
             IrInst.CleanupResource d => [d.SourceTemp],
             IrInst.RcDrop d => [d.SourceTemp],
             IrInst.RcDup d => [d.SourceTemp],
+            IrInst.RcIsUnique u => [u.SourceTemp],
             IrInst.Borrow b => [b.SourceTemp],
             IrInst.CreateTask ct => [ct.ClosureTemp],
             IrInst.CreateCompletedTask ct => [ct.ResultTemp],

@@ -69,6 +69,37 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_reports_runtime_rc_uniqueness_transitions()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(1, 0),
+            new IrInst.PrintBool(1),
+            new IrInst.RcDup(2, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 0),
+            new IrInst.PrintBool(3),
+            new IrInst.RcDrop(2, "UnitBox", RuntimeManaged: true),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.PrintBool(4),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.LoadConstInt(5, 0),
+            new IrInst.Return(5),
+        };
+        var function = new IrFunction("entry", instructions, 0, 6, false);
+        var program = new IrProgram(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\nfalse\ntrue\n");
+    }
+
+    [Test]
     public void Linux_backend_compile_should_emit_elf_header_for_int_program()
     {
         var bytes = CompileForLinux("Ashes.IO.print(40 + 2)");

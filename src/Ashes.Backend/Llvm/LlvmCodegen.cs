@@ -1753,6 +1753,8 @@ internal static partial class LlvmCodegen
                 EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
             // Erased Perceus marker: identity-preserving for arena-managed values.
             IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
+            IrInst.RcIsUnique unique => StoreTemp(state, unique.Target,
+                EmitRuntimeRcIsUnique(state, LoadTemp(state, unique.SourceTemp))),
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
