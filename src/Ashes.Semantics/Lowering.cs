@@ -6104,6 +6104,7 @@ public sealed partial class Lowering
             bool savedStringRequest = _runtimeRcStringAllocationRequested;
             bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
             bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
+            bool savedListRequest = _runtimeRcListAllocationRequested;
             _runtimeRcStringAllocationRequested = savedStringRequest
                 || _runtimeRcTupleAllocationRequested
                     && IsRuntimeRcStringProducer(element)
@@ -6116,10 +6117,14 @@ public sealed partial class Lowering
                 || _runtimeRcTupleAllocationRequested
                     && IsRuntimeRcBigIntProducer(element)
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
+            _runtimeRcListAllocationRequested = savedListRequest
+                || _runtimeRcTupleAllocationRequested
+                    && IsFreshListConstructionExpression(element);
             (int temp, TypeRef type) = LowerExpr(element);
             _runtimeRcStringAllocationRequested = savedStringRequest;
             _runtimeRcBytesAllocationRequested = savedBytesRequest;
             _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
+            _runtimeRcListAllocationRequested = savedListRequest;
             elementTemps.Add(temp);
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
@@ -6129,9 +6134,7 @@ public sealed partial class Lowering
         bool runtimeManaged = _runtimeRcTupleAllocationRequested;
         for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
         {
-            runtimeManaged = CanArenaReset(elementTypes[i])
-                || elementTypes[i] is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                    && IsRuntimeManagedResultTemp(elementTemps[i]);
+            runtimeManaged = IsRuntimeManageableTupleElement(elementTypes[i], elementTemps[i]);
         }
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elementTemps.Count; i++)
@@ -6142,6 +6145,15 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tupleTemp, new TypeRef.TTuple(elementTypes));
+    }
+
+    private bool IsRuntimeManageableTupleElement(TypeRef type, int temp)
+    {
+        TypeRef pruned = Prune(type);
+        return CanArenaReset(pruned)
+            || IsRuntimeManagedResultTemp(temp)
+                && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                    || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element)));
     }
 
     private (int, TypeRef) LowerCons(Expr.Cons cons)

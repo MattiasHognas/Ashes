@@ -2097,7 +2097,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 41).ConfigureAwait(false);
         List<MemoryExecutionResult> tuple = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleMemoryProgram,
-            outputPerIteration: 47).ConfigureAwait(false);
+            outputPerIteration: 87).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
             outputPerIteration: 109).ConfigureAwait(false);
@@ -5147,11 +5147,14 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let pair =
-                        let fresh = ((40, 2), Ashes.Text.fromInt(40), Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42)) in fresh
+                        let fresh = ((40, 2), Ashes.Text.fromInt(40), Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42), [40, 2]) in fresh
                     in
                     match pair with
-                        | ((left, right), text, bytes, big) ->
-                            loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1)
+                        | ((left, right), text, bytes, big, values) ->
+                            match values with
+                                | [] -> loop(n - 1)(total)
+                                | head :: _ ->
+                                    loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

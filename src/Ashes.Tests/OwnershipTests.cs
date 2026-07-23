@@ -659,6 +659,26 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_tuple_with_fresh_copy_list_child_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let values = ([40, 2], 0) in values) in match escaped with | (items, bonus) -> match items with | [] -> bonus | head :: _ -> head + bonus");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_tuple_with_borrowed_list_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let items = [40, 2] in let escaped = (let values = (items, 0) in values) in match escaped with | (values, _) -> match values with | [] -> 0 | head :: _ -> head");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT
