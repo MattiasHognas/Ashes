@@ -15,9 +15,9 @@
   "type": "module",
   "devDependencies": {
     "@mdit-vue/shared": "^3.0.2",
-    "@types/node": "^26.1.0",
+    "@types/node": "^26.1.1",
     "mermaid": "^11.16.0",
     "vitepress": "2.0.0-alpha.17",
-    "vue": "^3.5.39"
+    "vue": "^3.5.40"
   }
 }
