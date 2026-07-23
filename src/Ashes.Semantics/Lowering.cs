@@ -1898,14 +1898,23 @@ public sealed partial class Lowering
             // so match the defining let by the value object identity recorded at registration.
             || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
-        var (bodyTemp, bodyType) = LowerLetBody(let.Body);
+        var (bodyTemp, bodyType) = LowerEscapingResult(let.Body);
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
     }
 
-    private (int Temp, TypeRef Type) LowerLetBody(Expr body)
+    private (int Temp, TypeRef Type) LowerEscapingResult(Expr body, bool normalizeStaticString = false)
     {
+        if (normalizeStaticString && body is Expr.StrLit literal)
+        {
+            var (sourceTemp, sourceType) = LowerStr(literal);
+            int resultTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(resultTemp, sourceTemp, -1, RuntimeManaged: true));
+            _runtimeManagedResultTemps.Add(resultTemp);
+            return (resultTemp, sourceType);
+        }
+
         if (TryLowerRuntimeManagedBuiltinResultBody(body, out (int Temp, TypeRef Type) builtinResult))
         {
             return builtinResult;
@@ -4559,7 +4568,9 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = LowerExpr(lam.Body);
+        var (bodyTemp, bodyType) = !_usesAsync && CapabilityGlobalCount == 0
+            ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
+            : LowerExpr(lam.Body);
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitOpParamScope(opParamScope);

@@ -1261,9 +1261,8 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_adt_with_copy_fields_emits_CopyOutArena()
+    public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
     {
-        // Function returning an ADT with Int field → per-call copy-out with static size.
         var ir = LowerProgram(
             """
             type Box =
@@ -1278,8 +1277,10 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for ADT(Int) result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 16).ShouldBeTrue(
-            "CopyOutArena(16) should appear after CallClosure for Box(Int) result.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
+            "The callee's fresh RC result should survive the caller's arena reset directly.");
+        ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     // --- Per-call arena watermarks ---
@@ -1339,9 +1340,8 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_string_emits_CopyOutArena()
+    public void Call_returning_static_string_uses_runtime_ownership_normalization()
     {
-        // toString returns String — per-call watermark should save+restore+copy-out.
         var ir = LowerProgram(
             """
             let toString = given (x) -> "result"
@@ -1355,20 +1355,16 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for String result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeTrue(
-            "CopyOutArena should appear after CallClosure for String result.");
-
-        // RestoreArenaState must precede CopyOutArena
-        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
-        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
-        restoreIdx.ShouldBeLessThan(copyOutIdx,
-            "RestoreArenaState must come before CopyOutArena.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
+            "The callee should return its normalized RC String without caller-side copy-out.");
+        ir.Functions.SelectMany(function => function.Instructions).Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+            "The static literal should be normalized once at its function-return boundary.");
     }
 
     [Test]
-    public void Call_returning_string_emits_ReclaimArenaChunks_after_CopyOutArena()
+    public void Call_returning_runtime_string_reclaims_chunks_after_restore()
     {
-        // Sequence should be: RestoreArenaState → CopyOutArena → ReclaimArenaChunks
         var ir = LowerProgram(
             """
             let toString = given (x) -> "result"
@@ -1379,17 +1375,14 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
 
         var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
-        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
         var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
 
         restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
-        copyOutIdx.ShouldBeGreaterThanOrEqualTo(0, "CopyOutArena should be present.");
         reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
 
-        restoreIdx.ShouldBeLessThan(copyOutIdx,
-            "RestoreArenaState must come before CopyOutArena.");
-        copyOutIdx.ShouldBeLessThan(reclaimIdx,
-            "CopyOutArena must come before ReclaimArenaChunks (source must be readable before chunks are freed).");
+        restoreIdx.ShouldBeLessThan(reclaimIdx,
+            "The caller should restore before reclaiming its now-independent call window.");
+        afterCall.Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
     [Test]
