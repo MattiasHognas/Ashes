@@ -6107,8 +6107,12 @@ public sealed partial class Lowering
         }
 
         int tupleTemp = NewTemp();
-        bool runtimeManaged = _runtimeRcTupleAllocationRequested
-            && elementTypes.All(CanArenaReset);
+        bool runtimeManaged = _runtimeRcTupleAllocationRequested;
+        for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
+        {
+            runtimeManaged = CanArenaReset(elementTypes[i])
+                || elementTypes[i] is TypeRef.TTuple && IsRuntimeManagedResultTemp(elementTemps[i]);
+        }
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elementTemps.Count; i++)
         {

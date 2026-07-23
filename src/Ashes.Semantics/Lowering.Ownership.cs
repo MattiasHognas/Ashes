@@ -327,6 +327,11 @@ public sealed partial class Lowering
     {
         int loadTemp = NewTemp();
         Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
+        if (TryEmitRuntimeManagedTupleDrop(info, loadTemp))
+        {
+            return;
+        }
+
         if (info.RuntimeManaged
             && info.Type is not null
             && Prune(info.Type) is TypeRef.TList runtimeList
@@ -361,7 +366,15 @@ public sealed partial class Lowering
                 EmitRuntimeManagedAdtDrop(loadTemp, runtimeAdt);
             }
         }
-        else if (info.IsResourceBearing && info.Type is not null)
+        else
+        {
+            EmitSimpleOwnedValueDrop(info, loadTemp);
+        }
+    }
+
+    private void EmitSimpleOwnedValueDrop(OwnershipInfo info, int loadTemp)
+    {
+        if (info.IsResourceBearing && info.Type is not null)
         {
             EmitResourceBearingDrop(loadTemp, info.Type);
             // The recursive walk above handles deterministic cleanup of nested resources. The
@@ -390,6 +403,19 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, RuntimeManaged: true));
         }
+    }
+
+    private bool TryEmitRuntimeManagedTupleDrop(OwnershipInfo info, int loadTemp)
+    {
+        if (!info.RuntimeManaged
+            || info.Type is null
+            || Prune(info.Type) is not TypeRef.TTuple tuple)
+        {
+            return false;
+        }
+
+        EmitRuntimeManagedTupleDrop(loadTemp, tuple);
+        return true;
     }
 
     /// <summary>
@@ -473,6 +499,36 @@ public sealed partial class Lowering
         }
 
         return false;
+    }
+
+    private void EmitRuntimeManagedTupleDrop(int valueTemp, TypeRef.TTuple tuple)
+    {
+        List<(int Index, TypeRef.TTuple Type)> children = [];
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (Prune(tuple.Elements[i]) is TypeRef.TTuple child)
+            {
+                children.Add((i, child));
+            }
+        }
+
+        string sharedLabel = NewLabel("rc_drop_tuple_shared");
+        if (children.Count > 0)
+        {
+            int uniqueTemp = NewTemp();
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+            foreach ((int index, TypeRef.TTuple childType) in children)
+            {
+                int childTemp = NewTemp();
+                Emit(new IrInst.LoadMemOffset(childTemp, valueTemp, index * 8));
+                EmitRuntimeManagedTupleDrop(childTemp, childType);
+            }
+
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
+        Emit(new IrInst.RcDrop(valueTemp, "Tuple", RuntimeManaged: true));
     }
 
     /// <summary>

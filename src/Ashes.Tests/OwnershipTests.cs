@@ -605,6 +605,26 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_fresh_nested_tuple_transfers_child_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let pair = ((40, 2), 0) in pair) in match escaped with | ((left, right), bonus) -> left + right + bonus");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_tuple_with_borrowed_tuple_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let child = (40, 2) in let escaped = (let pair = (child, 0) in pair) in match escaped with | ((left, right), bonus) -> left + right + bonus");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT

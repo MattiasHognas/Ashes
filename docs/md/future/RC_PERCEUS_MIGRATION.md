@@ -434,7 +434,9 @@ Fresh monomorphic records with copy fields, including recursively nested fresh r
 transfer directly as well. Records containing Strings or other unsupported pointers and records that
 would need to borrow an existing child remain on the conservative arena path.
 Fresh tuples containing only copy values now transfer directly as one RC cell. Pointer-bearing tuple
-escape remains arena-managed until recursive tuple-child ownership is represented.
+escape remains arena-managed except for fully fresh nested tuples: each nested tuple is an RC cell,
+and a uniqueness-aware recursive drop releases children before their parent. Borrowed tuple children
+remain rejected.
 Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
 tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
 drop releases nested children only for the last owner; the immediate-match path retains the same contract.

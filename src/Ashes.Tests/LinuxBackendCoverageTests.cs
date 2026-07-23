@@ -5146,9 +5146,9 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let pair = (let fresh = (40, 2) in fresh) in
+                    let pair = (let fresh = ((40, 2), 0) in fresh) in
                     match pair with
-                        | (left, right) -> loop(n - 1)(total + left + right)
+                        | ((left, right), bonus) -> loop(n - 1)(total + left + right + bonus)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
