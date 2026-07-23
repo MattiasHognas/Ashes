@@ -5833,6 +5833,19 @@ public sealed partial class Lowering
 
     private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
     {
+        return TryResolveKnownFunctionResultOwnership(
+                rootExpr,
+                argumentCount,
+                out bool runtimeManaged)
+            && runtimeManaged;
+    }
+
+    private bool TryResolveKnownFunctionResultOwnership(
+        Expr rootExpr,
+        int argumentCount,
+        out bool runtimeManaged)
+    {
+        runtimeManaged = false;
         if (argumentCount == 0
             || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel))
         {
@@ -5849,7 +5862,8 @@ public sealed partial class Lowering
             resultLabel = nextLabel;
         }
 
-        return _runtimeManagedFunctionResultLabels.Contains(resultLabel);
+        runtimeManaged = _runtimeManagedFunctionResultLabels.Contains(resultLabel);
+        return true;
     }
 
     private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
@@ -5955,6 +5969,7 @@ public sealed partial class Lowering
                     && !_inCoroutineBody
                     && CapabilityGlobalCount == 0
                     && i == collectedArgs.Count - 1
+                    && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, out _)
                     && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
                 currentTemp, argTemp, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);

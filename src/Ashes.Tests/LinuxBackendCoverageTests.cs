@@ -3081,6 +3081,44 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_keep_direct_curried_list_result_alive_inside_arena_adt()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Step =
+                | Done
+                | Hit(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive show xs =
+                match xs with
+                    | [] -> ""
+                    | h :: t -> Ashes.Text.fromInt(h) + "," + show(t)
+
+            let updated = setAt(1)(42)([10, 20, 30])
+            let step = Hit(updated)
+            let rendered =
+                match step with
+                    | Done -> "done"
+                    | Hit(values) -> show(values)
+            Ashes.IO.print(rendered)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("10,42,30,\n");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         AssertLinuxLlvmCompiles(LowerExpression("Ashes.IO.panic(\"boom\")"));

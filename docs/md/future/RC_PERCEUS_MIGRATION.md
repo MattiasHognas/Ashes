@@ -489,6 +489,13 @@ lists with other pointer-bearing element layouts, and opaque closure graphs stil
 a runtime layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
 the established task-region boundary for now; enabling this closure-result channel there caused the
 HTTP keep-alive RSS gate to grow linearly and is therefore blocked on suspension-aware ownership.
+The runtime ownership channel is consulted only when a saturated result's function-label chain cannot
+be resolved statically. A known curried function whose innermost result is arena-managed retains the
+existing arena call copy-out instead of being normalized to RC. Promoting that child alone and then
+embedding it in an arena-managed ADT would create a mixed-lifetime graph: the child's lexical drop
+could free it while the arena parent still points to it. The `tco_deep_adt_accumulator` regression and
+a focused direct-curried-list/arena-ADT backend test pin this boundary, while the opaque higher-order
+list RSS profile continues to require normalization and plateauing memory.
 Fresh values produced directly as a let body now use the same escape request as a directly returned
 binding. String, Bytes, BigInt, fully owned List, Tuple, record, user-ADT, scalar parse-result,
 BigInt parse-result, and `Text.uncons` graphs therefore survive the scope reset through RC without a
