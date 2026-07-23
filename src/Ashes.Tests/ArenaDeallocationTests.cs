@@ -850,23 +850,31 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Mixed_branch_string_result_retains_copy_out_at_unproven_match_boundaries()
+    public void Mixed_branch_string_result_normalizes_static_arm_to_runtime_ownership()
     {
         var ir = LowerProgram(
             """
-            let prefix = "outer" in
-            let text =
-                match 1 with
-                    | 1 ->
-                        let suffix = "inner" in
-                        prefix + suffix
-                    | _ -> "bad"
-            in text
+            let final =
+                let prefix = "outer" in
+                let text =
+                    match 1 with
+                        | 1 ->
+                            let suffix = "inner" in
+                            prefix + suffix
+                        | _ -> "bad"
+                in text
+            in Ashes.Text.byteLength(final)
             """);
         var instructions = ir.EntryFunction.Instructions;
 
-        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(2,
-            "The fresh concatenation no longer needs copy-out, while the mixed static/RC match result remains conservative at its two enclosing boundaries.");
+        instructions.Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+            "The interned fallback arm should be copied once into the match's uniform RC ownership contract.");
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(0,
+            "After branch normalization, the match result should cross both enclosing arena resets without legacy copy-out.");
+        instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue(
+            "The normalized match result must retain a final RC drop.");
     }
 
     [Test]

@@ -43,6 +43,7 @@ public sealed partial class Lowering
         // arms that don't reference the accumulator again (so its cell is dead).
         (string? reuseScrutineeName, TypeRef.TNamedType? runtimeReuseType) =
             GetMatchReuseScrutinee(match, valueType, savedTailPos);
+        bool normalizeStaticStringArms = ShouldNormalizeStaticStringMatchArms(match.Cases);
 
         List<bool>? runtimeManagedResultArms = LowerMatchArms(
             match, valueTemp, valueType, resultType, resultSlot,
@@ -50,7 +51,8 @@ public sealed partial class Lowering
             noMatchLabel,
             savedTailPos,
             reuseScrutineeName,
-            runtimeReuseType);
+            runtimeReuseType,
+            normalizeStaticStringArms);
 
         Emit(new IrInst.Label(noMatchLabel));
         EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
@@ -89,20 +91,61 @@ public sealed partial class Lowering
         string noMatchLabel,
         bool savedTailPos,
         string? reuseScrutineeName,
-        TypeRef.TNamedType? runtimeReuseType)
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms)
     {
-        List<bool>? runtimeManagedResultArms = runtimeReuseType is null ? null : [];
+        List<bool>? runtimeManagedResultArms = [];
         _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
+            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
         }
         else
         {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType);
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
         }
         _runtimeManagedMatchResultArms.Pop();
         return runtimeManagedResultArms;
+    }
+
+    private bool ShouldNormalizeStaticStringMatchArms(IReadOnlyList<MatchCase> cases)
+    {
+        bool hasFreshStringResult = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null
+                || !IsRuntimeManagedStringMatchArm(matchCase.Body, out bool fresh))
+            {
+                return false;
+            }
+
+            hasFreshStringResult |= fresh;
+        }
+
+        return hasFreshStringResult;
+    }
+
+    private bool IsRuntimeManagedStringMatchArm(Expr expression, out bool fresh)
+    {
+        if (expression is Expr.StrLit)
+        {
+            fresh = false;
+            return true;
+        }
+
+        if (IsRuntimeRcStringProducer(expression))
+        {
+            fresh = true;
+            return true;
+        }
+
+        if (expression is Expr.Let let)
+        {
+            return IsRuntimeManagedStringMatchArm(let.Body, out fresh) && fresh;
+        }
+
+        fresh = false;
+        return false;
     }
 
     private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(
@@ -356,7 +399,7 @@ public sealed partial class Lowering
     /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
     /// patterns, and nested refinements.
     /// </summary>
-    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null, TypeRef.TNamedType? runtimeReuseType = null)
+    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null, TypeRef.TNamedType? runtimeReuseType = null, bool normalizeStaticStringArms = false)
     {
         for (int i = 0; i < match.Cases.Count; i++)
         {
@@ -379,7 +422,7 @@ public sealed partial class Lowering
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore, normalizeStaticStringArms);
 
             EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
 
@@ -476,12 +519,12 @@ public sealed partial class Lowering
     /// into the result slot before jumping to the match end label. Shared by the linear and
     /// tag-switch arm lowerings.
     /// </summary>
-    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, int reuseTokensBefore)
+    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, int reuseTokensBefore, bool normalizeStaticStringArms)
     {
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
-        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseTokensBefore);
+        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseTokensBefore, normalizeStaticStringArms);
         EndExclusiveBranch(armCredits);
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
@@ -515,7 +558,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Jump(endLabel));
     }
 
-    private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore)
+    private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore, bool normalizeStaticStringArm)
     {
         TypeRef.TNamedType? runtimeReuseType = _reuseTokens
             .Skip(reuseTokensBefore)
@@ -525,6 +568,15 @@ public sealed partial class Lowering
         _runtimeRcReuseAllocationTypeRequested = runtimeReuseType ?? savedReuseType;
         try
         {
+            if (normalizeStaticStringArm && body is Expr.StrLit literal)
+            {
+                var (sourceTemp, sourceType) = LowerStr(literal);
+                int resultTemp = NewTemp();
+                Emit(new IrInst.CopyOutArena(resultTemp, sourceTemp, -1, RuntimeManaged: true));
+                _runtimeManagedResultTemps.Add(resultTemp);
+                return (resultTemp, sourceType);
+            }
+
             return LowerExpr(body);
         }
         finally
@@ -726,7 +778,8 @@ public sealed partial class Lowering
         string noMatchLabel,
         bool savedTailPos,
         string? reuseScrutineeName = null,
-        TypeRef.TNamedType? runtimeReuseType = null)
+        TypeRef.TNamedType? runtimeReuseType = null,
+        bool normalizeStaticStringArms = false)
     {
         int tagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
@@ -760,7 +813,7 @@ public sealed partial class Lowering
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
+            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore, normalizeStaticStringArms);
 
             _scopes.Pop();
         }
