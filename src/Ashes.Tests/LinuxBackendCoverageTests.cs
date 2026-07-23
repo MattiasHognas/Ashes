@@ -3775,6 +3775,15 @@ public sealed class LinuxBackendCoverageTests
         return -1;
     }
 
+    private static long ReadMinorFaults(int pid)
+    {
+        string stat = File.ReadAllText($"/proc/{pid}/stat");
+        int commandEnd = stat.LastIndexOf(')');
+        commandEnd.ShouldBeGreaterThan(0);
+        string[] fieldsFromState = stat[(commandEnd + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return long.Parse(fieldsFromState[7], CultureInfo.InvariantCulture);
+    }
+
     // Sends two requests on one persistent connection, returning both responses (keep-alive).
     private static async Task<(string First, string Second)> HttpTwoRequestsOneConnectionAsync(int port, string firstRequest, string secondRequest)
     {
@@ -4912,6 +4921,60 @@ public sealed class LinuxBackendCoverageTests
                 var reply = await ConnectSendReceiveWithRetryAsync(port, payload).ConfigureAwait(false);
                 reply.ShouldBe("echo: " + payload);
             }
+        }
+        finally
+        {
+            CleanUpServerProcess(proc, exePath, tmpDir);
+        }
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_spawned_task_arena_should_not_fault_its_lazy_footer_page()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)(msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(
+            LowerProgramWithImports(source),
+            BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_lazy_footer_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
+            (await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false)).ShouldBe("warmup");
+
+            long faultsBefore = ReadMinorFaults(proc.Id);
+            const int requestCount = 300;
+            for (int request = 0; request < requestCount; request++)
+            {
+                (await ConnectSendReceiveWithRetryAsync(port, "x").ConfigureAwait(false)).ShouldBe("x");
+            }
+
+            long faultDelta = ReadMinorFaults(proc.Id) - faultsBefore;
+            faultDelta.ShouldBeLessThan(requestCount * 5L / 4L,
+                "each spawned handler should fault its task frame page, not also the far footer page");
         }
         finally
         {

@@ -722,9 +722,14 @@ Task frames and capability-handler state are scheduler-owned regions rather
 than ordinary RC cells. Suspension and resumptive control flow can retain state
 non-linearly; keeping one explicit region owner avoids publishing a partially
 RC-managed graph across those edges. Spawned roots have private arenas that are
-reaped on completion, while main-task and async-TCO regions use scoped or
-restart watermarks. Multi-scale RSS tests cover task runs, detached handlers,
-HTTP keep-alive loops, and capability-bearing TCO.
+reaped on completion. Their fixed initial 4 MiB chunk leaves its far footer
+page untouched: the reaper derives that first chunk from the task address,
+while chunks allocated on growth use the normal footer/previous-end chain.
+This preserves variable-size reclamation without faulting a second physical
+page for every short-lived request. Main-task and async-TCO regions use scoped
+or restart watermarks. Multi-scale RSS tests cover task runs, detached
+handlers, HTTP keep-alive loops, and capability-bearing TCO; a native
+minor-fault gate covers the lazy initial task footer.
 
 ### Threads and structured parallelism
 

@@ -99,6 +99,18 @@ After CRP-5 was fixed, a fresh 5,000-request HTTP diagnostic run completed witho
 These are correctness/load samples, not a replacement for the final interleaved A/B performance
 run.
 
+After the lazy task-arena footer correction in CRP-10, three interleaved 50,000-request runs per
+revision produced these medians:
+
+| TCP concurrency | Before | Fixed RC Perceus | Change |
+|---:|---:|---:|---:|
+| 1 | 25,761 req/s | 26,026 req/s | 1.01x |
+| 8 | 119,178 req/s | 118,879 req/s | unchanged |
+| 64 | 43,851 req/s | 43,526 req/s | unchanged |
+
+Every stage completed with zero errors. This longer balanced comparison supersedes the provisional
+5,000-request c=64 result.
+
 ## Actionable defect ledger
 
 ### CRP-1 — P1: TCO/exit double-drop corrupts the exact-size RC free list
@@ -303,10 +315,28 @@ fixed process overhead is visible at N=1,000, but the absolute difference stays 
 the pre-migration control rather than 57% above it. Runtime remained comparable at 14.18 seconds
 versus 13.94 seconds in the final diagnostic run.
 
-### CRP-10 — P2: TCP high-concurrency throughput may regress
+### CRP-10 — P2: TCP high-concurrency throughput may regress — resolved
 
-The short c=64 sample fell about 30% while c=1 and c=8 were unchanged/slightly faster. Confirm with
-longer interleaved runs after CRP-5 is fixed; do not optimize from this noisy sample alone.
+**Resolved 2026-07-23.** The original short c=64 sample was noisy, but the first longer retest after
+CRP-5 exposed a real, broader regression: 18,500/44,268/22,184 req/s at concurrency 1/8/64 versus
+26,099/120,155/42,772 req/s before migration in the balanced sequence.
+
+Commit isolation and optimized LLVM comparison traced the loss to CRP-5's task-private chunk-format
+correction. Each spawned request maps a 4 MiB private arena. Eagerly writing that chunk's footer at
+its far end faulted a second physical page even when the request used only its frame page; the
+mapping is released after the handler, so the unnecessary fault recurred on every connection and
+contended heavily at concurrency.
+
+The initial task chunk's footer is now lazy. A task reaper recognizes that fixed first chunk from
+the task address and frees it directly; any grown chunks retain the common footer/previous-end
+format, so variable-size growth and cross-chunk reset correctness from CRP-5 are unchanged. In a
+1,000-request diagnostic stage (plus the load generator's setup connections), minor faults fell
+from 2,416 to 1,215, matching the 1,215 pre-migration control. An 8 MiB receive stress verified that
+grown chunks still complete and reap at stable RSS.
+
+The final three-run, 50,000-request interleaved A/B medians shown above match the pre-migration
+binary at all three concurrency levels with zero errors. A focused native regression counts minor
+faults across 300 spawned handlers so an eager far-footer write cannot silently return.
 
 ## Remaining benchmark gaps outside the RC regression sweep
 

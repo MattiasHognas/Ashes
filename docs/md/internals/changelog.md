@@ -177,6 +177,15 @@ runtime-managed. The same rule removed Mandelbrot's duplicate packed-bitmap repr
 N=16,000 peak RSS returned from 2,756,764 KB to 1,757,596 KB, within 0.23% of the 1,753,536 KB
 pre-migration control. See CRP-8 and CRP-9 in the challenge regression sweep.
 
+Task-private arenas received a lazy-footer correction after the CRP-5 reclamation fix. Spawned
+handlers map a 4 MiB initial chunk; eagerly writing its footer touched the far page even when the
+handler used only its frame page, adding one recurring minor fault per connection. Reapers now
+derive the fixed first chunk from the task address, while genuinely grown chunks retain the common
+footer/previous-end chain. Minor faults for the 1,000-request diagnostic returned from 2,416 to the
+1,215 pre-migration level, and three interleaved 50,000-request TCP runs matched the pre-migration
+throughput at concurrency 1, 8, and 64. A native minor-fault gate and an 8 MiB receive stress cover
+the short-task and grown-chunk paths. See CRP-10 in the challenge regression sweep.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

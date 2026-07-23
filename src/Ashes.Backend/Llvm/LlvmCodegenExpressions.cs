@@ -2060,10 +2060,16 @@ internal static partial class LlvmCodegen
     private static void EmitReapTaskArena(LlvmCodegenState state, LlvmValueHandle task, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle initialBase = LlvmApi.BuildSub(builder, task,
+            LlvmApi.ConstInt(state.I64, ChunkHeaderBytes, 0), prefix + "_initial_base");
+        LlvmValueHandle initialEnd = LlvmApi.BuildAdd(builder, initialBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), prefix + "_initial_end");
         LlvmValueHandle currentEndSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_current_end_slot");
         LlvmApi.BuildStore(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), currentEndSlot);
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_check");
         LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_body");
+        LlvmBasicBlockHandle initialBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_initial");
+        LlvmBasicBlockHandle grownBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_grown");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_done");
         LlvmApi.BuildBr(builder, checkBlock);
         LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
@@ -2071,6 +2077,15 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentEnd, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
         LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
         LlvmValueHandle freeEnd = LlvmApi.BuildLoad2(builder, state.I64, currentEndSlot, prefix + "_free_end_value");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEnd, initialEnd, prefix + "_is_initial"),
+            initialBlock,
+            grownBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, initialBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), currentEndSlot);
+        EmitFreeOsMemory(state, initialBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), prefix + "_free_initial_chunk");
+        LlvmApi.BuildBr(builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, grownBlock);
         LlvmValueHandle freeBase = LoadMemory(state, freeEnd, 0, prefix + "_free_base");
         LlvmValueHandle previousEnd = LoadMemory(state, freeBase, 0, prefix + "_previous_end");
         LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
@@ -2785,14 +2800,16 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Private arena chunk for the task. It uses the same header/footer representation as the
-        // main arena so ordinary resets and variable-size growth can reclaim it safely.
+        // Private arena chunk for the task. Grown chunks use the common header/footer
+        // representation. The initial chunk's footer is deliberately lazy: touching the far end of
+        // every fresh 4 MiB mapping would fault a second page per spawned request. Reapers recognize
+        // this first chunk from the task address; a reset that crosses grown chunks stops at its
+        // saved initial end without reading a footer there.
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_chunk");
         EmitHeapChunkInitCheck(state, chunkBase);
         StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_chunk_prev");
         LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
             LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), "spawn_chunk_end");
-        StoreMemory(state, chunkEnd, 0, chunkBase, "spawn_chunk_self");
 
         // Copy the task frame (header + captures + live slots) into the chunk.
         LlvmValueHandle frameSize = LoadMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes, "spawn_frame_size");
@@ -2964,6 +2981,24 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeBodyBlock);
         LlvmValueHandle freeEndBody = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_end_body");
+        LlvmValueHandle reapTask = LlvmApi.BuildLoad2(builder, state.I64, layout.CurSlot, "rd_reap_task");
+        LlvmValueHandle initialBase = LlvmApi.BuildSub(builder, reapTask,
+            LlvmApi.ConstInt(state.I64, ChunkHeaderBytes, 0), "rd_initial_base");
+        LlvmValueHandle initialEnd = LlvmApi.BuildAdd(builder, initialBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), "rd_initial_end");
+        LlvmBasicBlockHandle initialBlock =
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_initial");
+        LlvmBasicBlockHandle grownBlock =
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_grown");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEndBody, initialEnd, "rd_is_initial"),
+            initialBlock,
+            grownBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, initialBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), layout.FreeBaseSlot);
+        EmitFreeOsMemory(state, initialBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "rd_free_initial_chunk");
+        LlvmApi.BuildBr(builder, layout.FreeCheckBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, grownBlock);
         LlvmValueHandle freeBaseBody = LoadMemory(state, freeEndBody, 0, "rd_free_base_body");
         LlvmValueHandle previousEnd = LoadMemory(state, freeBaseBody, 0, "rd_previous_end");
         LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
