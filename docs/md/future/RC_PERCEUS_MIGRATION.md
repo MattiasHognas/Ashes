@@ -1,9 +1,9 @@
 # RC Perceus Migration Plan
 
-Status: implementation in progress. The ownership-summary, explicit lifetime-IR, erased placement,
-and layout-descriptor scaffold tickets are implemented. Runtime reference counting is enabled for
-the current narrow local ADT/list slice; broader heap coverage and later Perceus optimization phases
-remain pending.
+Status: Phase 8 paper verification in progress. Phases 1-7 and their validation slices are
+implemented, but the final paper comparison has reopened the ordinary-value arena fallbacks listed
+under Phase 8. The migration is not complete until those blockers are removed or the declared full-RC
+target is explicitly reconsidered.
 
 Decision snapshot:
 
@@ -591,6 +591,39 @@ Phase 7 exit evidence (2026-07-23):
 
 This phase starts only after every implementation slice is complete and the resulting runtime has
 passed its correctness, memory-safety, memory-behavior, performance, and cross-target validation.
+
+Current status: paper comparison in progress; implementation blockers found. The PLDI'21 paper's
+central invariant is stronger than bounded peak RSS: after immediate `dup`/`drop` operations, every
+retained heap object must still be reachable, with `dup` delayed and `drop` placed at the earliest
+binding/branch death. Its reuse token is the consumed unique cell or null after decrementing a shared
+cell, and a constructor must allocate fresh when given null. Ashes implements those rules for values
+admitted to runtime RC, including layout-aware recursive drop, fusion/specialization, and
+`DropReuse`/`AllocReusing` fresh fallback. The comparison uses the published extended paper:
+<https://www.microsoft.com/en-us/research/publication/perceus-garbage-free-reference-counting-with-reuse/>.
+
+The remaining emitter audit classifies the apparent legacy operations as follows:
+
+- `CopyOutArena`/`CopyOutList` with `RuntimeManaged: true` are RC graph-normalization operations, not
+  arena lifetime fallbacks. They convert interned or opaque arena results into independently owned RC
+  values and are consistent with the target model, although permanent naming should make that clear.
+- `AllocAdtToSpace` and `CopyOutArenaToSpace` are confined to the specialized persistent
+  `Map`/`HashMap` reuse region. They are an intentional region implementation with bounded RSS gates,
+  not the lifetime mechanism for general ordinary values.
+- Parent/worker result copying and task-frame arenas remain intentional scheduler/thread boundaries.
+  RC values are not published across them until Ashes gains the paper's thread-shared marking or an
+  equivalent atomic transition.
+- Non-runtime `CopyOutArena`, `CopyOutList`, and `CopyOutClosure` emitted by scope, direct-call, and
+  TCO relocation paths are ordinary-value blockers. Unsupported borrowed/mixed pointer graphs can
+  also decline reclamation until an outer arena boundary. These paths are safe and measured, but they
+  do not satisfy the document's full ordinary-value RC target or the paper's garbage-free invariant.
+  In particular, the direct-curried-list regression demonstrates why promoting only one child of an
+  arena parent is unsound; the fix must promote the complete owned graph rather than restore a mixed
+  representation.
+
+Phase 8 therefore returns to implementation before the documentation rewrite. The next slices must
+establish uniform RC ownership for complete escaping aggregate graphs, then replace the non-runtime
+scope/call/TCO copy-outs. The final audit will rename or clearly distinguish RC normalization from
+arena relocation and will re-run this emitter census before declaring completion.
 
 Deliverables:
 
