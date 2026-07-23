@@ -1125,6 +1125,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_list_with_fresh_string_elements_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let values = [Ashes.Text.fromInt(40), Ashes.Text.fromInt(2)] in values) in match escaped with | [] -> 0 | head :: _ -> Ashes.Text.byteLength(head)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Pointer_element_list_consumed_by_match_remains_arena_managed()
     {
         IrProgram ir = LowerProgram("let values = [\"one\", \"two\"] in match values with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");

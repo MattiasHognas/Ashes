@@ -430,9 +430,10 @@ pointer children remain gated until child ownership is proven. Single-constructo
 a fresh scalar String, Bytes, or BigInt producer once the constructor application specializes the type
 variable. Fully fresh copy-element lists and recursively fresh tuple payloads now specialize through the
 same boundary, as do generic copy payloads. Borrowed generic pointer payloads remain arena-managed.
-Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
-boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
-entire transferred spine at the receiving scope.
+Fully fresh lists whose elements are copy values or fresh owned String, Bytes, BigInt, tuple, list, or
+user-ADT producers now transfer through the same direct-let boundary. The type-directed list drop
+releases an owned head only from a unique cell and stops after decrementing a shared spine. Literal or
+borrowed pointer elements remain arena-managed.
 Fresh monomorphic records with copy fields, including recursively nested fresh record literals, now
 transfer directly as well. Fresh String, Bytes, BigInt, copy-element list, and fully fresh tuple fields
 are owned and released by the record's type-directed drop. Records that would need to borrow an

@@ -6162,7 +6162,7 @@ public sealed partial class Lowering
 
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
-            var (headTemp, headType) = LowerExpr(list.Elements[i]);
+            var (headTemp, headType) = LowerRuntimeManagedListElement(list.Elements[i]);
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
                 Unify(headType, elemType);
@@ -6173,6 +6173,32 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tailTemp, Prune(tailType));
+    }
+
+    private (int Temp, TypeRef Type) LowerRuntimeManagedListElement(Expr element)
+    {
+        (bool String, bool Bytes, bool BigInt, bool Tuple) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcTupleAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || _runtimeRcListAllocationRequested && IsRuntimeRcStringProducer(element)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || _runtimeRcListAllocationRequested && IsRuntimeRcBytesProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || _runtimeRcListAllocationRequested && IsRuntimeRcBigIntProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
+        _runtimeRcTupleAllocationRequested = saved.Tuple
+            || _runtimeRcListAllocationRequested && element is Expr.TupleLit;
+        (int Temp, TypeRef Type) lowered = LowerExpr(element);
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcTupleAllocationRequested) = saved;
+        return lowered;
     }
 
     private (int, TypeRef) LowerTupleLit(Expr.TupleLit tuple)

@@ -892,11 +892,21 @@ public sealed partial class Lowering
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        bool runtimeManaged = _runtimeRcListAllocationRequested && CanArenaReset(headType);
+        bool runtimeManaged = _runtimeRcListAllocationRequested
+            && IsRuntimeManageableListElement(headType, headTemp);
         Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         return (nodeTemp, Prune(listType));
+    }
+
+    private bool IsRuntimeManageableListElement(TypeRef type, int temp)
+    {
+        TypeRef elementType = Prune(type);
+        return CanArenaReset(elementType)
+            || IsRuntimeManagedResultTemp(temp)
+                && elementType is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                    or TypeRef.TList or TypeRef.TNamedType;
     }
 
     private TypeRef InferPatternType(Pattern pattern, Dictionary<string, TypeRef> bindings)

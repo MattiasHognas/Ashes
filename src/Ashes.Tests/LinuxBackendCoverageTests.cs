@@ -2095,6 +2095,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> escapingList = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcEscapingListMemoryProgram,
             outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedElementList = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedElementListMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
         List<MemoryExecutionResult> tuple = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleMemoryProgram,
             outputPerIteration: 129).ConfigureAwait(false);
@@ -2128,6 +2131,7 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("runtime-RC list", list);
         AssertMemoryPlateaus("runtime-RC escaping list", escapingList);
+        AssertMemoryPlateaus("runtime-RC owned-element list", ownedElementList);
         AssertMemoryPlateaus("runtime-RC tuple", tuple);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC record owned child", recordOwnedChild);
@@ -5174,6 +5178,20 @@ public sealed class LinuxBackendCoverageTests
                                 | [] -> loop(n - 1)(total)
                                 | head :: _ ->
                                     loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + pairLeft + pairRight)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcOwnedElementListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let values = [Ashes.Text.fromInt(40), Ashes.Text.fromInt(2)] in values
+                    in match escaped with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

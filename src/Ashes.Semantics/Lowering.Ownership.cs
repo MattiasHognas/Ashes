@@ -334,16 +334,15 @@ public sealed partial class Lowering
 
         if (info.RuntimeManaged
             && info.Type is not null
-            && Prune(info.Type) is TypeRef.TList runtimeList
-            && CanArenaReset(Prune(runtimeList.Element)))
+            && Prune(info.Type) is TypeRef.TList runtimeList)
         {
             if (info.RuntimeDeepUnique)
             {
-                EmitRuntimeManagedUniqueListDrop(loadTemp);
+                EmitRuntimeManagedUniqueListDrop(loadTemp, runtimeList.Element);
             }
             else
             {
-                EmitRuntimeManagedListDrop(loadTemp);
+                EmitRuntimeManagedListDrop(loadTemp, runtimeList.Element);
             }
         }
         else if (info.RuntimeManaged
@@ -421,9 +420,10 @@ public sealed partial class Lowering
     /// <summary>
     /// Iteratively releases a runtime-managed list spine. A unique cell releases its tail ownership
     /// and permits the walk to continue; a shared cell is decremented and retains the remaining tail.
-    /// The initial list boundary admits only inline copy heads, so no head drop is required.
+    /// A unique cell releases an owned head before continuing through its tail. A shared cell keeps
+    /// both head and tail ownership and is only decremented.
     /// </summary>
-    private void EmitRuntimeManagedListDrop(int listTemp)
+    private void EmitRuntimeManagedListDrop(int listTemp, TypeRef elementType)
     {
         int currentSlot = NewLocal();
         Emit(new IrInst.StoreLocal(currentSlot, listTemp));
@@ -443,6 +443,7 @@ public sealed partial class Lowering
         int uniqueTemp = NewTemp();
         Emit(new IrInst.RcIsUnique(uniqueTemp, currentTemp));
         Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        EmitRuntimeManagedListHeadDrop(currentTemp, elementType);
         int tailTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(
             tailTemp,
@@ -458,7 +459,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(endLabel));
     }
 
-    private void EmitRuntimeManagedUniqueListDrop(int listTemp)
+    private void EmitRuntimeManagedUniqueListDrop(int listTemp, TypeRef elementType)
     {
         int currentSlot = NewLocal();
         Emit(new IrInst.StoreLocal(currentSlot, listTemp));
@@ -473,6 +474,7 @@ public sealed partial class Lowering
         int nonEmptyTemp = NewTemp();
         Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
         Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+        EmitRuntimeManagedListHeadDrop(currentTemp, elementType);
         int tailTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(
             tailTemp,
@@ -482,6 +484,22 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
         Emit(new IrInst.Jump(loopLabel));
         Emit(new IrInst.Label(endLabel));
+    }
+
+    private void EmitRuntimeManagedListHeadDrop(int cellTemp, TypeRef elementType)
+    {
+        TypeRef childType = Prune(elementType);
+        if (CanArenaReset(childType))
+        {
+            return;
+        }
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            headTemp,
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        EmitRuntimeManagedChildDrop(headTemp, childType);
     }
 
     private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)
@@ -541,8 +559,8 @@ public sealed partial class Lowering
             case TypeRef.TTuple tuple:
                 EmitRuntimeManagedTupleDrop(valueTemp, tuple);
                 break;
-            case TypeRef.TList:
-                EmitRuntimeManagedListDrop(valueTemp);
+            case TypeRef.TList list:
+                EmitRuntimeManagedListDrop(valueTemp, list.Element);
                 break;
             case TypeRef.TNamedType adt:
                 EmitRuntimeManagedAdtDrop(valueTemp, adt);
