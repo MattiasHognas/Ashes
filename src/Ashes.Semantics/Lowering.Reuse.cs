@@ -240,6 +240,64 @@ public sealed partial class Lowering
         return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
     }
 
+    // Params rebuilt as a self-contained fresh list at every tail self-call. This is deliberately
+    // stricter than the ordinary list reset analysis: a cons onto the previous accumulator shares
+    // its tail and cannot be normalized and followed by a drop without explicit ownership transfer.
+    private static HashSet<string> CollectFreshRebuiltListParams(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName)
+    {
+        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
+        bool sawSelfCall = false;
+
+        void Walk(Expr expression)
+        {
+            switch (expression)
+            {
+                case Expr.If iff:
+                    Walk(iff.Then);
+                    Walk(iff.Else);
+                    break;
+                case Expr.Match match:
+                    foreach (MatchCase matchCase in match.Cases)
+                    {
+                        Walk(matchCase.Body);
+                    }
+                    break;
+                case Expr.Let let:
+                    Walk(let.Body);
+                    break;
+                case Expr.LetResult letResult:
+                    Walk(letResult.Body);
+                    break;
+                case Expr.LetRecursive letRecursive:
+                    Walk(letRecursive.Body);
+                    break;
+                case Expr.Call:
+                    var args = new List<Expr>();
+                    Expr root = CollectCallArgs(expression, args);
+                    if (root is Expr.Var function
+                        && string.Equals(function.Name, selfName, StringComparison.Ordinal)
+                        && args.Count == paramNames.Count)
+                    {
+                        sawSelfCall = true;
+                        for (int i = 0; i < paramNames.Count; i++)
+                        {
+                            if (!IsFreshListRebuildExpr(args[i]))
+                            {
+                                candidates.Remove(paramNames[i]);
+                            }
+                        }
+                    }
+                    break;
+            }
+        }
+
+        Walk(body);
+        return sawSelfCall ? candidates : [];
+    }
+
     private static void CollectLoopInvariantParamsWalk(Expr e, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
         string selfName, HashSet<string> candidates, ref bool sawSelfCall)
     {

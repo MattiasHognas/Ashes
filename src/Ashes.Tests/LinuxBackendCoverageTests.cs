@@ -2725,11 +2725,35 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
+        IrProgram rebuiltTcoProbe = LowerProgram(BuildRuntimeRcRebuiltListTcoMemoryProgram(1));
+        AllInstructions(rebuiltTcoProbe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated rebuilt-list TCO accumulator should normalize at loop entry and replacement.");
+        AllInstructions(rebuiltTcoProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated rebuilt-list TCO path must not relocate through an arena allocation.");
+        AllInstructions(rebuiltTcoProbe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "List",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Rebuilt-list replacement must recursively release fixed back-edge RC cells.");
+        IrProgram sharedSpineProbe = LowerProgram(BuildSharedSpineListTcoProbe());
+        AllInstructions(sharedSpineProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeFalse(
+                "A cons-growing accumulator shares its prior spine and must wait for ownership transfer.");
+
         List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaListMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> rebuiltTcoSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcRebuiltListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena list", samples);
+        AssertMemoryPlateaus("runtime-RC rebuilt-list TCO accumulator", rebuiltTcoSamples);
     }
 
     [Test]
@@ -6586,6 +6610,30 @@ public sealed class LinuxBackendCoverageTests
                             else loop(n - 1)(total)
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcRebuiltListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Int) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)([n, n + 1])
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildSharedSpineListTcoProbe()
+        => """
+            let recursive loop : Int -> List(Int) -> Int = given n -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> 0
+                        | head :: _ -> head
+                else loop(n - 1)(n :: values)
+
+            Ashes.IO.print(loop(1)([]))
             """;
 
     private static string BuildLegacyArenaStringMemoryProgram(int iterations)

@@ -674,7 +674,13 @@ RSS profile now plateaus and asserts both the back-edge and exit-drop contracts.
 self-contained scalar replacement path now covers annotated BigInt accumulators, using their
 header-derived limb size for RC normalization and the BigInt drop contract. A growing 50,000-bit
 accumulator plateaus across the same three scales and contains no non-runtime BigInt relocation.
-Aggregate TCO families, closure graph normalization, and the final emitter census remain.
+The first aggregate TCO path now covers annotated copy-element lists that are rebuilt as complete
+values on each iteration. Loop entry and replacement normalize the entire spine into RC ownership,
+the previous spine is released with the uniqueness-aware recursive list drop, and scratch is reclaimed
+to the fixed entry watermark. The 2,000/10,000/50,000 `List(Int)` workload plateaus and contains no
+non-runtime list relocation. Cons-growing accumulators that share the previous spine remain separate:
+they require an ownership transfer instead of a whole-spine clone and drop. Shared-spine TCO,
+additional aggregate TCO families, closure graph normalization, and the final emitter census remain.
 
 Deliverables:
 

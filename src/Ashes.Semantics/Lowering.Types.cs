@@ -39,6 +39,8 @@ public sealed partial class Lowering
         public List<int> ParamSlots { get; init; } = [];
         public HashSet<int> RuntimeManagedParamSlots { get; } = [];
         public HashSet<int> RuntimeManagedBigIntParamSlots { get; } = [];
+        public HashSet<int> RuntimeManagedListParamSlots { get; } = [];
+        public Dictionary<int, TypeRef> RuntimeManagedParamTypes { get; } = [];
         public bool InTailPosition { get; set; }
 
         // Params passed as their own unchanged Var at EVERY tail self-call — loop-invariant, so they
@@ -46,6 +48,11 @@ public sealed partial class Lowering
         // plain per-iteration reset therefore leaves them valid, even when they are heap types (e.g. a
         // Bytes threaded unchanged through a fold). Empty when not computed (conservative).
         public HashSet<string> LoopInvariantParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Params whose argument is a self-contained fresh list at every tail self-call. These may
+        // use whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
+        // separate ownership-transfer path instead.
+        public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain
         // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a
