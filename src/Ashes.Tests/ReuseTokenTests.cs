@@ -7,6 +7,49 @@ namespace Ashes.Tests;
 public sealed class ReuseTokenTests
 {
     [Test]
+    public void Fresh_record_list_result_is_rewritten_in_place_before_escape()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            moveBodies(1.0)(makeBodies(3))
+            """);
+
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+        IrFunction specialization = program.Functions.Single(function =>
+            function.Instructions.Count(instruction => instruction is IrInst.AllocReusing) == 2
+                && function.Instructions.Any(instruction =>
+                    instruction is IrInst.AllocReusing { ListCell: true }));
+        IrInst.AllocReusing[] allocations = specialization.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .ToArray();
+
+        allocations.Length.ShouldBe(2);
+        allocations.Count(allocation => allocation.ListCell).ShouldBe(1);
+        allocations.Count(allocation => !allocation.ListCell && allocation.FieldCount == 2).ShouldBe(1);
+        allocations.ShouldAllBe(allocation => !allocation.RuntimeManaged);
+        specialization.Instructions.ShouldNotContain(instruction => instruction is IrInst.AllocAdtToSpace);
+        specialization.Instructions.ShouldNotContain(instruction => instruction is IrInst.AllocAdt);
+    }
+
+    [Test]
     public void Recursive_list_rewriter_specialization_reuses_untagged_cells()
     {
         IrProgram program = LowerProgram("""

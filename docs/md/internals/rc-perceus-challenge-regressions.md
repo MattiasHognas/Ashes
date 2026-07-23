@@ -398,6 +398,22 @@ unchanged at this point because `List(Body)` needs the conditional parent-to-chi
 the scalar path is the layout and recursive-call foundation, not a premature relaxation of that
 alias boundary.
 
+The next slice proves the simpler pointer-bearing boundary. Result reach now ignores record fields
+whose declared types are copied inline, so `updateVel` is correctly summarized as fresh.
+Multi-parameter recursive functions specialize on their final accumulator, and `updatePos` can
+consume the fresh `updateVel` result while both are still inside the same arena call window. Its
+specialization is fully reusing: one untagged list-cell token and one `Body` token per element, with
+no fresh ADT/to-space allocation. The result deliberately remains arena-managed until the enclosing
+`advance` escape performs normal RC normalization; marking it RC early was rejected by native
+N=2/N=3 correctness probes.
+
+Correctness is byte-identical through N=1,000 and RSS remains flat at about 8,204 KB. This does not
+recover the CPU regression: three N=5,000,000 runs took 4.05–4.11 seconds, slightly slower than the
+roughly 3.82-second pre-slice RC baseline. Arena bump allocation was not the dominant cost; the
+remaining hot cost is the per-timestep RC normalization/release of the five-cell escaping graph.
+The next performance slice must remove or amortize that RC boundary while preserving
+`updateVel`'s aliased `allBodies` read, rather than broadening local reuse unsafely.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against

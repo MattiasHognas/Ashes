@@ -699,7 +699,12 @@ makes a scalar-element list unique, recursive suffix calls return reused cells
 below their call watermark, and each cons rebuild overwrites its matched
 untagged cell. Pointer-bearing list heads require an additional conditional
 child-transfer proof before they use this path: a unique parent moves each
-child, while a shared parent must retain the child before rebuilding.
+child, while a shared parent must retain the child before rebuilding. One
+strictly local form is proven today: when a fresh aggregate call feeds an
+immediate recursive list rewriter, the rewriter may overwrite both the
+untagged spine and single-constructor record heads inside the same arena call
+window. The enclosing escape boundary still performs normal whole-graph RC
+normalization; the local reused result is never mislabeled as already RC-owned.
 
 ### Scoped arenas
 

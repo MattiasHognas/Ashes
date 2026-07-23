@@ -420,6 +420,26 @@ public sealed partial class Lowering
         return _maAnalyzed && _ownershipSummaries.TryGetValue(function, out var summary) ? summary : null;
     }
 
+    private bool IsFreshOwnershipResultCall(Expr expression)
+    {
+        if (expression is not Expr.Call)
+        {
+            return false;
+        }
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        string? name = root switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(root),
+            _ => null,
+        };
+        return name is not null
+            && GetOwnershipSummary(name) is { ResultFresh: true } summary
+            && arguments.Count == summary.Parameters.Count;
+    }
+
     private FunctionOwnershipSummary CreateOwnershipSummary(
         string function,
         (List<string> Params, Expr Body) info)
@@ -1233,10 +1253,28 @@ public sealed partial class Lowering
         Expr.RecordLit rec,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
+        ConstructorSymbol? constructor = _constructorSymbols.GetValueOrDefault(rec.TypeName);
+        IReadOnlyList<string> fieldNames = constructor?.DeclaringSyntax.FieldNames ?? [];
         var acc = ReachBottom();
-        foreach (var (_, fv) in rec.Fields)
+        foreach (var (fieldName, fieldValue) in rec.Fields)
         {
-            acc = ReachSum(acc, ResultReach(fv, env));
+            int fieldIndex = -1;
+            for (int i = 0; i < fieldNames.Count; i++)
+            {
+                if (string.Equals(fieldNames[i], fieldName, StringComparison.Ordinal))
+                {
+                    fieldIndex = i;
+                    break;
+                }
+            }
+            bool copyField = constructor is not null
+                && fieldIndex >= 0
+                && fieldIndex < constructor.ParameterTypes.Count
+                && BuiltinRegistry.IsCopyType(constructor.ParameterTypes[fieldIndex]);
+            if (!copyField)
+            {
+                acc = ReachSum(acc, ResultReach(fieldValue, env));
+            }
         }
 
         return acc;

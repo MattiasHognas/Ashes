@@ -429,14 +429,14 @@ public sealed partial class Lowering
 
             EmitLinearArmPatternAndGuard(match, i, valueTemp, valueType, armCleanupLabel);
 
-            int reuseTokensBefore = PublishLinearArmReuseToken(
+            ArmReuseContext reuseContext = PublishLinearArmReuseToken(
                 match,
                 i,
                 valueTemp,
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore, normalizeStaticStringArms);
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
 
             EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
 
@@ -487,7 +487,9 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token
     /// the arm body didn't consume.
     /// </summary>
-    private int PublishLinearArmReuseToken(
+    private sealed record ArmReuseContext(int TokensBefore, IReadOnlyList<string> AddedLinearNames);
+
+    private ArmReuseContext PublishLinearArmReuseToken(
         Expr.Match match,
         int i,
         int valueTemp,
@@ -498,6 +500,7 @@ public sealed partial class Lowering
         // constructor in this arm's body. Only when the body doesn't reference the accumulator
         // again and there is no guard re-test below (payload fields are bound into temps above).
         int reuseTokensBefore = _reuseTokens.Count;
+        var addedLinearNames = new List<string>();
         // A constructor pattern's matched cell is a reuse token. Includes nullary cells (e.g.
         // Leaf), whose bare pattern parses as Pattern.Var of a known nullary constructor.
         int? reuseArity = match.Cases[i].Pattern switch
@@ -530,9 +533,17 @@ public sealed partial class Lowering
                 runtimeCleanup,
                 ListCell: match.Cases[i].Pattern is Pattern.Cons));
             RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+            if (match.Cases[i].Pattern is Pattern.Cons { Head: Pattern.Var head }
+                && _linearReuseNames.Add(head.Name))
+            {
+                // A list specialization starts from a deep-unique spine. Its head owns a unique
+                // pointer-bearing value as well, so a nested match may reuse that child cell before
+                // the enclosing cons rebuild consumes the list-cell token.
+                addedLinearNames.Add(head.Name);
+            }
         }
 
-        return reuseTokensBefore;
+        return new ArmReuseContext(reuseTokensBefore, addedLinearNames);
     }
 
     /// <summary>
@@ -540,16 +551,20 @@ public sealed partial class Lowering
     /// into the result slot before jumping to the match end label. Shared by the linear and
     /// tag-switch arm lowerings.
     /// </summary>
-    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, int reuseTokensBefore, bool normalizeStaticStringArms)
+    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, ArmReuseContext reuseContext, bool normalizeStaticStringArms)
     {
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
-        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseTokensBefore, normalizeStaticStringArms);
+        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseContext.TokensBefore, normalizeStaticStringArms);
+        foreach (string name in reuseContext.AddedLinearNames)
+        {
+            _linearReuseNames.Remove(name);
+        }
         EndExclusiveBranch(armCredits);
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        ReleaseUnconsumedReuseTokens(reuseTokensBefore);
+        ReleaseUnconsumedReuseTokens(reuseContext.TokensBefore);
 
         using (PushDiagnosticContext($"in match arm {i + 1}"))
         {
@@ -833,7 +848,7 @@ public sealed partial class Lowering
 
             EmitTagSwitchArmPattern(matchValue, cases, plan, i, valueTemp, valueType, noMatchLabel);
 
-            int reuseTokensBefore = PublishTagSwitchArmReuseToken(
+            ArmReuseContext reuseContext = PublishTagSwitchArmReuseToken(
                 cases,
                 plan,
                 i,
@@ -841,7 +856,7 @@ public sealed partial class Lowering
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore, normalizeStaticStringArms);
+            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
 
             _scopes.Pop();
         }
@@ -976,7 +991,7 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token the
     /// arm body didn't consume.
     /// </summary>
-    private int PublishTagSwitchArmReuseToken(
+    private ArmReuseContext PublishTagSwitchArmReuseToken(
         IReadOnlyList<MatchCase> cases,
         List<(ConstructorSymbol Ctor, long Tag)> plan,
         int i,
@@ -1011,7 +1026,7 @@ public sealed partial class Lowering
             RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
-        return reuseTokensBefore;
+        return new ArmReuseContext(reuseTokensBefore, []);
     }
 
     private RuntimeReuseCleanup CreateRuntimeReuseCleanup(

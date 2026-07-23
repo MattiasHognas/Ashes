@@ -320,7 +320,13 @@ public sealed partial class Lowering
     // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
     // whose recursive parameter (LinearParam) is a linear reuse root, so its match-then-rebuild
     // reuses the node in place and the recursion stays within the reuse-enabled body.
+    // Recursive lambda chains whose final parameter can be consumed as a unique accumulator.
+    // ArgCount includes any earlier configuration parameters that are forwarded unchanged.
     private readonly Dictionary<string, (Expr.Lambda Lambda, string LinearParam, int ArgCount)> _specializableFunctions = new(StringComparer.Ordinal);
+    // Direct recursive functions with configuration parameters are currently specialized only for
+    // a fresh call-result composition. Keep them out of loop-entry accumulator specialization,
+    // whose established multi-argument support is the nested-recursive-return shape.
+    private readonly HashSet<string> _freshCompositionOnlySpecializable = new(StringComparer.Ordinal);
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
@@ -6426,6 +6432,50 @@ public sealed partial class Lowering
             && SpecializationRebuildsAccumulator(Prune(specBinding.Type), collectedArgs.Count))
         {
             return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs, call);
+        }
+
+        return LowerCallTryFreshRuntimeReuse(call, rootExpr, collectedArgs);
+    }
+
+    private (int, TypeRef)? LowerCallTryFreshRuntimeReuse(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs)
+    {
+        // A fresh aggregate call result is a deep-unique arena graph within the enclosing call
+        // window. Route its immediate recursive rewriter through the reuse specialization before
+        // that window escapes. The final enclosing boundary still performs the ordinary RC
+        // normalization; this only removes the redundant intermediate rebuild.
+        if (ResolveSpecializableCalleeName(rootExpr) is { } freshSpecName
+            && _specializableFunctions.TryGetValue(freshSpecName, out var freshSpecInfo)
+            && collectedArgs.Count == freshSpecInfo.ArgCount
+            && collectedArgs[^1] is Expr.Call freshArgument
+            && IsFreshOwnershipResultCall(freshArgument)
+            && Lookup(freshSpecName) is { } freshSpecBinding
+            && NthCurriedArgType(
+                Prune(freshSpecBinding.Type),
+                freshSpecInfo.ArgCount - 1) is TypeRef.TList
+            && SpecializationRebuildsAccumulator(
+                Prune(freshSpecBinding.Type),
+                collectedArgs.Count))
+        {
+            return LowerReuseSpecializedCall(
+                freshSpecName,
+                Prune(freshSpecBinding.Type),
+                collectedArgs,
+                call);
+        }
+
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
+            && ResolveSpecializableCalleeName(rootExpr) is { } candidateName
+            && _specializableFunctions.TryGetValue(candidateName, out var candidateInfo)
+            && collectedArgs.Count == candidateInfo.ArgCount
+            && collectedArgs[^1] is Expr.Call candidateArgument)
+        {
+            Console.Error.WriteLine(
+                $"[reuse] fresh candidate {candidateName}: "
+                + $"fresh={IsFreshOwnershipResultCall(candidateArgument)} "
+                + $"bound={Lookup(candidateName) is not null}");
         }
 
         return null;

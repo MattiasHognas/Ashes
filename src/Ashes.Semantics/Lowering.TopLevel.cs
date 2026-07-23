@@ -136,17 +136,28 @@ public sealed partial class Lowering
                 RegisterInlinableNonRecursiveLet(let, lam);
             }
 
-            // Single-parameter recursive functions (let rec f = given p -> body, body not a lambda)
-            // are candidates for in-place-reuse specialization when applied to a unique accumulator.
-            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet && RegisterInlinableStrip(recursiveLet.Value) is Expr.Lambda { Body: not Expr.Lambda } recursiveLambda)
+            // A recursive lambda chain is a candidate for in-place-reuse specialization when its
+            // final argument is a unique accumulator. Earlier arguments are configuration values.
+            else if (item is TopLevelItem.LetDecl { IsRecursive: true } recursiveLet
+                && RegisterInlinableStrip(recursiveLet.Value) is Expr.Lambda recursiveLambda)
             {
-                _specializableFunctions[recursiveLet.Name] = (recursiveLambda, recursiveLambda.ParamName, 1);
+                RegisterRecursiveReuseCandidate(recursiveLet.Name, recursiveLambda);
             }
             else if (item is TopLevelItem.RecursiveGroup { Bindings.Count: 1 } group
-                && RegisterInlinableStrip(group.Bindings[0].Value) is Expr.Lambda { Body: not Expr.Lambda } groupLam)
+                && RegisterInlinableStrip(group.Bindings[0].Value) is Expr.Lambda groupLam)
             {
-                _specializableFunctions[group.Bindings[0].Name] = (groupLam, groupLam.ParamName, 1);
+                RegisterRecursiveReuseCandidate(group.Bindings[0].Name, groupLam);
             }
+        }
+    }
+
+    private void RegisterRecursiveReuseCandidate(string name, Expr.Lambda lambda)
+    {
+        List<string> parameters = CollectLambdaParams(lambda);
+        _specializableFunctions[name] = (lambda, parameters[^1], parameters.Count);
+        if (parameters.Count > 1)
+        {
+            _freshCompositionOnlySpecializable.Add(name);
         }
     }
 
@@ -305,7 +316,7 @@ public sealed partial class Lowering
     }
 
     // Register each registerable candidate, in let-chain order, exactly like a flat top-level item:
-    // the nested-recursive-return / single-param-recursive shapes become reuse specializations, and
+    // the nested-recursive-return / recursive-lambda-chain shapes become reuse specializations, and
     // any other non-recursive helper with an allocating body becomes an inlinable rebuild helper.
     private void RegisterEntryBodyRegisterCandidates(
         List<(string Name, bool IsRecursive, Expr.Lambda Lam)> candidates,
@@ -348,10 +359,9 @@ public sealed partial class Lowering
                     _overloadGenericInline.Add(name);
                 }
             }
-            else if (lam.Body is not Expr.Lambda)
+            else
             {
-                // Single-parameter recursive function — a direct reuse-specialization candidate.
-                _specializableFunctions[name] = (lam, lam.ParamName, 1);
+                RegisterRecursiveReuseCandidate(name, lam);
             }
         }
     }

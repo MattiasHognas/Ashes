@@ -67,6 +67,29 @@ public sealed class UniquenessSummaryTests
     }
 
     [Test]
+    public void Record_literal_copy_fields_do_not_alias_their_parameters()
+    {
+        const string source =
+            """
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let move dt body =
+                match body with
+                    | Body(x, velocity) -> Body(x = x + dt * velocity, velocity = velocity)
+            in move(1.0)(Body(x = 0.0, velocity = 2.0))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("move");
+
+        summary.ShouldNotBeNull();
+        summary.ResultFresh.ShouldBeTrue();
+        summary.ResultReaches("dt").ShouldBeFalse();
+        summary.ResultReaches("body").ShouldBeFalse();
+    }
+
+    [Test]
     public void Fold_accumulator_is_unique_and_reached_by_the_result()
     {
         var s = LowerProgram(Sample).GetOwnershipSummary("count");

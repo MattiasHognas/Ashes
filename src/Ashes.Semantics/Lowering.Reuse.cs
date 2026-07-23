@@ -759,6 +759,7 @@ public sealed partial class Lowering
                 var callRoot = CollectCallArgs(call, callArgs);
                 if (ResolveSpecializableCalleeName(callRoot) is { } fnName
                     && _specializableFunctions.TryGetValue(fnName, out var fnSpec)
+                    && !_freshCompositionOnlySpecializable.Contains(fnName)
                     && callArgs.Count == fnSpec.ArgCount
                     && callArgs[^1] is Expr.Var arg
                     && paramNames.Contains(arg.Name))
