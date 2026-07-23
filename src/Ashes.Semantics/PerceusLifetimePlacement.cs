@@ -241,6 +241,24 @@ internal static class PerceusLifetimePlacement
         }
     }
 
+    private static HashSet<int> CollectAppliedClosureTemps(List<IrInst> instructions, List<Block> blocks, HashSet<int> region)
+    {
+        var applied = new HashSet<int>();
+        foreach (int blockIndex in region)
+        {
+            Block block = blocks[blockIndex];
+            for (int i = block.Start; i < block.End; i++)
+            {
+                if (instructions[i] is IrInst.CallClosure call)
+                {
+                    applied.Add(call.ClosureTemp);
+                }
+            }
+        }
+
+        return applied;
+    }
+
     private static HashSet<int> CollectOwnerAliases(
         List<IrInst> instructions,
         List<Block> blocks,
@@ -256,13 +274,18 @@ internal static class PerceusLifetimePlacement
             }
         }
 
-        // Follow aliases through Borrow, and — to a fixpoint — through a local slot that only ever
-        // holds an alias of this owner (StoreLocal of an alias temp, then LoadLocal back). The
-        // conditional runtime-argument retain (EmitConditionallyRetainedRuntimeArgument) routes a
-        // borrowed owner into a fresh slot and reloads it for the call; without this the owner looks
-        // dead at the store and its drop is placed before the call (a use-after-free). Extending the
-        // alias set only lengthens liveness, so the drop lands after the last real use — never earlier.
+        // Follow aliases to a fixpoint through Borrow; a local slot that only holds an alias
+        // (StoreLocal then LoadLocal — the conditional runtime-argument retain routes a borrowed owner
+        // through a fresh slot); a closure env that captured an alias (StoreMemOffset of an alias then
+        // MakeClosure over that env); and a PARTIAL application (CallClosure(f, alias) whose result is
+        // itself applied again, so the returned closure captured the alias). A transient closure holds
+        // the borrow in its arena/stack env until applied, so the owner must stay live until that
+        // application — else its drop lands right after the capture, a use-after-free (benign for a
+        // recycled small string, a segfault for an OS-backed >4 KiB string). All only lengthen
+        // liveness, so the drop lands after the last real use, never earlier.
+        HashSet<int> partialApplicationResults = CollectAppliedClosureTemps(instructions, blocks, region);
         var aliasHoldingSlots = new HashSet<int>();
+        var aliasHoldingEnvs = new HashSet<int>();
         bool changed = true;
         while (changed)
         {
@@ -282,6 +305,18 @@ internal static class PerceusLifetimePlacement
                             break;
                         case IrInst.LoadLocal load when aliasHoldingSlots.Contains(load.Slot):
                             changed |= aliases.Add(load.Target);
+                            break;
+                        case IrInst.StoreMemOffset envStore when aliases.Contains(envStore.Source):
+                            changed |= aliasHoldingEnvs.Add(envStore.BasePtr);
+                            break;
+                        case IrInst.MakeClosure mc when aliasHoldingEnvs.Contains(mc.EnvPtrTemp):
+                            changed |= aliases.Add(mc.Target);
+                            break;
+                        case IrInst.MakeClosureStack mcs when aliasHoldingEnvs.Contains(mcs.EnvPtrTemp):
+                            changed |= aliases.Add(mcs.Target);
+                            break;
+                        case IrInst.CallClosure partialCall when aliases.Contains(partialCall.ArgTemp) && partialApplicationResults.Contains(partialCall.Target):
+                            changed |= aliases.Add(partialCall.Target);
                             break;
                     }
                 }

@@ -241,6 +241,19 @@ the last real use, never earlier), so it cannot introduce a premature free. Regr
 `EndToEndNativeBackendTests.Runtime_managed_string_passed_through_identity_then_consuming_call_is_not_freed`
 plus the recovered `tests/stdlib_json.ash` and `tests/namespace_nested_modules.ash`.
 
+The same alias walk now also follows an owner captured into a closure. A runtime-managed value
+borrowed into a transient closure's arena/stack environment (`StoreMemOffset` of a borrow into an env
+pointer, then `MakeClosure`/`MakeClosureStack`), or into a curried partial application
+(`CallClosure(f, x)` whose result is itself applied again), must stay live until that closure is
+APPLIED — the borrow lives in the env until then. Previously the drop landed right after the capture,
+before the application read the value back: benign for a string recycled on the free list but a
+use-after-free (segfault) for one larger than the 4 KiB RC cache, whose independent mmap the drop
+munmaps. `CollectOwnerAliases` now follows an alias through a closure env and through a
+partial-application result, so the owner's drop lands after the closure's application. Recovers
+`tests/regex_large_subject_chain.ash` (chained `Ashes.Text.Regex.replace` over a >4 KiB subject —
+the subject was freed before the substitute read it). Regression:
+`EndToEndNativeBackendTests.Large_runtime_managed_string_captured_into_closure_survives_until_applied`.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

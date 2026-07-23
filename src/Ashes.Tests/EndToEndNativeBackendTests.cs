@@ -564,6 +564,38 @@ public sealed class EndToEndNativeBackendTests
     }
 
     [Test]
+    public async Task Large_runtime_managed_string_captured_into_closure_survives_until_applied()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a runtime-managed string captured (by borrow) into a closure's arena/stack env
+        // must stay live until the closure is APPLIED. The lifetime placement dropped it right after
+        // the capture — before the application read it back from the env. Benign for a small string
+        // (recycled on the free list, still mapped) but a use-after-free/segfault for one larger than
+        // the 4 KiB RC cache (backed by an independent mmap that drop munmaps). grow("acgt")(10) is
+        // exactly 4096 bytes. Both a directly-captured closure and a curried partial application
+        // (`f(seq)("xy")`, whose capture happens inside `f`) must survive.
+        var direct = """
+            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let seq = grow("acgt")(10)
+            let g = (given b -> Ashes.Text.byteLength(seq) + Ashes.Text.byteLength(b))
+            Ashes.IO.print(Ashes.Text.fromInt(g("xy")))
+            """;
+        (await CompileRunCaptureProgramAsync(direct).ConfigureAwait(false)).ShouldBe("4098\n");
+
+        var curried = """
+            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let f a b = Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b)
+            let seq = grow("acgt")(10)
+            Ashes.IO.print(Ashes.Text.fromInt(f(seq)("xy")))
+            """;
+        (await CompileRunCaptureProgramAsync(curried).ConfigureAwait(false)).ShouldBe("4098\n");
+    }
+
+    [Test]
     public async Task Runtime_managed_string_passed_through_identity_then_consuming_call_is_not_freed()
     {
         if (!OperatingSystem.IsLinux())
