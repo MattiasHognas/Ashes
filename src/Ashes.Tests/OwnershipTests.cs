@@ -313,6 +313,30 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_adt_with_fresh_bytes_bigint_and_list_children_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("type Payload = | Payload(Bytes, BigInt, List(Int))\nlet escaped = (let value = Payload(Ashes.Byte.u16Le(258u16))(Ashes.Number.BigInt.fromInt(42))([40, 2]) in value) in match escaped with | Payload(bytes, big, values) -> match values with | [] -> 0 | head :: _ -> Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + head");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Payload", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Payload = | Payload(List(Int))\nlet values = [40, 2] in let escaped = (let value = Payload(values) in value) in match escaped with | Payload(items) -> match items with | [] -> 0 | head :: _ -> head");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Payload", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {
         IrProgram ir = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box(42) in box) in match escaped with | Box(value) -> value");

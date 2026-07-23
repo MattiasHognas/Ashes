@@ -2100,7 +2100,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 129).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
-            outputPerIteration: 111).ConfigureAwait(false);
+            outputPerIteration: 154).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -5195,6 +5195,9 @@ public sealed class LinuxBackendCoverageTests
             type TextBox =
                 | TextBox(Str)
 
+            type Payload =
+                | Payload(Bytes, BigInt, List(Int))
+
             let recursive loop n total =
                 if n <= 0 then total
                 else
@@ -5206,19 +5209,26 @@ public sealed class LinuxBackendCoverageTests
                                 let fresh = TextBox(Ashes.Text.fromInt(40)) in fresh
                             in match textBox with
                                 | TextBox(text) ->
-                                    let boxed =
-                                        let fresh = Box(5) in fresh
-                                    in match boxed with
-                                        | Box(boxedValue) ->
-                                            let tree =
-                                                let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
-                                            in
-                                            match tree with
-                                                | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue)
-                                                | Node(child, value, _) ->
-                                                    match child with
-                                                        | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue + value)
-                                                        | Node(_, childValue, _) -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue + value + childValue)
+                                    let payload =
+                                        let fresh = Payload(Ashes.Byte.u16Le(258u16))(Ashes.Number.BigInt.fromInt(42))([40, 2]) in fresh
+                                    in match payload with
+                                        | Payload(bytes, big, values) ->
+                                            match values with
+                                                | [] -> loop(n - 1)(total)
+                                                | head :: _ ->
+                                                    let boxed =
+                                                        let fresh = Box(5) in fresh
+                                                    in match boxed with
+                                                        | Box(boxedValue) ->
+                                                            let tree =
+                                                                let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
+                                                            in
+                                                            match tree with
+                                                                | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + boxedValue)
+                                                                | Node(child, value, _) ->
+                                                                    match child with
+                                                                        | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + boxedValue + value)
+                                                                        | Node(_, childValue, _) -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + boxedValue + value + childValue)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

@@ -673,7 +673,7 @@ public sealed partial class Lowering
                 || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
                     && (CanRuntimeManageCopyAdt(named)
                         || CanRuntimeManageGenericCopyAdtConstructorApplication(ctor, args, named)
-                        || CanRuntimeManageFreshStringChildAdtConstructorApplication(ctor, args, named)
+                        || CanRuntimeManageFreshHeapChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecordChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
                         || (runtimeReuseRequest
@@ -799,14 +799,11 @@ public sealed partial class Lowering
         {
             for (int i = 0; i < arguments.Count; i++)
             {
-                bool savedStringRequest = _runtimeRcStringAllocationRequested;
                 TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-                _runtimeRcStringAllocationRequested = savedStringRequest
-                    || runtimeManagedCandidate && fieldType is TypeRef.TStr
-                        && IsRuntimeRcStringProducer(arguments[i])
-                        && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]);
-                (int argumentTemp, TypeRef argumentType) = LowerExpr(arguments[i]);
-                _runtimeRcStringAllocationRequested = savedStringRequest;
+                (int argumentTemp, TypeRef argumentType) = LowerRuntimeManagedConstructorArgument(
+                    arguments[i],
+                    fieldType,
+                    runtimeManagedCandidate);
                 argumentTemps.Add(argumentTemp);
                 TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
                 Unify(parameterType, argumentType);
@@ -821,6 +818,36 @@ public sealed partial class Lowering
         }
 
         return (argumentTemps, argumentTypes);
+    }
+
+    private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
+        Expr argument,
+        TypeRef fieldType,
+        bool runtimeManagedParent)
+    {
+        (bool String, bool Bytes, bool BigInt, bool List) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || runtimeManagedParent && fieldType is TypeRef.TStr
+                && IsRuntimeRcStringProducer(argument) && IsRuntimeRcClosureCaptureSafeStringProducer(argument);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || runtimeManagedParent && fieldType is TypeRef.TBytes
+                && IsRuntimeRcBytesProducer(argument) && IsRuntimeRcClosureCaptureSafeBytesProducer(argument);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || runtimeManagedParent && fieldType is TypeRef.TBigInt
+                && IsRuntimeRcBigIntProducer(argument) && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument);
+        _runtimeRcListAllocationRequested = saved.List
+            || runtimeManagedParent && fieldType is TypeRef.TList
+                && IsFreshListConstructionExpression(argument);
+        (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested) = saved;
+        return lowered;
     }
 
     /// <summary>

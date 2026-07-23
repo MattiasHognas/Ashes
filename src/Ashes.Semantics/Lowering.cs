@@ -2735,7 +2735,7 @@ public sealed partial class Lowering
             && resultType is not null
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
-                || CanRuntimeManageFreshStringChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageFreshHeapChildAdtConstructorApplication(directConstructor, directArguments, resultType)
                 || (CanRuntimeManageRecursiveCopyAdt(resultType)
                     && IsFreshConstructorTree(let.Value, resultType.Symbol)));
         if (!immediateMatch && !consumedByParent && !directOwnedEscape)

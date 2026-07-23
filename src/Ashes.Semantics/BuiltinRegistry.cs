@@ -6,7 +6,8 @@ public static class BuiltinRegistry
 {
     private static readonly HashSet<string> PrimitiveTypeNames = new(StringComparer.Ordinal)
     {
-        "Float"
+        "Float",
+        "Bytes"
     };
 
     public enum BuiltinValueKind
@@ -588,6 +589,12 @@ public static class BuiltinRegistry
         if (string.Equals(typeName, "Float", StringComparison.Ordinal))
         {
             type = new TypeRef.TFloat();
+            return true;
+        }
+
+        if (string.Equals(typeName, "Bytes", StringComparison.Ordinal))
+        {
+            type = new TypeRef.TBytes();
             return true;
         }
 

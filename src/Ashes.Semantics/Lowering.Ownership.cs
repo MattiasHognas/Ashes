@@ -1644,7 +1644,7 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool CanRuntimeManageFreshStringChildAdtConstructorApplication(
+    private bool CanRuntimeManageFreshHeapChildAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType)
@@ -1657,7 +1657,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool hasString = false;
+        bool hasOwnedChild = false;
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
@@ -1666,17 +1666,27 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (fieldType is not TypeRef.TStr
-                || !IsRuntimeRcStringProducer(arguments[i])
-                || !IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]))
+            bool supported = fieldType switch
+            {
+                TypeRef.TStr => IsRuntimeRcStringProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]),
+                TypeRef.TBytes => IsRuntimeRcBytesProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(arguments[i]),
+                TypeRef.TBigInt => IsRuntimeRcBigIntProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
+                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                    && IsFreshListConstructionExpression(arguments[i]),
+                _ => false,
+            };
+            if (!supported)
             {
                 return false;
             }
 
-            hasString = true;
+            hasOwnedChild = true;
         }
 
-        return hasString;
+        return hasOwnedChild;
     }
 
     /// <summary>
