@@ -482,8 +482,11 @@ independent RC result at runtime. When the higher-order result has a concrete sh
 normalized to RC ownership: an arena result is copied into an RC allocation, while an already-owned
 result is retained without copying. The normalized result then participates in ordinary scope drops
 and may itself cross another higher-order return boundary without losing ownership provenance.
-Unresolved polymorphic results, lists, and closures still use their legacy behavior until a runtime
-layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
+Concrete higher-order list results now use the same runtime ownership channel. Copy-element lists,
+`List(Str)`, and nested copy-element lists are rebuilt as complete RC graphs when an indirect callee
+returns an arena value; an already-owned result crosses unchanged. Unresolved polymorphic results,
+lists with other pointer-bearing element layouts, and closures still use their legacy behavior until
+a runtime layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
 the established task-region boundary for now; enabling this closure-result channel there caused the
 HTTP keep-alive RSS gate to grow linearly and is therefore blocked on suspension-aware ownership.
 Fresh values produced directly as a let body now use the same escape request as a directly returned
@@ -503,6 +506,13 @@ copy-out. A directly returned interned String is normalized once at the callee b
 ownership bit and final drop remain unambiguous. Async/task programs retain the established region
 contract and do not enable this function-body promotion; the keep-alive HTTP RSS slope remains the
 regression gate for that exclusion.
+The legacy persistent to-space/blob allocator remains reachable only from the specialized in-place
+`Map`/`HashMap` reuse path. It is intentionally retained as a specialized region rather than an
+ordinary-value lifetime mechanism: new persistent nodes and copied keys/values live for the retained
+map graph, while dead same-key value storage is overwritten in place when its region/capacity checks
+prove that safe. Automated 2K/10K/50K peak-RSS slopes now cover repeated `Map` String-value updates
+and fixed-key `HashMap` updates, replacing the earlier out-of-band memory claim and guarding both the
+fresh and overwrite paths against linear growth.
 
 Deliverables:
 

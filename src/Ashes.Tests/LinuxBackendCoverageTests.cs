@@ -2695,6 +2695,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_persistent_map_reuse_memory_should_plateau_as_updates_scale()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram mapProbe = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        AllInstructions(mapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+        AllInstructions(mapProbe).Any(instruction => instruction is IrInst.CopyStringIntoOrFresh).ShouldBeTrue();
+
+        IrProgram hashMapProbe = LowerProgramWithImports(BuildPersistentHashMapUpdateMemoryProgram(1));
+        AllInstructions(hashMapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+
+        List<MemoryExecutionResult> mapSamples = await MeasureImportedMemoryGrowthAsync(
+            BuildPersistentMapStringUpdateMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> hashMapSamples = await MeasureImportedMemoryGrowthAsync(
+            BuildPersistentHashMapUpdateMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("persistent Map String-value update", mapSamples);
+        AssertMemoryPlateaus("persistent HashMap fixed-key update", hashMapSamples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_parallel_worker_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
@@ -4591,6 +4617,23 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureImportedMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(sourceFactory(iterations));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcStringConcatMemoryGrowthAsync()
     {
         int[] iterationCounts = [2_000, 10_000, 50_000];
@@ -6204,6 +6247,40 @@ public sealed class LinuxBackendCoverageTests
                     in loop(n - 1)(total + f(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildPersistentMapStringUpdateMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.Map
+
+            let compareInt left right =
+                if left == right then 0
+                else if left < right then -1
+                else 1
+
+            let recursive loop i limit map =
+                if i > limit then map
+                else loop(i + 1)(limit)(Ashes.Collection.Map.set(compareInt)(0)(Ashes.Text.fromInt(i))(map))
+
+            let seeded = Ashes.Collection.Map.set(compareInt)(0)("seed")(Ashes.Collection.Map.empty)
+            let final = loop(1)({{iterations}})(seeded)
+            in match Ashes.Collection.Map.get(compareInt)(0)(final) with
+                | None -> Ashes.IO.print(0)
+                | Some(value) -> Ashes.IO.print(value)
+            """;
+
+    private static string BuildPersistentHashMapUpdateMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.HashMap
+
+            let recursive loop i limit map =
+                if i > limit then map
+                else loop(i + 1)(limit)(Ashes.Collection.HashMap.set("fixed")(i)(map))
+
+            let final = loop(1)({{iterations}})(Ashes.Collection.HashMap.empty)
+            in match Ashes.Collection.HashMap.get("fixed")(final) with
+                | None -> Ashes.IO.print(0)
+                | Some(value) -> Ashes.IO.print(value)
             """;
 
     private static async Task<MemoryExecutionResult> CompileRunWithLinuxLlvmPeakRssAsync(IrProgram ir)
