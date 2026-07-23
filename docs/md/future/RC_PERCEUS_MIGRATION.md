@@ -662,6 +662,17 @@ IR paths are covered, the transferred `List(Int)` workload plateaus at 2,000/10,
 and all 1,625 compiler tests pass. This removes the parent-leak workaround from the blocker list;
 TCO relocation, closure graph normalization, and the final emitter census remain.
 
+The first TCO-relocation slice moves annotated synchronous String accumulators to RC ownership at
+loop entry. Each tail replacement normalizes the new String to an independent RC allocation, drops
+the previous accumulator at the back-edge, resets to the fixed loop-entry arena watermark, and clears
+the old affine reservation before reclaiming scratch. The replacement drop is explicitly marked as
+already placed so the general lifetime pass cannot move it out of the loop; a separate lexical anchor
+releases the final accumulator when a copy-valued function result exits, while a runtime-owned result
+transfers its ownership to the caller. Large released RC blocks bypass the exact-size free list so a
+growing sequence cannot retain one mapping per distinct size. The 2,000/10,000/50,000 growing-String
+RSS profile now plateaus and asserts both the back-edge and exit-drop contracts. Other TCO heap
+families, closure graph normalization, and the final emitter census remain.
+
 Deliverables:
 
 - Re-read the RC Perceus paper against the completed implementation and record any intentional

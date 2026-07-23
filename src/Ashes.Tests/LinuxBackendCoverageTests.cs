@@ -2740,6 +2740,23 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
+        IrProgram growingStringProbe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
+        AllInstructions(growingStringProbe).Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated TCO String accumulator should normalize at loop entry and replacement.");
+        AllInstructions(growingStringProbe).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "TCO replacement and function exit should release runtime-owned Strings.");
+        AllInstructions(growingStringProbe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", OwnerSlot: -1, RuntimeManaged: true }).ShouldBeTrue(
+                "The back-edge replacement drop must remain fixed instead of being moved by lifetime placement.");
+        AllInstructions(growingStringProbe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated String TCO path must not relocate through an arena allocation.");
+        AllInstructions(growingStringProbe).Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
+                "An affine TCO accumulator should move into its replacement without an extra reference.");
+
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaStringMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2752,7 +2769,7 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
-        AssertMemoryPlateaus("legacy arena growing string accumulator", growingStrings);
+        AssertMemoryPlateaus("runtime-RC growing string accumulator", growingStrings);
     }
 
     [Test]
@@ -6575,7 +6592,7 @@ public sealed class LinuxBackendCoverageTests
 
     private static string BuildLegacyArenaGrowingStringMemoryProgram(int iterations)
         => $$"""
-            let recursive loop n text =
+            let recursive loop : Int -> Str -> Int = given n -> given text ->
                 if n <= 0 then Ashes.Text.byteLength(text)
                 else loop(n - 1)(text + "x")
 

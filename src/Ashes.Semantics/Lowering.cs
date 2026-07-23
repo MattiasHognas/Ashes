@@ -804,6 +804,8 @@ public sealed partial class Lowering
         bool[] SingleFreshCons,
         bool[] FreshListRebuild,
         bool[] StableAccArg,
+        int[] OldRuntimeParamTemps,
+        bool[] RuntimeManagedParams,
         int[] ParamSlots,
         int FixedCursorSlot,
         int FixedEndSlot,
@@ -839,6 +841,11 @@ public sealed partial class Lowering
     {
         var argTypes = info.ArgTypes;
         int tcoPreRestoreEndSlot = NewLocal();
+
+        if (TcoBackEdgeTryEmitRuntimeManagedStringReset(info, tcoPreRestoreEndSlot))
+        {
+            return;
+        }
 
         if (TcoBackEdgeTryEmitPlainReset(info, tcoPreRestoreEndSlot))
         {
@@ -883,6 +890,68 @@ public sealed partial class Lowering
         }
 
         EndLivePostsGuard(tcoCopySkipLabel);
+    }
+
+    private bool TcoBackEdgeTryEmitRuntimeManagedStringReset(
+        PendingTcoReset info,
+        int tcoPreRestoreEndSlot)
+    {
+        if (info.CoroutineLoop
+            || !info.RuntimeManagedParams.Any(runtimeManaged => runtimeManaged)
+            || Enumerable.Range(0, info.ArgTypes.Length).Any(i =>
+                !CanArenaReset(info.ArgTypes[i])
+                && !IsResourceHandleType(info.ArgTypes[i])
+                && !info.PassThrough[i]
+                && !(info.RuntimeManagedParams[i] && Prune(info.ArgTypes[i]) is TypeRef.TStr)))
+        {
+            return false;
+        }
+
+        int[] normalizedTemps = Enumerable.Repeat(-1, info.ArgTypes.Length).ToArray();
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (!info.RuntimeManagedParams[i] || info.PassThrough[i])
+            {
+                continue;
+            }
+
+            if (IsRuntimeManagedResultTemp(info.ArgTemps[i]))
+            {
+                normalizedTemps[i] = info.ArgTemps[i];
+            }
+            else
+            {
+                normalizedTemps[i] = NewTemp();
+                Emit(new IrInst.CopyOutArena(
+                    normalizedTemps[i],
+                    info.ArgTemps[i],
+                    -1,
+                    RuntimeManaged: true));
+            }
+
+            Emit(new IrInst.RcDrop(
+                info.OldRuntimeParamTemps[i],
+                "String",
+                OwnerSlot: -1,
+                RuntimeManaged: true));
+        }
+
+        int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
+        int resetEndSlot = info.FixedEndSlot >= 0 ? info.FixedEndSlot : info.ArenaEndSlot;
+        TcoBackEdgeEmitResetAndZeroReservations(
+            info,
+            resetCursorSlot,
+            resetEndSlot,
+            tcoPreRestoreEndSlot);
+        for (int i = 0; i < normalizedTemps.Length; i++)
+        {
+            if (normalizedTemps[i] >= 0)
+            {
+                Emit(new IrInst.StoreLocal(info.ParamSlots[i], normalizedTemps[i]));
+            }
+        }
+        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot));
+        return true;
     }
 
     /// <summary>
@@ -1599,7 +1668,9 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        if (ownerInfo is { RuntimeManaged: true })
+        if (ownerInfo is { RuntimeManaged: true }
+            || b is Binding.Local runtimeLocal
+                && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true)
         {
             _runtimeManagedResultTemps.Add(result.Temp);
         }
@@ -4061,8 +4132,7 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
-        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, reuseInsertIndex);
-
+        LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex);
         LowerLambdaCoreRecordAccStableFold(lam, savedTcoCtx, specElidedAccs);
 
         _tcoCtx = outerTcoCtx;
@@ -4070,6 +4140,7 @@ public sealed partial class Lowering
 
         Unify(bodyType, retTy);
         RecordFunctionResultProvenance(label, bodyTemp);
+        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
         LowerLambdaCoreFinishFunction(label);
@@ -4077,6 +4148,16 @@ public sealed partial class Lowering
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
         return (closureTemp, funTy);
+    }
+
+    private void LowerLambdaCoreSpliceTcoEntryOwnership(
+        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
+        HashSet<int> directReuseSlots,
+        TcoContext? tco,
+        int insertIndex)
+    {
+        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, insertIndex);
+        LowerLambdaCoreSpliceRuntimeManagedTcoParams(tco, insertIndex);
     }
 
     private void RecordFunctionResultProvenance(string label, int bodyTemp)
@@ -4450,6 +4531,7 @@ public sealed partial class Lowering
         tco.ParamSlots.Clear();
 
         LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
+        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(scope, tco);
 
         var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
         int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
@@ -4458,6 +4540,26 @@ public sealed partial class Lowering
 
         tco.InTailPosition = true;
         return reuseInsertIndex;
+    }
+
+    private void LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
+        IReadOnlyDictionary<string, Binding> scope,
+        TcoContext tco)
+    {
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        foreach (int slot in tco.ParamSlots)
+        {
+            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
+                .FirstOrDefault(local => local.Slot == slot);
+            if (parameter is not null && Prune(parameter.T) is TypeRef.TStr)
+            {
+                tco.RuntimeManagedParamSlots.Add(slot);
+            }
+        }
     }
 
     private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
@@ -4772,6 +4874,44 @@ public sealed partial class Lowering
         var generated = _inst.GetRange(genStart, genCount);
         _inst.RemoveRange(genStart, genCount);
         _inst.InsertRange(reuseInsertIndex, generated);
+    }
+
+    private void LowerLambdaCoreSpliceRuntimeManagedTcoParams(TcoContext? tco, int insertIndex)
+    {
+        if (tco is null || insertIndex < 0 || tco.RuntimeManagedParamSlots.Count == 0)
+        {
+            return;
+        }
+
+        int generatedStart = _inst.Count;
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            int sourceTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(sourceTemp, slot));
+            int normalizedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(normalizedTemp, sourceTemp, -1, RuntimeManaged: true));
+            Emit(new IrInst.StoreLocal(slot, normalizedTemp));
+        }
+
+        int generatedCount = _inst.Count - generatedStart;
+        List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
+        _inst.RemoveRange(generatedStart, generatedCount);
+        _inst.InsertRange(insertIndex, generated);
+    }
+
+    private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(TcoContext? tco, int bodyTemp)
+    {
+        if (tco is null || IsRuntimeManagedResultTemp(bodyTemp))
+        {
+            return;
+        }
+
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            int sourceTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(sourceTemp, slot));
+            Emit(new IrInst.RcDrop(sourceTemp, "String", slot, RuntimeManaged: true));
+        }
     }
 
     // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
@@ -5224,6 +5364,7 @@ public sealed partial class Lowering
         tco.InTailPosition = false;
 
         var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+        int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
         // Store new values into TCO param slots
         for (int i = 0; i < tco.ParamSlots.Count; i++)
@@ -5248,7 +5389,7 @@ public sealed partial class Lowering
         if (tco.ArenaCursorSlot >= 0)
         {
             var facts = LowerCallTcoGatherResetFacts(tco, collectedArgs, newArgTypes);
-            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, facts);
+            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, oldRuntimeParamTemps, facts);
         }
 
         // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
@@ -5271,6 +5412,21 @@ public sealed partial class Lowering
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
         return (dummy, NewTypeVar());
+    }
+
+    private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)
+    {
+        int[] oldRuntimeParamTemps = Enumerable.Repeat(-1, tco.ParamSlots.Count).ToArray();
+        for (int i = 0; i < tco.ParamSlots.Count; i++)
+        {
+            if (tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[i]))
+            {
+                oldRuntimeParamTemps[i] = NewTemp();
+                Emit(new IrInst.LoadLocal(oldRuntimeParamTemps[i], tco.ParamSlots[i]));
+            }
+        }
+
+        return oldRuntimeParamTemps;
     }
 
     private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
@@ -5426,7 +5582,7 @@ public sealed partial class Lowering
         return (passThrough, singleFreshCons, freshListRebuild, stableAccArg);
     }
 
-    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
+    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, int[] oldRuntimeParamTemps, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
         var resetInfo = new PendingTcoReset(
             newArgTemps,
@@ -5435,6 +5591,8 @@ public sealed partial class Lowering
             facts.SingleFreshCons,
             facts.FreshListRebuild,
             facts.StableAccArg,
+            oldRuntimeParamTemps,
+            tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
             tco.ParamSlots.ToArray(),
             tco.FixedCursorSlot,
             tco.FixedEndSlot,

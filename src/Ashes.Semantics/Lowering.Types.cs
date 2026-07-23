@@ -37,6 +37,7 @@ public sealed partial class Lowering
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; } = [];
         public List<int> ParamSlots { get; init; } = [];
+        public HashSet<int> RuntimeManagedParamSlots { get; } = [];
         public bool InTailPosition { get; set; }
 
         // Params passed as their own unchanged Var at EVERY tail self-call — loop-invariant, so they

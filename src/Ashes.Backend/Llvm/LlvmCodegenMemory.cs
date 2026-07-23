@@ -105,6 +105,8 @@ internal static partial class LlvmCodegen
         return (sizeBytes + 7) & ~7;
     }
 
+    private const ulong RuntimeRcMaxCachedBlockSizeBytes = 4096;
+
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false)
     {
         int valueSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(fieldCount);
@@ -264,11 +266,28 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
+        LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
+        LlvmValueHandle shouldCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
+            allocationSize,
+            LlvmApi.ConstInt(state.I64, RuntimeRcMaxCachedBlockSizeBytes, 0),
+            "rc_drop_should_cache");
+        LlvmBasicBlockHandle cacheBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_cache");
+        LlvmBasicBlockHandle freeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_free");
+        LlvmApi.BuildCondBr(builder, shouldCache, cacheBlock, freeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cacheBlock);
         LlvmValueHandle freeListHead = LlvmApi.BuildLoad2(builder, state.I64,
             state.RcFreeListSlot, "rc_drop_free_list");
         StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
             freeListHead, "rc_drop_next");
         LlvmApi.BuildStore(builder, allocationBase, state.RcFreeListSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freeBlock);
+        EmitFreeOsMemory(state, allocationBase, allocationSize, "rc_drop_large");
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
