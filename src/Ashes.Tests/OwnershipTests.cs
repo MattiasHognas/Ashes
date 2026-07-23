@@ -625,6 +625,27 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_tuple_with_fresh_string_child_transfers_child_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let pair = (Ashes.Text.fromInt(40), 2) in pair) in match escaped with | (text, bonus) -> Ashes.Text.byteLength(text) + bonus");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_tuple_with_literal_string_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let pair = (\"40\", 2) in pair) in match escaped with | (text, bonus) -> Ashes.Text.byteLength(text) + bonus");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT

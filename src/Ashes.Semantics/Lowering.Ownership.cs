@@ -503,10 +503,11 @@ public sealed partial class Lowering
 
     private void EmitRuntimeManagedTupleDrop(int valueTemp, TypeRef.TTuple tuple)
     {
-        List<(int Index, TypeRef.TTuple Type)> children = [];
+        List<(int Index, TypeRef Type)> children = [];
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
-            if (Prune(tuple.Elements[i]) is TypeRef.TTuple child)
+            TypeRef child = Prune(tuple.Elements[i]);
+            if (child is TypeRef.TTuple or TypeRef.TStr)
             {
                 children.Add((i, child));
             }
@@ -518,11 +519,18 @@ public sealed partial class Lowering
             int uniqueTemp = NewTemp();
             Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
-            foreach ((int index, TypeRef.TTuple childType) in children)
+            foreach ((int index, TypeRef childType) in children)
             {
                 int childTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(childTemp, valueTemp, index * 8));
-                EmitRuntimeManagedTupleDrop(childTemp, childType);
+                if (childType is TypeRef.TTuple childTuple)
+                {
+                    EmitRuntimeManagedTupleDrop(childTemp, childTuple);
+                }
+                else
+                {
+                    Emit(new IrInst.RcDrop(childTemp, "String", RuntimeManaged: true));
+                }
             }
 
             Emit(new IrInst.Label(sharedLabel));

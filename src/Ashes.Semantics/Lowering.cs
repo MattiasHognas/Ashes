@@ -6100,7 +6100,14 @@ public sealed partial class Lowering
         var elementTemps = new List<int>(tuple.Elements.Count);
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
-            var (temp, type) = LowerExpr(tuple.Elements[i]);
+            Expr element = tuple.Elements[i];
+            bool savedStringRequest = _runtimeRcStringAllocationRequested;
+            _runtimeRcStringAllocationRequested = savedStringRequest
+                || _runtimeRcTupleAllocationRequested
+                    && IsRuntimeRcStringProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+            (int temp, TypeRef type) = LowerExpr(element);
+            _runtimeRcStringAllocationRequested = savedStringRequest;
             elementTemps.Add(temp);
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
@@ -6111,7 +6118,8 @@ public sealed partial class Lowering
         for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
         {
             runtimeManaged = CanArenaReset(elementTypes[i])
-                || elementTypes[i] is TypeRef.TTuple && IsRuntimeManagedResultTemp(elementTemps[i]);
+                || elementTypes[i] is TypeRef.TTuple or TypeRef.TStr
+                    && IsRuntimeManagedResultTemp(elementTemps[i]);
         }
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elementTemps.Count; i++)
