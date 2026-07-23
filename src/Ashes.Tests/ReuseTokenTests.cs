@@ -86,6 +86,11 @@ public sealed class ReuseTokenTests
             && function.Instructions.Any(instruction =>
                 instruction is IrInst.MakeClosure { FuncLabel: var label }
                     && label.StartsWith("moveBodies__reuse", StringComparison.Ordinal))
+            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
+                && label.Contains("rc_list_overwrite_preflight", StringComparison.Ordinal))
+            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
+                && label.Contains("rc_list_overwrite_fallback", StringComparison.Ordinal))
+            && function.Instructions.Count(instruction => instruction is IrInst.RcIsUnique) >= 2
             && function.Instructions.Any(instruction => instruction is IrInst.RestoreStackPointer))
             .ShouldBeTrue();
     }

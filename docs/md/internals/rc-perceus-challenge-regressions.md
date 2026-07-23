@@ -427,6 +427,21 @@ pre-migration diagnostic was roughly 2.00 seconds, so the item remains open; the
 profile the remaining list-of-record RC normalization and release path rather than attributing it
 to arena allocation.
 
+Profiling confirmed that constructing the replacement directly in RC does not help: three
+N=5,000,000 runs took 3.76, 3.76, and 3.93 seconds. The useful reuse boundary is the preceding
+runtime-owned accumulator. For a fresh rebuilt list of single-constructor records whose fields are
+all inline copy values, the back edge now preflights the complete old spine and every old record
+head for matching length and RC uniqueness. Only after the whole check succeeds does it copy the
+new fields into the old records, preserving the old RC headers and spine. Any inactive predecessor,
+shape mismatch, shared cell, shared head, or pointer-bearing field takes the existing normalize-
+then-drop fallback without partial mutation.
+
+This removes the ten per-step RC allocation/release operations in n-body's five-element live graph.
+Interleaved N=5,000,000 diagnostics improved from 3.63–3.74 seconds to 3.32–3.46 seconds, with
+correct output through N=1,000 and flat peak RSS at roughly 8.2 MB. The result is a further partial
+recovery, not closure: it remains well above the approximately 2.00-second pre-migration control,
+so this ledger item stays open pending another profile of the remaining call/RC overhead.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against

@@ -710,6 +710,9 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
                 "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_list_overwrite", StringComparison.Ordinal)).ShouldBeFalse(
+                "A growing list with pointer-bearing record heads must retain the recursive RC path.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }

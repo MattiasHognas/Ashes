@@ -1,6 +1,7 @@
 // A fresh list-of-records result may be consumed by an immediate recursive rewriter. The
-// rewriter mutates only that still-local arena graph; the enclosing escape boundary performs the
-// ordinary RC normalization afterward.
+// rewriter mutates only that still-local arena graph. At a TCO back edge, a same-length,
+// uniquely-owned RC predecessor can then receive the copy-only record fields in place; a shape or
+// uniqueness mismatch falls back to ordinary whole-graph RC normalization.
 // expect: 2.0 2.0 2.0
 import Ashes.IO as io
 import Ashes.Text as text

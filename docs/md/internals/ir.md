@@ -400,3 +400,10 @@ reuse; large cells use direct OS allocation. Scoped arena instructions remain
 for proven scratch and explicit scheduler/specialized regions. See the
 [architecture memory model](architecture.md#memory-model) for ownership and
 boundary invariants.
+
+A TCO back edge may reuse an older runtime-owned `List(record)` graph as the
+normalization destination when the replacement is fresh and every record field
+is copied inline. It first checks equal spine length and uniqueness of every old
+cons cell and record head; only a complete successful preflight permits field
+overwrite. Otherwise the ordinary graph normalization and recursive drop path
+remains in effect.

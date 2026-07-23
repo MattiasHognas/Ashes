@@ -1008,12 +1008,28 @@ public sealed partial class Lowering
             }
 
             TypeRef argType = Prune(info.ArgTypes[i]);
-            normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
-                info.ArgTemps[i],
-                argType,
-                info.RuntimeManagedArgResults[i],
-                info.RuntimeManagedPredecessorAliases[i],
-                info.ConsumedListTail[i]);
+            if (!info.RuntimeManagedArgResults[i]
+                && info.FreshListRebuild[i]
+                && argType is TypeRef.TList { Element: TypeRef.TNamedType elementType }
+                && info.RuntimeManagedParamActiveSlots[i] >= 0
+                && TryGetCopyOnlyRecordConstructor(elementType, out ConstructorSymbol recordConstructor))
+            {
+                normalizedTemps[i] = EmitRuntimeManagedRecordListOverwriteOrNormalize(
+                    info.ArgTemps[i],
+                    info.OldRuntimeParamTemps[i],
+                    info.RuntimeManagedParamActiveSlots[i],
+                    elementType,
+                    recordConstructor);
+            }
+            else
+            {
+                normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
+                    info.ArgTemps[i],
+                    argType,
+                    info.RuntimeManagedArgResults[i],
+                    info.RuntimeManagedPredecessorAliases[i],
+                    info.ConsumedListTail[i]);
+            }
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
                 && info.RuntimeManagedArgResults[i];
@@ -1035,6 +1051,206 @@ public sealed partial class Lowering
         }
 
         return normalizedTemps;
+    }
+
+    private bool TryGetCopyOnlyRecordConstructor(
+        TypeRef.TNamedType named,
+        out ConstructorSymbol constructor)
+    {
+        ConstructorSymbol? candidate = named.Symbol.Constructors.Count == 1
+            ? named.Symbol.Constructors[0]
+            : null;
+        if (candidate is null
+            || candidate.DeclaringSyntax.FieldNames.Count == 0)
+        {
+            constructor = null!;
+            return false;
+        }
+
+        for (int i = 0; i < candidate.Arity; i++)
+        {
+            if (!CanArenaReset(Prune(InstantiateConstructorParameterType(candidate, i, named))))
+            {
+                constructor = null!;
+                return false;
+            }
+        }
+
+        constructor = candidate;
+        return true;
+    }
+
+    private int EmitRuntimeManagedRecordListOverwriteOrNormalize(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        TypeRef.TNamedType elementType,
+        ConstructorSymbol constructor)
+    {
+        int resultSlot = NewLocal();
+        int sourceCursorSlot = NewLocal();
+        int predecessorCursorSlot = NewLocal();
+        string overwriteLabel = NewLabel("rc_list_overwrite");
+        string fallbackLabel = NewLabel("rc_list_overwrite_fallback");
+        string doneLabel = NewLabel("rc_list_overwrite_result");
+        int zeroTemp = EmitRuntimeManagedRecordListOverwritePreflight(
+            sourceTemp,
+            predecessorTemp,
+            predecessorActiveSlot,
+            sourceCursorSlot,
+            predecessorCursorSlot,
+            overwriteLabel,
+            fallbackLabel);
+        EmitRuntimeManagedRecordListOverwrite(
+            sourceTemp,
+            predecessorTemp,
+            predecessorActiveSlot,
+            sourceCursorSlot,
+            predecessorCursorSlot,
+            zeroTemp,
+            constructor,
+            resultSlot,
+            overwriteLabel,
+            doneLabel);
+
+        Emit(new IrInst.Label(fallbackLabel));
+        int normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, elementType);
+        Emit(new IrInst.StoreLocal(resultSlot, normalizedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedRecordListOverwritePreflight(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        int sourceCursorSlot,
+        int predecessorCursorSlot,
+        string overwriteLabel,
+        string fallbackLabel)
+    {
+        string preflightLabel = NewLabel("rc_list_overwrite_preflight");
+        string sourceEmptyLabel = NewLabel("rc_list_overwrite_source_empty");
+        int predecessorActiveTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(predecessorActiveTemp, predecessorActiveSlot));
+        Emit(new IrInst.JumpIfFalse(predecessorActiveTemp, fallbackLabel));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, predecessorTemp));
+
+        // Check the complete shape and every destination node before mutating anything. A late
+        // mismatch or shared node therefore falls back without exposing a partially overwritten
+        // predecessor graph.
+        Emit(new IrInst.Label(preflightLabel));
+        int preflightSourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(preflightSourceTemp, sourceCursorSlot));
+        int preflightPredecessorTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(preflightPredecessorTemp, predecessorCursorSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int sourceNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(sourceNonEmptyTemp, preflightSourceTemp, zeroTemp));
+        int predecessorNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(predecessorNonEmptyTemp, preflightPredecessorTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(sourceNonEmptyTemp, sourceEmptyLabel));
+        Emit(new IrInst.JumpIfFalse(predecessorNonEmptyTemp, fallbackLabel));
+
+        int predecessorUniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(predecessorUniqueTemp, preflightPredecessorTemp));
+        Emit(new IrInst.JumpIfFalse(predecessorUniqueTemp, fallbackLabel));
+        int predecessorHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            predecessorHeadTemp,
+            preflightPredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int predecessorHeadUniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(predecessorHeadUniqueTemp, predecessorHeadTemp));
+        Emit(new IrInst.JumpIfFalse(predecessorHeadUniqueTemp, fallbackLabel));
+
+        int preflightSourceTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            preflightSourceTailTemp,
+            preflightSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int preflightPredecessorTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            preflightPredecessorTailTemp,
+            preflightPredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, preflightSourceTailTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, preflightPredecessorTailTemp));
+        Emit(new IrInst.Jump(preflightLabel));
+
+        Emit(new IrInst.Label(sourceEmptyLabel));
+        Emit(new IrInst.JumpIfFalse(predecessorNonEmptyTemp, overwriteLabel));
+        Emit(new IrInst.Jump(fallbackLabel));
+        return zeroTemp;
+    }
+
+    private void EmitRuntimeManagedRecordListOverwrite(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        int sourceCursorSlot,
+        int predecessorCursorSlot,
+        int zeroTemp,
+        ConstructorSymbol constructor,
+        int resultSlot,
+        string overwriteLabel,
+        string doneLabel)
+    {
+        string overwriteDoneLabel = NewLabel("rc_list_overwrite_done");
+        Emit(new IrInst.Label(overwriteLabel));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, predecessorTemp));
+        string overwriteLoopLabel = NewLabel("rc_list_overwrite_loop");
+        Emit(new IrInst.Label(overwriteLoopLabel));
+        int overwriteSourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(overwriteSourceTemp, sourceCursorSlot));
+        int overwriteSourceNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(overwriteSourceNonEmptyTemp, overwriteSourceTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(overwriteSourceNonEmptyTemp, overwriteDoneLabel));
+        int overwritePredecessorTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(overwritePredecessorTemp, predecessorCursorSlot));
+        int sourceHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            sourceHeadTemp,
+            overwriteSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int destinationHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            destinationHeadTemp,
+            overwritePredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        for (int field = 0; field < constructor.Arity; field++)
+        {
+            int fieldTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(fieldTemp, sourceHeadTemp, field));
+            Emit(new IrInst.SetAdtField(destinationHeadTemp, field, fieldTemp));
+        }
+
+        int overwriteSourceTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            overwriteSourceTailTemp,
+            overwriteSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int overwritePredecessorTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            overwritePredecessorTailTemp,
+            overwritePredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, overwriteSourceTailTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, overwritePredecessorTailTemp));
+        Emit(new IrInst.Jump(overwriteLoopLabel));
+
+        Emit(new IrInst.Label(overwriteDoneLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, predecessorTemp));
+        int inactiveTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+        Emit(new IrInst.StoreLocal(predecessorActiveSlot, inactiveTemp));
+        Emit(new IrInst.Jump(doneLabel));
     }
 
     private bool IsRuntimeManagedConcatStrTipResult(int temp)
