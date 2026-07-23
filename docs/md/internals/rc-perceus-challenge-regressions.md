@@ -170,6 +170,12 @@ Audit match-payload ownership and ADT/list state carried between `nextPerm` and 
 
 ### CRP-4 — P1: regex substitution graph becomes dangling at scale
 
+**Resolved by the CRP-3 child-transfer fix.** Regex-redux's substitution state also crossed a TCO
+boundary through an arena parent containing runtime-managed children. After positional-product
+ownership was fixed, the N=10,000 fixture completed with the expected lengths
+`101745/100000/133640`. The N=100,000 fixture also completed at `-O2` with lengths
+`1016745/1000000/1336326`, in 1.97 seconds with 241,068 KB peak RSS in the diagnostic run.
+
 The N=10,000 fasta fixture prints all nine regex counts correctly, then segfaults in `applySubs`.
 The N=1 fixture completes. Debugging shows an invalid pointer dereference rather than the
 minus-one free-list signature, so treat this as a likely escaping substitution string/list
