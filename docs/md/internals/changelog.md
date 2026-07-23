@@ -1,10 +1,16 @@
 # Compiler Changelog
 
-A record of the compiler's internal quality-of-implementation work — LLVM passes, the arena memory
-model, in-place reuse, structured parallelism, resource safety, and codegen. None of it changes the
+A record of the compiler's internal quality-of-implementation work — LLVM passes, the memory-model
+chronology, in-place reuse, structured parallelism, resource safety, and codegen. None of it changes the
 language specification; it is the "what was done and why" history behind the behavior described in
 [Compiler Architecture](architecture.md) and the [IR Reference](ir.md). A short list of
 deliberately-deferred capabilities is kept at the end so the design analysis is not lost.
+
+> Entries below describe the implementation at the time each item landed. In
+> particular, the early arena-only, erased-drop, old closure-layout, and
+> "no runtime RC" entries are historical and are superseded by **RC Perceus
+> migration** below. Use the architecture and IR references for the current
+> contract.
 
 ---
 
@@ -14,6 +20,7 @@ All original audit findings have been addressed:
 
 | Area | What was done |
 |------|---------------|
+| **RC Perceus migration** | Escaping ordinary graphs now use compiler-inferred ownership and runtime RC: per-function borrowed/consumed summaries, last-use/branch-entry `RcDrop`, late `RcDup`, layout-aware recursive drops, uniqueness specialization, and `DropReuse`/`AllocReusing` with a fresh-allocation null fallback. Complete-graph normalization prevents mixed-lifetime parents and children. Small cells use dense per-thread RC chunks plus exact-size free-list reuse; large cells return directly to the OS. Compiler-proven scratch, task/capability state, mmap-backed views, parallel publication copies, and the persistent Map/HashMap to-space retain explicitly classified regions with multi-scale RSS gates. The paper conformance ledger and full validation history are in the [migration record](../future/RC_PERCEUS_MIGRATION.md). |
 | **LLVM passes** | Targeted pipeline (mem2reg, instcombine, early-cse, reassociate, gvn, dce, inline, licm, dse) at O1–O3. PLT32 + PE relocation support. Freestanding builtins (memcpy, memset, strlen, memcmp, bcmp) emitted per module. |
 | **Memory allocator** | OS-backed `mmap`/`VirtualAlloc` chunks (4 MB each, on demand; a single allocation larger than one chunk grows a chunk to fit — see CO-31). Bounds checking with clean error. |
 | **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. Phase 5: extended TCO copy-out — `CopyOutTcoListCell` for `TList(TStr)` and `TList(TList(copy-type))` args (single-cell + head copy), closure and ADT args via `CopyOutClosure`/`CopyOutArena`. |

@@ -6,9 +6,13 @@ documented in the normative docs under [`docs/md/`](../index.md) — syntax/sema
 runtime/backend behavior in [Architecture](../internals/architecture.md), and the history of the
 compiler's optimization/codegen work in the [Compiler Changelog](../internals/changelog.md) — not here.
 
+The RC Perceus memory model has shipped. Its current contract is documented in
+[Compiler Architecture](../internals/architecture.md#memory-model); the
+[migration record](RC_PERCEUS_MIGRATION.md) preserves the phased implementation,
+paper comparison, validation evidence, and intentional region/thread boundaries.
+
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [RC Perceus Memory Model](RC_PERCEUS_MIGRATION.md) | Planned | Replace arena/copy-out memory handling with precise RC Perceus while preserving Ashes syntax and native LLVM targets |
 | [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
 | [Package Registry Website](REGISTRY_WEBSITE.md) | Planned | Server-rendered browse/search UI over the existing registry API, surfacing per-package capability requirements |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
@@ -31,5 +35,5 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
    All APIs — standard library and user-defined — are pure: they return
    new values and never modify their arguments. There are no in-place
    updates visible to user code.
-6. **No GC.** All resource and memory management is deterministic and
-   compile-time verified.
+6. **No tracing GC.** Ordinary lifetime operations are compiler-inserted;
+   resource cleanup remains statically verified.
