@@ -2777,35 +2777,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        AssertRuntimeRcOwnedHeadListTcoProbe(
-            LowerProgram(BuildRuntimeRcStringHeadListTcoMemoryProgram(1)),
-            IrInst.ListHeadCopyKind.String,
-            "String");
-        AssertRuntimeRcOwnedHeadListTcoProbe(
-            LowerProgram(BuildRuntimeRcNestedListTcoMemoryProgram(1)),
-            IrInst.ListHeadCopyKind.InnerList,
-            "nested-list");
-        IrProgram transferProbe = LowerProgram(BuildRuntimeRcListPatternTransferMemoryProgram(1));
-        AllInstructions(transferProbe).Any(instruction => instruction is IrInst.RcDup
-        {
-            RuntimeManaged: true,
-        }).ShouldBeTrue();
-        IrProgram tupleHeadProbe = LowerProgram(BuildRuntimeRcTupleHeadListTcoMemoryProgram(1));
-        AllInstructions(tupleHeadProbe).Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        AllInstructions(tupleHeadProbe).Any(instruction => instruction is IrInst.RcDrop
-        {
-            TypeName: "Tuple",
-            RuntimeManaged: true,
-        }).ShouldBeTrue();
-        IrProgram recordHeadProbe = LowerProgram(BuildRuntimeRcRecordHeadListTcoMemoryProgram(1));
-        AllInstructions(recordHeadProbe).Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        AllInstructions(recordHeadProbe).Any(instruction => instruction is IrInst.RcDrop
-        {
-            TypeName: "Item",
-            RuntimeManaged: true,
-        }).ShouldBeTrue();
+        AssertRuntimeRcOwnedHeadListTcoProbes();
 
         List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcStringHeadListTcoMemoryProgram,
@@ -2822,7 +2794,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> recordHeadSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcRecordHeadListTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
-
+        MemoryExecutionResult nilTailTransfer = await CompileRunWithLinuxLlvmPeakRssAsync(
+            LowerProgram(BuildRuntimeRcNilTailPatternTransferProgram())).ConfigureAwait(false);
+        nilTailTransfer.Stdout.ShouldBe("1\n");
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
         AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
@@ -5674,6 +5648,40 @@ public sealed class LinuxBackendCoverageTests
             $"The migrated {elementDescription} list must release its owned graph.");
     }
 
+    private static void AssertRuntimeRcOwnedHeadListTcoProbes()
+    {
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcStringHeadListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.String,
+            "String");
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcNestedListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.InnerList,
+            "nested-list");
+        IrProgram transferProbe = LowerProgram(BuildRuntimeRcListPatternTransferMemoryProgram(1));
+        AllInstructions(transferProbe).Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AssertRuntimeRcGeneralHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcTupleHeadListTcoMemoryProgram(1)),
+            "Tuple");
+        AssertRuntimeRcGeneralHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcRecordHeadListTcoMemoryProgram(1)),
+            "Item");
+    }
+
+    private static void AssertRuntimeRcGeneralHeadListTcoProbe(IrProgram probe, string childTypeName)
+    {
+        AllInstructions(probe).Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: var typeName,
+            RuntimeManaged: true,
+        } && string.Equals(typeName, childTypeName, StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
     private static void AssertRuntimeRcStringTcoProbe()
     {
         IrProgram probe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
@@ -6981,6 +6989,18 @@ public sealed class LinuxBackendCoverageTests
                         | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))(["next"])(head)
 
             Ashes.IO.print(loop({{iterations}})(0)(["seed"])("initial"))
+            """;
+
+    private static string BuildRuntimeRcNilTailPatternTransferProgram()
+        => """
+            let recursive reverse : List(Str) -> List(Str) -> List(Str) = given acc -> given rest ->
+                match rest with
+                    | [] -> acc
+                    | head :: tail -> reverse(head :: acc)(tail)
+
+            match reverse([])(["x"]) with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(Ashes.Text.byteLength(head))
             """;
 
     private static string BuildRuntimeRcTupleHeadListTcoMemoryProgram(int iterations)

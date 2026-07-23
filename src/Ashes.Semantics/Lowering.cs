@@ -6093,6 +6093,12 @@ public sealed partial class Lowering
     {
         int valueTemp = NewTemp();
         Emit(new IrInst.LoadLocal(valueTemp, alias.AliasSlot));
+        int nonNullTemp = NewTemp();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
+        string duplicatedLabel = NewLabel("rc_tco_alias_duplicated");
+        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
         int duplicatedTemp = valueTemp;
         for (int use = 0; use < uses; use++)
         {
@@ -6101,6 +6107,7 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.StoreLocal(alias.AliasSlot, duplicatedTemp));
+        Emit(new IrInst.Label(duplicatedLabel));
         _activeRuntimeManagedTcoPatternAliases.Add(name);
     }
 

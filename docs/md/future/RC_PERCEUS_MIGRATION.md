@@ -763,6 +763,13 @@ legacy list relocation. Consumed general-head input lists remain conservative un
 payload transfer is complete. Lists whose element graph contains `Bytes` also remain conservative:
 blind deep-copy normalization could duplicate an entire mmap-backed buffer per cell, as 1BRC's chunk
 tuples demonstrate. The complete 1BRC correctness and bounded-memory gate remains green.
+Transfer now treats nil pattern aliases as ownership-free values and skips `dup` entirely, avoiding an
+RC-header read before address zero when the final cons tail crosses a back edge. A native one-element
+reverse regression covers that boundary. The remaining general consumed-head blocker is more precise
+than the local match: a curried call such as `consume(build(...))(initial)` carries the first argument
+through the returned inner closure environment. That environment must publish or move the RC graph
+before the outer parameter is released and communicate its runtime provenance to inner-loop entry;
+generating an environment normalizer alone is insufficient on the saturated direct-call path.
 
 Deliverables:
 

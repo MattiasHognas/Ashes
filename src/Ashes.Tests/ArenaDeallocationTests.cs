@@ -608,8 +608,9 @@ public sealed class ArenaDeallocationTests
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.Alloc
         {
+            SizeBytes: 16,
             RuntimeManaged: true,
-        }).ShouldBeTrue();
+        }).ShouldBeTrue("The tuple head itself must be allocated under RC before the list owns it.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
             TypeName: "Tuple",
@@ -673,6 +674,9 @@ public sealed class ArenaDeallocationTests
         {
             RuntimeManaged: true,
         }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
+                "Nil list aliases must bypass RC header access.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
