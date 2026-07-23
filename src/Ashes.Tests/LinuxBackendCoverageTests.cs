@@ -2189,6 +2189,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_list_capture_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingListCaptureClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingListCaptureClosureMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping List capture closure", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_string_concat_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -5520,6 +5541,23 @@ public sealed class LinuxBackendCoverageTests
             let make n =
                 let text = "value-" + "x"
                 in given (ignored) -> Ashes.Text.byteLength(text)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingListCaptureClosureMemoryProgram(int iterations)
+        => $$"""
+            let make n =
+                let values = [n, 2]
+                in given (ignored) -> match values with
+                    | [] -> 0
+                    | _ :: _ -> 2
 
             let recursive loop n total =
                 if n <= 0 then total

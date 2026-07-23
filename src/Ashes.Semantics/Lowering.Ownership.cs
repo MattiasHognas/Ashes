@@ -2424,7 +2424,14 @@ public sealed partial class Lowering
 
     private void EmitRuntimeManagedClosureCaptureDrop(int capturedTemp, TypeRef type)
     {
-        string typeName = Prune(type) switch
+        TypeRef pruned = Prune(type);
+        if (pruned is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(capturedTemp, list.Element);
+            return;
+        }
+
+        string typeName = pruned switch
         {
             TypeRef.TStr => "String",
             TypeRef.TBytes => "Bytes",

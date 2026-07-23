@@ -2481,7 +2481,11 @@ public sealed partial class Lowering
         HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
         foreach (string name in FreeVars(lambda.Body, bound))
         {
-            if (LookupOwnedValue(name) is { RuntimeManaged: true, Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt })
+            if (LookupOwnedValue(name) is
+                {
+                    RuntimeManaged: true,
+                    Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt or TypeRef.TList,
+                })
             {
                 return true;
             }
@@ -2512,7 +2516,8 @@ public sealed partial class Lowering
             if (owned.RuntimeManaged
                 && owned.Type is not TypeRef.TStr
                 && owned.Type is not TypeRef.TBytes
-                && owned.Type is not TypeRef.TBigInt)
+                && owned.Type is not TypeRef.TBigInt
+                && owned.Type is not TypeRef.TList)
             {
                 return false;
             }
@@ -2524,6 +2529,16 @@ public sealed partial class Lowering
 
     private bool IsKnownCopyClosureResult(Expr expression)
     {
+        if (expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit)
+        {
+            return true;
+        }
+
+        if (expression is Expr.Match match)
+        {
+            return match.Cases.All(matchCase => IsKnownCopyClosureResult(matchCase.Body));
+        }
+
         if (expression is Expr.Call(Expr.QualifiedVar qualified, _))
         {
             string module = ResolveModuleAlias(qualified.Module);
@@ -2531,6 +2546,8 @@ public sealed partial class Lowering
                     && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
                         || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal))
                 || string.Equals(module, "Ashes.Byte", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                || string.Equals(module, "Ashes.Collection.List", StringComparison.Ordinal)
                     && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
         }
 
@@ -2957,7 +2974,8 @@ public sealed partial class Lowering
         bool freshRuntimeList = freshConstruction
             && (IsImmediateCopyListMatchUse(let.Name, let.Body)
                 || IsTailConsumedByImmediateListMatch(let.Name, let.Body)
-                || IsDirectBindingResult(let.Body, let.Name));
+                || IsDirectBindingResult(let.Body, let.Name)
+                || IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name));
         bool extendsRuntimeList = TryGetRuntimeRcListTailExtension(let.Name, let.Value, let.Body, out string? tailBinding);
         if (!freshRuntimeList && !extendsRuntimeList)
         {

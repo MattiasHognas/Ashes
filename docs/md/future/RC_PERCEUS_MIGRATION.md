@@ -506,11 +506,12 @@ copy-out. A directly returned interned String is normalized once at the callee b
 ownership bit and final drop remain unambiguous. Async/task programs retain the established region
 contract and do not enable this function-body promotion; the keep-alive HTTP RSS slope remains the
 regression gate for that exclusion.
-Fresh escaping closures with no owned pointer captures, or with proven owned String/Bytes/BigInt
+Fresh escaping closures with no owned pointer captures, or with proven owned String/Bytes/BigInt/List
 captures and a copy-valued result, now allocate the closure and environment as one RC-owned graph.
 This includes closures returned directly from known functions: the caller reclaims the call arena
 without shallow `CopyOutClosure`, and a synthesized environment dropper releases each moved capture
-when the last closure owner dies. A 2K/10K/50K closure-factory loop guards the path against growth.
+when the last closure owner dies. Separate 2K/10K/50K closure-factory loops cover scalar heap and
+list captures and guard both paths against growth.
 Closures with arena-backed, resource-bearing, aggregate, or otherwise opaque captures remain outside
 this promotion because copying only the environment words would preserve dangling child pointers.
 The legacy persistent to-space/blob allocator remains reachable only from the specialized in-place
