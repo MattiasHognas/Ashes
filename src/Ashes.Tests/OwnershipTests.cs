@@ -646,6 +646,19 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_tuple_with_fresh_bytes_and_bigint_children_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let values = (Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42)) in values) in match escaped with | (bytes, big) -> Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT

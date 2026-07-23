@@ -507,7 +507,7 @@ public sealed partial class Lowering
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
             TypeRef child = Prune(tuple.Elements[i]);
-            if (child is TypeRef.TTuple or TypeRef.TStr)
+            if (child is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt)
             {
                 children.Add((i, child));
             }
@@ -529,7 +529,14 @@ public sealed partial class Lowering
                 }
                 else
                 {
-                    Emit(new IrInst.RcDrop(childTemp, "String", RuntimeManaged: true));
+                    string typeName = childType switch
+                    {
+                        TypeRef.TStr => "String",
+                        TypeRef.TBytes => "Bytes",
+                        TypeRef.TBigInt => "BigInt",
+                        _ => throw new InvalidOperationException("Unsupported runtime-managed tuple child."),
+                    };
+                    Emit(new IrInst.RcDrop(childTemp, typeName, RuntimeManaged: true));
                 }
             }
 

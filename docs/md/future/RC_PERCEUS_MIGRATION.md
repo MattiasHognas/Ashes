@@ -437,7 +437,8 @@ Fresh tuples containing only copy values now transfer directly as one RC cell. P
 escape remains arena-managed except for fully fresh nested tuples: each nested tuple is an RC cell,
 and a uniqueness-aware recursive drop releases children before their parent. Borrowed tuple children
 remain rejected. Fresh owned String producers may also move into a tuple; String literals and borrowed
-Strings remain non-owning pointers and therefore keep the tuple on the arena path.
+Strings remain non-owning pointers and therefore keep the tuple on the arena path. Fresh Bytes and
+BigInt producers use the same owned-child rule and are released by the parent's recursive drop.
 Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
 tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
 drop releases nested children only for the last owner; the immediate-match path retains the same contract.

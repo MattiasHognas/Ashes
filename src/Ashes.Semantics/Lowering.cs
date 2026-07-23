@@ -6102,12 +6102,24 @@ public sealed partial class Lowering
         {
             Expr element = tuple.Elements[i];
             bool savedStringRequest = _runtimeRcStringAllocationRequested;
+            bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
+            bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
             _runtimeRcStringAllocationRequested = savedStringRequest
                 || _runtimeRcTupleAllocationRequested
                     && IsRuntimeRcStringProducer(element)
                     && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+            _runtimeRcBytesAllocationRequested = savedBytesRequest
+                || _runtimeRcTupleAllocationRequested
+                    && IsRuntimeRcBytesProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
+            _runtimeRcBigIntAllocationRequested = savedBigIntRequest
+                || _runtimeRcTupleAllocationRequested
+                    && IsRuntimeRcBigIntProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
             (int temp, TypeRef type) = LowerExpr(element);
             _runtimeRcStringAllocationRequested = savedStringRequest;
+            _runtimeRcBytesAllocationRequested = savedBytesRequest;
+            _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
             elementTemps.Add(temp);
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
@@ -6118,7 +6130,7 @@ public sealed partial class Lowering
         for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
         {
             runtimeManaged = CanArenaReset(elementTypes[i])
-                || elementTypes[i] is TypeRef.TTuple or TypeRef.TStr
+                || elementTypes[i] is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
                     && IsRuntimeManagedResultTemp(elementTemps[i]);
         }
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
