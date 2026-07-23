@@ -530,28 +530,30 @@ float/long-double/complex/gamma/bessel source variants; a few forwarding shims).
 ### BigInt (arbitrary-precision integers)
 
 `BigInt` is a native primitive (`Ashes.Number.BigInt`), consistent with `Int`/`Float`/`u8`–`u64` being
-native. It is an **immutable, arena-allocated heap value** — a pointer to
+native. It is an **immutable heap value** — a pointer to
 `{ i64 header, i64 limb[…] }` where `header = (negFlag << 32) | limbCount`, the magnitude is
 sign-magnitude base-2^64 little-endian, and the form is normalized (no leading-zero limbs; zero is
 header `0`). Being a pointer word, it flows through slots, closures, tuples, and `match` like any
-other heap value, and every operation returns a fresh normalized result (no mutation).
+other heap value, and every operation returns a fresh normalized result (no source-visible mutation).
+An independently owned result carries the common RC allocation header immediately before this
+payload; temporary arithmetic buffers may remain in a proven scoped arena.
 
 Unlike the openlibm math payload, the BigInt arithmetic is **emitted directly as LLVM-IR runtime
 helper functions** by the backend (`EmitBigIntRuntimeHelpers`), the same technique as the
 freestanding `memcmp`/`strlen` helpers — there is no vendored library or build step. The helpers
 (`bignum_add`/`_sub`/`_mul`/`_divmod`/`_cmp`/`_from_i64`/`_to_decimal`/`_from_decimal`) are emitted
 once per program that uses BigInt (gated by `ProgramUsesBigIntRuntimeAbi`), with internal linkage so
-unused ones are dead-stripped. They are **allocation-free**: the call-site codegen reads the operand
-limb counts, pre-sizes generous result buffers in the arena (`EmitAllocDynamic`), and passes them
-in. The IR is pure integer arithmetic (i64/i128) with no syscalls or soft-int libcalls — the
+unused ones are dead-stripped. The helpers do not allocate themselves: call-site codegen reads the
+operand limb counts, pre-sizes result and scratch buffers in the selected RC or scoped region, and
+passes them in. The IR is pure integer arithmetic (i64/i128) with no syscalls or soft-int libcalls — the
 64×64→128 multiply lowers to hardware `umulh`, and decimal conversion divides 32 bits at a time so it
 needs only i64 `udiv` — so all three targets share one implementation. Division is binary long
 division (Knuth Algorithm D is a documented performance follow-up).
 
-Because values are immutable and arena-allocated, a growing bignum in a tight loop churns the arena;
-that cost is deliberate (there is no GC or reference counting) and is what the pidigits challenge
-exercises. `Int↔BigInt` conversions live in `Ashes.Number.BigInt` (`fromInt`/`toInt`); string conversions
-live in `Ashes.Text` (`fromBigInt`/`parseBigInt`), matching `fromInt`/`parseInt`.
+RC-owned BigInt accumulators release replaced buffers at TCO back-edges; large released buffers return
+to the OS instead of accumulating in the small-block cache. `Int↔BigInt` conversions live in
+`Ashes.Number.BigInt` (`fromInt`/`toInt`); string conversions live in `Ashes.Text`
+(`fromBigInt`/`parseBigInt`), matching `fromInt`/`parseInt`.
 
 ---
 
@@ -597,174 +599,172 @@ registers.
 
 ## Memory Model
 
-Ashes programs run without a garbage collector. Heap allocation uses a
-**chunked arena allocator** with a bump-pointer cursor and a 4 MB chunk
-size.
+Ashes uses a hybrid, non-tracing memory model. RC Perceus is the general
+lifetime substrate for escaping ordinary heap graphs; compiler-proven scoped
+values, scheduler state, OS-backed payload views, and a small number of
+specialized data-structure regions retain explicit region lifetimes. There is
+no tracing garbage collector and no ownership syntax in the source language.
 
-```mermaid
-flowchart TD
-    c0["chunk 0 · 4 MB<br/>[prev = 0] [alloc] [alloc] [alloc] ... [free]"]
-    c1["chunk 1 · 4 MB<br/>[prev = chunk 0] [alloc] [alloc] ... [free]"]
-    cursor(["bump cursor"])
-    c0 -->|"grow on demand"| c1
-    c1 -.->|"prev pointer"| c0
-    cursor -.->|"points into current chunk"| c1
+### Ownership placement
+
+Lowering infers a `FunctionOwnershipSummary` for each visible function:
+parameters are borrowed or consumed, results record which parameters they may
+reach, captures record their ownership, and unique inputs/results are tracked
+where proven. `PerceusLifetimePlacement` then moves ordinary lifetime operations
+from lexical anchors to control-flow-precise positions:
+
+- an owner is moved when its sole reference transfers;
+- `RcDup` is emitted as late as possible when ownership splits;
+- `RcDrop` is emitted after the last use or at the start of a branch where the
+  owner is dead;
+- match payloads receive their own reference before a parent is consumed;
+- TCO back-edges drop replaced owners, and function exit transfers only the
+  returned root while dropping every other active owner.
+
+These are compiler-internal operations. Resource ownership is separate:
+`CleanupResource` closes or reaps files, sockets, processes, and
+resource-bearing closures and remains governed by the `ASH006`-`ASH008`
+diagnostics.
+
+### RC allocation and layout
+
+An RC-managed allocation starts with a 16-byte header followed by the existing
+value payload:
+
+```text
+allocation base  -> [reference_count:i64][allocation_size:i64][payload...]
+value pointer    --------------------------------------------^
 ```
 
-- The allocator state lives in **LLVM module-level globals** for the current
-   heap cursor and current chunk end, so every function on a thread shares one
-   arena. (This is per-thread once parallelism forks a worker — see
-   *Per-thread arenas* below.)
-- Program entry allocates the first chunk from the OS with `mmap` (Linux) or
-   `VirtualAlloc` (Windows).
-- `Alloc(n)` and dynamic allocation paths bump the cursor inside the current
-   chunk. If `cursor + n` would overflow the chunk, the runtime allocates a new
-   4 MB chunk, links it to the previous chunk, and continues there.
-- Each chunk reserves its first 8 bytes for a `prev` pointer to the previous
-   chunk base. Allocations start after that header.
-- Ownership scopes in lowered IR save and restore arena watermarks. At scope
-   exit, `RestoreArenaState` resets the allocator to the saved cursor/end, and
-   `ReclaimArenaChunks` walks the chunk chain and releases abandoned chunks with
-   `munmap` or `VirtualFree`.
-- `Drop` is therefore not general per-object deallocation. For most owned heap
-   values it is a no-op; bulk reclamation happens through arena reset. Resource
-   types such as sockets still route `Drop` to explicit cleanup operations.
+The public value pointer still addresses the legacy payload, so field/tag
+offsets do not depend on whether a value is RC- or region-managed. New RC cells
+start at count 1. `RcDup` increments the count. `RcDrop` decrements a shared
+cell; on the last reference it first releases owned children through the
+type-directed drop path, then releases the cell. Known constructors and
+deep-unique roots use specialized drop paths that avoid unnecessary tag or
+uniqueness checks.
 
-### Per-thread arenas (structured parallelism)
+Small allocations, including the RC header, of at most 4096 bytes come from a
+dense per-thread RC bump region. Released small cells join a per-thread free
+list; allocation scans it for an exact-size match before bump-allocating.
+Larger cells are allocated directly from the OS and returned directly on their
+last drop. Thread teardown releases its RC chunks and any cached cells.
 
-The single-arena description above is per **thread**. When `Ashes.Task.Parallel.both`
-forks a worker, that worker runs on its own bump arena so the two threads never
-race on the shared heap-cursor globals:
+### Complete graphs and copy boundaries
 
-- The worker's arena cursor/end live in a small **thread-control block (TCB)**
-  reached through a platform thread-pointer register instead of the module
-  globals: `%gs`-segment TCB on linux-x64, the TEB `ArbitraryUserPointer` slot
-  on win-x64 (and the reserved `x18` TEB base on win-arm64), and ELF `PT_TLS` local-exec cursors (via `TPIDR_EL0`) on
-  linux-arm64. `EmitHeapChunkInit` gives each worker its first chunk
-  (`LlvmCodegenParallel.cs`).
-- The right-hand thunk of `both` is a pure closure whose result type
-  `CanRunRightOnWorker` restricts to arena-safe, deep-copyable values, so the
-  worker's arena never aliases the main thread's heap (or its TLS/socket
-  state); the join copies the result back into the caller's arena.
-- This coexists with dynamically linked (networking) images: the arm64 prologue
-  self-initialises `TPIDR_EL0` only when the loader left it zero, so the
-  loader's own thread pointer is preserved in dynamically linked programs.
+An RC parent may own only inline data, static non-owning data, or independently
+owned RC children. When an arena value must escape as RC, lowering normalizes
+the complete owned graph rather than copying only its root. A moved child needs
+no count change; a retained child receives exactly one `RcDup`.
 
-The number of workers a fork may spawn is capped. The **compiled maximum** is a
-fixed `--parallel-workers` constant or, when unset, the once-detected core count
-(cached in `__ashes_parallel_cap`). `Ashes.Task.Parallel.withWorkers(count)(action)`
-adds a dynamically-scoped **override**: it saves the previous value of the
-`__ashes_parallel_override` global, stores `count`, runs the thunk, and restores
-the old value on return (a compiler intrinsic, not a runtime function). The fork
-gate and the queued-reduce cap both take `min(override, compiledMax)` when the
-override is set (`EmitEffectiveWorkerCap`), so a scoped request only ever lowers
-the effective count, never raises it past the ceiling. The override is a single
-process-wide global read on the thread that set it; a `withWorkers` nested
-*inside* a forked worker thunk therefore shares it process-wide rather than
-per-thread, which structured join ordering keeps well-defined for the common
-(main-thread) use.
+The IR makes every remaining copy operation declare its purpose:
 
-### In-place reuse (Perceus-style, no runtime RC)
+| `CopyOutPurpose` | Meaning |
+|---|---|
+| `RcNormalization` | Build an independently owned RC graph from an arena/static source. |
+| `ArenaScopeBoundary` | Preserve a value across a scheduler/capability scope watermark. |
+| `ArenaCallBoundary` | Preserve a value across a scheduler/capability call watermark. |
+| `ArenaTcoCompaction` | Keep live loop state while resetting such a region. |
+| `IndependentClone` | Explicit `deepCopy`, reuse defense, or worker publication. |
 
-On top of the arena, immutable recursive-ADT accumulators are, where provably
-safe, **rebuilt in place** instead of reallocated — a Perceus-style reuse with
-no reference counting:
+`AllocAdtToSpace` and `CopyOutArenaToSpace` are not general escape mechanisms;
+they belong only to the persistent `Map`/`HashMap` region described below.
 
-- A matched-and-rebuilt cell is overwritten through an `AllocReusing` token
-  rather than freshly allocated, so an accumulator threaded through a TCO loop
-  stays constant-memory instead of allocating one new spine per iteration.
-- Fresh leaf fields (Str/Bytes/tuple keys and values) produced during reuse are
-  materialised into a **persistent to-space/blob** that the per-iteration arena
-  reset does *not* reclaim, so an in-place-updated value is not stranded by the
-  watermark reset.
-- A one-time defensive deep copy at loop entry makes the accumulator uniquely
-  owned before reuse begins. A whole-program **move/linearity analysis**
-  (`Lowering.MoveAnalysis.cs`) elides that entry copy when it can prove the
-  accumulator is already uniquely owned at every call site — conservatively, so
-  an incomplete proof can only leak, never corrupt.
+### Drop specialization and reuse
 
-### Runtime layouts
+The optimizer sinks branch-local duplicates and fuses adjacent `RcDup`/
+`RcDrop` pairs when no intervening uniqueness observation can see the count.
+For a dead matched constructor, `DropReuse` implements the Perceus token
+contract:
 
-- Strings are `[header:i64][bytes...]`. The header word is not a plain length:
-   bits `[0..62]` hold the byte length and **bit 63 is a "view" flag** that
-   distinguishes an owned arena string from a read-only literal/borrowed view.
-   That flag is what lets string literals be emitted as **read-only globals**
-   (same in-memory layout, marked as a view) instead of being copied into the
-   arena — an owned string clears the bit, a view sets it.
-- Heap closures are 24-byte records:
-   `[function-pointer:i64][env-pointer:i64][env-size:i64]`.
-- ADT values use `[tag:i64][field0:i64][field1:i64]...`.
-- Some temporary values also have stack-allocated forms during codegen
-   (notably closures and certain ADTs), so not every runtime value necessarily
-   originates from the arena.
+1. If the cell is unique, release or transfer its old fields and return the
+   cell address as the token.
+2. If it is shared, decrement it and return null.
+3. `AllocReusing` overwrites a compatible non-null cell; a null token allocates
+   a fresh RC cell.
+4. Any token not consumed by a compatible constructor is released.
 
-This model is arena-based and non-GC, not a single never-freed static slab.
-Memory is reclaimed at ownership-scope boundaries, and whole OS chunks can be
-returned once they fall out of scope.
+When an old child is also a field of the rebuilt constructor, the unique path
+moves that reference. The shared/null path duplicates it because the old shared
+parent still owns its field. This is reuse specialization, and it lets pure
+recursive code update unique data in place without changing source semantics.
 
-### Stacks
+### Scoped arenas
 
-The arena serves heap values; call frames use the ordinary machine stack, and
-the compiler does not install guard handlers — exhausting a stack faults the
-process (SIGSEGV on Linux, stack-overflow exception on Windows). Tail-recursive
-loops (including eligible `let recursive ... and ...` groups, which lowering merges
-into a single dispatch loop) run in constant stack space; only non-tail
-recursion depth is bounded by these sizes:
+Region allocation remains an optimization for values proven not to escape.
+Each thread has a chunked bump arena. A scope records its cursor and current
+chunk with `SaveArenaState`; `RestoreArenaState` resets the cursor, and
+`ReclaimArenaChunks` returns abandoned chunks through `munmap` or
+`VirtualFree`. TCO and coroutine restart edges use fixed watermarks to reclaim
+per-iteration scratch.
 
-- **Main thread, Linux (x64/arm64).** The ELF images do not override the
-  platform stack, so the main thread gets the OS default (`RLIMIT_STACK`,
-  commonly 8 MiB).
-- **Main thread, win-x64.** The PE optional header reserves 8 MiB
-  (`SizeOfStackReserve`, 4 KiB initially committed). The reserve can be
-  overridden at compile time via the `ASHES_WIN_STACK_RESERVE_BYTES`
-  environment variable read by the PE linker.
-- **Parallel workers.** `Ashes.Task.Parallel` workers get 1 MiB by default —
-  `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
-  the `--parallel-stack-size` CLI flag.
+Arena use is not a permissive fallback: an escaping ordinary graph must be
+normalized to RC unless it is inside one of the explicit boundaries above.
+Borrowed mmap-backed `Bytes` views remain tied to their resource/runtime
+region, and lists containing such views are not blindly deep-copied because
+that would duplicate the mapped buffer per cell.
 
----
+### Task and capability regions
 
-### In-place reuse (Perceus-style, no runtime RC)
+Task frames and capability-handler state are scheduler-owned regions rather
+than ordinary RC cells. Suspension and resumptive control flow can retain state
+non-linearly; keeping one explicit region owner avoids publishing a partially
+RC-managed graph across those edges. Spawned roots have private arenas that are
+reaped on completion, while main-task and async-TCO regions use scoped or
+restart watermarks. Multi-scale RSS tests cover task runs, detached handlers,
+HTTP keep-alive loops, and capability-bearing TCO.
 
-On top of the arena, immutable recursive-ADT accumulators are, where provably
-safe, **rebuilt in place** instead of reallocated — a Perceus-style reuse with
-no reference counting:
+### Threads and structured parallelism
 
-- A matched-and-rebuilt cell is overwritten through an `AllocReusing` token
-  rather than freshly allocated, so an accumulator threaded through a TCO loop
-  stays constant-memory instead of allocating one new spine per iteration.
-- Fresh leaf fields (Str/Bytes/tuple keys and values) produced during reuse are
-  materialised into a **persistent to-space/blob** that the per-iteration arena
-  reset does *not* reclaim, so an in-place-updated value is not stranded by the
-  watermark reset.
-- A one-time defensive deep copy at loop entry makes the accumulator uniquely
-  owned before reuse begins. A whole-program **move/linearity analysis**
-  (`Lowering.MoveAnalysis.cs`) elides that entry copy when it can prove the
-  accumulator is already uniquely owned at every call site — conservatively, so
-  an incomplete proof can only leak, never corrupt.
+RC counts are deliberately thread-local and non-atomic. Ashes does not yet
+implement Perceus `tshare` marking. `Ashes.Task.Parallel` therefore never
+publishes an RC cell directly to another thread: captures and results cross the
+boundary through independent deep copies, and each worker owns its arena, RC
+region, and free list. The parent waits for true worker exit before reclaiming
+the worker stack, TCB, regions, and copied result source.
 
-### Runtime layouts
+Per-thread allocator state is reached through `%gs` on linux-x64, the TEB
+`ArbitraryUserPointer` on Windows, and ELF local-exec TLS via `TPIDR_EL0` on
+linux-arm64. The worker cap comes from `--parallel-workers` or the detected core
+count; `Ashes.Task.Parallel.withWorkers` may lower that cap dynamically but
+cannot raise it. Direct cross-thread RC publication requires a future atomic
+or thread-share transition.
 
-- Strings are `[header:i64][bytes...]`. The header word is not a plain length:
-   bits `[0..62]` hold the byte length and **bit 63 is a "view" flag** that
-   distinguishes an owned arena string from a read-only literal/borrowed view.
-   That flag is what lets string literals be emitted as **read-only globals**
-   (same in-memory layout, marked as a view) instead of being copied into the
-   arena — an owned string clears the bit, a view sets it.
-- Heap closures are 24-byte records:
-   `[function-pointer:i64][env-pointer:i64][env-size:i64]`.
-- ADT values use `[tag:i64][field0:i64][field1:i64]...`.
-- Some temporary values also have stack-allocated forms during codegen
-   (notably closures and certain ADTs), so not every runtime value necessarily
-   originates from the arena.
+### Persistent collection region
 
-This model is arena-based and non-GC, not a single never-freed static slab.
-Memory is reclaimed at ownership-scope boundaries, and whole OS chunks can be
-returned once they fall out of scope.
+The in-place `Map`/`HashMap` specialization retains a separate persistent
+to-space/blob region. New nodes and copied keys/values survive loop watermarks;
+same-key updates overwrite compatible storage in place after region and
+capacity checks. This is an Ashes-specific specialized region, not the lifetime
+model for ordinary collections. Dedicated 2K/10K/50K RSS slopes and the 1BRC
+profile guard both fresh-insert and overwrite paths against retained growth.
+
+### Cycles
+
+Reference counting does not collect cycles. RC admission is limited to acyclic
+immutable graphs: inductive ADTs, lists, tuples, records, scalar heap buffers,
+and non-self-referential closure environments. Task/scheduler links remain
+region-owned. A future mutable reference type or cyclic closure representation
+must add cycle handling or be explicitly excluded from RC admission.
+
+### Runtime payload layouts
+
+| Value | Payload addressed by the value pointer |
+|---|---|
+| String / Bytes | `[length_and_view_flag:i64][bytes...]` |
+| BigInt | `[sign_and_limb_count:i64][limb0:i64]...` |
+| List cons | `[head:i64][tail:i64]`; nil is zero |
+| ADT / record | `[tag:i64][field0:i64]...` |
+| Tuple / environment | `[word0:i64][word1:i64]...` |
+| Closure | `[code:i64][env:i64][packed_env_size_and_result_owner:i64][dropper:i64]` |
+
+An RC value has the common 16-byte allocation header immediately before this
+payload. Read-only literals and borrowed views do not. Stack allocation remains
+available for short-lived compiler-proven values.
 
 ### Stacks
 
-The arena serves heap values; call frames use the ordinary machine stack, and
+Heap allocators serve values; call frames use the ordinary machine stack, and
 the compiler does not install guard handlers — exhausting a stack faults the
 process (SIGSEGV on Linux, stack-overflow exception on Windows). Tail-recursive
 loops (including eligible `let recursive ... and ...` groups, which lowering merges
