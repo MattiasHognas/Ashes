@@ -606,6 +606,26 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_fresh_nested_records_transfer_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet escaped = (let node = Node(child = Leaf(value = 40), bonus = 2) in node) in escaped.bonus");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_string_field_record_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Box = | value: String\nlet escaped = (let box = Box(value = \"hello\") in box) in Ashes.IO.print(escaped.value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Unsupported_outer_record_keeps_fresh_nested_record_on_arena()
     {
         IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | label: String\nlet node = Node(child = Leaf(value = 40), label = \"answer\") in Ashes.IO.print(node.label)");

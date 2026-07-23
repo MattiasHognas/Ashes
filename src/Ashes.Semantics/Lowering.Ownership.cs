@@ -1668,6 +1668,35 @@ public sealed partial class Lowering
         return true;
     }
 
+    private bool IsFreshRuntimeManageableRecordTree(Expr expression)
+    {
+        if (!TryDescribeConstructorExpression(
+                expression,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? resultType)
+            || expression is not Expr.RecordLit
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || !CanRuntimeManageAdt(resultType))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanArenaReset(fieldType)
+                && (arguments[i] is not Expr.RecordLit || !IsFreshRuntimeManageableRecordTree(arguments[i])))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Owned child fields must be fresh nested record literals or explicitly tracked runtime-managed
     /// bindings. Existing bindings are moved or duplicated by <see cref="PrepareRuntimeManagedAdtChildArguments"/>.

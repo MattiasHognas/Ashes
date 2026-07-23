@@ -2393,10 +2393,13 @@ public sealed partial class Lowering
         Expr.Let let,
         out (int Temp, TypeRef Type) lowered)
     {
+        bool directFreshEscape = IsDirectBindingResult(let.Body, let.Name)
+            && IsFreshRuntimeManageableRecordTree(let.Value);
         if (let.Value is not Expr.RecordLit
             || (!IsImmediateCopyUseOfRecord(let.Body, let.Name)
                 && !IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)
-                && !IsRuntimeManagedRecordChildConsumedByImmediateParent(let.Name, let.Body)))
+                && !IsRuntimeManagedRecordChildConsumedByImmediateParent(let.Name, let.Body)
+                && !directFreshEscape))
         {
             lowered = default;
             return false;

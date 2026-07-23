@@ -428,6 +428,9 @@ other pointer-bearing shapes, and polymorphic constructors remain gated until ch
 Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
 boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
 entire transferred spine at the receiving scope.
+Fresh monomorphic records with copy fields, including recursively nested fresh record literals, now
+transfer directly as well. Records containing Strings or other unsupported pointers and records that
+would need to borrow an existing child remain on the conservative arena path.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure

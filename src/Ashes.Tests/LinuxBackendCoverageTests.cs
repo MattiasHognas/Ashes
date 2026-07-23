@@ -5191,7 +5191,9 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let node = Node(child = Leaf(value = 40), bonus = 2) in
+                    let node =
+                        let fresh = Node(child = Leaf(value = 40), bonus = 2) in fresh
+                    in
                     match node with
                         | Node(child, bonus) ->
                             let rebuilt = Node(child = child, bonus = bonus + 1) in
