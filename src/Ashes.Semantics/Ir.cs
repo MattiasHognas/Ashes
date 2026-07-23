@@ -471,11 +471,26 @@ public abstract record IrInst
     /// ensuring the tail pointer to a pre-watermark cell is preserved.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Classifies every remaining copy-out so RC graph normalization cannot be confused with an
+    /// arena lifetime fallback. The arena cases are deliberately limited to scoped scheduler or
+    /// capability regions, TCO compaction inside those regions, and explicit independent cloning.
+    /// </summary>
+    public enum CopyOutPurpose
+    {
+        RcNormalization,
+        ArenaScopeBoundary,
+        ArenaCallBoundary,
+        ArenaTcoCompaction,
+        IndependentClone,
+    }
+
     public sealed record CopyOutArena(
         int DestTemp,
         int SrcTemp,
         int StaticSizeBytes,
-        bool RuntimeManaged = false
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose
     ) : IrInst
     {
         /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from
@@ -556,8 +571,9 @@ public abstract record IrInst
     public sealed record CopyOutList(
         int DestTemp,
         int SrcTemp,
-        ListHeadCopyKind HeadCopy = ListHeadCopyKind.Inline,
-        bool RuntimeManaged = false
+        ListHeadCopyKind HeadCopy,
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose
     ) : IrInst;
 
     /// <summary>
@@ -578,7 +594,8 @@ public abstract record IrInst
     public sealed record CopyOutClosure(
         int DestTemp,
         int SrcTemp,
-        bool RuntimeManaged = false
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose
     ) : IrInst;
 
     /// <summary>
@@ -605,7 +622,12 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
+    public sealed record CopyOutTcoListCell(
+        int DestTemp,
+        int SrcTemp,
+        ListHeadCopyKind HeadCopy,
+        CopyOutPurpose Purpose
+    ) : IrInst;
 
     public sealed record ToCString(int Target, int StrTemp) : IrInst;
     public sealed record CallExternal(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;

@@ -1004,7 +1004,8 @@ public sealed partial class Lowering
                     normalizedTemp,
                     sourceTemp,
                     headCopy,
-                    RuntimeManaged: true));
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
             }
             else
             {
@@ -1013,7 +1014,11 @@ public sealed partial class Lowering
         }
         else if (argType is TypeRef.TFun)
         {
-            Emit(new IrInst.CopyOutClosure(normalizedTemp, sourceTemp, RuntimeManaged: true));
+            Emit(new IrInst.CopyOutClosure(
+                normalizedTemp,
+                sourceTemp,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
         else if (argType is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
@@ -1030,7 +1035,8 @@ public sealed partial class Lowering
                 normalizedTemp,
                 sourceTemp,
                 TcoRuntimeManagedCopySize(argType),
-                RuntimeManaged: true));
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
 
         _runtimeManagedResultTemps.Add(normalizedTemp);
@@ -1150,7 +1156,8 @@ public sealed partial class Lowering
                     resultTemp,
                     sourceTemp,
                     TcoRuntimeManagedCopySize(valueType),
-                    RuntimeManaged: true));
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
                 break;
             case TypeRef.TList list:
                 if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
@@ -1159,7 +1166,8 @@ public sealed partial class Lowering
                         resultTemp,
                         sourceTemp,
                         headCopy,
-                        RuntimeManaged: true));
+                        RuntimeManaged: true,
+                        IrInst.CopyOutPurpose.RcNormalization));
                 }
                 else
                 {
@@ -1181,7 +1189,8 @@ public sealed partial class Lowering
                     resultTemp,
                     sourceTemp,
                     sizeBytes,
-                    RuntimeManaged: true));
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
                 break;
             case TypeRef.TNamedType named when CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
@@ -1318,7 +1327,8 @@ public sealed partial class Lowering
             resultTemp,
             sourceTemp,
             HeapLayouts.Adt.AllocationSizeBytes(constructor.Arity),
-            RuntimeManaged: true));
+            RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization));
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
@@ -2398,7 +2408,12 @@ public sealed partial class Lowering
         {
             var (sourceTemp, sourceType) = LowerStr(literal);
             int resultTemp = NewTemp();
-            Emit(new IrInst.CopyOutArena(resultTemp, sourceTemp, -1, RuntimeManaged: true));
+            Emit(new IrInst.CopyOutArena(
+                resultTemp,
+                sourceTemp,
+                -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
             _runtimeManagedResultTemps.Add(resultTemp);
             return (resultTemp, sourceType);
         }
@@ -5470,10 +5485,8 @@ public sealed partial class Lowering
                 if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
                 {
                     Emit(new IrInst.CopyOutList(
-                        normalizedTemp,
-                        sourceTemp,
-                        headCopy,
-                        RuntimeManaged: true));
+                        normalizedTemp, sourceTemp, headCopy, RuntimeManaged: true,
+                        IrInst.CopyOutPurpose.RcNormalization));
                 }
                 else
                 {
@@ -5493,7 +5506,9 @@ public sealed partial class Lowering
             else
             {
                 int copySize = TcoRuntimeManagedCopySize(tco.RuntimeManagedParamTypes[slot]);
-                Emit(new IrInst.CopyOutArena(normalizedTemp, sourceTemp, copySize, RuntimeManaged: true));
+                Emit(new IrInst.CopyOutArena(
+                    normalizedTemp, sourceTemp, copySize, RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
             }
             _runtimeManagedResultTemps.Add(normalizedTemp);
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
@@ -7250,11 +7265,21 @@ public sealed partial class Lowering
         int copiedTemp = NewTemp();
         if (callCopyOutKind == CopyOutKind.List)
         {
-            Emit(new IrInst.CopyOutList(copiedTemp, currentTemp, listHeadCopy, RuntimeManaged: true));
+            Emit(new IrInst.CopyOutList(
+                copiedTemp,
+                currentTemp,
+                listHeadCopy,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
         else
         {
-            Emit(new IrInst.CopyOutArena(copiedTemp, currentTemp, callCopySize, RuntimeManaged: true));
+            Emit(new IrInst.CopyOutArena(
+                copiedTemp,
+                currentTemp,
+                callCopySize,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
@@ -7299,14 +7324,20 @@ public sealed partial class Lowering
                     copyDest,
                     currentTemp,
                     callCopySize,
-                    RuntimeManaged: normalizeToRuntimeOwnership));
+                    RuntimeManaged: normalizeToRuntimeOwnership,
+                    normalizeToRuntimeOwnership
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaCallBoundary));
                 break;
             case CopyOutKind.List:
                 Emit(new IrInst.CopyOutList(
                     copyDest,
                     currentTemp,
                     listHeadCopy,
-                    RuntimeManaged: normalizeToRuntimeOwnership));
+                    RuntimeManaged: normalizeToRuntimeOwnership,
+                    normalizeToRuntimeOwnership
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaCallBoundary));
                 break;
         }
         if (normalizeToRuntimeOwnership)
@@ -7643,7 +7674,8 @@ public sealed partial class Lowering
                 normalizedTemp,
                 lowered.Temp,
                 -1,
-                RuntimeManaged: true));
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
         else if (elementType is TypeRef.TList inner
             && TryGetRuntimeManagedListHeadCopy(inner.Element, out IrInst.ListHeadCopyKind headCopy))
@@ -7652,7 +7684,8 @@ public sealed partial class Lowering
                 normalizedTemp,
                 lowered.Temp,
                 headCopy,
-                RuntimeManaged: true));
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
         }
         else if (CanRuntimeManageTcoListElement(elementType))
         {

@@ -870,7 +870,8 @@ public sealed partial class Lowering
                 normalizedTemp,
                 lowered.Temp,
                 IrInst.ListHeadCopyKind.Inline,
-                RuntimeManaged: true));
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
             _runtimeManagedResultTemps.Add(normalizedTemp);
             lowered = (normalizedTemp, lowered.Type);
         }

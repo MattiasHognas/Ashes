@@ -1458,13 +1458,20 @@ public sealed partial class Lowering
                     copyDest,
                     resultTemp,
                     staticSizeBytes,
-                    RuntimeManaged: runtimeManaged));
+                    RuntimeManaged: runtimeManaged,
+                    runtimeManaged
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaScopeBoundary));
                 break;
             case CopyOutKind.List:
                 Emit(new IrInst.CopyOutList(
                     copyDest,
                     resultTemp,
-                    RuntimeManaged: runtimeManaged));
+                    IrInst.ListHeadCopyKind.Inline,
+                    RuntimeManaged: runtimeManaged,
+                    runtimeManaged
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaScopeBoundary));
                 break;
         }
     }
@@ -2374,13 +2381,27 @@ public sealed partial class Lowering
         switch (kind)
         {
             case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(destTemp, srcTemp, staticSizeBytes));
+                Emit(new IrInst.CopyOutArena(
+                    destTemp,
+                    srcTemp,
+                    staticSizeBytes,
+                    RuntimeManaged: false,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(destTemp, srcTemp, listHeadCopy));
+                Emit(new IrInst.CopyOutList(
+                    destTemp,
+                    srcTemp,
+                    listHeadCopy,
+                    RuntimeManaged: false,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             case CopyOutKind.TcoListCell:
-                Emit(new IrInst.CopyOutTcoListCell(destTemp, srcTemp, listHeadCopy));
+                Emit(new IrInst.CopyOutTcoListCell(
+                    destTemp,
+                    srcTemp,
+                    listHeadCopy,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             default:
                 throw new System.InvalidOperationException($"EmitTcoCopyOut called with non-copyable kind {kind}.");
@@ -2405,7 +2426,12 @@ public sealed partial class Lowering
             case TypeRef.TBytes:
                 {
                     int dest = NewTemp();
-                    Emit(new IrInst.CopyOutArena(dest, temp, -1));
+                    Emit(new IrInst.CopyOutArena(
+                        dest,
+                        temp,
+                        -1,
+                        RuntimeManaged: false,
+                        IrInst.CopyOutPurpose.IndependentClone));
                     return dest;
                 }
 
@@ -2430,7 +2456,11 @@ public sealed partial class Lowering
             case TypeRef.TFun:
                 {
                     int dest = NewTemp();
-                    Emit(new IrInst.CopyOutClosure(dest, temp));
+                    Emit(new IrInst.CopyOutClosure(
+                        dest,
+                        temp,
+                        RuntimeManaged: false,
+                        IrInst.CopyOutPurpose.IndependentClone));
                     return dest;
                 }
 
@@ -2454,21 +2484,36 @@ public sealed partial class Lowering
         if (CanArenaReset(elemPruned))
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.Inline));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.Inline,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 
         if (elemPruned is TypeRef.TStr)
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.String));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.String,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 
         if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.InnerList));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.InnerList,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 

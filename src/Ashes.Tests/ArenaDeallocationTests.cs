@@ -925,19 +925,27 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void CopyOutTcoListCell_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutTcoListCell(7, 3, IrInst.ListHeadCopyKind.String);
+        var inst = new IrInst.CopyOutTcoListCell(
+            7, 3, IrInst.ListHeadCopyKind.String, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
         inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.String);
 
-        var innerInst = new IrInst.CopyOutTcoListCell(10, 5, IrInst.ListHeadCopyKind.InnerList);
+        var innerInst = new IrInst.CopyOutTcoListCell(
+            10, 5, IrInst.ListHeadCopyKind.InnerList, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         innerInst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.InnerList);
+        innerInst.Purpose.ShouldBe(IrInst.CopyOutPurpose.ArenaTcoCompaction);
     }
 
     [Test]
-    public void CopyOutList_instruction_has_default_inline_head_copy()
+    public void CopyOutList_instruction_records_inline_head_copy()
     {
-        var inst = new IrInst.CopyOutList(7, 3);
+        var inst = new IrInst.CopyOutList(
+            7,
+            3,
+            IrInst.ListHeadCopyKind.Inline,
+            RuntimeManaged: false,
+            IrInst.CopyOutPurpose.IndependentClone);
         inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.Inline);
     }
 
@@ -1113,19 +1121,27 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void CopyOutArena_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutArena(7, 3, -1);
+        var inst = new IrInst.CopyOutArena(
+            7, 3, -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
         inst.StaticSizeBytes.ShouldBe(-1);
 
-        var fixedInst = new IrInst.CopyOutArena(10, 5, 16);
+        var fixedInst = new IrInst.CopyOutArena(
+            10, 5, 16, RuntimeManaged: false, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         fixedInst.StaticSizeBytes.ShouldBe(16);
+        fixedInst.Purpose.ShouldBe(IrInst.CopyOutPurpose.ArenaTcoCompaction);
     }
 
     [Test]
     public void CopyOutList_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutList(7, 3);
+        var inst = new IrInst.CopyOutList(
+            7,
+            3,
+            IrInst.ListHeadCopyKind.Inline,
+            RuntimeManaged: false,
+            IrInst.CopyOutPurpose.IndependentClone);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
     }
@@ -1133,10 +1149,94 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void CopyOutClosure_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutClosure(7, 3, RuntimeManaged: true);
+        var inst = new IrInst.CopyOutClosure(
+            7, 3, RuntimeManaged: true, IrInst.CopyOutPurpose.RcNormalization);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
         inst.RuntimeManaged.ShouldBeTrue();
+        inst.Purpose.ShouldBe(IrInst.CopyOutPurpose.RcNormalization);
+    }
+
+    [Test]
+    public void Copy_out_emitters_classify_RC_and_region_boundaries()
+    {
+        IrProgram ordinary = LowerProgram(
+            """
+            let choose : List(Int) -> List(Int) = given source ->
+                let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+        IrProgram taskRegion = LowerProgram(
+            """
+            let pending = async(1)
+            let choose : List(Int) -> List(Int) = given source ->
+                let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+        IrProgram clone = LowerProgram(
+            """
+            let original = [1, 2, 3]
+            let copied = Ashes.Internal.deepCopy(original)
+            match copied with | [] -> 0 | head :: _ -> head
+            """);
+
+        CopyOutInstructions(ordinary).All(instruction =>
+            instruction switch
+            {
+                IrInst.CopyOutArena copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                IrInst.CopyOutList copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                IrInst.CopyOutClosure copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                _ => false,
+            }).ShouldBeTrue();
+        CopyOutInstructions(taskRegion).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena
+            {
+                RuntimeManaged: false,
+                Purpose: IrInst.CopyOutPurpose.ArenaScopeBoundary
+                    or IrInst.CopyOutPurpose.ArenaCallBoundary,
+            } => true,
+            IrInst.CopyOutList
+            {
+                RuntimeManaged: false,
+                Purpose: IrInst.CopyOutPurpose.ArenaScopeBoundary
+                    or IrInst.CopyOutPurpose.ArenaCallBoundary,
+            } => true,
+            _ => false,
+        }).ShouldBeTrue("Task-bearing programs retain their explicit scheduler-region boundary.");
+        CopyOutInstructions(clone).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            IrInst.CopyOutList { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            IrInst.CopyOutClosure { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            _ => false,
+        }).ShouldBeTrue("The explicit deep-copy primitive must remain distinguishable from relocation.");
+    }
+
+    [Test]
+    public void Task_bearing_TCO_classifies_arena_compaction()
+    {
+        IrProgram taskTcoRegion = LowerProgram(
+            """
+            let pending = async(1)
+            let recursive build : Int -> List(Str) -> List(Str) = given n -> given values ->
+                if n <= 0 then values
+                else build(n - 1)("value" :: values)
+            match build(3)([]) with | [] -> 0 | _ :: _ -> 1
+            """);
+
+        CopyOutInstructions(taskTcoRegion).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            IrInst.CopyOutList { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            IrInst.CopyOutTcoListCell { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            _ => false,
+        }).ShouldBeTrue("Task-bearing TCO keeps its explicitly classified arena compaction path.");
     }
 
     [Test]
@@ -1627,6 +1727,16 @@ public sealed class ArenaDeallocationTests
     {
         return ir.Functions.First(f =>
             f.Instructions.Any(i => i is IrInst.Jump j && j.Target.Contains("_body", StringComparison.Ordinal)));
+    }
+
+    private static IEnumerable<IrInst> CopyOutInstructions(IrProgram ir)
+    {
+        return ir.Functions.Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Where(instruction => instruction is IrInst.CopyOutArena
+                or IrInst.CopyOutList
+                or IrInst.CopyOutClosure
+                or IrInst.CopyOutTcoListCell);
     }
 
     private static bool HasSaveArenaState(List<IrInst> instructions)

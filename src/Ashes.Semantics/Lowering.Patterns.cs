@@ -589,7 +589,12 @@ public sealed partial class Lowering
             {
                 var (sourceTemp, sourceType) = LowerStr(literal);
                 int resultTemp = NewTemp();
-                Emit(new IrInst.CopyOutArena(resultTemp, sourceTemp, -1, RuntimeManaged: true));
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    -1,
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
                 _runtimeManagedResultTemps.Add(resultTemp);
                 return (resultTemp, sourceType);
             }

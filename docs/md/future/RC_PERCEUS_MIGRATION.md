@@ -792,6 +792,15 @@ while every other active parameter follows its type-directed recursive drop path
 correct when two parameters alias or different branches return different parameters. A loop that
 builds two independent `List(Int)` accumulators, returns one, consumes it, and discards the other
 plateaus across 2,000/10,000/50,000 repeated calls; the unreturned graph no longer leaks.
+The emitter census is now represented in IR instead of inferred from a `RuntimeManaged` boolean.
+Every `CopyOutArena`, `CopyOutList`, `CopyOutClosure`, and `CopyOutTcoListCell` construction must name
+one of five purposes: RC graph normalization, a scheduler/capability scope boundary, a
+scheduler/capability call boundary, arena TCO compaction inside such a region, or an explicit
+independent clone (the `deepCopy`, worker-publication, and reuse-defense machinery). Required
+constructor arguments make an unclassified new emitter a compile error. Focused lowering probes pin
+ordinary synchronous results to RC normalization and keep task-region relocation, task-region TCO,
+and explicit cloning visibly separate. `AllocAdtToSpace`/`CopyOutArenaToSpace` remain independently
+named operations confined to the persistent `Map`/`HashMap` region.
 
 Deliverables:
 
