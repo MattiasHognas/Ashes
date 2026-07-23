@@ -5670,12 +5670,9 @@ public sealed class LinuxBackendCoverageTests
             }).ShouldBeTrue(
                 "Variant replacement must recursively release its old owned-child graph.");
         AllInstructions(probe).Any(instruction =>
-            instruction is IrInst.CopyOutArena
-            {
-                StaticSizeBytes: 8 or 24,
-                RuntimeManaged: false
-            }).ShouldBeFalse(
-                "The migrated variant parent must not use arena relocation at the TCO boundary.");
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing variant TCO path must not use arena staging.");
     }
 
     private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)

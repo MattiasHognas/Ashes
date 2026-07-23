@@ -4869,6 +4869,7 @@ public sealed partial class Lowering
         {
             if (_scopes.Peek().TryGetValue(accName, out var accBinding)
                 && accBinding is Binding.Local accLocal
+                && !tco.RuntimeManagedParamSlots.Contains(accLocal.Slot)
                 && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
                 && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
                 && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
@@ -4927,6 +4928,7 @@ public sealed partial class Lowering
 
             if (_scopes.Peek().TryGetValue(accName, out var accB)
                 && accB is Binding.Local accL
+                && !tco.RuntimeManagedParamSlots.Contains(accL.Slot)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
                 && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed

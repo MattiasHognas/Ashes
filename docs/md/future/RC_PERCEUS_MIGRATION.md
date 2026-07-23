@@ -697,10 +697,9 @@ recursively normalizing supported fields before the arena reset and releasing th
 field-aware ADT dropper; the owned String/List record profile also plateaus at all three scales.
 Pointer-bearing multi-constructor ADTs now dispatch on the source tag, allocate each variant's actual
 layout size, recursively normalize the selected fields, and use the synthesized tag-aware dropper;
-the nullary/owned-child variant profile plateaus without non-runtime parent relocation. Its constructor
-lowering still contains transient non-runtime child staging, which remains visible for the final emitter
-census instead of being misreported as a completed boundary. Closure graph normalization, removal of
-that staging, and the final emitter census remain.
+the nullary/owned-child variant profile plateaus. Runtime-managed TCO params now bypass the superseded
+static-reuse defensive deep copy, removing its redundant arena String/list staging; the probe contains
+no non-runtime relocation. Closure graph normalization and the final emitter census remain.
 
 Deliverables:
 
