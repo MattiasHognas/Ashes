@@ -1550,9 +1550,9 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Runtime RC starts with monomorphic records whose fields are inline copy values or other
-    /// recursively manageable records. Cyclic record layouts and resource-bearing layouts stay on
-    /// the arena path.
+    /// Runtime RC supports monomorphic records whose pointer fields can be described by the
+    /// type-directed runtime dropper. Constructor freshness is checked separately so an RC record
+    /// never captures an arena-owned child. Cyclic and resource-bearing layouts stay on the arena path.
     /// </summary>
     private bool CanRuntimeManageAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
     {
@@ -1575,8 +1575,15 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType)
-                && (fieldType is not TypeRef.TNamedType child || !CanRuntimeManageAdt(child, path)))
+            bool supported = CanArenaReset(fieldType) || fieldType switch
+            {
+                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+                TypeRef.TNamedType child => CanRuntimeManageAdt(child, path),
+                _ => false,
+            };
+            if (!supported)
             {
                 path.Remove(symbol);
                 return false;
@@ -1584,6 +1591,27 @@ public sealed partial class Lowering
         }
 
         path.Remove(symbol);
+        return true;
+    }
+
+    private bool CanRuntimeManageOwnedTupleType(TypeRef.TTuple tuple)
+    {
+        foreach (TypeRef element in tuple.Elements)
+        {
+            TypeRef elementType = Prune(element);
+            bool supported = CanArenaReset(elementType) || elementType switch
+            {
+                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                TypeRef.TTuple child => CanRuntimeManageOwnedTupleType(child),
+                _ => false,
+            };
+            if (!supported)
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -1723,6 +1751,27 @@ public sealed partial class Lowering
         }
 
         return true;
+    }
+
+    private bool CanRuntimeManageFreshOwnedChildExpression(Expr expression, TypeRef type)
+    {
+        TypeRef childType = Prune(type);
+        return CanArenaReset(childType) || childType switch
+        {
+            TypeRef.TStr => IsRuntimeRcStringProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(expression),
+            TypeRef.TBytes => IsRuntimeRcBytesProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression),
+            TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
+            TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                && IsFreshListConstructionExpression(expression),
+            TypeRef.TTuple tuple => expression is Expr.TupleLit tupleExpression
+                && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
+            TypeRef.TNamedType => expression is Expr.RecordLit
+                && IsFreshRuntimeManageableRecordTree(expression),
+            _ => false,
+        };
     }
 
     /// <summary>
@@ -1926,8 +1975,7 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (!CanArenaReset(fieldType)
-                && (arguments[i] is not Expr.RecordLit || !IsFreshRuntimeManageableRecordTree(arguments[i])))
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType))
             {
                 return false;
             }
@@ -1937,8 +1985,9 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Owned child fields must be fresh nested record literals or explicitly tracked runtime-managed
-    /// bindings. Existing bindings are moved or duplicated by <see cref="PrepareRuntimeManagedAdtChildArguments"/>.
+    /// Owned child fields must be fresh runtime-managed producers or explicitly tracked
+    /// runtime-managed record bindings. Existing bindings are moved or duplicated by
+    /// <see cref="PrepareRuntimeManagedAdtChildArguments"/>.
     /// </summary>
     private bool CanRuntimeManageConstructorApplication(
         ConstructorSymbol constructor,
@@ -1953,10 +2002,9 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (!CanArenaReset(fieldType)
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
                 && (fieldType is not TypeRef.TNamedType child
-                    || (arguments[i] is not Expr.RecordLit
-                        && !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol))))
+                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
             {
                 return false;
             }

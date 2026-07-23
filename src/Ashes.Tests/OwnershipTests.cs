@@ -828,6 +828,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_record_with_fresh_string_field_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("type Box = | value: Str\nlet escaped = (let box = Box(value = Ashes.Text.fromInt(42)) in box) in Ashes.Text.byteLength(escaped.value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Unsupported_outer_record_keeps_fresh_nested_record_on_arena()
     {
         IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | label: String\nlet node = Node(child = Leaf(value = 40), label = \"answer\") in Ashes.IO.print(node.label)");

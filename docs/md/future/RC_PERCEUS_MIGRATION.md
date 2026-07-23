@@ -431,8 +431,9 @@ Fully fresh lists whose element type lowers as a copy value now transfer through
 boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
 entire transferred spine at the receiving scope.
 Fresh monomorphic records with copy fields, including recursively nested fresh record literals, now
-transfer directly as well. Records containing Strings or other unsupported pointers and records that
-would need to borrow an existing child remain on the conservative arena path.
+transfer directly as well. Fresh String, Bytes, BigInt, copy-element list, and fully fresh tuple fields
+are owned and released by the record's type-directed drop. Records that would need to borrow an
+existing pointer child remain on the conservative arena path.
 Fresh tuples containing only copy values now transfer directly as one RC cell. Pointer-bearing tuple
 escape remains arena-managed except for fully fresh nested tuples: each nested tuple is an RC cell,
 and a uniqueness-aware recursive drop releases children before their parent. Borrowed tuple children
