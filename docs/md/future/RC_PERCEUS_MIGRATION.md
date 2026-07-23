@@ -513,6 +513,13 @@ map graph, while dead same-key value storage is overwritten in place when its re
 prove that safe. Automated 2K/10K/50K peak-RSS slopes now cover repeated `Map` String-value updates
 and fixed-key `HashMap` updates, replacing the earlier out-of-band memory claim and guarding both the
 fresh and overwrite paths against linear growth.
+Call lowering now consumes the materialized per-function `FunctionOwnershipSummary` for both reuse
+uniqueness and resource-borrow decisions; resource calls no longer re-read the mutable whole-program
+function tables or maintain a second borrow cache. The remaining call-site census is confined to
+constructing those summaries and proving unique entry to the headerless persistent `Map`/`HashMap`
+reuse region. Removing that last proof before the specialized region itself gains RC headers would
+restore its defensive whole-tree copy on nested re-entry and reintroduce the measured leak, so it is
+an intentional specialized-region input rather than an ordinary-value lifetime fallback.
 
 Deliverables:
 

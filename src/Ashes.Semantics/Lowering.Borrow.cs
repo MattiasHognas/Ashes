@@ -32,37 +32,27 @@ public sealed partial class Lowering
         "Ashes.IO.Process.readStderrLine",
     };
 
-    private readonly Dictionary<(string Func, int Param), bool> _borrowOnlyMemo = new();
-
     /// <summary>
     /// True if <paramref name="rootExpr"/> is a call to a known user function whose parameter at
     /// <paramref name="argIndex"/> is borrows-only — so a resource passed there is borrowed, not moved.
     /// Only plain-named user functions are considered; builtins and higher-order callees fall through to
-    /// the conservative move. Requires the move analysis to have registered the function.
+    /// the conservative move. Reads the materialized ownership contract rather than the analysis's
+    /// mutable function tables, so call lowering has one stable source of boundary ownership facts.
     /// </summary>
     private bool CalleeParamBorrowsOnly(Expr rootExpr, int argIndex)
     {
-        if (rootExpr is not Expr.Var v || !_maAnalyzed || !_maFuncs.TryGetValue(v.Name, out var info))
+        if (rootExpr is not Expr.Var v || GetOwnershipSummary(v.Name) is not { } summary)
         {
             return false;
         }
 
-        if (argIndex < 0 || argIndex >= info.Params.Count)
+        if (argIndex < 0 || argIndex >= summary.Parameters.Count)
         {
             return false;
         }
 
-        var key = (v.Name, argIndex);
-        if (_borrowOnlyMemo.TryGetValue(key, out var cached))
-        {
-            return cached;
-        }
-
-        // The scan is purely syntactic over one body (it never recurses into another function), so no
-        // cycle is possible; compute once and cache.
-        bool result = ParamUsedOnlyAsBorrowRead(info.Body, info.Params[argIndex]);
-        _borrowOnlyMemo[key] = result;
-        return result;
+        string parameter = summary.Parameters[argIndex];
+        return summary.ParameterOwnership[parameter] == ParameterOwnership.Borrowed;
     }
 
     // True if every occurrence of <paramref name="p"/> in <paramref name="e"/> is the resource (first)

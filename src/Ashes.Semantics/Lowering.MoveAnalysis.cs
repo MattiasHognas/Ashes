@@ -143,7 +143,6 @@ public sealed partial class Lowering
         _maInProgress.Clear();
         _maResultReach.Clear();
         _maNestedRecursive.Clear();
-        _borrowOnlyMemo.Clear();
         _ownershipSummaries.Clear();
         _maBody = desugaredBody;
 
