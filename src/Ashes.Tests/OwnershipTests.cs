@@ -313,6 +313,30 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_variant_with_fresh_string_child_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("type Choice = | Empty | Text(Str)\nlet escaped = (let choice = Text(Ashes.Text.fromInt(42)) in choice) in match escaped with | Empty -> 0 | Text(value) -> Ashes.Text.byteLength(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.Functions.SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.Functions.SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_variant_with_literal_string_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Choice = | Empty | Text(Str)\nlet escaped = (let choice = Text(\"42\") in choice) in match escaped with | Empty -> 0 | Text(value) -> Ashes.Text.byteLength(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.Functions.SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_adt_with_fresh_bytes_bigint_and_list_children_transfers_ownership()
     {
         IrProgram ir = LowerProgram("type Payload = | Payload(Bytes, BigInt, List(Int))\nlet escaped = (let value = Payload(Ashes.Byte.u16Le(258u16))(Ashes.Number.BigInt.fromInt(42))([40, 2]) in value) in match escaped with | Payload(bytes, big, values) -> match values with | [] -> 0 | head :: _ -> Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + head");

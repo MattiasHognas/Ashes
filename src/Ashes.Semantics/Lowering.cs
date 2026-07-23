@@ -2736,6 +2736,7 @@ public sealed partial class Lowering
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
                 || CanRuntimeManageFreshHeapChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageOwnedChildAdtConstructorApplication(directConstructor, directArguments, resultType)
                 || (CanRuntimeManageRecursiveCopyAdt(resultType)
                     && IsFreshConstructorTree(let.Value, resultType.Symbol)));
         if (!immediateMatch && !consumedByParent && !directOwnedEscape)
@@ -2977,7 +2978,7 @@ public sealed partial class Lowering
             || arguments is null
             || parentType is null
             || (!CanRuntimeManageAdt(parentType)
-                && !CanRuntimeManageRecordChildAdt(parentType))
+                && !CanRuntimeManageOwnedChildAdt(parentType))
             || !IsImmediateRuntimeManagedParentUse(parent))
         {
             return false;
@@ -3071,7 +3072,7 @@ public sealed partial class Lowering
             || arguments is null
             || resultType is null
             || (!CanRuntimeManageAdt(resultType)
-                && !CanRuntimeManageRecordChildAdt(resultType)))
+                && !CanRuntimeManageOwnedChildAdt(resultType)))
         {
             return false;
         }

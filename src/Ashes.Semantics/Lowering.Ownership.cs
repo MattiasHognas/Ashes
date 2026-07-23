@@ -586,7 +586,7 @@ public sealed partial class Lowering
         }
 
         if (CanRuntimeManageRecursiveCopyAdt(named)
-            || CanRuntimeManageRecordChildAdt(named))
+            || CanRuntimeManageOwnedChildAdt(named))
         {
             EmitRecursiveRuntimeManagedAdtDrop(valueTemp, named);
             return;
@@ -751,7 +751,7 @@ public sealed partial class Lowering
             return;
         }
 
-        var childFields = new List<(int Index, TypeRef.TNamedType Type)>();
+        var childFields = new List<(int Index, TypeRef Type)>();
         for (int i = 0; i < cleanup.Constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(
@@ -759,10 +759,9 @@ public sealed partial class Lowering
                 i,
                 cleanup.Type));
             if (!CanArenaReset(fieldType)
-                && fieldType is TypeRef.TNamedType child
                 && (transferredFields is null || !transferredFields.Contains(i)))
             {
-                childFields.Add((i, child));
+                childFields.Add((i, fieldType));
             }
         }
 
@@ -777,11 +776,11 @@ public sealed partial class Lowering
         Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
         string endLabel = NewLabel("reuse_children_released");
         Emit(new IrInst.JumpIfFalse(hasTokenTemp, endLabel));
-        foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
+        foreach ((int fieldIndex, TypeRef childType) in childFields)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, tokenTemp, fieldIndex));
-            EmitRuntimeManagedAdtDrop(childTemp, childType);
+            EmitRuntimeManagedChildDrop(childTemp, childType);
         }
         Emit(new IrInst.Label(endLabel));
     }
@@ -850,15 +849,14 @@ public sealed partial class Lowering
             for (int i = 0; i < constructor.Arity; i++)
             {
                 TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (CanArenaReset(fieldType)
-                    || fieldType is not TypeRef.TNamedType child)
+                if (CanArenaReset(fieldType))
                 {
                     continue;
                 }
 
                 int childTemp = NewTemp();
                 Emit(new IrInst.GetAdtField(childTemp, valueTemp, i));
-                EmitRuntimeManagedAdtDrop(childTemp, child);
+                EmitRuntimeManagedChildDrop(childTemp, fieldType);
             }
 
             Emit(new IrInst.Jump(sharedLabel));
@@ -1775,10 +1773,10 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// A narrow heterogeneous ADT boundary: monomorphic variants may own fresh runtime-managed
-    /// record children, but not strings, lists, resources, recursive variants, or generic payloads.
+    /// A heterogeneous ADT boundary: monomorphic variants may own fresh children supported by the
+    /// type-directed runtime dropper. Recursive variants and generic payloads use separate gates.
     /// </summary>
-    private bool CanRuntimeManageRecordChildAdt(TypeRef.TNamedType named)
+    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named)
     {
         TypeSymbol symbol = named.Symbol;
         if (symbol.IsBuiltin
@@ -1790,7 +1788,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool hasRecordChild = false;
+        bool hasOwnedChild = false;
         foreach (ConstructorSymbol constructor in symbol.Constructors)
         {
             for (int i = 0; i < constructor.Arity; i++)
@@ -1801,24 +1799,32 @@ public sealed partial class Lowering
                     continue;
                 }
 
-                if (fieldType is not TypeRef.TNamedType child || !CanRuntimeManageAdt(child))
+                bool supported = fieldType switch
+                {
+                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                    TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+                    TypeRef.TNamedType child => CanRuntimeManageAdt(child),
+                    _ => false,
+                };
+                if (!supported)
                 {
                     return false;
                 }
 
-                hasRecordChild = true;
+                hasOwnedChild = true;
             }
         }
 
-        return hasRecordChild;
+        return hasOwnedChild;
     }
 
-    private bool CanRuntimeManageRecordChildAdtConstructorApplication(
+    private bool CanRuntimeManageOwnedChildAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType)
     {
-        if (!CanRuntimeManageRecordChildAdt(resultType)
+        if (!CanRuntimeManageOwnedChildAdt(resultType)
             || arguments.Count != constructor.Arity)
         {
             return false;
@@ -1827,10 +1833,9 @@ public sealed partial class Lowering
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-            if (!CanArenaReset(fieldType)
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
                 && (fieldType is not TypeRef.TNamedType child
-                    || (arguments[i] is not Expr.RecordLit
-                        && !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol))))
+                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
             {
                 return false;
             }

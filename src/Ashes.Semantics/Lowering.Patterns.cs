@@ -157,7 +157,7 @@ public sealed partial class Lowering
             || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
             || (!CanRuntimeManageCopyAdt(matchedType)
                 && !CanRuntimeManageAdt(matchedType)
-                && !CanRuntimeManageRecordChildAdt(matchedType)
+                && !CanRuntimeManageOwnedChildAdt(matchedType)
                 && !CanRuntimeManageRecursiveCopyAdt(matchedType))
             || match.Cases.Count != matchedType.Symbol.Constructors.Count)
         {
@@ -220,7 +220,7 @@ public sealed partial class Lowering
             && ReferenceEquals(resultType.Symbol, matchedType.Symbol)
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageAdt(resultType)
-                || CanRuntimeManageRecordChildAdt(resultType)
+                || CanRuntimeManageOwnedChildAdt(resultType)
                 || CanRuntimeManageRecursiveCopyAdt(resultType)))
         {
             arguments = constructorArguments;
@@ -337,7 +337,7 @@ public sealed partial class Lowering
                 || (CanRuntimeManageRecursiveCopyAdt(matchedType)
                     && IsFreshConstructorTree(rebuildArguments[i], matchedType.Symbol))
                 || ((CanRuntimeManageAdt(matchedType)
-                        || CanRuntimeManageRecordChildAdt(matchedType))
+                        || CanRuntimeManageOwnedChildAdt(matchedType))
                     && rebuildArguments[i] is Expr.RecordLit)
                 || (rebuildArguments[i] is Expr.Var variable
                     && transferableBindings.Contains(variable.Name)))

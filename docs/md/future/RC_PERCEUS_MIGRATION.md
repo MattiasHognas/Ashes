@@ -423,10 +423,12 @@ releases only the RC `Result` cell rather than treating either payload as an own
 child only when the Result cell is unique, while the interned `Error` String remains non-owning.
 Fresh user-ADT constructors whose fields are all copy values now transfer directly as a single RC
 cell. A fully fresh monomorphic recursive ADT tree may transfer as well: nested children are allocated
-as RC cells in the same expression and ownership moves into the parent. Borrowed recursive children,
-other pointer-bearing shapes, and generic constructors instantiated with pointer payloads remain gated
-until child ownership is proven. Generic constructors instantiated entirely with copy payloads transfer
-through the same type-specialized boundary.
+as RC cells in the same expression and ownership moves into the parent. Monomorphic multi-constructor
+ADTs may also own fresh String, Bytes, BigInt, copy-element list, tuple, and record children; their
+synthesized tag-aware dropper releases only the live constructor's children. Borrowed recursive or
+pointer children and generic constructors instantiated with pointer payloads remain gated until child
+ownership is proven. Generic constructors instantiated entirely with copy payloads transfer through the
+same type-specialized boundary.
 Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
 boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
 entire transferred spine at the receiving scope.
