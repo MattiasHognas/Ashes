@@ -1906,20 +1906,25 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type) LowerLetBody(Expr body)
     {
-        if (!IsRuntimeRcStringProducer(body))
+        bool runtimeManagedString = IsRuntimeRcStringProducer(body);
+        bool runtimeManagedAdt = IsFreshRuntimeManageableAdtExpression(body);
+        if (!runtimeManagedString && !runtimeManagedAdt)
         {
             return LowerExpr(body);
         }
 
-        bool savedRequest = _runtimeRcStringAllocationRequested;
-        _runtimeRcStringAllocationRequested = true;
+        bool savedStringRequest = _runtimeRcStringAllocationRequested;
+        bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
+        _runtimeRcStringAllocationRequested |= runtimeManagedString;
+        _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
         try
         {
             return LowerExpr(body);
         }
         finally
         {
-            _runtimeRcStringAllocationRequested = savedRequest;
+            _runtimeRcStringAllocationRequested = savedStringRequest;
+            _runtimeRcCopyAdtAllocationRequested = savedAdtRequest;
         }
     }
 
@@ -2756,16 +2761,7 @@ public sealed partial class Lowering
         bool consumedByParent = IsConstructorExpression(let.Value)
             && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
         bool directOwnedEscape = IsDirectBindingResult(let.Body, let.Name)
-            && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
-            && directConstructor is not null
-            && directArguments is not null
-            && resultType is not null
-            && (CanRuntimeManageCopyAdt(resultType)
-                || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
-                || CanRuntimeManageFreshHeapChildAdtConstructorApplication(directConstructor, directArguments, resultType)
-                || CanRuntimeManageOwnedChildAdtConstructorApplication(directConstructor, directArguments, resultType)
-                || (CanRuntimeManageRecursiveCopyAdt(resultType)
-                    && IsFreshConstructorTree(let.Value, resultType.Symbol)));
+            && IsFreshRuntimeManageableAdtExpression(let.Value);
         if (!immediateMatch && !consumedByParent && !directOwnedEscape)
         {
             lowered = default;
@@ -2795,6 +2791,20 @@ public sealed partial class Lowering
             _runtimeRcCopyAdtAllocationRequested = savedRequest;
             _runtimeRcAdtChildBindings = savedChildBindings;
         }
+    }
+
+    private bool IsFreshRuntimeManageableAdtExpression(Expr expression)
+    {
+        return TryDescribeConstructorExpression(expression, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
+            && directConstructor is not null
+            && directArguments is not null
+            && resultType is not null
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageFreshHeapChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageOwnedChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || (CanRuntimeManageRecursiveCopyAdt(resultType)
+                    && IsFreshConstructorTree(expression, resultType.Symbol)));
     }
 
     private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)

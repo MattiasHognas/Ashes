@@ -1048,7 +1048,7 @@ public sealed class ArenaDeallocationTests
     // --- Extended copy-out: ADT ---
 
     [Test]
-    public void Adt_with_copy_type_fields_let_result_emits_CopyOutArena()
+    public void Adt_with_copy_type_fields_let_result_uses_runtime_managed_allocation()
     {
         // ADT with Int field: (1 + 1) * 8 = 16 bytes → safe for shallow copy.
         var ir = LowerProgram(
@@ -1059,12 +1059,14 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "ADT(Int) result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh ADT result should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A runtime-managed ADT result should not be copied out of the arena.");
     }
 
     [Test]
-    public void Adt_with_copy_type_fields_emits_correct_static_size()
+    public void Adt_with_multiple_copy_type_fields_avoids_shallow_copy_out()
     {
         // ADT with 2 Int fields: (1 + 2) * 8 = 24 bytes.
         var ir = LowerProgram(
@@ -1075,12 +1077,13 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 24);
-        found.ShouldBeTrue("Pair(Int, Int) result should emit CopyOutArena with StaticSizeBytes == 24.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "Pair(Int, Int) should survive the scope reset through its RC allocation.");
     }
 
     [Test]
-    public void Adt_nullary_constructor_let_result_emits_CopyOutArena()
+    public void Adt_nullary_constructor_let_result_uses_runtime_managed_allocation()
     {
         // Nullary ADT: (1 + 0) * 8 = 8 bytes → safe (just a tag, no pointers).
         var ir = LowerProgram(
@@ -1093,12 +1096,13 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "Nullary ADT result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue(
+            "The escaping nullary constructor should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse();
     }
 
     [Test]
-    public void Adt_nullary_constructor_emits_correct_static_size()
+    public void Adt_nullary_constructor_avoids_shallow_copy_out()
     {
         // All-nullary ADT: (1 + 0) * 8 = 8 bytes.
         var ir = LowerProgram(
@@ -1111,8 +1115,9 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 8);
-        found.ShouldBeTrue("Nullary ADT result should emit CopyOutArena with StaticSizeBytes == 8.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A nullary RC result should survive the scope reset without shallow copy-out.");
     }
 
     [Test]
