@@ -650,6 +650,31 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_list_pattern_payload_transfer_preserves_moved_parent()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive loop : Int -> List(Str) -> Int = given n -> given values ->
+                if n == 0 then n
+                else
+                    match values with
+                        | [] -> loop (n - 1) ("next" :: values)
+                        | head :: _ -> loop (n - 1) (head :: values)
+            in loop 5 ["seed"]
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The payload needs its own reference while the parent list moves to the next iteration.");
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_drop_inactive", StringComparison.Ordinal)).ShouldBe(0,
+                "The moved list parent must stay active across the back edge.");
+    }
+
+    [Test]
     public void TCO_loop_with_fresh_closure_arg_uses_runtime_ownership()
     {
         IrProgram ir = LowerProgram(

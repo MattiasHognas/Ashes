@@ -152,6 +152,7 @@ public sealed partial class Lowering
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
     private sealed record RuntimeManagedTcoPatternAlias(
+        string ParentName,
         int ParentSlot,
         int ParentActiveSlot,
         TypeRef ParentType,
@@ -5975,7 +5976,12 @@ public sealed partial class Lowering
             }
 
             RuntimeManagedTcoPatternAlias parent = group.First().Alias;
-            LowerCallTcoConsumePatternParent(parent);
+            bool parentMovesToNextIteration = collectedArgs.Any(argument =>
+                CountNameOccurrences(argument, parent.ParentName) > 0);
+            if (!parentMovesToNextIteration)
+            {
+                LowerCallTcoConsumePatternParent(parent);
+            }
         }
 
         return transfers.Select(transfer => transfer.Name).ToList();

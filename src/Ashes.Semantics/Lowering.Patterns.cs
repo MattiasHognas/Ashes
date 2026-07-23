@@ -921,6 +921,7 @@ public sealed partial class Lowering
             }
 
             _runtimeManagedTcoPatternAliases[bindingName] = new RuntimeManagedTcoPatternAlias(
+                variable.Name,
                 parent.Slot,
                 activeSlot,
                 Prune(valueType),

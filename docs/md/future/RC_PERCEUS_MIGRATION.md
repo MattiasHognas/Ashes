@@ -751,6 +751,10 @@ admit both the growing accumulator and shrinking input to one coherent runtime r
 longer fall back to an arena result that shares children with an RC input. The reverse IR contains
 runtime list normalization, payload `dup`/parent drops, and no legacy list relocation; the complete
 1BRC correctness and bounded-memory workload remains green.
+Pattern transfer also distinguishes consuming a matched parent from moving that parent into the
+next iteration. When both a payload and the original list occur in the self-call arguments, the
+payload receives its independent reference but the list remains active; the later argument build
+owns the moved parent and no premature parent drop is emitted.
 
 Deliverables:
 
