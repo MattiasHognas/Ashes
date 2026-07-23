@@ -501,6 +501,32 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Higher_order_function_normalizes_owned_pointer_list_results()
+    {
+        IrProgram strings = LowerProgram(
+            "let apply : (Int -> List(Str)) -> List(Str) = given f -> f(0)\nlet source = [\"forty\", \"two\"] in let borrow = given unit -> source in let result = apply(borrow) in match result with | [] -> 0 | head :: _ -> Ashes.Text.byteLength(head)");
+        IrProgram nested = LowerProgram(
+            "let apply : (Int -> List(List(Int))) -> List(List(Int)) = given f -> f(0)\nlet source = [[40, 2]] in let borrow = given unit -> source in let result = apply(borrow) in match result with | [] -> 0 | head :: _ -> match head with | [] -> 0 | value :: _ -> value");
+
+        strings.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.CopyOutList
+            {
+                HeadCopy: IrInst.ListHeadCopyKind.String,
+                RuntimeManaged: true,
+            }).ShouldBeTrue();
+        strings.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        nested.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.CopyOutList
+            {
+                HeadCopy: IrInst.ListHeadCopyKind.InnerList,
+                RuntimeManaged: true,
+            }).ShouldBeTrue();
+        nested.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeGreaterThan(1);
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");

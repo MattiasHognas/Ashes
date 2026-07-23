@@ -1485,6 +1485,33 @@ public sealed partial class Lowering
         }
     }
 
+    private CopyOutKind GetCallCopyOutKind(
+        TypeRef type,
+        out int staticSizeBytes,
+        out IrInst.ListHeadCopyKind listHeadCopy)
+    {
+        CopyOutKind kind = GetCopyOutKind(type, out staticSizeBytes);
+        listHeadCopy = IrInst.ListHeadCopyKind.Inline;
+        if (kind != CopyOutKind.None || Prune(type) is not TypeRef.TList list)
+        {
+            return kind;
+        }
+
+        TypeRef element = Prune(list.Element);
+        if (element is TypeRef.TStr)
+        {
+            listHeadCopy = IrInst.ListHeadCopyKind.String;
+            return CopyOutKind.List;
+        }
+        if (element is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+        {
+            listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
+            return CopyOutKind.List;
+        }
+
+        return CopyOutKind.None;
+    }
+
     /// <summary>
     /// Legacy helper — returns true if the type can be copy-outed via shallow memcpy.
     /// </summary>

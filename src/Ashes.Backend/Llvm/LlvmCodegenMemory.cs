@@ -1604,7 +1604,7 @@ internal static partial class LlvmCodegen
         // Eagerly allocate the first cell from headBuf[0].
         LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], prefix + "_first_head_slot");
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, prefix + "_first_head_val");
-        LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
+        LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy, runtimeManaged);
         LlvmValueHandle firstCell = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, cellSize, prefix + "_first_rc")
             : EmitAllocDynamic(state, cellSize);
@@ -1627,7 +1627,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, buildBody);
         LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], prefix + "_build_head_slot");
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, prefix + "_build_head_val");
-        LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
+        LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy, runtimeManaged);
         LlvmValueHandle newCell = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, cellSize, prefix + "_cell_rc")
             : EmitAllocDynamic(state, cellSize);
@@ -1721,7 +1721,7 @@ internal static partial class LlvmCodegen
     /// For <see cref="ListHeadCopyKind.InnerList"/>, deep-copies the inner cons-cell chain
     /// (with inline/copy-type heads) via the same three-phase algorithm.
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutListHead(LlvmCodegenState state, LlvmValueHandle headVal, ListHeadCopyKind headCopy)
+    private static LlvmValueHandle EmitCopyOutListHead(LlvmCodegenState state, LlvmValueHandle headVal, ListHeadCopyKind headCopy, bool runtimeManaged)
     {
         switch (headCopy)
         {
@@ -1729,10 +1729,10 @@ internal static partial class LlvmCodegen
                 return headVal;
 
             case ListHeadCopyKind.String:
-                return EmitCopyOutStringValue(state, headVal);
+                return EmitCopyOutStringValue(state, headVal, runtimeManaged);
 
             case ListHeadCopyKind.InnerList:
-                return EmitCopyOutListFromValue(state, headVal);
+                return EmitCopyOutListFromValue(state, headVal, runtimeManaged);
 
             default:
                 return headVal;
@@ -1745,8 +1745,11 @@ internal static partial class LlvmCodegen
     /// but with inline (copy-type) head values only. Used for inner list elements in
     /// <see cref="ListHeadCopyKind.InnerList"/> copy-out.
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutListFromValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
-        => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, runtimeManaged: false, prefix: "copy_inner");
+    private static LlvmValueHandle EmitCopyOutListFromValue(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr,
+        bool runtimeManaged = false)
+        => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, runtimeManaged, prefix: "copy_inner");
 
     /// <summary>
     /// Copies a closure ({code, env, packed env_size/result ownership, dropper}) and its environment

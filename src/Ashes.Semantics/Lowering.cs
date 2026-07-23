@@ -5697,7 +5697,7 @@ public sealed partial class Lowering
 
         var callResultType = Prune(currentType);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
-        CopyOutKind callResultCopyKind = GetCopyOutKind(callResultType, out _);
+        CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
             && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
@@ -5840,7 +5840,7 @@ public sealed partial class Lowering
                     && !_inCoroutineBody
                     && CapabilityGlobalCount == 0
                     && i == collectedArgs.Count - 1
-                    && GetCopyOutKind(Prune(funType.Ret), out _) is CopyOutKind.Shallow or CopyOutKind.List,
+                    && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
                 currentTemp, argTemp, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
@@ -5918,7 +5918,10 @@ public sealed partial class Lowering
             return currentTemp;
         }
 
-        var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
+        var callCopyOutKind = GetCallCopyOutKind(
+            callResultType,
+            out int callCopySize,
+            out IrInst.ListHeadCopyKind listHeadCopy);
         if (callCopyOutKind == CopyOutKind.None)
         {
             return currentTemp;
@@ -5933,10 +5936,18 @@ public sealed partial class Lowering
                 currentTemp,
                 runtimeManagedResultFlagTemp,
                 callCopyOutKind,
+                listHeadCopy,
                 callCopySize);
         }
 
-        return LowerCallCopyOutResult(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot, currentTemp, callCopyOutKind, callCopySize);
+        return LowerCallCopyOutResult(
+            callWmCursorSlot,
+            callWmEndSlot,
+            callPreRestoreEndSlot,
+            currentTemp,
+            callCopyOutKind,
+            listHeadCopy,
+            callCopySize);
     }
 
     private int LowerCallConditionalCopyOutResult(
@@ -5946,6 +5957,7 @@ public sealed partial class Lowering
         int currentTemp,
         int runtimeManagedResultFlagTemp,
         CopyOutKind callCopyOutKind,
+        IrInst.ListHeadCopyKind listHeadCopy,
         int callCopySize)
     {
         int resultSlot = NewLocal();
@@ -5960,7 +5972,7 @@ public sealed partial class Lowering
         int copiedTemp = NewTemp();
         if (callCopyOutKind == CopyOutKind.List)
         {
-            Emit(new IrInst.CopyOutList(copiedTemp, currentTemp, RuntimeManaged: true));
+            Emit(new IrInst.CopyOutList(copiedTemp, currentTemp, listHeadCopy, RuntimeManaged: true));
         }
         else
         {
@@ -5975,7 +5987,14 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    private int LowerCallCopyOutResult(int callWmCursorSlot, int callWmEndSlot, int callPreRestoreEndSlot, int currentTemp, CopyOutKind callCopyOutKind, int callCopySize)
+    private int LowerCallCopyOutResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        CopyOutKind callCopyOutKind,
+        IrInst.ListHeadCopyKind listHeadCopy,
+        int callCopySize)
     {
         // With capabilities in the program the copy-out is conditional on no post being
         // pending, so the result is routed through a local slot that the skipped path
@@ -5997,7 +6016,7 @@ public sealed partial class Lowering
                 Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
                 break;
             case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(copyDest, currentTemp));
+                Emit(new IrInst.CopyOutList(copyDest, currentTemp, listHeadCopy));
                 break;
             case CopyOutKind.Closure:
                 Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));

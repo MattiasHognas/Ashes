@@ -2152,11 +2152,19 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+        List<MemoryExecutionResult> copySamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderListResultMemoryProgram,
             outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderStringListResultMemoryProgram,
+            outputPerIteration: 5).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderNestedListResultMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
 
-        AssertMemoryPlateaus("runtime-RC higher-order list result", samples);
+        AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
+        AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
+        AssertMemoryPlateaus("runtime-RC higher-order nested-list result", nestedSamples);
     }
 
     [Test]
@@ -5402,6 +5410,43 @@ public sealed class LinuxBackendCoverageTests
                     match result with
                         | [] -> loop(n - 1)(total)
                         | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderStringListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(Str)) -> List(Str) = given f -> f(0)
+            let source = ["forty", "two"]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderNestedListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(List(Int))) -> List(List(Int)) = given f -> f(0)
+            let source = [[40, 2]]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match head with
+                                | [] -> loop(n - 1)(total)
+                                | value :: _ -> loop(n - 1)(total + value)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
