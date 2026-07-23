@@ -684,6 +684,92 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_loop_with_consumed_tuple_head_list_keeps_one_runtime_regime()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+            in consume [("x", 1), ("y", 2)] 0
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue("The consumed tail must receive an independent reference before its parent is released.");
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Tuple",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("Releasing the consumed list parent must recursively release its tuple head.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_consumed_record_head_list_keeps_one_runtime_regime()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive consume : List(Item) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | Item(_, value) :: tail -> consume(tail)(total + value)
+            in consume [Item(text = "x", value = 1), Item(text = "y", value = 2)] 0
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Item",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("Releasing the consumed list parent must recursively release its record head.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Inferred_consumed_general_head_list_waits_for_pattern_transfer_facts()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let first pair =
+                match pair with
+                    | (key, _) -> key
+
+            let recursive formatAll pairs acc =
+                match pairs with
+                    | [] -> acc
+                    | head :: tail -> formatAll(tail)(first(head) :: acc)
+            in formatAll([("a", 1), ("b", 2)])([])
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeFalse(
+                "Late general-head admission must not bypass match payload-transfer analysis.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse("Frame-coherent admission keeps every list parameter conservative together.");
+    }
+
+    [Test]
     public void TCO_list_pattern_payload_transfer_consumes_parent_once()
     {
         IrProgram ir = LowerProgram(

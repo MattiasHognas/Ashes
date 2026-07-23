@@ -407,6 +407,9 @@ public sealed partial class Lowering
     // without copying the result out: the returned RC allocation is independent of the reclaimed arena.
     // This is intentionally label-based and does not infer ownership through higher-order calls.
     private readonly HashSet<string> _runtimeManagedFunctionResultLabels = new(StringComparer.Ordinal);
+    // Curried application labels whose argument is normalized into an independent RC graph at the
+    // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
+    private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
     // an arbitrary closure value as known.
@@ -1098,8 +1101,7 @@ public sealed partial class Lowering
             TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
-                    || TryGetRuntimeManagedListHeadCopy(list.Element, out _)
-                        && info.ConsumedListTail[index]
+                    || info.ConsumedListTail[index]
                         && info.RuntimeManagedArgResults[index]
                     || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
             TypeRef.TFun => info.RuntimeManagedArgResults[index],
@@ -4518,8 +4520,8 @@ public sealed partial class Lowering
         // Compute free variables for capture, then allocate and fill the env at the creation site.
         var (free, captures, envPtrTemp, knownCaptureLabels) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
 
-        // Create lambda function label
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        RecordTcoParamLabel(lam.ParamName, label);
 
         // Build function body IR in isolation
         var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
@@ -4562,6 +4564,15 @@ public sealed partial class Lowering
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
         return (closureTemp, funTy);
+    }
+
+    private void RecordTcoParamLabel(string paramName, string label)
+    {
+        if (_tcoCtx is { DescendingChain: true } tco
+            && tco.ParamNames.Contains(paramName, StringComparer.Ordinal))
+        {
+            tco.ParamLabels[paramName] = label;
+        }
     }
 
     private void LowerLambdaCoreSpliceTcoEntryOwnership(
@@ -5020,7 +5031,7 @@ public sealed partial class Lowering
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (freshRebuiltList
                         || affineConsList
-                        || consumedListTail && TryGetRuntimeManagedListHeadCopy(list.Element, out _))
+                        || consumedListTail)
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
@@ -5414,6 +5425,7 @@ public sealed partial class Lowering
         int generatedStart = _inst.Count;
         foreach (int slot in tco.RuntimeManagedParamSlots)
         {
+            RecordRuntimeNormalizedTcoParamLabel(tco, slot);
             if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
             {
                 continue;
@@ -5463,6 +5475,16 @@ public sealed partial class Lowering
         List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
         _inst.RemoveRange(generatedStart, generatedCount);
         _inst.InsertRange(insertIndex, generated);
+    }
+
+    private void RecordRuntimeNormalizedTcoParamLabel(TcoContext tco, int slot)
+    {
+        int paramIndex = tco.ParamSlots.IndexOf(slot);
+        if (paramIndex >= 0
+            && tco.ParamLabels.TryGetValue(tco.ParamNames[paramIndex], out string? paramLabel))
+        {
+            _runtimeNormalizedFunctionArgumentLabels.Add(paramLabel);
+        }
     }
 
     private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(TcoContext? tco, int bodyTemp)
@@ -6766,12 +6788,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerCallGeneral(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
     {
-        // Per-call arena watermark — save the heap cursor/end before
-        // evaluating the callee and arguments so that intermediate allocations
-        // (closures from partial application, temporary data structures inside
-        // the callee, argument construction) can be reclaimed after the call
-        // chain completes.  The watermark is managed independently of the
-        // _arenaWatermarks / _ownershipScopes stacks to avoid unbalancing them.
+        // Keep call-chain intermediates in an independent reclaimable arena window.
         int callWmCursorSlot = NewLocal();
         int callWmEndSlot = NewLocal();
         Emit(new IrInst.SaveArenaState(callWmCursorSlot, callWmEndSlot));
@@ -6800,13 +6817,15 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArgs, collectedArgs.Count);
         }
 
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments = [];
         if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
-                out int runtimeManagedResultFlagTemp) is { } earlyResult)
+                consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
         {
             return earlyResult;
         }
 
         var callResultType = Prune(currentType);
+        LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
         CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
@@ -6916,6 +6935,7 @@ public sealed partial class Lowering
     // early error, or null when the whole chain applied cleanly.
     private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
         ref int currentTemp, ref TypeRef currentType,
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
         out int runtimeManagedResultFlagTemp)
     {
         runtimeManagedResultFlagTemp = -1;
@@ -6967,7 +6987,7 @@ public sealed partial class Lowering
                     && i == collectedArgs.Count - 1
                     && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, out _)
                     && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
-                currentTemp, argTemp, ref runtimeManagedResultFlagTemp);
+                currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
 
@@ -6981,6 +7001,8 @@ public sealed partial class Lowering
         bool needsResultOwnership,
         int closureTemp,
         int argumentTemp,
+        TypeRef argumentType,
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
@@ -6988,6 +7010,11 @@ public sealed partial class Lowering
         if (!borrowsOnly)
         {
             MarkResourceArgMoved(argument);
+            if (IsRuntimeManagedResultTemp(argumentTemp)
+                && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex))
+            {
+                consumedRuntimeArguments.Add((argumentTemp, Prune(argumentType)));
+            }
         }
 
         if (needsResultOwnership)
@@ -7006,6 +7033,56 @@ public sealed partial class Lowering
         int target = NewTemp();
         EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly);
         return target;
+    }
+
+    private void LowerCallDropConsumedRuntimeArguments(
+        TypeRef resultType,
+        IReadOnlyList<(int Temp, TypeRef Type)> consumedRuntimeArguments)
+    {
+        if (Prune(resultType) is TypeRef.TFun)
+        {
+            return;
+        }
+
+        HashSet<int> dropped = [];
+        foreach ((int temp, TypeRef type) in consumedRuntimeArguments)
+        {
+            TypeRef valueType = Prune(type);
+            if (CanArenaReset(valueType) || !dropped.Add(temp))
+            {
+                continue;
+            }
+
+            if (valueType is TypeRef.TFun)
+            {
+                Emit(new IrInst.CleanupResource(temp, "Function"));
+                Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
+            }
+            else
+            {
+                EmitRuntimeManagedChildDrop(temp, valueType);
+            }
+        }
+    }
+
+    private bool IsKnownRuntimeNormalizedFunctionArgument(Expr rootExpr, int argumentIndex)
+    {
+        if (!TryResolveKnownFunctionLabel(rootExpr, out string label))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < argumentIndex; i++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
+            {
+                return false;
+            }
+
+            label = nextLabel;
+        }
+
+        return _runtimeNormalizedFunctionArgumentLabels.Contains(label);
     }
 
     private void EmitClosureCall(int target, int closureTemp, int argumentTemp, bool borrowsArgument)

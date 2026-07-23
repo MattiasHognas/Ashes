@@ -769,9 +769,16 @@ reverse regression covers that boundary. TCO back-edge dummy results are now own
 control-flow joins: only reachable return arms determine whether a function transfers an RC result.
 This prevents an affine tuple/record-head list builder from recursively dropping its final graph
 immediately before returning it; a native `consume(build(...))(initial)` regression covers the
-previous corruption. General consumed-head admission remains conservative while nested-pattern
-payload transfer and curried environment provenance are audited together; generating an environment
-normalizer alone is insufficient on the saturated direct-call path.
+previous corruption. Annotated consumed tuple and supported ADT/record-head lists now join the same
+RC regime: entry normalization creates an independent graph, nested pattern payloads receive precise
+references, and recursive parent drops release the old graph. Each curried application label records
+whether its argument is normalized at the admitted loop entry; after the complete saturated call
+returns, the caller releases a consumed runtime argument without invalidating an intermediate closure
+capture. The repeated `consume(reverse(build(...)))(initial)` 2,000/10,000/50,000 profile covers both
+scalar and aggregate call results and plateaus within the standard RSS budget. Inferred general-head
+consumers remain conservative: their element type resolves while the body is lowered, after match
+payload-transfer facts would have to be recorded. The 1BRC `formatAll` gate verifies that late
+admission does not bypass those facts. `Bytes`-bearing heads remain excluded from deep normalization.
 
 Deliverables:
 

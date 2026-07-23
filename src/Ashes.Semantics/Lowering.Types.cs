@@ -36,6 +36,7 @@ public sealed partial class Lowering
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; } = [];
+        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
         public List<int> ParamSlots { get; init; } = [];
         public HashSet<int> RuntimeManagedParamSlots { get; } = [];
         public HashSet<int> RuntimeManagedListParamSlots { get; } = [];

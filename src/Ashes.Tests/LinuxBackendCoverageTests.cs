@@ -2788,6 +2788,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> transferSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcListPatternTransferMemoryProgram,
             outputPerIteration: 4).ConfigureAwait(false);
+        List<MemoryExecutionResult> consumedTupleHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcConsumedTupleHeadListTcoMemoryProgram,
+            outputPerIteration: 10).ConfigureAwait(false);
         List<MemoryExecutionResult> tupleHeadSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleHeadListTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2803,6 +2806,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
         AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
+        AssertMemoryPlateaus("runtime-RC consumed tuple-head list", consumedTupleHeadSamples);
         AssertMemoryPlateaus("runtime-RC tuple-head list TCO accumulator", tupleHeadSamples);
         AssertMemoryPlateaus("runtime-RC record-head list TCO accumulator", recordHeadSamples);
     }
@@ -7018,6 +7022,29 @@ public sealed class LinuxBackendCoverageTests
                     | (_, value) :: tail -> consume(tail)(total + value)
 
             Ashes.IO.print(consume(build(1)([]))(0))
+            """;
+
+    private static string BuildRuntimeRcConsumedTupleHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive build : Int -> List((Str, Int)) -> List((Str, Int)) = given n -> given values ->
+                if n <= 0 then values
+                else build(n - 1)(("x", n) :: values)
+
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+
+            let recursive reverse : List((Str, Int)) -> List((Str, Int)) -> List((Str, Int)) = given values -> given reversed ->
+                match values with
+                    | [] -> reversed
+                    | head :: tail -> reverse(tail)(head :: reversed)
+
+            let recursive loop : Int -> Int -> Int = given n -> given total ->
+                if n <= 0 then total
+                else loop(n - 1)(total + consume(reverse(build(4)([]))([]))(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
             """;
 
     private static string BuildRuntimeRcTupleHeadListTcoMemoryProgram(int iterations)
