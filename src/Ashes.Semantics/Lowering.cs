@@ -1021,7 +1021,9 @@ public sealed partial class Lowering
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageAdt(named),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
+                || CanRuntimeManageAdt(named)
+                || CanRuntimeManageOwnedChildAdt(named),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
@@ -1065,7 +1067,7 @@ public sealed partial class Lowering
                     Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
                 }
                 break;
-            case TypeRef.TNamedType named when CanRuntimeManageAdt(named):
+            case TypeRef.TNamedType named when CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
@@ -1077,7 +1079,45 @@ public sealed partial class Lowering
 
     private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named)
     {
-        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        if (named.Symbol.Constructors.Count == 1)
+        {
+            return EmitRuntimeManagedTcoConstructorDeepCopy(
+                sourceTemp,
+                named,
+                named.Symbol.Constructors[0]);
+        }
+
+        int resultSlot = NewLocal();
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, sourceTemp));
+        List<(long Tag, string Label)> cases = named.Symbol.Constructors
+            .Select(constructor => ((long)GetConstructorTag(constructor), NewLabel("rc_normalize_adt")))
+            .ToList();
+        string endLabel = NewLabel("rc_normalize_adt_end");
+        Emit(new IrInst.SwitchTag(tagTemp, cases, cases[0].Label));
+        for (int i = 0; i < named.Symbol.Constructors.Count; i++)
+        {
+            Emit(new IrInst.Label(cases[i].Label));
+            int branchTemp = EmitRuntimeManagedTcoConstructorDeepCopy(
+                sourceTemp,
+                named,
+                named.Symbol.Constructors[i]);
+            Emit(new IrInst.StoreLocal(resultSlot, branchTemp));
+            Emit(new IrInst.Jump(endLabel));
+        }
+
+        Emit(new IrInst.Label(endLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoConstructorDeepCopy(
+        int sourceTemp,
+        TypeRef.TNamedType named,
+        ConstructorSymbol constructor)
+    {
         int resultTemp = NewTemp();
         Emit(new IrInst.CopyOutArena(
             resultTemp,
@@ -4739,6 +4779,7 @@ public sealed partial class Lowering
                     && CanRuntimeManageOwnedTupleType(tuple)
                 || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
                 || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
+                || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
                     && (freshRebuiltList || affineConsList))

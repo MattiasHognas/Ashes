@@ -695,8 +695,12 @@ uses the layout-aware recursive tuple drop. The owned-child tuple profile platea
 without non-runtime relocation. Single-constructor records now use the same complete-graph rule,
 recursively normalizing supported fields before the arena reset and releasing them through the
 field-aware ADT dropper; the owned String/List record profile also plateaus at all three scales.
-Pointer-bearing multi-constructor ADTs, closure graph normalization, and the final emitter census
-remain.
+Pointer-bearing multi-constructor ADTs now dispatch on the source tag, allocate each variant's actual
+layout size, recursively normalize the selected fields, and use the synthesized tag-aware dropper;
+the nullary/owned-child variant profile plateaus without non-runtime parent relocation. Its constructor
+lowering still contains transient non-runtime child staging, which remains visible for the final emitter
+census instead of being misreported as a completed boundary. Closure graph normalization, removal of
+that staging, and the final emitter census remain.
 
 Deliverables:
 

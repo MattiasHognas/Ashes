@@ -2777,26 +2777,12 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        IrProgram growingStringProbe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
-        AllInstructions(growingStringProbe).Count(instruction =>
-            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "The annotated TCO String accumulator should normalize at loop entry and replacement.");
-        AllInstructions(growingStringProbe).Count(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "TCO replacement and function exit should release runtime-owned Strings.");
-        AllInstructions(growingStringProbe).Any(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "String", OwnerSlot: -1, RuntimeManaged: true }).ShouldBeTrue(
-                "The back-edge replacement drop must remain fixed instead of being moved by lifetime placement.");
-        AllInstructions(growingStringProbe).Any(instruction =>
-            instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
-                "The migrated String TCO path must not relocate through an arena allocation.");
-        AllInstructions(growingStringProbe).Count(instruction =>
-            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
-                "An affine TCO accumulator should move into its replacement without an extra reference.");
+        AssertRuntimeRcStringTcoProbe();
         AssertRuntimeRcTupleTcoProbe();
         AssertRuntimeRcOwnedTupleTcoProbe();
         AssertRuntimeRcCopyAdtTcoProbes();
         AssertRuntimeRcOwnedRecordTcoProbe();
+        AssertRuntimeRcOwnedVariantTcoProbe();
 
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaStringMemoryProgram,
@@ -2819,6 +2805,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> ownedRecords = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcOwnedRecordTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedVariants = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedVariantTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
@@ -2827,6 +2816,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC owned-child tuple TCO accumulator", ownedTuples);
         AssertMemoryPlateaus("runtime-RC copy-field ADT TCO accumulator", copyAdts);
         AssertMemoryPlateaus("runtime-RC owned-child record TCO accumulator", ownedRecords);
+        AssertMemoryPlateaus("runtime-RC owned-child variant TCO accumulator", ownedVariants);
     }
 
     [Test]
@@ -5567,6 +5557,26 @@ public sealed class LinuxBackendCoverageTests
                 "The migrated tuple TCO path must not relocate through an arena allocation.");
     }
 
+    private static void AssertRuntimeRcStringTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated TCO String accumulator should normalize at loop entry and replacement.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "TCO replacement and function exit should release runtime-owned Strings.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", OwnerSlot: -1, RuntimeManaged: true }).ShouldBeTrue(
+                "The back-edge replacement drop must remain fixed instead of being moved by lifetime placement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated String TCO path must not relocate through an arena allocation.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
+                "An affine TCO accumulator should move into its replacement without an extra reference.");
+    }
+
     private static void AssertRuntimeRcCopyAdtTcoProbes()
     {
         AssertRuntimeRcCopyAdtTcoProbe(
@@ -5629,6 +5639,43 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.CopyOutArena { RuntimeManaged: false }
                 or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
                 "The migrated pointer-bearing record TCO path must not use arena relocation.");
+    }
+
+    private static void AssertRuntimeRcOwnedVariantTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedVariantTcoMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 8,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tag-dispatched normalization should use the nullary variant's actual size.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tag-dispatched normalization should use the owned-child variant's actual size.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The selected variant's complete list child should normalize with its parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "State",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Variant replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 8 or 24,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                "The migrated variant parent must not use arena relocation at the TCO boundary.");
     }
 
     private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
@@ -6875,6 +6922,23 @@ public sealed class LinuxBackendCoverageTests
                     loop(n - 1)(limit)(Box(text = "value-" + Ashes.Text.fromInt(n), values = [n, n + 1]))
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})(Box(text = "", values = [])))
+            """;
+
+    private static string BuildRuntimeRcOwnedVariantTcoMemoryProgram(int iterations)
+        => $$"""
+            type State =
+                | Empty
+                | Full(Str, List(Int))
+
+            let recursive loop : Int -> Int -> State -> Int = given n -> given limit -> given state ->
+                if n <= 0 then
+                    match state with
+                        | Empty -> limit
+                        | Full(_, _) -> limit
+                else
+                    loop(n - 1)(limit)(Full("value-" + Ashes.Text.fromInt(n))([n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Empty))
             """;
 
     private static string BuildRuntimeRcCopyRecordTcoProbe()
