@@ -2796,6 +2796,7 @@ public sealed class LinuxBackendCoverageTests
         AssertRuntimeRcTupleTcoProbe();
         AssertRuntimeRcOwnedTupleTcoProbe();
         AssertRuntimeRcCopyAdtTcoProbes();
+        AssertRuntimeRcOwnedRecordTcoProbe();
 
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaStringMemoryProgram,
@@ -2815,6 +2816,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> copyAdts = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcCopyAdtTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedRecords = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedRecordTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
@@ -2822,6 +2826,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC tuple TCO accumulator", tuples);
         AssertMemoryPlateaus("runtime-RC owned-child tuple TCO accumulator", ownedTuples);
         AssertMemoryPlateaus("runtime-RC copy-field ADT TCO accumulator", copyAdts);
+        AssertMemoryPlateaus("runtime-RC owned-child record TCO accumulator", ownedRecords);
     }
 
     [Test]
@@ -5599,6 +5604,33 @@ public sealed class LinuxBackendCoverageTests
                 "The migrated pointer-bearing tuple TCO path must not use arena relocation.");
     }
 
+    private static void AssertRuntimeRcOwnedRecordTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedRecordTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The pointer-bearing record parent should normalize at entry and replacement.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The record's complete list child should normalize with its parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Box",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Record replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing record TCO path must not use arena relocation.");
+    }
+
     private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
     {
         AllInstructions(probe).Count(instruction =>
@@ -6828,6 +6860,21 @@ public sealed class LinuxBackendCoverageTests
                     loop(n - 1)(limit)(("value-" + Ashes.Text.fromInt(n), Ashes.Number.BigInt.fromInt(n), [n, n + 1]))
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})(("", 0N, [])))
+            """;
+
+    private static string BuildRuntimeRcOwnedRecordTcoMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | text: Str
+                | values: List(Int)
+
+            let recursive loop : Int -> Int -> Box -> Int = given n -> given limit -> given box ->
+                if n <= 0 then
+                    if Ashes.Text.byteLength(box.text) >= 0 then limit else limit
+                else
+                    loop(n - 1)(limit)(Box(text = "value-" + Ashes.Text.fromInt(n), values = [n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Box(text = "", values = [])))
             """;
 
     private static string BuildRuntimeRcCopyRecordTcoProbe()

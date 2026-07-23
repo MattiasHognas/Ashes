@@ -966,6 +966,10 @@ public sealed partial class Lowering
         {
             return EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
         }
+        else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
+        {
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+        }
         else
         {
             Emit(new IrInst.CopyOutArena(
@@ -993,6 +997,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (argType is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+            return;
+        }
+
         Emit(new IrInst.RcDrop(
             sourceTemp,
             TcoRuntimeManagedTypeName(argType),
@@ -1011,7 +1021,7 @@ public sealed partial class Lowering
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-            TypeRef.TNamedType named => CanCopyOutAdt(named, out _),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageAdt(named),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
@@ -1055,8 +1065,37 @@ public sealed partial class Lowering
                     Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
                 }
                 break;
+            case TypeRef.TNamedType named when CanRuntimeManageAdt(named):
+                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
+        }
+
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        int resultTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            resultTemp,
+            sourceTemp,
+            HeapLayouts.Adt.AllocationSizeBytes(constructor.Arity),
+            RuntimeManaged: true));
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, i));
+            int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, fieldType);
+            Emit(new IrInst.SetAdtField(resultTemp, i, copiedChild));
         }
 
         _runtimeManagedResultTemps.Add(resultTemp);
@@ -4699,6 +4738,7 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TTuple tuple
                     && CanRuntimeManageOwnedTupleType(tuple)
                 || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
+                || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
                     && (freshRebuiltList || affineConsList))
@@ -5054,6 +5094,11 @@ public sealed partial class Lowering
             {
                 normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
             }
+            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TNamedType named
+                && !CanCopyOutAdt(named, out _))
+            {
+                normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+            }
             else
             {
                 int copySize = TcoRuntimeManagedCopySize(tco.RuntimeManagedParamTypes[slot]);
@@ -5088,6 +5133,10 @@ public sealed partial class Lowering
             else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple)
             {
                 EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+            }
+            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TNamedType named)
+            {
+                EmitRuntimeManagedAdtDrop(sourceTemp, named);
             }
             else
             {

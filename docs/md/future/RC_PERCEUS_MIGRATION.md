@@ -692,8 +692,11 @@ same type-directed fixed-size path; both record and constructor-form IR are cove
 profile plateaus across the same scales. Pointer-bearing tuples now normalize their parent and every
 supported String, Bytes, BigInt, copy-element list, or nested-tuple child into one RC graph; replacement
 uses the layout-aware recursive tuple drop. The owned-child tuple profile plateaus at all three scales
-without non-runtime relocation. Pointer-bearing records/ADTs, closure graph normalization, and the
-final emitter census remain.
+without non-runtime relocation. Single-constructor records now use the same complete-graph rule,
+recursively normalizing supported fields before the arena reset and releasing them through the
+field-aware ADT dropper; the owned String/List record profile also plateaus at all three scales.
+Pointer-bearing multi-constructor ADTs, closure graph normalization, and the final emitter census
+remain.
 
 Deliverables:
 
