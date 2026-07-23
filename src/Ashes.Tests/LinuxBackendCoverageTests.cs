@@ -4,11 +4,11 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using System.Runtime.CompilerServices;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -43,7 +43,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
     {
-        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
+        if (!OperatingSystem.IsLinux())
         {
             return;
         }
@@ -2791,7 +2791,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale()
     {
-        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
+        if (!OperatingSystem.IsLinux())
         {
             return;
         }
@@ -2835,7 +2835,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_parallel_worker_memory_should_plateau_as_work_scales()
     {
-        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
+        if (!OperatingSystem.IsLinux())
         {
             return;
         }
@@ -6487,44 +6487,76 @@ public sealed class LinuxBackendCoverageTests
         string exePath,
         IReadOnlyList<string>? arguments = null)
     {
-        const string rssMarker = "__ASHES_MAX_RSS_KB__=";
-        for (int attempt = 0; ; attempt++)
+        ProcessStartInfo startInfo = new(exePath)
         {
-            ProcessStartInfo startInfo = new("/usr/bin/time")
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        if (arguments is not null)
+        {
+            foreach (string argument in arguments)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            startInfo.ArgumentList.Add("-f");
-            startInfo.ArgumentList.Add(rssMarker + "%M");
-            startInfo.ArgumentList.Add(exePath);
-            if (arguments is not null)
-            {
-                foreach (string argument in arguments)
-                {
-                    startInfo.ArgumentList.Add(argument);
-                }
+                startInfo.ArgumentList.Add(argument);
             }
-
-            using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
-            string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-            string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            if (process.ExitCode == 0)
-            {
-                return new MemoryExecutionResult(stdout, ParsePeakRssKb(stderr, rssMarker));
-            }
-
-            bool transientExecutableRace = process.ExitCode == 126
-                && stderr.Contains("Text file busy", StringComparison.Ordinal);
-            if (!transientExecutableRace || attempt >= 2)
-            {
-                process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
-            }
-
-            await Task.Delay(25).ConfigureAwait(false);
         }
+
+        LinuxMeasuredExecution result = await RunLinuxMeasuredProcessAsync(startInfo).ConfigureAwait(false);
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.MaxRssKb.ShouldBeGreaterThan(0, "Linux resource wrapper did not report peak RSS");
+        return new MemoryExecutionResult(result.Stdout, result.MaxRssKb);
+    }
+
+    private static async Task<LinuxMeasuredExecution> RunLinuxMeasuredProcessAsync(ProcessStartInfo startInfo)
+    {
+        const string usageMarker = "__ASHES_LINUX_USAGE__=";
+        const string measureScript = """
+            import errno, resource, subprocess, sys, time
+            for attempt in range(3):
+                try:
+                    completed = subprocess.run(sys.argv[1:])
+                    break
+                except OSError as error:
+                    if error.errno != errno.ETXTBSY or attempt == 2:
+                        raise
+                    time.sleep(0.025)
+            usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+            print(f"__ASHES_LINUX_USAGE__={usage.ru_maxrss}|{usage.ru_utime + usage.ru_stime}", file=sys.stderr)
+            sys.exit(completed.returncode)
+            """;
+        ProcessStartInfo measuredStartInfo = new("python3")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        measuredStartInfo.ArgumentList.Add("-c");
+        measuredStartInfo.ArgumentList.Add(measureScript);
+        measuredStartInfo.ArgumentList.Add(startInfo.FileName);
+        foreach (string argument in startInfo.ArgumentList)
+        {
+            measuredStartInfo.ArgumentList.Add(argument);
+        }
+
+        using Process process = await TestProcessHelper.StartProcessAsync(measuredStartInfo).ConfigureAwait(false);
+        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith(usageMarker, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string[] fields = line[usageMarker.Length..].Split('|');
+            fields.Length.ShouldBe(2);
+            long maxRssKb = long.Parse(fields[0], CultureInfo.InvariantCulture);
+            double cpuMilliseconds = double.Parse(fields[1], CultureInfo.InvariantCulture) * 1_000.0;
+            return new LinuxMeasuredExecution(stdout, stderr, process.ExitCode, maxRssKb, cpuMilliseconds);
+        }
+
+        throw new InvalidOperationException($"Python resource wrapper did not report child usage. stderr: {stderr}");
     }
 
     private static IrProgram ConvertRuntimeRcToArenaBaseline(IrProgram program)
@@ -6585,48 +6617,16 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<double> RunAndMeasureCpuTimeAsync(string exePath, string expectedOutput)
     {
-        const string cpuMarker = "__ASHES_CPU_SECONDS__=";
-        ProcessStartInfo startInfo = new("/usr/bin/time")
+        ProcessStartInfo startInfo = new(exePath)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        startInfo.ArgumentList.Add("-f");
-        startInfo.ArgumentList.Add(cpuMarker + "%U|%S");
-        startInfo.ArgumentList.Add(exePath);
-        using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
-        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        await process.WaitForExitAsync().ConfigureAwait(false);
-        process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
-        stdout.ShouldBe(expectedOutput);
-        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (line.StartsWith(cpuMarker, StringComparison.Ordinal))
-            {
-                string[] fields = line[cpuMarker.Length..].Split('|');
-                fields.Length.ShouldBe(2);
-                double userSeconds = double.Parse(fields[0], CultureInfo.InvariantCulture);
-                double systemSeconds = double.Parse(fields[1], CultureInfo.InvariantCulture);
-                return (userSeconds + systemSeconds) * 1_000.0;
-            }
-        }
-
-        throw new InvalidOperationException($"GNU time did not report user CPU time. stderr: {stderr}");
-    }
-
-    private static long ParsePeakRssKb(string stderr, string marker)
-    {
-        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (line.StartsWith(marker, StringComparison.Ordinal))
-            {
-                return long.Parse(line[marker.Length..], System.Globalization.CultureInfo.InvariantCulture);
-            }
-        }
-
-        throw new InvalidOperationException($"GNU time did not report peak RSS. stderr: {stderr}");
+        LinuxMeasuredExecution result = await RunLinuxMeasuredProcessAsync(startInfo).ConfigureAwait(false);
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.Stdout.ShouldBe(expectedOutput);
+        return result.CpuMilliseconds;
     }
 
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
@@ -6801,5 +6801,11 @@ public sealed class LinuxBackendCoverageTests
     }
 
     private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    private readonly record struct LinuxMeasuredExecution(
+        string Stdout,
+        string Stderr,
+        int ExitCode,
+        long MaxRssKb,
+        double CpuMilliseconds);
     private readonly record struct MemoryExecutionResult(string Stdout, long MaxRssKb);
 }

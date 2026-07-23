@@ -534,6 +534,14 @@ constructing those summaries and proving unique entry to the headerless persiste
 reuse region. Removing that last proof before the specialized region itself gains RC headers would
 restore its defensive whole-tree copy on nested re-entry and reintroduce the measured leak, so it is
 an intentional specialized-region input rather than an ordinary-value lifetime fallback.
+The Linux memory/performance harness now collects child `ru_maxrss`, user time, and system time through
+Python's kernel-backed `resource.getrusage` wrapper. This removes the undeclared GNU `time` dependency
+that made every RSS gate fail in the hermetic CI image, retains the narrow transient `ETXTBSY` retry,
+and measures even programs that exit too quickly for `/proc` polling. The full 1,622-test compiler
+suite passes both on the host and in the CI container with all RSS and CPU gates enabled. The aggregate
+`just ci` invocation proceeds through all .NET suites, then currently stops at pre-existing pnpm
+advisories in the VS Code extension and docs builder; the remaining formatter, static-analysis,
+extension, docs, and target-matrix jobs are therefore run separately for this phase exit.
 
 Deliverables:
 
