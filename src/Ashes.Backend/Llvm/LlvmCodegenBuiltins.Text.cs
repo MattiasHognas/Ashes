@@ -37,12 +37,17 @@ internal static partial class LlvmCodegen
         LlvmValueHandle headLen = LlvmApi.BuildSelect(builder, hasFullScalar, widthCandidate, LlvmApi.ConstInt(state.I64, 1, 0), "text_uncons_head_len");
         LlvmValueHandle tailLen = LlvmApi.BuildSub(builder, len, headLen, "text_uncons_tail_len");
         LlvmValueHandle tailPtr = LlvmApi.BuildGEP2(builder, state.I8, bytesPtr, [headLen], "text_uncons_tail_ptr");
-        // Views into the input string (no copy): the backing outlives these (it's the string being
-        // unconsed), and any persisted value materializes via copy-out. This is what makes a
-        // char-by-char uncons loop O(T) instead of O(T^2).
-        LlvmValueHandle headRef = EmitStringView(state, bytesPtr, headLen, "text_uncons_head");
-        LlvmValueHandle tailRef = EmitStringView(state, tailPtr, tailLen, "text_uncons_tail");
-        LlvmValueHandle tupleRef = EmitAlloc(state, 16);
+        // The immediate arena path keeps zero-copy views. An escaping runtime-managed result instead
+        // owns copied Strings plus its tuple so no child points back into a reclaimed call region.
+        LlvmValueHandle headRef = runtimeManaged
+            ? EmitHeapStringSliceFromBytesPointer(state, bytesPtr, headLen, "text_uncons_head", runtimeManaged: true)
+            : EmitStringView(state, bytesPtr, headLen, "text_uncons_head");
+        LlvmValueHandle tailRef = runtimeManaged
+            ? EmitHeapStringSliceFromBytesPointer(state, tailPtr, tailLen, "text_uncons_tail", runtimeManaged: true)
+            : EmitStringView(state, tailPtr, tailLen, "text_uncons_tail");
+        LlvmValueHandle tupleRef = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, 16, "rc_text_uncons_tuple")
+            : EmitAlloc(state, 16);
         StoreMemory(state, tupleRef, 0, headRef, "text_uncons_tuple_head");
         StoreMemory(state, tupleRef, 8, tailRef, "text_uncons_tuple_tail");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1, runtimeManaged);

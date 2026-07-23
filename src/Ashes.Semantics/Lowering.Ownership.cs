@@ -493,6 +493,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (IsRuntimeManagedTextUnconsResult(named))
+        {
+            EmitRuntimeManagedTextUnconsResultDrop(valueTemp, named);
+            return;
+        }
+
         if (CanRuntimeManageRecursiveCopyAdt(named)
             || CanRuntimeManageRecordChildAdt(named))
         {
@@ -544,6 +550,40 @@ public sealed partial class Lowering
             && named.TypeArgs.Count == 2
             && named.TypeArgs[0] is TypeRef.TStr
             && named.TypeArgs[1] is TypeRef.TInt or TypeRef.TFloat;
+    }
+
+    private static bool IsRuntimeManagedTextUnconsResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Maybe", StringComparison.Ordinal)
+            && named.TypeArgs is [TypeRef.TTuple { Elements: [TypeRef.TStr, TypeRef.TStr] }];
+    }
+
+    private void EmitRuntimeManagedTextUnconsResultDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol someConstructor = named.Symbol.Constructors.First(constructor =>
+            string.Equals(constructor.Name, "Some", StringComparison.Ordinal));
+        string sharedLabel = NewLabel("rc_drop_text_uncons_shared");
+        string someLabel = NewLabel("rc_drop_text_uncons_some");
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.SwitchTag(tagTemp, [(GetConstructorTag(someConstructor), someLabel)], sharedLabel));
+        Emit(new IrInst.Label(someLabel));
+        int tupleTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(tupleTemp, valueTemp, 0));
+        for (int offset = 0; offset <= 8; offset += 8)
+        {
+            int stringTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(stringTemp, tupleTemp, offset));
+            Emit(new IrInst.RcDrop(stringTemp, "String", RuntimeManaged: true));
+        }
+
+        Emit(new IrInst.RcDrop(tupleTemp, "Tuple", RuntimeManaged: true));
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
     }
 
     private void EmitRuntimeManagedBigIntParseResultDrop(int valueTemp, TypeRef.TNamedType named)

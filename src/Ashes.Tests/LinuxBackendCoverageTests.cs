@@ -763,7 +763,7 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_runtime_manages_immediately_measured_text_uncons_results()
+    public async Task Linux_backend_runtime_manages_escaping_text_uncons_results()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -775,10 +775,15 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBe(2);
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "Maybe", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
 
         IrProgram escaping = LowerProgram("let split = Ashes.Text.uncons(\"abc\") in split");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -5715,12 +5720,12 @@ public sealed class LinuxBackendCoverageTests
                 if n <= 0 then total
                 else
                     let nonEmpty =
-                        let split = Ashes.Text.uncons("abcdef") in
+                        let split = (let escaped = Ashes.Text.uncons("abcdef") in escaped) in
                         match split with
                             | None -> 0
                             | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
                     in let empty =
-                        let split = Ashes.Text.uncons("") in
+                        let split = (let escaped = Ashes.Text.uncons("") in escaped) in
                         match split with
                             | None -> 0
                             | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)

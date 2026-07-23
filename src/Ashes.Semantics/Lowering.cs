@@ -2174,7 +2174,8 @@ public sealed partial class Lowering
     private bool TryLowerRuntimeRcTextUnconsResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcTextUnconsResultProducer(let.Value)
-            || !IsImmediateRuntimeTextUnconsMatchUse(let.Name, let.Body))
+            || (!IsImmediateRuntimeTextUnconsMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
         {
             lowered = default;
             return false;

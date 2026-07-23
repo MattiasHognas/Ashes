@@ -433,6 +433,9 @@ entire transferred spine at the receiving scope.
 Fresh monomorphic records with copy fields, including recursively nested fresh record literals, now
 transfer directly as well. Records containing Strings or other unsupported pointers and records that
 would need to borrow an existing child remain on the conservative arena path.
+Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
+tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
+drop releases nested children only for the last owner; the immediate-match path retains the same contract.
 String concatenation now applies the RC request only to its final allocation. Nested String producers
 such as `Text.fromInt` remain arena scratch, then the enclosing scope restores its watermark after the
 independent RC concat is formed. This supports both direct result transfer and immediate owned closure
