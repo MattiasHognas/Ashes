@@ -345,8 +345,13 @@ from 2,416 to 1,215, matching the 1,215 pre-migration control. An 8 MiB receive 
 grown chunks still complete and reap at stable RSS.
 
 The final three-run, 50,000-request interleaved A/B medians shown above match the pre-migration
-binary at all three concurrency levels with zero errors. A focused native regression counts minor
-faults across 300 spawned handlers so an eager far-footer write cannot silently return.
+binary at all three concurrency levels with zero errors. A focused native test drives 300 spawned
+handlers and checks each echo plus a generous minor-fault ceiling. Note: this fault ceiling is only a
+gross-regression smoke bound, not a precise footer gate — the eager-footer fault is only observable
+when the footer page is reclaimed and re-faulted, and inside the parallel test harness ambient reclaim
+noise masks the ~1-fault/handler signal (measured ~2.1 faults/request under load versus ~0.06
+unloaded). Precisely guarding the footer write would require inspecting the spawn-task codegen for a
+store to the chunk footer; the runtime bound deliberately trades that precision for host/CI robustness.
 
 ### CRP-11 — P1: pidigits exact-line results crash above 4 KiB — resolved
 
