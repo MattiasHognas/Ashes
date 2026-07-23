@@ -670,8 +670,11 @@ already placed so the general lifetime pass cannot move it out of the loop; a se
 releases the final accumulator when a copy-valued function result exits, while a runtime-owned result
 transfers its ownership to the caller. Large released RC blocks bypass the exact-size free list so a
 growing sequence cannot retain one mapping per distinct size. The 2,000/10,000/50,000 growing-String
-RSS profile now plateaus and asserts both the back-edge and exit-drop contracts. Other TCO heap
-families, closure graph normalization, and the final emitter census remain.
+RSS profile now plateaus and asserts both the back-edge and exit-drop contracts. The same
+self-contained scalar replacement path now covers annotated BigInt accumulators, using their
+header-derived limb size for RC normalization and the BigInt drop contract. A growing 50,000-bit
+accumulator plateaus across the same three scales and contains no non-runtime BigInt relocation.
+Aggregate TCO families, closure graph normalization, and the final emitter census remain.
 
 Deliverables:
 

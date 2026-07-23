@@ -2780,15 +2780,43 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
+        IrProgram growingBigIntProbe = LowerProgram(BuildRuntimeRcGrowingBigIntMemoryProgram(1));
+        AllInstructions(growingBigIntProbe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated TCO BigInt accumulator should normalize at loop entry and replacement.");
+        AllInstructions(growingBigIntProbe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "BigInt",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "The BigInt replacement drop must remain fixed at the back-edge.");
+        AllInstructions(growingBigIntProbe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                "The migrated BigInt TCO path must not relocate through an arena allocation.");
+
         List<MemoryExecutionResult> bytes = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaBytesMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
         List<MemoryExecutionResult> bigints = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaBigIntMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> growingBigInts = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcGrowingBigIntMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena bytes", bytes);
         AssertMemoryPlateaus("legacy arena bigint", bigints);
+        AssertMemoryPlateaus("runtime-RC growing BigInt accumulator", growingBigInts);
     }
 
     [Test]
@@ -6625,6 +6653,15 @@ public sealed class LinuxBackendCoverageTests
                     else loop(n - 1)(total)
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcGrowingBigIntMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> BigInt -> Int = given n -> given limit -> given value ->
+                if n <= 0 then limit
+                else loop(n - 1)(limit)(value * 2N + 1N)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(1N))
             """;
 
     private static string BuildLegacyArenaClosureMemoryProgram(int iterations)
