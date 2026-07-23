@@ -222,6 +222,17 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Direct_known_function_results_transfer_runtime_aggregate_ownership()
+    {
+        IrProgram ir = LowerProgram("type Pair = | Pair(Int, Int)\ntype Point = | x: Int | y: Int\nlet makeList unit = (let values = [40, 2] in values)\nlet makePair unit = (let pair = Pair(40)(2) in pair)\nlet makePoint unit = (let point = Point(x = 40, y = 2) in point)\nlet values = makeList(0) in let pair = makePair(0) in let point = makePoint(0) in match values with | [] -> 0 | head :: _ -> match pair with | Pair(left, right) -> head + left + right + point.x + point.y");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Point", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Directly_escaping_bigint_arithmetic_reclaims_operand_scratch()
     {
         IrProgram ir = LowerProgram("let escaped = (let value = Ashes.Number.BigInt.add(Ashes.Number.BigInt.fromInt(40))(2N) in value) in Ashes.Number.BigInt.compare(escaped)(escaped)");

@@ -447,7 +447,8 @@ result, propagates ownership to the receiving let, and emits the final drop ther
 calls follow the statically known returned-closure label chain to the innermost result. Higher-order
 values that lose this label provenance and functions returning arena-backed values retain the
 conservative copy-out path. Native and RSS-slope coverage exercises this boundary for String, Bytes,
-and BigInt results so the provenance channel is not coupled to one payload representation.
+BigInt, copy-element List, copy-field ADT, and fresh record results so the provenance channel is not
+coupled to one payload representation.
 An exact let alias of a statically known function now retains that label provenance by local-slot
 identity, including curried saturation. The exact label also follows that alias into a closure
 environment by its capture index. Function parameters and arbitrary closure-producing control flow

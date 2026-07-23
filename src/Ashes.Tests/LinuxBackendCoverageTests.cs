@@ -477,7 +477,7 @@ public sealed class LinuxBackendCoverageTests
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
-        result.Stdout.ShouldBe("9\n");
+        result.Stdout.ShouldBe("133\n");
     }
 
     [Test]
@@ -4611,7 +4611,7 @@ public sealed class LinuxBackendCoverageTests
                     instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true })
                 && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
             MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
-            sample.Stdout.ShouldBe($"{iterations * 9L}\n");
+            sample.Stdout.ShouldBe($"{iterations * 133L}\n");
             samples.Add(sample);
         }
 
@@ -5294,11 +5294,27 @@ public sealed class LinuxBackendCoverageTests
 
     private static string BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(int iterations)
         => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
+            type Point =
+                | x: Int
+                | y: Int
+
             let makeBytes unit =
                 let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes
 
             let makeBigInt number =
                 let big = Ashes.Number.BigInt.fromInt(number) in big
+
+            let makeList unit =
+                let values = [40, 2] in values
+
+            let makePair unit =
+                let pair = Pair(40)(2) in pair
+
+            let makePoint unit =
+                let point = Point(x = 40, y = 2) in point
 
             let recursive loop n total =
                 if n <= 0 then total
@@ -5307,7 +5323,15 @@ public sealed class LinuxBackendCoverageTests
                     let byteCount = Ashes.Byte.length(bytes) in
                     let big = makeBigInt(n) in
                     let comparison = Ashes.Number.BigInt.compare(big)(big) in
-                    loop(n - 1)(total + byteCount + comparison + 1)
+                    let values = makeList(0) in
+                    let pair = makePair(0) in
+                    let point = makePoint(0) in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match pair with
+                                | Pair(left, right) ->
+                                    loop(n - 1)(total + byteCount + comparison + 1 + head + left + right + point.x + point.y)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
