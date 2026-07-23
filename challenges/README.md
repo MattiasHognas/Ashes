@@ -9,9 +9,9 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-Every defect the suite surfaced is triaged in **[BUGS.md](BUGS.md)**. The post-migration
-**[RC Perceus regression sweep](../docs/md/internals/rc-perceus-challenge-regressions.md)**
-currently records correctness, performance-scaling, and peak-RSS regressions that must be fixed
+Every open defect and remaining benchmark gap is triaged in the
+**[RC Perceus regression sweep](../docs/md/internals/rc-perceus-challenge-regressions.md)**.
+It currently records correctness, performance-scaling, and peak-RSS regressions that must be fixed
 before replacing the historical numbers below. The analysis and measurements for shipped fixes live in
 [`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md), each fix ships with a
 regression test under `tests/`, and every benchmark below is written in its natural,
@@ -43,7 +43,7 @@ that revision. See the linked RC Perceus sweep for the current regression status
 | [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
 | [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
 | [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
-| [reverse-complement](reverse-complement/README.md) | fasta 1M input | 0.58 s | 944 MB | linear, but ~96 B/base constant — the one open BUGS.md item (cons-cell reuse) |
+| [reverse-complement](reverse-complement/README.md) | fasta 1M input | 0.58 s | 944 MB | linear, but ~96 B/base constant — tracked as a remaining representation gap (cons-cell reuse) |
 | [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 11.3 s | 123 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
 | [regex-redux](regex-redux/README.md) | fasta 5M input | 63.7 s | 1.3 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
 

@@ -19,8 +19,8 @@
 # There is no URL anywhere that serves a billion-row file: the upstream 1BRC repo
 # only checks in the ~44k-row station list (data/weather_stations.csv); the
 # ~13 GB measurements.txt is meant to be generated locally from it. That is what
-# ROWS does here. Crank ROWS up to 1e9 to reproduce the out-of-memory failure
-# documented in challenges/BUGS.md.
+# ROWS does here. The full-workload memory characteristics are documented in
+# challenges/1brc/README.md.
 set -euo pipefail
 
 # Default source: the upstream 1BRC station list (`Station;Latitude`). With ROWS

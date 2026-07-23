@@ -229,6 +229,27 @@ simultaneously live graphs. The fix gate is no regression in the multi-scale RSS
 The short c=64 sample fell about 30% while c=1 and c=8 were unchanged/slightly faster. Confirm with
 longer interleaved runs after CRP-5 is fixed; do not optimize from this noisy sample alone.
 
+## Remaining benchmark gaps outside the RC regression sweep
+
+These issues predate the RC Perceus migration. They remain relevant, but are not regressions against
+the pre-migration comparison revision:
+
+### P2: list-of-small-`Str` representation constant (~96 B/base)
+
+Every quadratic memory/time hole in growing TCO accumulators is fixed, and reverse-complement's
+completed pre-migration workloads scaled linearly. The remaining constant is large: a list of
+single-character `Str` values costs about 96 bytes per element because each element is a separate
+length-prefixed string plus a cons cell. That produced about 1 GB peak RSS for a 10 MB input.
+
+CRP-6 must first restore linear RC-migration scaling. Reducing this separate representation constant
+then requires in-place cons-cell reuse, an ownership/linearity feature rather than a point fix.
+
+### Open question: line-oriented output buffering
+
+Confirm whether `Ashes.IO.write` buffers output or issues one syscall per call. Fasta and
+reverse-complement emit one write per 60-character line, exceeding two million calls at benchmark
+scale. If the path is unbuffered, capture and prioritize the resulting throughput cost separately.
+
 ## Fix and verification order
 
 1. Fix CRP-1 first and rerun every crashing challenge; allocator corruption can mask later defects.

@@ -64,5 +64,6 @@ Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
 Time and memory are both **linear**, but the memory *constant* is the story: ~96 bytes of resident
 set per input base, because the working form is a cons list of single-character `Str` values (a
 length-prefixed heap string plus a cons cell per base). That constant is the last open remainder in
-[`../BUGS.md`](../BUGS.md) — shrinking it needs in-place cons-cell reuse (the ownership milestone),
-which also gates running the standard 25M-base workload (extrapolates to ~24 GB).
+the [RC Perceus challenge regression ledger](../../docs/md/internals/rc-perceus-challenge-regressions.md#p2-list-of-small-str-representation-constant-96-bbase)
+— shrinking it needs in-place cons-cell reuse (the ownership milestone), which also gates running
+the standard 25M-base workload (extrapolates to ~24 GB).
