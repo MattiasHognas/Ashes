@@ -2484,7 +2484,8 @@ public sealed partial class Lowering
             if (LookupOwnedValue(name) is
                 {
                     RuntimeManaged: true,
-                    Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt or TypeRef.TList,
+                    Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt or TypeRef.TList
+                        or TypeRef.TTuple or TypeRef.TNamedType,
                 })
             {
                 return true;
@@ -2517,7 +2518,9 @@ public sealed partial class Lowering
                 && owned.Type is not TypeRef.TStr
                 && owned.Type is not TypeRef.TBytes
                 && owned.Type is not TypeRef.TBigInt
-                && owned.Type is not TypeRef.TList)
+                && owned.Type is not TypeRef.TList
+                && owned.Type is not TypeRef.TTuple
+                && owned.Type is not TypeRef.TNamedType)
             {
                 return false;
             }
@@ -2593,11 +2596,14 @@ public sealed partial class Lowering
     {
         bool directFreshEscape = IsDirectBindingResult(let.Body, let.Name)
             && IsFreshRuntimeManageableRecordTree(let.Value);
+        bool capturedFreshRecord = IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && IsFreshRuntimeManageableRecordTree(let.Value);
         if (let.Value is not Expr.RecordLit
             || (!IsImmediateCopyUseOfRecord(let.Body, let.Name)
                 && !IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)
                 && !IsRuntimeManagedRecordChildConsumedByImmediateParent(let.Name, let.Body)
-                && !directFreshEscape))
+                && !directFreshEscape
+                && !capturedFreshRecord))
         {
             lowered = default;
             return false;
@@ -2622,7 +2628,9 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcTupleLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
-        if (let.Value is not Expr.TupleLit || !IsDirectBindingResult(let.Body, let.Name))
+        if (let.Value is not Expr.TupleLit
+            || (!IsDirectBindingResult(let.Body, let.Name)
+                && !IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)))
         {
             lowered = default;
             return false;
@@ -2663,9 +2671,21 @@ public sealed partial class Lowering
     {
         return ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
             || body is Expr.Let closureLet
-            && (UsesNameOnlyAsDirectCallee(closureLet.Body, closureLet.Name)
+            && (UsesNameOnlyAsDirectCalleeForClosureCapture(closureLet.Body, closureLet.Name)
                 || IsDirectBindingResult(closureLet.Body, closureLet.Name))
             && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
+    }
+
+    private bool UsesNameOnlyAsDirectCalleeForClosureCapture(Expr expression, string name)
+    {
+        try
+        {
+            return UsesNameOnlyAsDirectCallee(expression, name);
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
@@ -2923,7 +2943,9 @@ public sealed partial class Lowering
             && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
         bool directOwnedEscape = IsDirectBindingResult(let.Body, let.Name)
             && IsFreshRuntimeManageableAdtExpression(let.Value);
-        if (!immediateMatch && !consumedByParent && !directOwnedEscape)
+        bool capturedOwnedAdt = IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && IsFreshRuntimeManageableAdtExpression(let.Value);
+        if (!immediateMatch && !consumedByParent && !directOwnedEscape && !capturedOwnedAdt)
         {
             lowered = default;
             return false;

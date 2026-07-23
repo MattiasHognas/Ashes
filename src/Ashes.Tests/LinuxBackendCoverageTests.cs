@@ -2210,6 +2210,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_aggregate_capture_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping aggregate capture closure", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_string_concat_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -5558,6 +5583,25 @@ public sealed class LinuxBackendCoverageTests
                 in given (ignored) -> match values with
                     | [] -> 0
                     | _ :: _ -> 2
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | Box(List(Int))
+
+            let make n =
+                let graph = (Box([n, 2]), n)
+                in given (ignored) -> match graph with
+                    | (Box(_), _) -> 2
 
             let recursive loop n total =
                 if n <= 0 then total

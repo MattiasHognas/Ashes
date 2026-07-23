@@ -2430,6 +2430,16 @@ public sealed partial class Lowering
             EmitRuntimeManagedListDrop(capturedTemp, list.Element);
             return;
         }
+        if (pruned is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(capturedTemp, tuple);
+            return;
+        }
+        if (pruned is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(capturedTemp, named);
+            return;
+        }
 
         string typeName = pruned switch
         {
