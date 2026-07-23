@@ -673,18 +673,7 @@ public sealed partial class Lowering
         bool runtimeReuseRequest = resultType is TypeRef.TNamedType reuseNamed
             && RuntimeReuseAllocationMatches(reuseNamed);
         bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
-            && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
-                || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
-                    && (CanRuntimeManageCopyAdt(named)
-                        || CanRuntimeManageGenericCopyAdtConstructorApplication(ctor, args, named)
-                        || CanRuntimeManageFreshHeapChildAdtConstructorApplication(ctor, args, named)
-                        || CanRuntimeManageOwnedChildAdtConstructorApplication(ctor, args, named)
-                        || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
-                        || (runtimeReuseRequest
-                            && CanRuntimeReuseAdtConstructorApplication(
-                                ctor,
-                                args,
-                                named)))));
+            && IsRuntimeManagedConstructorCandidate(ctor, args, named, runtimeReuseRequest);
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
             ctor, args, resultType, runtimeManagedCandidate);
@@ -717,6 +706,27 @@ public sealed partial class Lowering
 
         return (ptrTemp, resultType);
     }
+
+    private bool IsRuntimeManagedConstructorCandidate(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType,
+        bool runtimeReuseRequest)
+        => _runtimeRcRecordAllocationRequested
+                && CanRuntimeManageConstructorApplication(constructor, arguments, resultType)
+            || (_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
+                && (CanRuntimeManageCopyAdt(resultType)
+                    || CanRuntimeManageGenericCopyAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageFreshHeapChildAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageRecursiveAdtConstructorApplication(constructor, arguments, resultType)
+                    || runtimeReuseRequest
+                        && CanRuntimeReuseAdtConstructorApplication(constructor, arguments, resultType))
+            || _runtimeRcTcoAdtAllocationRequested
+                && CanRuntimeManageTcoOwnedChildAdtConstructorApplication(
+                    constructor,
+                    arguments,
+                    resultType);
 
     private bool RuntimeReuseAllocationMatches(TypeRef.TNamedType resultType)
         => _runtimeRcReuseAllocationTypeRequested is { } requested

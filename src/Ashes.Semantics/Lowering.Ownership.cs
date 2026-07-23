@@ -2037,6 +2037,52 @@ public sealed partial class Lowering
         return hasOwnedChild;
     }
 
+    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count != 1
+            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
+        {
+            return CanRuntimeManageOwnedChildAdt(named);
+        }
+
+        return CanRuntimeManageTcoOwnedChildAdtConstructorFields(named);
+    }
+
+    private bool CanRuntimeManageTcoOwnedChildAdtConstructorFields(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool hasOwnedChild = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                if (fieldType is not TypeRef.TList list || !CanArenaReset(Prune(list.Element)))
+                {
+                    return false;
+                }
+
+                hasOwnedChild = true;
+            }
+        }
+
+        return hasOwnedChild;
+    }
+
     private bool CanRuntimeManageOwnedChildAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
@@ -2054,6 +2100,29 @@ public sealed partial class Lowering
             if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
                 && (fieldType is not TypeRef.TNamedType child
                     || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanRuntimeManageTcoOwnedChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageTcoOwnedChildAdt(resultType)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType))
             {
                 return false;
             }

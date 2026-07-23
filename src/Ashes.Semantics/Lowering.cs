@@ -454,6 +454,7 @@ public sealed partial class Lowering
 
     // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
     private bool _runtimeRcCopyAdtAllocationRequested;
+    private bool _runtimeRcTcoAdtAllocationRequested;
     // Set while lowering a match arm with a runtime reuse token. Unlike the general copy-ADT
     // request, this is restricted to the scrutinee's type so unrelated constructors remain arena
     // managed and cannot consume the token merely because their layouts happen to match.
@@ -1188,8 +1189,7 @@ public sealed partial class Lowering
             TypeRef.TStr or TypeRef.TBigInt => true,
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
-                || CanRuntimeManageAdt(named)
-                || CanRuntimeManageOwnedChildAdt(named),
+                || CanRuntimeManageTcoAdt(named),
             TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
@@ -1252,7 +1252,7 @@ public sealed partial class Lowering
                     RuntimeManaged: true,
                     IrInst.CopyOutPurpose.RcNormalization));
                 break;
-            case TypeRef.TNamedType named when CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named):
+            case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
@@ -1261,6 +1261,11 @@ public sealed partial class Lowering
         _runtimeManagedResultTemps.Add(resultTemp);
         return resultTemp;
     }
+
+    private bool CanRuntimeManageTcoAdt(TypeRef.TNamedType named)
+        => CanRuntimeManageAdt(named)
+            || CanRuntimeManageOwnedChildAdt(named)
+            || CanRuntimeManageTcoOwnedChildAdt(named);
 
     private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
     {
@@ -5192,7 +5197,7 @@ public sealed partial class Lowering
                     && CanRuntimeManageOwnedTupleType(tuple)
                 || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
                 || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
-                || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
+                || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageTcoAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (freshRebuiltList
@@ -6396,8 +6401,7 @@ public sealed partial class Lowering
             bool supported = type is TypeRef.TStr or TypeRef.TBigInt
                 || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
                 || type is TypeRef.TNamedType named && (CanCopyOutAdt(named, out _)
-                    || CanRuntimeManageAdt(named)
-                    || CanRuntimeManageOwnedChildAdt(named))
+                    || CanRuntimeManageTcoAdt(named))
                 || type is TypeRef.TList list
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (tco.FreshRebuiltListParams.Contains(name)
@@ -6516,6 +6520,8 @@ public sealed partial class Lowering
         (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
         bool savedListRequest = _runtimeRcListAllocationRequested;
         bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
+        bool savedTcoAdtRequest = _runtimeRcTcoAdtAllocationRequested;
+        Dictionary<string, bool>? savedAdtChildBindings = _runtimeRcAdtChildBindings;
         string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
@@ -6526,6 +6532,7 @@ public sealed partial class Lowering
             && tco.FreshClosureParams.Contains(tco.ParamNames[index])
             && IsRuntimeRcCopyClosureProducer(argument)
             && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
+        bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);
         LowerCallTcoArmAffineStringArg(tco, argument, index);
         if (affineConsList)
         {
@@ -6535,6 +6542,11 @@ public sealed partial class Lowering
         if (freshClosure)
         {
             _runtimeRcClosureAllocationRequested = true;
+        }
+        if (freshAdt)
+        {
+            _runtimeRcTcoAdtAllocationRequested = true;
+            _runtimeRcAdtChildBindings = LowerCallTcoAdtChildBindings(constructorArguments!);
         }
 
         try
@@ -6551,8 +6563,31 @@ public sealed partial class Lowering
             _affineAppendCtx = savedAffineCtx;
             _runtimeRcListAllocationRequested = savedListRequest;
             _runtimeRcClosureAllocationRequested = savedClosureRequest;
+            _runtimeRcTcoAdtAllocationRequested = savedTcoAdtRequest;
+            _runtimeRcAdtChildBindings = savedAdtChildBindings;
             _runtimeRcTcoListTailBinding = savedTcoTailBinding;
         }
+    }
+
+    private Dictionary<string, bool> LowerCallTcoAdtChildBindings(IReadOnlyList<Expr> arguments)
+    {
+        return arguments
+            .OfType<Expr.Var>()
+            .Where(variable => LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+            .GroupBy(variable => variable.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Count() > 1,
+                StringComparer.Ordinal);
+    }
+
+    private bool LowerCallTcoTryGetAdtArguments(Expr argument, out List<Expr>? constructorArguments)
+    {
+        constructorArguments = null;
+        return !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
     }
 
     private void LowerCallTcoArmAffineStringArg(TcoContext tco, Expr argument, int index)

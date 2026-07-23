@@ -153,6 +153,17 @@ by `final`. Audit result-reach ownership summaries and the required late `RcDup`
 
 ### CRP-3 — P1: fannkuch permutation state is corrupted
 
+**Resolved 2026-07-23.** `nextPerm` rebuilt its single-constructor positional `State` product around
+runtime-managed permutation and counter lists at a TCO back edge. The product itself stayed
+arena-managed, so its child lets were dropped at scope exit and the next iteration received dangling
+list pointers. TCO argument lowering now admits this narrow monomorphic positional-product shape as
+an RC owner, records whether repeated child variables need duplication, and moves unique children
+into it. The general escaping-ADT gate remains unchanged, including its borrowed-child behavior.
+
+A dedicated positional-product/owned-child TCO regression passes. Fannkuch now matches the reference
+from N=3 through N=8 at `-O2`, including checksum/max `1616/22` for N=8, and the Ownership,
+ArenaDeallocation, and ReuseToken test classes pass.
+
 N=1 and N=2 match the baseline. N=3 changes checksum/max from `2/2` to `-1/1`, N=4 changes
 `4/4` to `3/4`, N=5 changes `11/7` to `3/4`, and N>=6 does not terminate within 20 seconds.
 Audit match-payload ownership and ADT/list state carried between `nextPerm` and the tail loop.
