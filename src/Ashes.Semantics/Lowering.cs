@@ -1909,7 +1909,11 @@ public sealed partial class Lowering
         bool runtimeManagedString = IsRuntimeRcStringProducer(body);
         bool runtimeManagedAdt = IsFreshRuntimeManageableAdtExpression(body);
         bool runtimeManagedList = IsFreshListConstructionExpression(body);
-        if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList)
+        bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
+            && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
+        bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
+        if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
+            && !runtimeManagedBytes && !runtimeManagedBigInt)
         {
             return LowerExpr(body);
         }
@@ -1917,9 +1921,13 @@ public sealed partial class Lowering
         bool savedStringRequest = _runtimeRcStringAllocationRequested;
         bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
         bool savedListRequest = _runtimeRcListAllocationRequested;
+        bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
+        bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
         _runtimeRcStringAllocationRequested |= runtimeManagedString;
         _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
         _runtimeRcListAllocationRequested |= runtimeManagedList;
+        _runtimeRcBytesAllocationRequested |= runtimeManagedBytes;
+        _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
         try
         {
             return LowerExpr(body);
@@ -1929,6 +1937,8 @@ public sealed partial class Lowering
             _runtimeRcStringAllocationRequested = savedStringRequest;
             _runtimeRcCopyAdtAllocationRequested = savedAdtRequest;
             _runtimeRcListAllocationRequested = savedListRequest;
+            _runtimeRcBytesAllocationRequested = savedBytesRequest;
+            _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
         }
     }
 

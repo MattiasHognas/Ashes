@@ -912,6 +912,24 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Fresh_bytes_and_bigint_bodies_avoid_arena_copy_out()
+    {
+        IrProgram bytes = LowerProgram("let marker = \"owned\" in Ashes.Byte.u16Le(258u16)");
+        IrProgram bigInt = LowerProgram("let marker = \"owned\" in Ashes.Number.BigInt.fromInt(42)");
+
+        bytes.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { bytes, bigInt })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse(
+                "An independent runtime-managed scalar heap result should survive the scope reset directly.");
+        }
+    }
+
+    [Test]
     public void CopyOutArena_instruction_has_correct_fields()
     {
         var inst = new IrInst.CopyOutArena(7, 3, -1);
