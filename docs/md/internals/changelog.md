@@ -20,7 +20,7 @@ All original audit findings have been addressed:
 
 | Area | What was done |
 |------|---------------|
-| **RC Perceus migration** | Escaping ordinary graphs now use compiler-inferred ownership and runtime RC: per-function borrowed/consumed summaries, last-use/branch-entry `RcDrop`, late `RcDup`, layout-aware recursive drops, uniqueness specialization, and `DropReuse`/`AllocReusing` with a fresh-allocation null fallback. Complete-graph normalization prevents mixed-lifetime parents and children. Small cells use dense per-thread RC chunks plus exact-size free-list reuse; large cells return directly to the OS. Compiler-proven scratch, task/capability state, mmap-backed views, parallel publication copies, and the persistent Map/HashMap to-space retain explicitly classified regions with multi-scale RSS gates. See [RC Perceus migration chronology and verification](#rc-perceus-migration-chronology-and-verification). |
+| **RC Perceus migration** | Escaping ordinary graphs now use compiler-inferred ownership and runtime RC: per-function borrowed/consumed summaries, last-use/branch-entry `RcDrop`, late `RcDup`, layout-aware recursive drops, uniqueness specialization, and `DropReuse`/`AllocReusing` with a fresh-allocation null fallback. Complete-graph normalization prevents mixed-lifetime parents and children. Small cells use dense per-thread RC chunks plus constant-time exact-size free-list bins; large cells return directly to the OS. Compiler-proven scratch, task/capability state, mmap-backed views, parallel publication copies, and the persistent Map/HashMap to-space retain explicitly classified regions with multi-scale RSS gates. See [RC Perceus migration chronology and verification](#rc-perceus-migration-chronology-and-verification). |
 | **LLVM passes** | Targeted pipeline (mem2reg, instcombine, early-cse, reassociate, gvn, dce, inline, licm, dse) at O1–O3. PLT32 + PE relocation support. Freestanding builtins (memcpy, memset, strlen, memcmp, bcmp) emitted per module. |
 | **Memory allocator** | OS-backed `mmap`/`VirtualAlloc` chunks (4 MB each, on demand; a single allocation larger than one chunk grows a chunk to fit — see CO-31). Bounds checking with clean error. |
 | **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. Phase 5: extended TCO copy-out — `CopyOutTcoListCell` for `TList(TStr)` and `TList(TList(copy-type))` args (single-cell + head copy), closure and ADT args via `CopyOutClosure`/`CopyOutArena`. |
@@ -159,6 +159,13 @@ been captured in closure environments. Late-inferred TCO parameter eligibility r
 call flags before code generation. This restored reverse-complement from quadratic time
 (4.80 seconds at fasta N=30,000) to linear scaling (0.01 seconds at N=30,000; 0.06 seconds at
 N=100,000), with byte-identical output. See CRP-6 in the challenge regression sweep.
+
+The next scaling correction replaced the RC allocator's single unsorted exact-size free list with
+per-size bins for cached blocks up to 4 KiB. The old allocator linearly searched every differently
+sized released block, so workloads such as `Ashes.Text.join` became quadratic despite correct
+ownership and stable RSS. Direct bin lookup restored 1BRC to 0.01/0.03 seconds at 10,000/30,000
+rows, matching the pre-migration timings with byte-identical output. A variable-size recycling CPU
+gate covers the allocator shape. See CRP-7 in the challenge regression sweep.
 
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:

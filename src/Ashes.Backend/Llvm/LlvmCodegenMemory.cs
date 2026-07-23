@@ -106,6 +106,7 @@ internal static partial class LlvmCodegen
     }
 
     private const ulong RuntimeRcMaxCachedBlockSizeBytes = 4096;
+    private const ulong RuntimeRcFreeListTableSizeBytes = RuntimeRcMaxCachedBlockSizeBytes + 8;
 
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false)
     {
@@ -163,77 +164,43 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_result_slot");
-        LlvmValueHandle linkAddressSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_link_slot");
-        LlvmValueHandle freeListAddress = LlvmApi.BuildPtrToInt(builder, state.RcFreeListSlot, state.I64, name + "_free_list_addr");
-        LlvmApi.BuildStore(builder, freeListAddress, linkAddressSlot);
-
-        LlvmBasicBlockHandle scanBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, name + "_scan");
-        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, name + "_check");
-        LlvmBasicBlockHandle nextBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, name + "_next");
+        LlvmValueHandle freeListSlotAddress = LlvmApi.BuildAlloca(builder, state.I64, name + "_free_bin_slot");
+        LlvmValueHandle useCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
+            allocationSize,
+            LlvmApi.ConstInt(state.I64, RuntimeRcMaxCachedBlockSizeBytes, 0),
+            name + "_use_cache");
+        LlvmBasicBlockHandle cachedBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_cached");
         LlvmBasicBlockHandle reuseBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, name + "_reuse");
-        LlvmBasicBlockHandle freshBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, name + "_fresh");
-        LlvmBasicBlockHandle initializeBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, name + "_initialize");
-        LlvmApi.BuildBr(builder, scanBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, scanBlock);
-        LlvmValueHandle linkAddress = LlvmApi.BuildLoad2(builder, state.I64, linkAddressSlot, name + "_link_addr");
-        LlvmValueHandle linkPointer = LlvmApi.BuildIntToPtr(builder, linkAddress, state.I64Ptr, name + "_link_ptr");
-        LlvmValueHandle candidate = LlvmApi.BuildLoad2(builder, state.I64, linkPointer, name + "_candidate");
-        LlvmValueHandle candidateIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, candidate,
-            LlvmApi.ConstInt(state.I64, 0, 0), name + "_candidate_null");
-        LlvmApi.BuildCondBr(builder, candidateIsNull, freshBlock, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle candidateSize = LoadMemory(state, candidate,
-            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, name + "_candidate_size");
-        LlvmValueHandle sizeMatches = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            candidateSize, allocationSize, name + "_size_matches");
-        LlvmApi.BuildCondBr(builder, sizeMatches, reuseBlock, nextBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, nextBlock);
-        // A released block's reference-count word is its next pointer, so the candidate address is
-        // also the address of the link which must be followed (and potentially rewritten).
-        LlvmApi.BuildStore(builder, candidate, linkAddressSlot);
-        LlvmApi.BuildBr(builder, scanBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
-        LlvmValueHandle next = LoadMemory(state, candidate,
-            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, name + "_reuse_next");
-        LlvmApi.BuildStore(builder, next, linkPointer);
-        LlvmApi.BuildStore(builder, candidate, resultSlot);
-        LlvmApi.BuildBr(builder, initializeBlock);
-
-        EmitAcquireRuntimeRcFreshBlock(state, allocationSize, name, resultSlot, freshBlock, initializeBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
-        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
-    }
-
-    private static void EmitAcquireRuntimeRcFreshBlock(
-        LlvmCodegenState state,
-        LlvmValueHandle allocationSize,
-        string name,
-        LlvmValueHandle resultSlot,
-        LlvmBasicBlockHandle freshBlock,
-        LlvmBasicBlockHandle initializeBlock)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle freshSmallBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, name + "_fresh_small");
         LlvmBasicBlockHandle freshLargeBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, name + "_fresh_large");
-        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
-        LlvmValueHandle useRcArena = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
-            allocationSize,
-            LlvmApi.ConstInt(state.I64, RuntimeRcMaxCachedBlockSizeBytes, 0),
-            name + "_use_rc_arena");
-        LlvmApi.BuildCondBr(builder, useRcArena, freshSmallBlock, freshLargeBlock);
+        LlvmBasicBlockHandle initializeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_initialize");
+        LlvmApi.BuildCondBr(builder, useCache, cachedBlock, freshLargeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, cachedBlock);
+        LlvmValueHandle freeListSlot = EmitRuntimeRcFreeListBinSlot(state, allocationSize, name);
+        LlvmApi.BuildStore(builder,
+            LlvmApi.BuildPtrToInt(builder, freeListSlot, state.I64, name + "_free_bin_addr"),
+            freeListSlotAddress);
+        LlvmValueHandle candidate = LlvmApi.BuildLoad2(builder, state.I64, freeListSlot, name + "_candidate");
+        LlvmValueHandle candidateIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, candidate,
+            LlvmApi.ConstInt(state.I64, 0, 0), name + "_candidate_null");
+        LlvmApi.BuildCondBr(builder, candidateIsNull, freshSmallBlock, reuseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
+        LlvmValueHandle storedFreeListSlotAddress = LlvmApi.BuildLoad2(
+            builder, state.I64, freeListSlotAddress, name + "_stored_free_bin_addr");
+        LlvmValueHandle storedFreeListSlot = LlvmApi.BuildIntToPtr(
+            builder, storedFreeListSlotAddress, state.I64Ptr, name + "_stored_free_bin");
+        LlvmValueHandle next = LoadMemory(state, candidate,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, name + "_reuse_next");
+        LlvmApi.BuildStore(builder, next, storedFreeListSlot);
+        LlvmApi.BuildStore(builder, candidate, resultSlot);
+        LlvmApi.BuildBr(builder, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freshSmallBlock);
         LlvmValueHandle freshSmall = EmitAllocDynamic(
@@ -245,6 +212,42 @@ internal static partial class LlvmCodegen
         LlvmValueHandle freshLarge = EmitAllocateOsMemory(state, allocationSize, name + "_os");
         LlvmApi.BuildStore(builder, freshLarge, resultSlot);
         LlvmApi.BuildBr(builder, initializeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
+    }
+
+    private static LlvmValueHandle EmitRuntimeRcFreeListBinSlot(
+        LlvmCodegenState state,
+        LlvmValueHandle allocationSize,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle tableSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_free_table_slot");
+        LlvmValueHandle table = LlvmApi.BuildLoad2(builder, state.I64, state.RcFreeListSlot, name + "_free_table");
+        LlvmValueHandle tableIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, table,
+            LlvmApi.ConstInt(state.I64, 0, 0), name + "_free_table_null");
+        LlvmBasicBlockHandle allocateBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_free_table_allocate");
+        LlvmBasicBlockHandle readyBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_free_table_ready");
+        LlvmApi.BuildStore(builder, table, tableSlot);
+        LlvmApi.BuildCondBr(builder, tableIsNull, allocateBlock, readyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, allocateBlock);
+        LlvmValueHandle allocatedTable = EmitAllocDynamic(
+            state,
+            LlvmApi.ConstInt(state.I64, RuntimeRcFreeListTableSizeBytes, 0),
+            state.RcArenaCursorSlot,
+            state.RcArenaEndSlot);
+        LlvmApi.BuildStore(builder, allocatedTable, state.RcFreeListSlot);
+        LlvmApi.BuildStore(builder, allocatedTable, tableSlot);
+        LlvmApi.BuildBr(builder, readyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, readyBlock);
+        LlvmValueHandle readyTable = LlvmApi.BuildLoad2(builder, state.I64, tableSlot, name + "_free_table_value");
+        LlvmValueHandle binAddress = LlvmApi.BuildAdd(builder, readyTable, allocationSize, name + "_free_bin_addr");
+        return LlvmApi.BuildIntToPtr(builder, binAddress, state.I64Ptr, name + "_free_bin");
     }
 
     private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)
@@ -308,11 +311,13 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldCache, cacheBlock, freeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBlock);
+        LlvmValueHandle freeListSlot = EmitRuntimeRcFreeListBinSlot(
+            state, allocationSize, "rc_drop");
         LlvmValueHandle freeListHead = LlvmApi.BuildLoad2(builder, state.I64,
-            state.RcFreeListSlot, "rc_drop_free_list");
+            freeListSlot, "rc_drop_free_list");
         StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
             freeListHead, "rc_drop_next");
-        LlvmApi.BuildStore(builder, allocationBase, state.RcFreeListSlot);
+        LlvmApi.BuildStore(builder, allocationBase, freeListSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freeBlock);

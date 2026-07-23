@@ -251,12 +251,25 @@ fasta N=1,000/3,000/10,000/30,000 to 0.00/0.00/0.00/0.01 seconds. At N=100,000
 (1,016,745 input bytes) it completed in 0.06 seconds at 82,000 KB peak RSS. The separate
 list-of-small-`Str` representation constant remains tracked below.
 
-### CRP-7 — P1: 1BRC becomes superlinear
+### CRP-7 — P1: 1BRC becomes superlinear — resolved
 
-The RC build progresses from 52x slower at 10,000 rows to 275x at 100,000 rows, with byte-identical
-output and roughly unchanged RSS. Use ownership tracing around persistent Map/HashMap updates and
-worker merge paths to find repeated cloning/normalization. Restore linear scaling before attempting
-the 1e9-row workload.
+**Resolved 2026-07-23.** The initial persistent-Map/worker-merge hypothesis was incorrect. Running a
+single worker retained the regression, the specialized `Map.set` path remained fully reusing, and
+debugger sampling placed the hot instruction in `Ashes.Text.join` after computation completed.
+
+The runtime-RC allocator cached every released block up to 4 KiB in one unsorted list. Allocation
+linearly searched that list for an exact size. `Text.join`'s balanced reduction creates and releases
+many differently sized strings, so otherwise-linear ownership traffic caused quadratic allocator
+searches. The allocator now lazily creates one per-thread table with an exact bin for every aligned
+cached size. Allocation and release are constant-time; larger blocks still bypass the cache and
+return directly to the OS.
+
+Fresh `-O2` runs changed from 0.84/7.47 seconds to 0.01/0.03 seconds at 10,000/30,000 rows, matching
+the pre-migration 0.01/0.03-second control. On a freshly generated 100,000-row fixture the fixed RC
+binary took 0.10 seconds versus the pre-migration binary's 0.09 seconds. Peak RSS remained in the
+same bands (229,932/336,684 KB at 10,000/30,000 rows and 640,824 KB at 100,000), and output was
+byte-identical at every scale. A focused variable-size RC-recycling CPU regression now compares the
+native RC path with its arena control.
 
 ### CRP-8 — P2: spectral-norm scalar loop is 2.1-2.3x slower
 

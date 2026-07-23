@@ -2714,6 +2714,32 @@ public sealed class LinuxBackendCoverageTests
 
         runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(allowedRuntimeRcMedianMs,
             $"runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
+                $"{arenaMedianMs:F1} ms (relative budget {allowedRuntimeRcMedianMs:F1} ms)");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_variable_size_recycling_stays_within_arena_baseline_budget()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const int iterations = 3_000;
+        IrProgram lowered = LowerProgram(BuildRuntimeRcVariableSizeRecyclingProgram(iterations));
+        IrProgram runtimeRc = IrOptimizer.Optimize(lowered);
+        IrProgram arenaBaseline = IrOptimizer.Optimize(ConvertRuntimeRcToArenaBaseline(lowered));
+
+        AllInstructions(runtimeRc).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeTrue();
+
+        string expectedOutput = $"{iterations * 2}\n";
+        double runtimeRcMedianMs = await CompileAndMeasureMedianCpuTimeAsync(runtimeRc, expectedOutput).ConfigureAwait(false);
+        double arenaMedianMs = await CompileAndMeasureMedianCpuTimeAsync(arenaBaseline, expectedOutput).ConfigureAwait(false);
+        double allowedRuntimeRcMedianMs = Math.Max(arenaMedianMs * 8.0, arenaMedianMs + 100.0);
+
+        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(allowedRuntimeRcMedianMs,
+            $"variable-size runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
             $"{arenaMedianMs:F1} ms (relative budget {allowedRuntimeRcMedianMs:F1} ms)");
     }
 
@@ -7211,6 +7237,17 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(text + "x")
 
             Ashes.IO.print(loop({{iterations}})(""))
+            """;
+
+    private static string BuildRuntimeRcVariableSizeRecyclingProgram(int iterations)
+        => $$"""
+            let recursive grow : Int -> Str -> Int = given n -> given text ->
+                if n <= 0 then Ashes.Text.byteLength(text)
+                else grow(n - 1)(text + "x")
+
+            let first = grow({{iterations}})("") in
+            let second = grow({{iterations}})("") in
+            Ashes.IO.print(first + second)
             """;
 
     private static string BuildRuntimeRcTupleTcoMemoryProgram(int iterations)

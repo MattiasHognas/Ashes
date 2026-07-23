@@ -702,6 +702,13 @@ Borrowed mmap-backed `Bytes` views remain tied to their resource/runtime
 region, and lists containing such views are not blindly deep-copied because
 that would duplicate the mapped buffer per cell.
 
+Each thread's runtime-RC allocator caches released blocks up to 4 KiB in
+exact-size bins. The lazily allocated bin table makes allocation and release
+constant-time even when a workload mixes many string or collection sizes;
+larger blocks bypass the cache and return directly to the OS. The bin table
+and cached cells belong to the thread's RC region and are reclaimed with that
+region.
+
 ### Task and capability regions
 
 Task frames and capability-handler state are scheduler-owned regions rather
