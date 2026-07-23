@@ -522,6 +522,11 @@ map graph, while dead same-key value storage is overwritten in place when its re
 prove that safe. Automated 2K/10K/50K peak-RSS slopes now cover repeated `Map` String-value updates
 and fixed-key `HashMap` updates, replacing the earlier out-of-band memory claim and guarding both the
 fresh and overwrite paths against linear growth.
+The shipped `challenges/1brc/brc.ash` source is also compiled and executed by an automated Linux RSS
+profile over generated 75K/150K/300K-row inputs. It verifies the queued parallel reducer and persistent
+trie allocation path, checks the exact three-station aggregates, and bounds both peak RSS and growth;
+the executable pins a four-worker cap so every sample has the same worker topology and the slope
+measures retained row work rather than scale-dependent thread/stack startup.
 Call lowering now consumes the materialized per-function `FunctionOwnershipSummary` for both reuse
 uniqueness and resource-borrow decisions; resource calls no longer re-read the mutable whole-program
 function tables or maintain a second borrow cache. The remaining call-site census is confined to

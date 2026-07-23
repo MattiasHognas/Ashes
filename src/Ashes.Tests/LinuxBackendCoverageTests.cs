@@ -8,6 +8,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Runtime.CompilerServices;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -2788,6 +2789,50 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale()
+    {
+        if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
+        {
+            return;
+        }
+
+        string source = File.ReadAllText(Path.Combine(GetRepositoryRoot(), "challenges", "1brc", "brc.ash"));
+        IrProgram ir = LowerProgramWithImports(source);
+        AllInstructions(ir).Any(instruction => instruction is IrInst.ParallelQueueStart).ShouldBeTrue();
+        AllInstructions(ir).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(
+            ir,
+            BackendCompileOptions.Default with { ParallelWorkerCap = 4 });
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"one_brc_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            int[] rowCounts = [75_000, 150_000, 300_000];
+            List<MemoryExecutionResult> samples = new(rowCounts.Length);
+            foreach (int rows in rowCounts)
+            {
+                string inputPath = Path.Combine(tmpDir, $"measurements_{rows}.txt");
+                File.WriteAllText(inputPath, BuildOneBrcMeasurements(rows));
+                MemoryExecutionResult sample = await RunLinuxExecutablePeakRssAsync(exePath, [inputPath])
+                    .ConfigureAwait(false);
+                sample.Stdout.ShouldContain("Alpha=1.0/1.0/1.0");
+                sample.Stdout.ShouldContain("Beta=-2.0/-2.0/-2.0");
+                sample.Stdout.ShouldContain("Gamma=3.5/3.5/3.5");
+                samples.Add(sample);
+            }
+
+            AssertMemoryPlateaus("1BRC bounded-row profile", samples, maxRssKb: 128_000, growthBudgetKb: 8_192);
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_parallel_worker_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/time"))
@@ -5243,21 +5288,27 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
-    private static void AssertMemoryPlateaus(string workload, IReadOnlyList<MemoryExecutionResult> samples)
+    private static void AssertMemoryPlateaus(
+        string workload,
+        IReadOnlyList<MemoryExecutionResult> samples,
+        long maxRssKb = 64_000,
+        long growthBudgetKb = 8_192)
     {
         samples.Count.ShouldBe(3);
+        string sampleSummary = string.Join(", ", samples.Select(sample => $"{sample.MaxRssKb} KB"));
         foreach (MemoryExecutionResult sample in samples)
         {
             sample.MaxRssKb.ShouldBeGreaterThan(0);
-            sample.MaxRssKb.ShouldBeLessThan(64_000, $"{workload} peaked at {sample.MaxRssKb} KB");
+            sample.MaxRssKb.ShouldBeLessThan(maxRssKb,
+                $"{workload} peaked at {sample.MaxRssKb} KB; samples: {sampleSummary}");
         }
 
         long totalGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[0].MaxRssKb);
         long lateGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[1].MaxRssKb);
-        totalGrowthKb.ShouldBeLessThan(8_192,
-            $"{workload} RSS grew {totalGrowthKb} KB from 2K to 50K iterations");
-        lateGrowthKb.ShouldBeLessThan(8_192,
-            $"{workload} RSS grew {lateGrowthKb} KB from 10K to 50K iterations");
+        totalGrowthKb.ShouldBeLessThan(growthBudgetKb,
+            $"{workload} RSS grew {totalGrowthKb} KB from first to last sample; samples: {sampleSummary}");
+        lateGrowthKb.ShouldBeLessThan(growthBudgetKb,
+            $"{workload} RSS grew {lateGrowthKb} KB from middle to last sample; samples: {sampleSummary}");
     }
 
     private static string BuildRuntimeRcListMemoryProgram(int iterations)
@@ -6401,15 +6452,44 @@ public sealed class LinuxBackendCoverageTests
                 | Some(value) -> Ashes.IO.print(value)
             """;
 
+    private static string BuildOneBrcMeasurements(int rows)
+    {
+        StringBuilder source = new(rows * 11);
+        for (int row = 0; row < rows; row += 3)
+        {
+            source.Append("Alpha;1.0\nBeta;-2.0\nGamma;3.5\n");
+        }
+
+        return source.ToString();
+    }
+
+    private static string GetRepositoryRoot([CallerFilePath] string callerFile = "")
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(callerFile)!, "..", ".."));
+
     private static async Task<MemoryExecutionResult> CompileRunWithLinuxLlvmPeakRssAsync(IrProgram ir)
     {
-        const string rssMarker = "__ASHES_MAX_RSS_KB__=";
         byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
         string tmpDir = CreateTempDirectory();
         string exePath = Path.Combine(tmpDir, $"llvm_rss_{Guid.NewGuid():N}");
         try
         {
             TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            return await RunLinuxExecutablePeakRssAsync(exePath).ConfigureAwait(false);
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<MemoryExecutionResult> RunLinuxExecutablePeakRssAsync(
+        string exePath,
+        IReadOnlyList<string>? arguments = null)
+    {
+        const string rssMarker = "__ASHES_MAX_RSS_KB__=";
+        for (int attempt = 0; ; attempt++)
+        {
             ProcessStartInfo startInfo = new("/usr/bin/time")
             {
                 RedirectStandardOutput = true,
@@ -6419,18 +6499,31 @@ public sealed class LinuxBackendCoverageTests
             startInfo.ArgumentList.Add("-f");
             startInfo.ArgumentList.Add(rssMarker + "%M");
             startInfo.ArgumentList.Add(exePath);
+            if (arguments is not null)
+            {
+                foreach (string argument in arguments)
+                {
+                    startInfo.ArgumentList.Add(argument);
+                }
+            }
 
             using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
             string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
             string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
             await process.WaitForExitAsync().ConfigureAwait(false);
-            process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
-            return new MemoryExecutionResult(stdout, ParsePeakRssKb(stderr, rssMarker));
-        }
-        finally
-        {
-            DeleteFileIfExists(exePath);
-            DeleteDirectoryIfExists(tmpDir);
+            if (process.ExitCode == 0)
+            {
+                return new MemoryExecutionResult(stdout, ParsePeakRssKb(stderr, rssMarker));
+            }
+
+            bool transientExecutableRace = process.ExitCode == 126
+                && stderr.Contains("Text file busy", StringComparison.Ordinal);
+            if (!transientExecutableRace || attempt >= 2)
+            {
+                process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+            }
+
+            await Task.Delay(25).ConfigureAwait(false);
         }
     }
 
