@@ -167,6 +167,52 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_runtime_list_reuse_preserves_untagged_layout_and_shared_fallback()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.Alloc(0, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.StoreMemOffset(0, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 1),
+            new IrInst.DropReuse(2, 0, 2, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 0, 2, 2, RuntimeManaged: true, ListCell: true),
+            new IrInst.CmpIntEq(4, 0, 3),
+            new IrInst.PrintBool(4),
+            new IrInst.LoadConstInt(5, 43),
+            new IrInst.StoreMemOffset(3, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 5),
+            new IrInst.LoadMemOffset(6, 3, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)),
+            new IrInst.PrintInt(6),
+            new IrInst.RcDrop(3, "List", RuntimeManaged: true),
+
+            new IrInst.Alloc(7, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true),
+            new IrInst.LoadConstInt(8, 44),
+            new IrInst.StoreMemOffset(7, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 8),
+            new IrInst.RcDup(9, 7, RuntimeManaged: true),
+            new IrInst.DropReuse(10, 7, 2, RuntimeManaged: true),
+            new IrInst.AllocReusing(11, 0, 2, 10, RuntimeManaged: true, ListCell: true),
+            new IrInst.CmpIntNe(12, 9, 11),
+            new IrInst.PrintBool(12),
+            new IrInst.LoadMemOffset(13, 9, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)),
+            new IrInst.PrintInt(13),
+            new IrInst.RcDrop(9, "List", RuntimeManaged: true),
+            new IrInst.RcDrop(11, "List", RuntimeManaged: true),
+            new IrInst.LoadConstInt(14, 0),
+            new IrInst.Return(14),
+        };
+        IrFunction function = new("entry", instructions, 0, 15, false);
+        IrProgram program = new(function, [], [], true, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n43\ntrue\n44\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_reuse_child_transfer_dups_for_null_token()
     {
         if (!OperatingSystem.IsLinux())

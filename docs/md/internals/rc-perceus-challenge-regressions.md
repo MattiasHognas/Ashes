@@ -380,8 +380,10 @@ hot float loop. Returning these cells to the arena instead is not a fix: a diagn
 retained about 272 MB after only 5,000,000 steps and did not recover the lost CPU time.
 
 The required fix is ownership-proven in-place reuse of untagged list cells together with their
-single-constructor record heads. Existing `DropReuse` / `AllocReusing` supports tagged ADT layouts
-only. The list extension must preserve the important alias boundary in `updateVel`: `allBodies`
+single-constructor record heads. `AllocReusing` now represents both tagged ADT and untagged list
+layouts, including the fresh-RC fallback; ownership lowering does not emit the list form until the
+following alias proof is established. The extension must preserve the important boundary in
+`updateVel`: `allBodies`
 reads the same source graph as `remaining`, so a cell can be overwritten only after the recursive
 suffix and its final acceleration read have completed, or after a defensive unique copy. A fresh
 `updateVel` result is uniquely consumed by `updatePos` and is the simpler first reuse boundary.

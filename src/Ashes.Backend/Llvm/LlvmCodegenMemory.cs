@@ -380,23 +380,28 @@ internal static partial class LlvmCodegen
         LlvmValueHandle tokenPtr,
         int tag,
         int fieldCount,
-        bool runtimeManaged)
+        bool runtimeManaged,
+        bool listCell)
     {
         if (!runtimeManaged)
         {
-            StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
-                LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+            if (!listCell)
+            {
+                StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
+                    LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+            }
             return tokenPtr;
         }
 
-        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount);
+        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount, listCell);
     }
 
     private static LlvmValueHandle EmitRuntimeAllocReusing(
         LlvmCodegenState state,
         LlvmValueHandle tokenPtr,
         int tag,
-        int fieldCount)
+        int fieldCount,
+        bool listCell)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "alloc_reuse_result_slot");
@@ -411,13 +416,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasToken, reuseBlock, freshBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
-        StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
-            LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        if (!listCell)
+        {
+            StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
+                LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+        }
         LlvmApi.BuildStore(builder, tokenPtr, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
-        LlvmValueHandle fresh = EmitAllocAdt(state, tag, fieldCount, runtimeManaged: true);
+        LlvmValueHandle fresh = listCell
+            ? EmitRuntimeRcAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes, "rc_list_reuse")
+            : EmitAllocAdt(state, tag, fieldCount, runtimeManaged: true);
         LlvmApi.BuildStore(builder, fresh, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 

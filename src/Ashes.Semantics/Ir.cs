@@ -268,18 +268,20 @@ public abstract record IrInst
     ) : IrInst;
 
     /// <summary>
-    /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
-    /// address as <c>Target</c>, instead of bump-allocating. Arena-backed tokens are emitted only for
-    /// provably-dead, uniquely-owned ADT cells of the same size (1 + FieldCount words) — e.g. the node
-    /// a linear TCO accumulator was just deconstructed from. A null runtime-managed token instead
-    /// allocates a fresh RC cell. The fields are written afterwards exactly like <see cref="AllocAdt"/>.
+    /// In-place reuse: yields the cell at <c>TokenTemp</c>'s address as <c>Target</c>, instead of
+    /// allocating. ADT reuse writes <c>Tag</c> and uses a (1 + FieldCount)-word payload. List-cell
+    /// reuse leaves the untagged two-word payload for the following stores and ignores
+    /// <c>Tag</c>/<c>FieldCount</c>. Arena-backed tokens are emitted only for provably-dead,
+    /// uniquely-owned cells of the compatible layout. A null runtime-managed token instead
+    /// allocates a fresh RC cell of that layout.
     /// </summary>
     public sealed record AllocReusing(
         int Target,
         int Tag,
         int FieldCount,
         int TokenTemp,
-        bool RuntimeManaged = false
+        bool RuntimeManaged = false,
+        bool ListCell = false
     ) : IrInst;
     // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;

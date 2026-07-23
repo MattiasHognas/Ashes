@@ -208,7 +208,7 @@ this direct-argument flag.
 |-------------|--------|-------------|
 | `AllocAdt` | `Target`, `Tag`, `FieldCount`, `RuntimeManaged` | Allocate ADT payload `[tag, fields...]`, optionally behind an RC header |
 | `DropReuse` | `Target`, `SourceTemp`, `FieldCount`, `RuntimeManaged` | Consume a dead cell into a compatible reuse token, or return null after decrementing a shared RC cell |
-| `AllocReusing` | `Target`, `Tag`, `FieldCount`, `TokenTemp`, `RuntimeManaged` | Overwrite a compatible token; runtime null falls back to fresh RC allocation |
+| `AllocReusing` | `Target`, `Tag`, `FieldCount`, `TokenTemp`, `RuntimeManaged`, `ListCell` | Overwrite a compatible tagged ADT or untagged list-cell token; runtime null falls back to fresh RC allocation of the same layout |
 | `SetAdtField` | `Ptr`, `FieldIndex`, `Source` | `*(Ptr + 8 + Index*8) = Source` |
 | `GetAdtTag` | `Target`, `Ptr` | `Target = *(Ptr + 0)` |
 | `GetAdtField` | `Target`, `Ptr`, `FieldIndex` | `Target = *(Ptr + 8 + Index*8)` |
