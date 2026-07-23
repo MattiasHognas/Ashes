@@ -679,8 +679,13 @@ values on each iteration. Loop entry and replacement normalize the entire spine 
 the previous spine is released with the uniqueness-aware recursive list drop, and scratch is reclaimed
 to the fixed entry watermark. The 2,000/10,000/50,000 `List(Int)` workload plateaus and contains no
 non-runtime list relocation. Cons-growing accumulators that share the previous spine remain separate:
-they require an ownership transfer instead of a whole-spine clone and drop. Shared-spine TCO,
-additional aggregate TCO families, closure graph normalization, and the final emitter census remain.
+their replacement now allocates one RC cell and moves the previous spine into its tail without a
+whole-spine clone, `dup`, or back-edge drop. The final recursive drop releases the complete spine,
+and the growing-list 2,000/10,000/50,000 profile plateaus. That profile also exposed page-per-object
+fragmentation in the first RC allocator: small RC blocks are now densely bump-allocated in a dedicated
+per-thread RC region, released cells retain exact-size free-list reuse, large blocks keep direct OS
+allocation/free, and worker cleanup releases RC-region chunks as a unit. Additional aggregate TCO
+families, closure graph normalization, and the final emitter census remain.
 
 Deliverables:
 

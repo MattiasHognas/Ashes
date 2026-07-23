@@ -462,6 +462,7 @@ public sealed partial class Lowering
     private bool _runtimeRcListAllocationRequested;
     private string? _runtimeRcListTailBinding;
     private bool _runtimeRcListTailShared;
+    private string? _runtimeRcTcoListTailBinding;
 
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
@@ -917,7 +918,13 @@ public sealed partial class Lowering
 
             TypeRef argType = Prune(info.ArgTypes[i]);
             normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(info.ArgTemps[i], argType);
-            TcoBackEdgeDropRuntimeManagedArg(info.OldRuntimeParamTemps[i], argType);
+            bool movedListTail = argType is TypeRef.TList
+                && info.SingleFreshCons[i]
+                && IsRuntimeManagedResultTemp(info.ArgTemps[i]);
+            if (!movedListTail)
+            {
+                TcoBackEdgeDropRuntimeManagedArg(info.OldRuntimeParamTemps[i], argType);
+            }
         }
 
         int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
@@ -993,7 +1000,9 @@ public sealed partial class Lowering
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
-                && (info.PassThrough[index] || info.FreshListRebuild[index]),
+                && (info.PassThrough[index]
+                    || info.FreshListRebuild[index]
+                    || info.SingleFreshCons[index] && IsRuntimeManagedResultTemp(info.ArgTemps[index])),
             _ => false,
         };
     }
@@ -3919,6 +3928,7 @@ public sealed partial class Lowering
                 InTailPosition = false,
                 LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
                 FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
             };
         }
@@ -4609,10 +4619,12 @@ public sealed partial class Lowering
             int paramIndex = tco.ParamSlots.IndexOf(slot);
             bool freshRebuiltList = paramIndex >= 0
                 && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
+            bool affineConsList = paramIndex >= 0
+                && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
-                    && freshRebuiltList)
+                    && (freshRebuiltList || affineConsList))
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
                 tco.RuntimeManagedParamTypes[slot] = parameterType;
@@ -5580,32 +5592,7 @@ public sealed partial class Lowering
         var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
-            // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
-            // concat chain with the accumulator as its leftmost leaf) appends in place at every
-            // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
-            var savedAffineCtx = _affineAppendCtx;
-            if (i < tco.ParamNames.Count
-                && tco.FixedCursorSlot >= 0
-                && tco.AffineStrParams.Contains(tco.ParamNames[i])
-                && i < tco.ParamSlots.Count
-                && collectedArgs[i] is Expr.Add)
-            {
-                var chainLeaf = collectedArgs[i];
-                while (chainLeaf is Expr.Add chainAdd)
-                {
-                    chainLeaf = chainAdd.Left;
-                }
-
-                if (chainLeaf is Expr.Var affineVar
-                    && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
-                    && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
-                {
-                    _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
-                }
-            }
-
-            var (argTemp, argType) = LowerExpr(collectedArgs[i]);
-            _affineAppendCtx = savedAffineCtx;
+            var (argTemp, argType) = LowerCallTcoEvalArg(tco, collectedArgs[i], i);
             newArgTemps[i] = argTemp;
             newArgTypes[i] = argType;
             if (curType is TypeRef.TFun funType)
@@ -5616,6 +5603,65 @@ public sealed partial class Lowering
         }
 
         return (newArgTemps, newArgTypes);
+    }
+
+    private (int Temp, TypeRef Type) LowerCallTcoEvalArg(TcoContext tco, Expr argument, int index)
+    {
+        (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
+        bool savedListRequest = _runtimeRcListAllocationRequested;
+        string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
+        bool affineConsList = index < tco.ParamNames.Count
+            && index < tco.ParamSlots.Count
+            && tco.AffineConsListParams.Contains(tco.ParamNames[index])
+            && argument is Expr.Cons { Tail: Expr.Var tail }
+            && string.Equals(tail.Name, tco.ParamNames[index], StringComparison.Ordinal);
+        LowerCallTcoArmAffineStringArg(tco, argument, index);
+        if (affineConsList)
+        {
+            _runtimeRcListAllocationRequested = true;
+            _runtimeRcTcoListTailBinding = tco.ParamNames[index];
+        }
+
+        try
+        {
+            (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+            if (affineConsList)
+            {
+                _runtimeManagedResultTemps.Add(lowered.Temp);
+            }
+            return lowered;
+        }
+        finally
+        {
+            _affineAppendCtx = savedAffineCtx;
+            _runtimeRcListAllocationRequested = savedListRequest;
+            _runtimeRcTcoListTailBinding = savedTcoTailBinding;
+        }
+    }
+
+    private void LowerCallTcoArmAffineStringArg(TcoContext tco, Expr argument, int index)
+    {
+        if (index >= tco.ParamNames.Count
+            || tco.FixedCursorSlot < 0
+            || !tco.AffineStrParams.Contains(tco.ParamNames[index])
+            || index >= tco.ParamSlots.Count
+            || argument is not Expr.Add)
+        {
+            return;
+        }
+
+        Expr chainLeaf = argument;
+        while (chainLeaf is Expr.Add chainAdd)
+        {
+            chainLeaf = chainAdd.Left;
+        }
+
+        if (chainLeaf is Expr.Var affineVar
+            && string.Equals(affineVar.Name, tco.ParamNames[index], StringComparison.Ordinal)
+            && tco.AffineResvSlots.TryGetValue(tco.ParamNames[index], out var resvSlots))
+        {
+            _affineAppendCtx = (tco.ParamNames[index], tco.ParamSlots[index], resvSlots.Start, resvSlots.End);
+        }
     }
 
     // Gather the AST/scope-dependent facts about each argument NOW (they need the
@@ -6844,6 +6890,13 @@ public sealed partial class Lowering
 
     private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
     {
+        if (tailExpression is Expr.Var tcoTail
+            && _runtimeRcTcoListTailBinding is not null
+            && string.Equals(tcoTail.Name, _runtimeRcTcoListTailBinding, StringComparison.Ordinal))
+        {
+            return tailTemp;
+        }
+
         if (tailExpression is not Expr.Var tail
             || _runtimeRcListTailBinding is null
             || !string.Equals(tail.Name, _runtimeRcListTailBinding, StringComparison.Ordinal)

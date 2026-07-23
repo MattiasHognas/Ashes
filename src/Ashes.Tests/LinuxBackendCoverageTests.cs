@@ -2740,10 +2740,19 @@ public sealed class LinuxBackendCoverageTests
                 RuntimeManaged: true
             }).ShouldBeTrue(
                 "Rebuilt-list replacement must recursively release fixed back-edge RC cells.");
-        IrProgram sharedSpineProbe = LowerProgram(BuildSharedSpineListTcoProbe());
+        IrProgram sharedSpineProbe = LowerProgram(BuildRuntimeRcSharedSpineListTcoMemoryProgram(1));
+        AllInstructions(sharedSpineProbe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBe(1,
+                "A cons-growing accumulator should normalize only its loop-entry spine, not clone replacements.");
         AllInstructions(sharedSpineProbe).Any(instruction =>
-            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeFalse(
-                "A cons-growing accumulator shares its prior spine and must wait for ownership transfer.");
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+                "A cons-growing accumulator should allocate its replacement cell through runtime RC.");
+        AllInstructions(sharedSpineProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated shared-spine TCO path must not relocate through an arena allocation.");
+        AllInstructions(sharedSpineProbe).Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
+                "An affine cons replacement should move its tail ownership without duplicating it.");
 
         List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaListMemoryProgram,
@@ -2751,9 +2760,13 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> rebuiltTcoSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcRebuiltListTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> sharedSpineTcoSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcSharedSpineListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena list", samples);
         AssertMemoryPlateaus("runtime-RC rebuilt-list TCO accumulator", rebuiltTcoSamples);
+        AssertMemoryPlateaus("runtime-RC shared-spine TCO accumulator", sharedSpineTcoSamples);
     }
 
     [Test]
@@ -6624,16 +6637,16 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
             """;
 
-    private static string BuildSharedSpineListTcoProbe()
-        => """
-            let recursive loop : Int -> List(Int) -> Int = given n -> given values ->
+    private static string BuildRuntimeRcSharedSpineListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Int) -> Int = given n -> given limit -> given values ->
                 if n <= 0 then
                     match values with
-                        | [] -> 0
-                        | head :: _ -> head
-                else loop(n - 1)(n :: values)
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)(n :: values)
 
-            Ashes.IO.print(loop(1)([]))
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
             """;
 
     private static string BuildLegacyArenaStringMemoryProgram(int iterations)

@@ -53,6 +53,7 @@ public sealed partial class Lowering
         // use whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
         // separate ownership-transfer path instead.
         public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
+        public HashSet<string> AffineConsListParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain
         // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a

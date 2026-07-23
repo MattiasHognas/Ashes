@@ -247,6 +247,28 @@ public sealed partial class Lowering
         Expr body,
         IReadOnlyList<string> paramNames,
         string selfName)
+        => CollectTcoParamsMatchingArguments(
+            body,
+            paramNames,
+            selfName,
+            (_, argument) => IsFreshListRebuildExpr(argument));
+
+    private static HashSet<string> CollectAffineConsListParams(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName)
+        => CollectTcoParamsMatchingArguments(
+            body,
+            paramNames,
+            selfName,
+            (index, argument) => argument is Expr.Cons { Tail: Expr.Var tail }
+                && string.Equals(tail.Name, paramNames[index], StringComparison.Ordinal));
+
+    private static HashSet<string> CollectTcoParamsMatchingArguments(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        Func<int, Expr, bool> argumentMatches)
     {
         var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
         bool sawSelfCall = false;
@@ -284,7 +306,7 @@ public sealed partial class Lowering
                         sawSelfCall = true;
                         for (int i = 0; i < paramNames.Count; i++)
                         {
-                            if (!IsFreshListRebuildExpr(args[i]))
+                            if (!argumentMatches(i, args[i]))
                             {
                                 candidates.Remove(paramNames[i]);
                             }

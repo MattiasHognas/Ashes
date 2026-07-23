@@ -209,13 +209,42 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, candidate, resultSlot);
         LlvmApi.BuildBr(builder, initializeBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
-        LlvmValueHandle fresh = EmitAllocateOsMemory(state, allocationSize, name + "_os");
-        LlvmApi.BuildStore(builder, fresh, resultSlot);
-        LlvmApi.BuildBr(builder, initializeBlock);
+        EmitAcquireRuntimeRcFreshBlock(state, allocationSize, name, resultSlot, freshBlock, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
+    }
+
+    private static void EmitAcquireRuntimeRcFreshBlock(
+        LlvmCodegenState state,
+        LlvmValueHandle allocationSize,
+        string name,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle freshBlock,
+        LlvmBasicBlockHandle initializeBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle freshSmallBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_fresh_small");
+        LlvmBasicBlockHandle freshLargeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, name + "_fresh_large");
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle useRcArena = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
+            allocationSize,
+            LlvmApi.ConstInt(state.I64, RuntimeRcMaxCachedBlockSizeBytes, 0),
+            name + "_use_rc_arena");
+        LlvmApi.BuildCondBr(builder, useRcArena, freshSmallBlock, freshLargeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freshSmallBlock);
+        LlvmValueHandle freshSmall = EmitAllocDynamic(
+            state, allocationSize, state.RcArenaCursorSlot, state.RcArenaEndSlot);
+        LlvmApi.BuildStore(builder, freshSmall, resultSlot);
+        LlvmApi.BuildBr(builder, initializeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freshLargeBlock);
+        LlvmValueHandle freshLarge = EmitAllocateOsMemory(state, allocationSize, name + "_os");
+        LlvmApi.BuildStore(builder, freshLarge, resultSlot);
+        LlvmApi.BuildBr(builder, initializeBlock);
     }
 
     private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)
@@ -326,37 +355,6 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "drop_reuse_result");
-    }
-
-    private static void EmitReleaseRuntimeRcFreeList(LlvmCodegenState state, LlvmValueHandle head)
-    {
-        LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle currentSlot = LlvmApi.BuildAlloca(builder, state.I64, "rc_free_current_slot");
-        LlvmApi.BuildStore(builder, head, currentSlot);
-        LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "rc_free_check");
-        LlvmBasicBlockHandle releaseBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "rc_free_release");
-        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "rc_free_done");
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle current = LlvmApi.BuildLoad2(builder, state.I64, currentSlot, "rc_free_current");
-        LlvmValueHandle isDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, current,
-            LlvmApi.ConstInt(state.I64, 0, 0), "rc_free_is_done");
-        LlvmApi.BuildCondBr(builder, isDone, doneBlock, releaseBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
-        LlvmValueHandle next = LoadMemory(state, current,
-            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_free_next");
-        LlvmValueHandle size = LoadMemory(state, current,
-            HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_free_size");
-        EmitFreeOsMemory(state, current, size, "rc_free_cached");
-        LlvmApi.BuildStore(builder, next, currentSlot);
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
 
     private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
@@ -808,7 +806,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
     }
 
-    // Repoints a bare runtime state's six arena cursor slots at the arm64 thread-local globals, so
+    // Repoints a bare runtime state's allocator slots at the arm64 thread-local globals, so
     // reads/writes go through TP+tprel (this thread's TLS block). Used by the parallel worker after it
     // sets TPIDR_EL0 to its own block.
     private static LlvmCodegenState WithArm64ThreadLocalArenaSlots(LlvmCodegenState state) => state with
@@ -820,6 +818,8 @@ internal static partial class LlvmCodegen
         BlobCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_cursor"),
         BlobEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_blob_end"),
         RcFreeListSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_rc_free_list"),
+        RcArenaCursorSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_rc_arena_cursor"),
+        RcArenaEndSlot = LlvmApi.GetNamedGlobal(state.Target.Module, "__ashes_rc_arena_end"),
     };
 
     // win-x64 analog of EmitMainThreadTlsInit: publish the main-thread TCB pointer into TEB+0x28.
@@ -860,7 +860,16 @@ internal static partial class LlvmCodegen
 
         (LlvmValueHandle cursor, LlvmValueHandle end) = BuildLinuxArenaSlots(state, tcbBase);
         LlvmValueHandle rcFreeListSlot = BuildLinuxTcbSlot(state, tcbBase, TcbRcFreeListOffset, "rc_free_list");
-        return state with { HeapCursorSlot = cursor, HeapEndSlot = end, RcFreeListSlot = rcFreeListSlot };
+        (LlvmValueHandle rcArenaCursor, LlvmValueHandle rcArenaEnd) = BuildLinuxTcbSlots(
+            state, tcbBase, TcbRcArenaCursorOffset, TcbRcArenaEndOffset);
+        return state with
+        {
+            HeapCursorSlot = cursor,
+            HeapEndSlot = end,
+            RcFreeListSlot = rcFreeListSlot,
+            RcArenaCursorSlot = rcArenaCursor,
+            RcArenaEndSlot = rcArenaEnd,
+        };
     }
 
     /// <summary>

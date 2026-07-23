@@ -28,7 +28,7 @@ internal static partial class LlvmCodegen
     // its stack after publishing the result — distinct from the Done word (result-ready) so the parent
     // can consume the result immediately and only the stack free blocks on true exit. (linux only.)
     private const int ParallelDescExited = 56;
-    private const int ParallelDescWorkerRcFreeList = 64; // arm64: worker-published released RC block list
+    private const int ParallelDescWorkerRcArenaEnd = 64; // arm64: worker-published small-RC arena end
     private const int ParallelDescSizeBytes = 72;
 
     // Default per-worker stack size when the --parallel-stack-size tunable is unset. On linux this
@@ -331,9 +331,9 @@ internal static partial class LlvmCodegen
         // (it can't read it from the TLS block without the link-time tprel offset).
         LlvmValueHandle armHeapEnd = LlvmApi.BuildLoad2(target.Builder, state.I64, state.HeapEndSlot, "worker_heap_end");
         StoreMemory(state, desc, ParallelDescWorkerArenaEnd, armHeapEnd, "worker_arena_end");
-        LlvmValueHandle armRcFreeList = LlvmApi.BuildLoad2(target.Builder, state.I64,
-            state.RcFreeListSlot, "worker_rc_free_list");
-        StoreMemory(state, desc, ParallelDescWorkerRcFreeList, armRcFreeList, "worker_rc_free_list_publish");
+        LlvmValueHandle armRcArenaEnd = LlvmApi.BuildLoad2(target.Builder, state.I64,
+            state.RcArenaEndSlot, "worker_rc_arena_end");
+        StoreMemory(state, desc, ParallelDescWorkerRcArenaEnd, armRcArenaEnd, "worker_rc_arena_end_publish");
         StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 1, 0), "worker_done");
         // Release the worker slot now that this worker's user work is complete. The cap bounds
         // RUNNING workers, not un-joined descriptors: a fork attempted while this result still
@@ -633,11 +633,11 @@ internal static partial class LlvmCodegen
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "par_cleanup_arena_end");
         }
 
-        LlvmValueHandle rcFreeList = state.Flavor == LlvmCodegenFlavor.LinuxArm64
-            ? LoadMemory(state, desc, ParallelDescWorkerRcFreeList, "par_cleanup_rc_free_list")
-            : LoadMemory(state, workerTcb, (int)TcbRcFreeListOffset, "par_cleanup_rc_free_list");
-        EmitReleaseRuntimeRcFreeList(state, rcFreeList);
+        LlvmValueHandle rcArenaEnd = state.Flavor == LlvmCodegenFlavor.LinuxArm64
+            ? LoadMemory(state, desc, ParallelDescWorkerRcArenaEnd, "par_cleanup_rc_arena_end")
+            : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "par_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
+        EmitFreeWorkerArenaChunks(state, rcArenaEnd);
         EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "par_cleanup_tcb");
         LlvmApi.BuildBr(builder, doneBlock);
 
@@ -695,11 +695,17 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, arenaEnd, curEndSlot);
 
         var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_loop");
+        var releaseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_release");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_done");
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "par_free_cur_end_val");
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), "par_free_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, doneBlock, releaseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
         // Footer at curEnd -> chunk base; header at base -> previous chunk's end. size = curEnd + footer - base.
         LlvmValueHandle base_ = LoadMemory(state, curEnd, 0, "par_free_base");
         LlvmValueHandle prevEnd = LoadMemory(state, base_, 0, "par_free_prev_end");
@@ -1232,8 +1238,8 @@ internal static partial class LlvmCodegen
             // can't read it from the TLS block without the link-time tprel offset).
             LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, i64, state.HeapEndSlot, "parq_worker_heap_end");
             StoreMemory(state, rec, ParallelDescWorkerArenaEnd, heapEnd, "parq_worker_arena_end");
-            LlvmValueHandle rcFreeList = LlvmApi.BuildLoad2(builder, i64, state.RcFreeListSlot, "parq_worker_rc_free_list");
-            StoreMemory(state, rec, ParallelDescWorkerRcFreeList, rcFreeList, "parq_worker_rc_free_list_publish");
+            LlvmValueHandle rcArenaEnd = LlvmApi.BuildLoad2(builder, i64, state.RcArenaEndSlot, "parq_worker_rc_arena_end");
+            StoreMemory(state, rec, ParallelDescWorkerRcArenaEnd, rcArenaEnd, "parq_worker_rc_arena_end_publish");
         }
 
         LlvmValueHandle activeAddr = LlvmApi.BuildPtrToInt(builder,
@@ -1664,11 +1670,11 @@ internal static partial class LlvmCodegen
             arenaEnd = LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
         }
 
-        LlvmValueHandle rcFreeList = flavor == LlvmCodegenFlavor.LinuxArm64
-            ? LoadMemory(state, recordAddr, ParallelDescWorkerRcFreeList, "parq_cleanup_rc_free_list")
-            : LoadMemory(state, workerTcb, (int)TcbRcFreeListOffset, "parq_cleanup_rc_free_list");
-        EmitReleaseRuntimeRcFreeList(state, rcFreeList);
+        LlvmValueHandle rcArenaEnd = flavor == LlvmCodegenFlavor.LinuxArm64
+            ? LoadMemory(state, recordAddr, ParallelDescWorkerRcArenaEnd, "parq_cleanup_rc_arena_end")
+            : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "parq_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
+        EmitFreeWorkerArenaChunks(state, rcArenaEnd);
         EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "parq_cleanup_tcb");
     }
 
