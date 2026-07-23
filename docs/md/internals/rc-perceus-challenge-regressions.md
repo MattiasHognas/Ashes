@@ -271,10 +271,22 @@ same bands (229,932/336,684 KB at 10,000/30,000 rows and 640,824 KB at 100,000),
 byte-identical at every scale. A focused variable-size RC-recycling CPU regression now compares the
 native RC path with its arena control.
 
-### CRP-8 — P2: spectral-norm scalar loop is 2.1-2.3x slower
+### CRP-8 — P2: spectral-norm scalar loop is 2.1-2.3x slower — resolved
 
-Output and memory behavior remain correct. Profile generated LLVM and ownership instructions in the
-hot recursive vector loops; ordinary scalar-only loops should not pay RC graph-management overhead.
+**Resolved 2026-07-23.** `avRow` and `atRow` traverse `List(Float)` through a pattern tail. The
+consumed-tail rule normalized each caller-owned vector to RC at function entry, then duplicated and
+dropped one list reference per element. That added a complete extra list pass for every matrix row.
+
+A tail cursor through an inline-element list now borrows the caller-owned graph: all tails remain
+below the loop watermark and no pointer-bearing head ownership must move out of a discarded cell.
+Pointer-bearing consumed lists stay runtime-managed. When the TCO frame has no other managed
+parameters, lowering also avoids a redundant back-edge arena reset; nested call scopes already
+reclaim their own scratch.
+
+At N=3,000 the fixed `-O2` binary took 1.38 seconds versus 1.43 seconds before migration. A
+three-run `hyperfine` at the standard N=5,500 measured 4.639 s ± 0.001 for the fixed binary and
+4.683 s ± 0.033 before migration; output remained byte-identical. The focused IR regression forbids
+both list RC traffic and the redundant scalar-frame reset.
 
 ### CRP-9 — P2: mandelbrot standard peak RSS grows 57%
 

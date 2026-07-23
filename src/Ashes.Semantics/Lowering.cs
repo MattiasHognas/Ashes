@@ -943,6 +943,7 @@ public sealed partial class Lowering
                 !CanArenaReset(info.ArgTypes[i])
                 && !IsResourceHandleType(info.ArgTypes[i])
                 && !info.PassThrough[i]
+                && !TcoBackEdgeConsumedInlineListTailCanReset(info, i)
                 && !TcoBackEdgeRuntimeManagedArgCanReset(info, i)))
         {
             return false;
@@ -1463,6 +1464,11 @@ public sealed partial class Lowering
         EndLivePostsGuard(tcoResetSkipLabel);
         return true;
     }
+
+    private bool TcoBackEdgeConsumedInlineListTailCanReset(PendingTcoReset info, int index)
+        => info.ConsumedListTail[index]
+            && Prune(info.ArgTypes[index]) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element));
 
     // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
     // at every back-edge, affordable only when the body already paid O(length) rebuilding the
@@ -5265,7 +5271,7 @@ public sealed partial class Lowering
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (freshRebuiltList
                         || affineConsList
-                        || consumedListTail)
+                        || consumedListTail && !CanArenaReset(Prune(list.Element)))
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
@@ -5298,6 +5304,9 @@ public sealed partial class Lowering
                 || CanArenaReset(Prune(parameter.T))
                 || IsResourceHandleType(Prune(parameter.T))
                 || tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                || Prune(parameter.T) is TypeRef.TList list
+                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && CanArenaReset(Prune(list.Element))
                 || tco.RuntimeManagedParamSlots.Contains(slot))
             {
                 continue;
@@ -6541,7 +6550,8 @@ public sealed partial class Lowering
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (tco.FreshRebuiltListParams.Contains(name)
                         || tco.AffineConsListParams.Contains(name)
-                        || tco.ConsumedListTailParams.Contains(name));
+                        || tco.ConsumedListTailParams.Contains(name)
+                            && !CanArenaReset(Prune(list.Element)));
             if (!supported
                 || _linearReuseNames.Contains(name)
                 || _linearSpecializationAccumulators.Contains(name)
@@ -6569,6 +6579,9 @@ public sealed partial class Lowering
             if (!CanArenaReset(type)
                 && !IsResourceHandleType(type)
                 && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                && !(type is TypeRef.TList list
+                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && CanArenaReset(Prune(list.Element)))
                 && !tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[index]))
             {
                 ClearRuntimeManagedTcoParams(tco);

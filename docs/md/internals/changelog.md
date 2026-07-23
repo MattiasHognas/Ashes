@@ -167,6 +167,14 @@ ownership and stable RSS. Direct bin lookup restored 1BRC to 0.01/0.03 seconds a
 rows, matching the pre-migration timings with byte-identical output. A variable-size recycling CPU
 gate covers the allocator shape. See CRP-7 in the challenge regression sweep.
 
+Scalar folds received a separate borrowed-cursor correction. A tail-recursive walk over
+`List(Float)` had been normalized to RC and then duplicated/dropped one cons cell per iteration,
+even though inline list heads have no child ownership to transfer. Such cursors now borrow the
+caller-owned graph, and scalar-only frames omit the otherwise-redundant arena reset at the back
+edge. Spectral norm N=5,500 returned from 10.95 seconds to a 4.639-second median, matching the
+pre-migration 4.683-second control with byte-identical output. Pointer-bearing consumed lists remain
+runtime-managed. See CRP-8 in the challenge regression sweep.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

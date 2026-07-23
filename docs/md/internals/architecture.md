@@ -709,6 +709,13 @@ larger blocks bypass the cache and return directly to the OS. The bin table
 and cached cells belong to the thread's RC region and are reclaimed with that
 region.
 
+Tail-recursive cursors through lists of inline elements (`Int`, `Float`, and
+other reset-safe values) borrow the caller-owned list instead of normalizing
+and reference-counting every cons cell. Every tail remains below the loop
+watermark, and there is no owned child to transfer out of a discarded cell.
+Lists with owned pointer-bearing elements retain the RC path so pattern
+payload transfer can preserve child ownership.
+
 ### Task and capability regions
 
 Task frames and capability-handler state are scheduler-owned regions rather

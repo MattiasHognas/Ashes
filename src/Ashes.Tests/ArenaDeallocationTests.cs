@@ -774,6 +774,42 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_loop_borrows_consumed_inline_list_tail_without_runtime_RC()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive sum : List(Float) -> Float -> Float = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | value :: tail -> sum(tail)(total + value)
+            in sum([1.0, 2.0, 3.0])(0.0)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+                "A tail cursor into an inline-element list can borrow the caller's graph.");
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        } or IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+                "A scalar fold should not update list reference counts per element.");
+        int backEdgeIndex = instructions.FindLastIndex(instruction =>
+            instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal));
+        backEdgeIndex.ShouldBeGreaterThan(1);
+        instructions[backEdgeIndex - 1].ShouldBeOfType<IrInst.RestoreStackPointer>();
+        instructions[backEdgeIndex - 2].ShouldNotBeOfType<IrInst.ReclaimArenaChunks>(
+            "A scalar-only frame must not add a redundant arena reset at every element.");
+    }
+
+    [Test]
     public void TCO_loop_with_consumed_tuple_head_list_keeps_one_runtime_regime()
     {
         IrProgram ir = LowerProgram(
