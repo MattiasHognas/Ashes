@@ -961,6 +961,11 @@ public sealed partial class Lowering
                 IrInst.ListHeadCopyKind.Inline,
                 RuntimeManaged: true));
         }
+        else if (argType is TypeRef.TTuple tuple
+            && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
+        {
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+        }
         else
         {
             Emit(new IrInst.CopyOutArena(
@@ -982,6 +987,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (argType is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+            return;
+        }
+
         Emit(new IrInst.RcDrop(
             sourceTemp,
             TcoRuntimeManagedTypeName(argType),
@@ -999,7 +1010,7 @@ public sealed partial class Lowering
         return Prune(info.ArgTypes[index]) switch
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
-            TypeRef.TTuple tuple => tuple.Elements.All(element => CanArenaReset(Prune(element))),
+            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
@@ -1007,6 +1018,49 @@ public sealed partial class Lowering
                     || info.SingleFreshCons[index] && IsRuntimeManagedResultTemp(info.ArgTemps[index])),
             _ => false,
         };
+    }
+
+    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type)
+    {
+        TypeRef valueType = Prune(type);
+        if (CanArenaReset(valueType))
+        {
+            return sourceTemp;
+        }
+
+        int resultTemp = NewTemp();
+        switch (valueType)
+        {
+            case TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt:
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    TcoRuntimeManagedCopySize(valueType),
+                    RuntimeManaged: true));
+                break;
+            case TypeRef.TList:
+                Emit(new IrInst.CopyOutList(
+                    resultTemp,
+                    sourceTemp,
+                    IrInst.ListHeadCopyKind.Inline,
+                    RuntimeManaged: true));
+                break;
+            case TypeRef.TTuple tuple:
+                Emit(new IrInst.Alloc(resultTemp, tuple.Elements.Count * 8, RuntimeManaged: true));
+                for (int i = 0; i < tuple.Elements.Count; i++)
+                {
+                    int childTemp = NewTemp();
+                    Emit(new IrInst.LoadMemOffset(childTemp, sourceTemp, i * 8));
+                    int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, tuple.Elements[i]);
+                    Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
+                }
+                break;
+            default:
+                throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
+        }
+
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
     }
 
     private int TcoRuntimeManagedCopySize(TypeRef type)
@@ -4643,7 +4697,7 @@ public sealed partial class Lowering
                 && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
                 || parameterType is TypeRef.TTuple tuple
-                    && tuple.Elements.All(element => CanArenaReset(Prune(element)))
+                    && CanRuntimeManageOwnedTupleType(tuple)
                 || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
@@ -4995,6 +5049,11 @@ public sealed partial class Lowering
                     IrInst.ListHeadCopyKind.Inline,
                     RuntimeManaged: true));
             }
+            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple
+                && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
+            {
+                normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+            }
             else
             {
                 int copySize = TcoRuntimeManagedCopySize(tco.RuntimeManagedParamTypes[slot]);
@@ -5025,6 +5084,10 @@ public sealed partial class Lowering
                 && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
             {
                 EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+            }
+            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple)
+            {
+                EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
             }
             else
             {

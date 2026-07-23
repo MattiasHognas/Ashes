@@ -689,8 +689,11 @@ path covers copy-only tuples: their fixed payload is shallow-normalized at entry
 replacement, the previous tuple is dropped at the back-edge, and the 2,000/10,000/50,000 profile
 plateaus without non-runtime relocation. Equal-layout copy-field records and user ADTs now follow the
 same type-directed fixed-size path; both record and constructor-form IR are covered, and the ADT RSS
-profile plateaus across the same scales. Pointer-bearing tuples/records/ADTs, closure graph
-normalization, and the final emitter census remain.
+profile plateaus across the same scales. Pointer-bearing tuples now normalize their parent and every
+supported String, Bytes, BigInt, copy-element list, or nested-tuple child into one RC graph; replacement
+uses the layout-aware recursive tuple drop. The owned-child tuple profile plateaus at all three scales
+without non-runtime relocation. Pointer-bearing records/ADTs, closure graph normalization, and the
+final emitter census remain.
 
 Deliverables:
 

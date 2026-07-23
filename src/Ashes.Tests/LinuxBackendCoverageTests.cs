@@ -2794,6 +2794,7 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
                 "An affine TCO accumulator should move into its replacement without an extra reference.");
         AssertRuntimeRcTupleTcoProbe();
+        AssertRuntimeRcOwnedTupleTcoProbe();
         AssertRuntimeRcCopyAdtTcoProbes();
 
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
@@ -2808,6 +2809,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> tuples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedTuples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedTupleTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
         List<MemoryExecutionResult> copyAdts = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcCopyAdtTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2816,6 +2820,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("legacy arena pointer record", records);
         AssertMemoryPlateaus("runtime-RC growing string accumulator", growingStrings);
         AssertMemoryPlateaus("runtime-RC tuple TCO accumulator", tuples);
+        AssertMemoryPlateaus("runtime-RC owned-child tuple TCO accumulator", ownedTuples);
         AssertMemoryPlateaus("runtime-RC copy-field ADT TCO accumulator", copyAdts);
     }
 
@@ -5567,6 +5572,33 @@ public sealed class LinuxBackendCoverageTests
             "Point");
     }
 
+    private static void AssertRuntimeRcOwnedTupleTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedTupleTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.Alloc
+            {
+                SizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The pointer-bearing tuple parent should normalize at entry and replacement.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The tuple's complete list child should normalize with its parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Tuple",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tuple replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing tuple TCO path must not use arena relocation.");
+    }
+
     private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
     {
         AllInstructions(probe).Count(instruction =>
@@ -6784,6 +6816,18 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(limit)(Pair(n)(n + 1))
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})(Pair(0)(0)))
+            """;
+
+    private static string BuildRuntimeRcOwnedTupleTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Str, BigInt, List(Int)) -> Int = given n -> given limit -> given value ->
+                if n <= 0 then
+                    match value with
+                        | (_, _, _) -> limit
+                else
+                    loop(n - 1)(limit)(("value-" + Ashes.Text.fromInt(n), Ashes.Number.BigInt.fromInt(n), [n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(("", 0N, [])))
             """;
 
     private static string BuildRuntimeRcCopyRecordTcoProbe()
