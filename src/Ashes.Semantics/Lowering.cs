@@ -1912,8 +1912,11 @@ public sealed partial class Lowering
         bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
             && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
         bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
+        bool runtimeManagedTuple = body is Expr.TupleLit;
+        bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
-            && !runtimeManagedBytes && !runtimeManagedBigInt)
+            && !runtimeManagedBytes && !runtimeManagedBigInt
+            && !runtimeManagedTuple && !runtimeManagedRecord)
         {
             return LowerExpr(body);
         }
@@ -1923,11 +1926,15 @@ public sealed partial class Lowering
         bool savedListRequest = _runtimeRcListAllocationRequested;
         bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
         bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
+        bool savedTupleRequest = _runtimeRcTupleAllocationRequested;
+        bool savedRecordRequest = _runtimeRcRecordAllocationRequested;
         _runtimeRcStringAllocationRequested |= runtimeManagedString;
         _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
         _runtimeRcListAllocationRequested |= runtimeManagedList;
         _runtimeRcBytesAllocationRequested |= runtimeManagedBytes;
         _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
+        _runtimeRcTupleAllocationRequested |= runtimeManagedTuple;
+        _runtimeRcRecordAllocationRequested |= runtimeManagedRecord;
         try
         {
             return LowerExpr(body);
@@ -1939,6 +1946,8 @@ public sealed partial class Lowering
             _runtimeRcListAllocationRequested = savedListRequest;
             _runtimeRcBytesAllocationRequested = savedBytesRequest;
             _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
+            _runtimeRcTupleAllocationRequested = savedTupleRequest;
+            _runtimeRcRecordAllocationRequested = savedRecordRequest;
         }
     }
 

@@ -930,6 +930,39 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Fresh_tuple_and_record_bodies_survive_scope_reset_through_runtime_rc()
+    {
+        IrProgram tuple = LowerProgram("let marker = \"owned\" in (40, 2)");
+        IrProgram record = LowerProgram(
+            """
+            type Point =
+                | x: Int
+                | y: Int
+            let marker = "owned" in Point(x = 40, y = 2)
+            """);
+
+        tuple.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        record.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { tuple, record })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public void Borrowed_pointer_tuple_body_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let text = Ashes.Text.fromInt(42) in (text, 2)");
+
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "A tuple borrowing an existing pointer child must not be promoted to an owning RC graph.");
+    }
+
+    [Test]
     public void CopyOutArena_instruction_has_correct_fields()
     {
         var inst = new IrInst.CopyOutArena(7, 3, -1);
