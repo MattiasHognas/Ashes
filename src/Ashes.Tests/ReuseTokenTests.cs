@@ -50,6 +50,47 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
+    public void Fresh_helper_is_inlined_into_tco_back_edge_before_list_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            let advance dt bodies = moveBodies(dt)(makeBodies(3))
+
+            let recursive run turns bodies =
+                if turns == 0
+                then bodies
+                else run(turns - 1)(advance(1.0)(bodies))
+
+            run(10)([])
+            """);
+
+        program.Functions.Any(function =>
+            function.LocalNames?.Values.Contains("turns", StringComparer.Ordinal) == true
+            && function.Instructions.Any(instruction =>
+                instruction is IrInst.MakeClosure { FuncLabel: var label }
+                    && label.StartsWith("moveBodies__reuse", StringComparison.Ordinal))
+            && function.Instructions.Any(instruction => instruction is IrInst.RestoreStackPointer))
+            .ShouldBeTrue();
+    }
+
+    [Test]
     public void Recursive_list_rewriter_specialization_reuses_untagged_cells()
     {
         IrProgram program = LowerProgram("""

@@ -193,6 +193,14 @@ promotion. Control-flow reachability now excludes those stores, derived exit con
 the managed regime, and runtime-managed `ConcatStrTip` consumes its predecessor uniformly across
 in-place and fallback paths. Standard N=10,000 is byte-identical and completes in 3.26 seconds.
 
+Fresh-result helpers used directly as TCO successor arguments are now inlined into the back edge.
+This retains their aggregate inside the loop arena until the existing copy/reset boundary instead
+of normalizing it to RC at an intermediate helper return. Ownership-summary freshness is the gate,
+and capture expansion supplies any functions referenced by the inlined helper. Combined with local
+list-and-record reuse, n-body's N=5,000,000 diagnostic improved from 4.05–4.11 seconds to
+3.62–3.72 seconds with byte-identical output and flat 8.2 MB peak RSS. The remaining gap to the
+pre-migration control is still tracked by the challenge regression sweep.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

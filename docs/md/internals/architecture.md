@@ -713,7 +713,13 @@ Each thread has a chunked bump arena. A scope records its cursor and current
 chunk with `SaveArenaState`; `RestoreArenaState` resets the cursor, and
 `ReclaimArenaChunks` returns abandoned chunks through `munmap` or
 `VirtualFree`. TCO and coroutine restart edges use fixed watermarks to reclaim
-per-iteration scratch.
+per-iteration scratch. When a non-recursive helper has a fresh ownership
+summary and supplies a TCO successor argument, lowering may inline it into the
+back edge. Its aggregate then remains inside the loop's arena window until the
+existing copy/reset boundary, avoiding an otherwise redundant intermediate RC
+normalization. Capture expansion includes the helper's own function
+dependencies; helpers with aliasing or poisoned results keep the ordinary call
+boundary.
 
 Arena use is not a permissive fallback: an escaping ordinary graph must be
 normalized to RC unless it is inside one of the explicit boundaries above.

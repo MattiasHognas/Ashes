@@ -394,6 +394,11 @@ public sealed partial class Lowering
     // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
     private bool _inSpecialization;
 
+    // True only while evaluating a tail self-call's successor arguments. A fresh-result,
+    // non-recursive helper can be inlined here so its arena graph stays inside the loop window
+    // instead of crossing an intermediate call boundary before the back-edge copy/reset.
+    private bool _loweringTcoBackEdgeArguments;
+
     // Nesting depth of LowerLambdaCore (0 = lowering a top-level declaration's value). Used to snapshot
     // the top-level scope so a lazily-generated reuse specialization can resolve the stdlib helper
     // functions it references (Ashes_Map_makeNode, ...) as globals, even though it is generated deep
@@ -4994,13 +4999,7 @@ public sealed partial class Lowering
 
     private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
     {
-        var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
-        if (selfName is not null)
-        {
-            bound.Add(selfName);
-        }
-
-        var free = FreeVars(lam.Body, bound);
+        HashSet<string> free = LowerLambdaCoreCollectFreeVariables(lam, selfName);
 
         // For a mutual-recursion group member, every member shares one identical environment so a
         // sibling's closure can be reconstructed (via Binding.Self) using the current member's env.
@@ -5018,7 +5017,28 @@ public sealed partial class Lowering
             }
         }
 
-        // At lambda creation site: allocate env if needed
+        int envPtrTemp = LowerLambdaCoreBuildEnvAllocation(captures, recursiveGroup, stackAllocateClosure);
+        return (free, captures, envPtrTemp, knownCaptureLabels);
+    }
+
+    private HashSet<string> LowerLambdaCoreCollectFreeVariables(Expr.Lambda lam, string? selfName)
+    {
+        var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
+        if (selfName is not null)
+        {
+            bound.Add(selfName);
+        }
+
+        var free = FreeVars(lam.Body, bound);
+        ExpandFreshInlinableCaptures(free, bound);
+        return free;
+    }
+
+    private int LowerLambdaCoreBuildEnvAllocation(
+        IReadOnlyList<string> captures,
+        RecursiveGroupContext? recursiveGroup,
+        bool stackAllocateClosure)
+    {
         int envPtrTemp;
         if (recursiveGroup is not null)
         {
@@ -5052,7 +5072,28 @@ public sealed partial class Lowering
             }
         }
 
-        return (free, captures, envPtrTemp, knownCaptureLabels);
+        return envPtrTemp;
+    }
+
+    private void ExpandFreshInlinableCaptures(HashSet<string> free, IReadOnlySet<string> outerBound)
+    {
+        foreach (string helperName in free.ToArray())
+        {
+            if (!_inlinableFunctions.TryGetValue(helperName, out var helper)
+                || GetOwnershipSummary(helperName) is not { ResultFresh: true })
+            {
+                continue;
+            }
+
+            var helperBound = new HashSet<string>(helper.Params, StringComparer.Ordinal);
+            foreach (string helperFree in FreeVars(helper.Body, helperBound))
+            {
+                if (!outerBound.Contains(helperFree))
+                {
+                    free.Add(helperFree);
+                }
+            }
+        }
     }
 
     // The enclosing function's lowering state snapshotted around a lambda body (restored by
@@ -6534,7 +6575,11 @@ public sealed partial class Lowering
     // isolated scope where only inline/by-label resolution works.
     private (int, TypeRef)? LowerCallTryReuseInlineForm(Expr rootExpr, List<Expr> collectedArgs)
     {
-        if ((_reuseTokens.Count > 0 || _inSpecialization)
+        if ((_reuseTokens.Count > 0
+                || _inSpecialization
+                || _loweringTcoBackEdgeArguments
+                    && ResolveSpecializableCalleeName(rootExpr) is { } freshInlineName
+                    && GetOwnershipSummary(freshInlineName) is { ResultFresh: true })
             && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
             && !_inliningInProgress.Contains(inlineName)
@@ -6554,7 +6599,7 @@ public sealed partial class Lowering
         tco.InTailPosition = false;
 
         List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(collectedArgs);
-        var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+        (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
         foreach (string alias in transferredPatternAliases)
         {
             _activeRuntimeManagedTcoPatternAliases.Remove(alias);
@@ -6605,6 +6650,22 @@ public sealed partial class Lowering
         tco.InTailPosition = savedTail;
 
         return LowerCallTcoBackEdgeDummy();
+    }
+
+    private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalBackEdgeArgs(
+        TcoContext tco,
+        List<Expr> collectedArgs)
+    {
+        bool savedBackEdgeArguments = _loweringTcoBackEdgeArguments;
+        _loweringTcoBackEdgeArguments = true;
+        try
+        {
+            return LowerCallTcoEvalArgs(tco, collectedArgs);
+        }
+        finally
+        {
+            _loweringTcoBackEdgeArguments = savedBackEdgeArguments;
+        }
     }
 
     private (int Temp, TypeRef Type) LowerCallTcoBackEdgeDummy()

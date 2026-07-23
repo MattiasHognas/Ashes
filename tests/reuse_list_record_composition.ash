@@ -20,6 +20,13 @@ let recursive moveBodies dt bodies =
             match body with
                 | Body(x, velocity) -> Body(x = x + dt * velocity, velocity = velocity) :: moveBodies(dt)(rest)
 
+let advance dt _ = moveBodies(dt)(makeBodies(3))
+
+let recursive run turns bodies =
+    if turns == 0
+    then bodies
+    else run(turns - 1)(advance(1.0)(bodies))
+
 let recursive positions bodies output =
     match bodies with
         | [] -> output
@@ -32,4 +39,4 @@ let recursive positions bodies output =
                         else " "
                     in positions(rest)(output + separator + text.formatFloat(x)(1))
 
-io.print(positions(moveBodies(1.0)(makeBodies(3)))(""))
+io.print(positions(run(10)([]))(""))

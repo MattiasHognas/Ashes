@@ -414,6 +414,19 @@ remaining hot cost is the per-timestep RC normalization/release of the five-cell
 The next performance slice must remove or amortize that RC boundary while preserving
 `updateVel`'s aliased `allBodies` read, rather than broadening local reuse unsafely.
 
+Inlining a fresh-result helper specifically while evaluating a TCO successor argument removes one
+such boundary without changing general call ownership. `run` now lowers `advance` inside its back
+edge; capture expansion makes `updateVel` and `updatePos` available there, and the existing
+fresh-result composition applies before the loop's established copy/reset boundary. Helpers whose
+ownership result aliases an input or is poisoned retain their ordinary call boundary.
+
+This is a measurable but partial recovery. Three N=5,000,000 runs completed in 3.62, 3.63, and
+3.72 seconds at roughly 8.2 MB peak RSS, versus 4.05–4.11 seconds before the inline and about
+3.82 seconds before the pointer-bearing reuse slice. N=1,000 remains byte-identical. The
+pre-migration diagnostic was roughly 2.00 seconds, so the item remains open; the next slice must
+profile the remaining list-of-record RC normalization and release path rather than attributing it
+to arena allocation.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against
