@@ -204,6 +204,25 @@ Filter by test class:
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/ClassName/**"
 ```
 
+RC Perceus work normally starts with the ownership, reuse, and arena-boundary
+classes before the native memory profiles:
+
+```sh
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/PerceusLifetimePlacementTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/OwnershipTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/ReuseTokenTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/ArenaDeallocationTests/**"
+```
+
+For allocator/lifetime behavior, add or run the multi-scale native RSS tests in
+`LinuxBackendCoverageTests`; see
+[Compiler Memory Regressions](testing.md#compiler-memory-regressions). Correct
+output alone is insufficient for a memory-management change.
+
 ### LSP Unit Tests
 
 ```sh

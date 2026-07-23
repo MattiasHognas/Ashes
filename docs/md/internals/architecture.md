@@ -378,7 +378,7 @@ parked leaves.
 composite as their `Waiter`, each completion decrements the composite's counter
 (`all`) or delivers the first result (`race`), and the composite completes to its
 own waiter — a handler blocked in `all` never serializes its peers.
-`Ashes.Task.spawn` enqueues a detached task with a **private arena**
+`Ashes.Task.spawn` enqueues a detached task with a **private region**
 (`ArenaOwner` = itself): each scheduler step installs the owning task's arena
 cursor as the global bump allocator and writes it back after, sub-tasks inherit
 the awaiter's owner (zero-copy awaits), and a spawned root's arena is reaped when
@@ -402,8 +402,8 @@ every suspend), since positional before/after analysis is unsound across a
 backward jump. Awaits inside *nested plain lambdas* still lower to a blocking
 `RunTask` — only the helper's own coroutine scope suspends.
 
-The restart back-edge also carries a **per-iteration arena reset** (the same
-watermark + copy-out machinery as synchronous TCO loops), so a long-lived loop —
+The restart back-edge also carries a **per-iteration region reset** (the same
+watermark and explicitly classified compaction machinery as region-managed synchronous TCO loops), so a long-lived loop —
 an HTTP keep-alive connection serving thousands of requests — reclaims each
 iteration's allocations instead of growing its arena per request. Loop-invariant
 and scalar arguments take the plain reset (flat memory); fresh heap-typed
@@ -417,9 +417,8 @@ interleaved siblings could allocate above a stale watermark.
 
 #### Task frames and memory
 
-A `Task` value is a heap **state struct** allocated by `CreateTask` through the
-ordinary arena bump allocator — the same per-thread arena as every other owned
-value. The struct holds a fixed header (state index, coroutine function pointer,
+A `Task` value is a heap **state struct** allocated by `CreateTask` in its
+scheduler-owned region. The struct holds a fixed header (state index, coroutine function pointer,
 result slot, awaited-task pointer, scheduler chaining/wait metadata) followed by
 the coroutine's captured environment and one slot per variable that is live
 across an `await`. `StateMachineTransform` splits the async body at each
@@ -428,10 +427,9 @@ save/restore sequences, so suspension serializes the live temps into the struct
 and resumption reloads them — **no machine stack survives across an `await`**;
 a suspended task costs its state struct, not a stack frame.
 
-Task memory is reclaimed by the ownership-scope watermark mechanism plus the
-scheduler's spawned-arena reap: ordinary task structs return when an enclosing
-ownership scope resets the arena (subject to the usual conservative escape rules
-in `Lowering.Ownership.cs`), and a spawned root task's private arena is freed by
+Task memory is reclaimed by scoped scheduler watermarks plus the
+scheduler's spawned-region reap: ordinary task structs return when an enclosing
+task/capability scope resets its region, and a spawned root task's private region is freed by
 the scheduler when the task completes. Task execution is **single-threaded on
 the calling thread** — the scheduler steps every task on the thread that invoked
 `Ashes.Task.run` (concurrency, not parallelism), so all task allocations land
@@ -460,7 +458,7 @@ bundles, pinning), SNI / multiple certificates, ALPN, HTTP/2, HTTP/3.
 
 A server is not a new runtime — it is the composition already described: the run-queue
 scheduler (one cooperative poll loop per process), `Ashes.Task.spawn` (each accepted
-connection's handler is a detached task with a private arena reaped on completion, so
+connection's handler is a detached task with a private region reaped on completion, so
 resident memory is bounded under sustained load), and the async tail-recursive loop
 transform (the accept loop and each connection's keep-alive loop are single suspending
 coroutines with the per-iteration arena reset). `Ashes.Net.Tcp.Server.serve` /
