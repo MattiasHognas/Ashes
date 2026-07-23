@@ -679,6 +679,28 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_tuple_with_fresh_adt_and_record_children_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("type Pair = | Pair(Int, Int)\ntype Point = | x: Int | y: Int\nlet escaped = (let values = (Pair(40)(2), Point(x = 40, y = 2)) in values) in match escaped with | (Pair(left, right), point) -> left + right + point.x + point.y");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Point", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_tuple_with_borrowed_adt_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Pair = | Pair(Int, Int)\nlet child = Pair(40)(2) in let escaped = (let values = (child, 0) in values) in match escaped with | (Pair(left, right), bonus) -> left + right + bonus");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT

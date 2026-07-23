@@ -2097,7 +2097,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 41).ConfigureAwait(false);
         List<MemoryExecutionResult> tuple = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleMemoryProgram,
-            outputPerIteration: 87).ConfigureAwait(false);
+            outputPerIteration: 129).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
             outputPerIteration: 109).ConfigureAwait(false);
@@ -5143,18 +5143,21 @@ public sealed class LinuxBackendCoverageTests
 
     private static string BuildRuntimeRcTupleMemoryProgram(int iterations)
         => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
             let recursive loop n total =
                 if n <= 0 then total
                 else
                     let pair =
-                        let fresh = ((40, 2), Ashes.Text.fromInt(40), Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42), [40, 2]) in fresh
+                        let fresh = ((40, 2), Ashes.Text.fromInt(40), Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42), [40, 2], Pair(40)(2)) in fresh
                     in
                     match pair with
-                        | ((left, right), text, bytes, big, values) ->
+                        | ((left, right), text, bytes, big, values, Pair(pairLeft, pairRight)) ->
                             match values with
                                 | [] -> loop(n - 1)(total)
                                 | head :: _ ->
-                                    loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head)
+                                    loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + pairLeft + pairRight)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

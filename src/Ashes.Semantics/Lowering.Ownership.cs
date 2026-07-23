@@ -508,7 +508,8 @@ public sealed partial class Lowering
         {
             TypeRef child = Prune(tuple.Elements[i]);
             if (child is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                || child is TypeRef.TList list && CanArenaReset(Prune(list.Element)))
+                || child is TypeRef.TList list && CanArenaReset(Prune(list.Element))
+                || child is TypeRef.TNamedType)
             {
                 children.Add((i, child));
             }
@@ -531,6 +532,10 @@ public sealed partial class Lowering
                 else if (childType is TypeRef.TList)
                 {
                     EmitRuntimeManagedListDrop(childTemp);
+                }
+                else if (childType is TypeRef.TNamedType childAdt)
+                {
+                    EmitRuntimeManagedAdtDrop(childTemp, childAdt);
                 }
                 else
                 {

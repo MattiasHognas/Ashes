@@ -6101,30 +6101,7 @@ public sealed partial class Lowering
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
             Expr element = tuple.Elements[i];
-            bool savedStringRequest = _runtimeRcStringAllocationRequested;
-            bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
-            bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
-            bool savedListRequest = _runtimeRcListAllocationRequested;
-            _runtimeRcStringAllocationRequested = savedStringRequest
-                || _runtimeRcTupleAllocationRequested
-                    && IsRuntimeRcStringProducer(element)
-                    && IsRuntimeRcClosureCaptureSafeStringProducer(element);
-            _runtimeRcBytesAllocationRequested = savedBytesRequest
-                || _runtimeRcTupleAllocationRequested
-                    && IsRuntimeRcBytesProducer(element)
-                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
-            _runtimeRcBigIntAllocationRequested = savedBigIntRequest
-                || _runtimeRcTupleAllocationRequested
-                    && IsRuntimeRcBigIntProducer(element)
-                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
-            _runtimeRcListAllocationRequested = savedListRequest
-                || _runtimeRcTupleAllocationRequested
-                    && IsFreshListConstructionExpression(element);
-            (int temp, TypeRef type) = LowerExpr(element);
-            _runtimeRcStringAllocationRequested = savedStringRequest;
-            _runtimeRcBytesAllocationRequested = savedBytesRequest;
-            _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
-            _runtimeRcListAllocationRequested = savedListRequest;
+            (int temp, TypeRef type) = LowerTupleElement(element);
             elementTemps.Add(temp);
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
@@ -6147,13 +6124,48 @@ public sealed partial class Lowering
         return (tupleTemp, new TypeRef.TTuple(elementTypes));
     }
 
+    private (int Temp, TypeRef Type) LowerTupleElement(Expr element)
+    {
+        (bool String, bool Bytes, bool BigInt, bool List, bool Adt, bool Record) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcCopyAdtAllocationRequested,
+            _runtimeRcRecordAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcStringProducer(element)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBytesProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBigIntProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
+        _runtimeRcListAllocationRequested = saved.List
+            || _runtimeRcTupleAllocationRequested && IsFreshListConstructionExpression(element);
+        _runtimeRcCopyAdtAllocationRequested = saved.Adt
+            || _runtimeRcTupleAllocationRequested && IsConstructorExpression(element);
+        _runtimeRcRecordAllocationRequested = saved.Record
+            || _runtimeRcTupleAllocationRequested && element is Expr.RecordLit;
+        (int Temp, TypeRef Type) lowered = LowerExpr(element);
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcCopyAdtAllocationRequested,
+            _runtimeRcRecordAllocationRequested) = saved;
+        return lowered;
+    }
+
     private bool IsRuntimeManageableTupleElement(TypeRef type, int temp)
     {
         TypeRef pruned = Prune(type);
         return CanArenaReset(pruned)
             || IsRuntimeManagedResultTemp(temp)
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                    || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element)));
+                    || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element))
+                    || pruned is TypeRef.TNamedType);
     }
 
     private (int, TypeRef) LowerCons(Expr.Cons cons)

@@ -439,7 +439,9 @@ and a uniqueness-aware recursive drop releases children before their parent. Bor
 remain rejected. Fresh owned String producers may also move into a tuple; String literals and borrowed
 Strings remain non-owning pointers and therefore keep the tuple on the arena path. Fresh Bytes and
 BigInt producers use the same owned-child rule and are released by the parent's recursive drop. A
-fully fresh copy-element list may move into a tuple as well; borrowed list spines remain rejected.
+fully fresh copy-element list may move into a tuple as well. Fresh runtime-manageable user ADTs and
+records now join that graph through their type-directed droppers; borrowed aggregate children remain
+rejected.
 Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
 tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
 drop releases nested children only for the last owner; the immediate-match path retains the same contract.
