@@ -254,6 +254,29 @@ partial-application result, so the owner's drop lands after the closure's applic
 the subject was freed before the substitute read it). Regression:
 `EndToEndNativeBackendTests.Large_runtime_managed_string_captured_into_closure_survives_until_applied`.
 
+A TCO loop's string accumulator returned inside a tuple is now copied out of the reused arena. A
+tail-recursive parser step such as `readWord acc text = ... | Some((h, t)) -> if h == " " then (acc,
+t) else readWord(acc + h)(t)` returns its `String` accumulator (and the match-bound suffix `tail`) in
+a tuple. Both live in the callee's arena, which the loop resets in place on every back-edge; a
+directly-returned `String` is copied out at the return boundary, but a `String` nested in a tuple
+field was not, so a second call reusing the same arena overwrote the first call's word
+(`value=value` instead of `name=value`). `MaterializeEscapingStringTupleElement` now copies such a
+field out to an independent RC string — but only inside a TCO loop (`_tcoCtx` set), only for a bare
+variable with no RC ownership of its own (an already-owned value like `let text = fromInt(42) in
+(text, 2)` stays arena-managed, preserving the borrowed-pointer-tuple contract), and skipping any
+element the ownership system already keeps alive. Because inference is interleaved with lowering the
+accumulator's element type is often an unresolved type variable at this point (indistinguishable from
+a scalar accumulator's), so the copy-out is emitted provisionally with a `DeferredElementType` and a
+post-inference pass (`ResolveDeferredTupleMaterializations`) keeps it when the type resolved to `Str`
+or rewrites it to a plain `Borrow` alias when it resolved to a scalar — a scalar field is never
+byte-copied as a length-prefixed string. The same hazard when the tuple is wrapped in an ADT
+constructor (`Ok((acc, tail))`, which every hand-written parser's `parseStringBody` returns) is
+handled by recursing `ProducesFreshTuple` into constructor arguments so the tuple flag is set through
+the wrapper. Recovers `tests/text_json_parser_smoke.ash` (a hand-written JSON parser whose object
+keys and member suffixes were both corrupted). Regressions:
+`EndToEndNativeBackendTests.Tco_loop_string_accumulator_returned_in_tuple_survives_next_call`, its
+`_adt_wrapped_tuple_` counterpart, and `Tco_loop_int_accumulator_returned_in_tuple_is_not_corrupted_as_string`.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

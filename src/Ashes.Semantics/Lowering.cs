@@ -25,6 +25,7 @@ public sealed partial class Lowering
     // (ResolveDeferredAdds). The shared operand var is added to _addConstrainedTvars so it stays
     // monomorphic (not generalized) — that is what lets a later use resolve it.
     private bool _hasDeferredAdds;
+    private bool _hasDeferredTupleMaterializations;
     private readonly List<TypeRef.TVar> _addConstrainedVars = new();
 
     // Current representative ids of the '+'-constrained type vars (a var may have been unified since
@@ -764,6 +765,7 @@ public sealed partial class Lowering
         // After the operator resolutions: argument types the back-edge copy-out decision was
         // waiting on are now as concrete as they will ever be.
         ResolveDeferredTcoResets();
+        ResolveDeferredTupleMaterializations();
 
         // Any concrete capability left in the entry expression's row after inference has no handler
         // discharging it — a compile-time error, not a runtime failure.
@@ -2201,6 +2203,47 @@ public sealed partial class Lowering
         return inst;
     }
 
+    // Patches the provisional string copy-outs emitted by MaterializeEscapingStringTupleElement for
+    // tuple fields whose element type was an unresolved var at lowering time. Now that inference is
+    // complete: a field that resolved to Str really is a runtime-managed string that would dangle
+    // into the reused arena, so its copy-out stays. A field that resolved to a scalar (Int/Float/Bool)
+    // never dangles — rewrite its copy-out to a plain Borrow alias (dest = src, no RC change, no
+    // byte copy) so the scalar value is stored verbatim instead of being mis-read as a length-prefixed
+    // string.
+    private void ResolveDeferredTupleMaterializations()
+    {
+        if (!_hasDeferredTupleMaterializations)
+        {
+            return;
+        }
+
+        ResolveDeferredTupleMaterializationsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredTupleMaterializationsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredTupleMaterializationsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.CopyOutArena { DeferredElementType: { } elementType } copy)
+            {
+                continue;
+            }
+
+            if (Prune(elementType) is TypeRef.TStr)
+            {
+                instructions[i] = copy with { DeferredElementType = null };
+            }
+            else
+            {
+                instructions[i] = new IrInst.Borrow(copy.DestTemp, copy.SrcTemp) { Location = copy.Location };
+            }
+        }
+    }
+
     // Patches the provisional MulInts emitted for '*' with two unconstrained operands, now that
     // inference is complete. Any operand var still unbound defaults to Int. Then each provisional
     // multiply becomes MulFloat (Float), BigIntBinary "mul" (BigInt), or stays MulInt.
@@ -2772,12 +2815,12 @@ public sealed partial class Lowering
         }
 
         bool runtimeManagedString = IsRuntimeRcStringProducer(body);
-        bool runtimeManagedAdt = IsFreshRuntimeManageableAdtExpression(body);
+        bool runtimeManagedAdt = ProducesFreshRuntimeManageableAdt(body);
         bool runtimeManagedList = IsFreshListConstructionExpression(body);
         bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
             && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
         bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
-        bool runtimeManagedTuple = body is Expr.TupleLit;
+        bool runtimeManagedTuple = ProducesFreshTuple(body);
         bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
         bool runtimeManagedClosure = !_usesAsync
             && !_inCoroutineBody
@@ -2803,6 +2846,50 @@ public sealed partial class Lowering
             runtimeManagedClosure);
     }
 
+    // True when the escaping result IS a tuple (directly, or through the arms of a match/if or the
+    // body of a let). A tuple built in a match arm otherwise stays arena-managed, so a function like
+    // `readWord acc text = ... -> (acc, rest)` returns a tuple whose runtime-managed string field
+    // lives in the callee's arena; the next call reuses that arena and overwrites it. Marking the
+    // result a fresh tuple sets _runtimeRcTupleAllocationRequested, so LowerTupleLit allocates the
+    // tuple in the RC heap (only when its elements are themselves runtime-manageable — a scalar tuple
+    // stays arena), keeping it alive across calls.
+    private bool ProducesFreshTuple(Expr body)
+        => body switch
+        {
+            Expr.TupleLit => true,
+            Expr.If iff => ProducesFreshTuple(iff.Then) || ProducesFreshTuple(iff.Else),
+            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshTuple(matchCase.Body)),
+            Expr.Let let => ProducesFreshTuple(let.Body),
+            Expr.LetResult letResult => ProducesFreshTuple(letResult.Body),
+            Expr.LetRecursive letRecursive => ProducesFreshTuple(letRecursive.Body),
+            // A tuple wrapped in an ADT constructor (e.g. `Ok((acc, tail))` from a JSON parser) carries
+            // the same dangling-string hazard: its string fields live in the callee's arena. Recurse
+            // into the constructor's arguments so the flag is set and LowerTupleLit materializes them.
+            // Only real constructor applications, not ordinary function calls (whose tuple argument is
+            // consumed, not returned).
+            _ when TryDescribeConstructorExpression(body, out _, out var ctorArgs, out _) && ctorArgs is not null
+                => ctorArgs.Any(ProducesFreshTuple),
+            _ => false,
+        };
+
+    // Like IsFreshRuntimeManageableAdtExpression but recurses through the arms of a match/if and the
+    // body of a let (mirroring ProducesFreshTuple). A tail-recursive parser like `parseStringBody acc
+    // text = match uncons(text) with ... | Some((h,t)) -> if h == "\"" then Ok((acc, tail)) else
+    // parseStringBody(acc + head)(tail)` returns its fresh `Ok((acc, tail))` from a nested match/if
+    // arm, not as the whole body. Detecting it here marks the result an escaping runtime-managed ADT,
+    // so the Ok survives the arena reset AND (via LowerEscapingRuntimeManagedResult's tuple broadening)
+    // the tuple's string fields are materialized out of the reused arena.
+    private bool ProducesFreshRuntimeManageableAdt(Expr body)
+        => body switch
+        {
+            Expr.If iff => ProducesFreshRuntimeManageableAdt(iff.Then) || ProducesFreshRuntimeManageableAdt(iff.Else),
+            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshRuntimeManageableAdt(matchCase.Body)),
+            Expr.Let let => ProducesFreshRuntimeManageableAdt(let.Body),
+            Expr.LetResult letResult => ProducesFreshRuntimeManageableAdt(letResult.Body),
+            Expr.LetRecursive letRecursive => ProducesFreshRuntimeManageableAdt(letRecursive.Body),
+            _ => IsFreshRuntimeManageableAdtExpression(body),
+        };
+
     private (int Temp, TypeRef Type) LowerEscapingRuntimeManagedResult(
         Expr body,
         bool runtimeManagedString,
@@ -2827,7 +2914,14 @@ public sealed partial class Lowering
         _runtimeRcListAllocationRequested |= runtimeManagedList;
         _runtimeRcBytesAllocationRequested |= runtimeManagedBytes;
         _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
-        _runtimeRcTupleAllocationRequested |= runtimeManagedTuple;
+        // A tuple nested inside an escaping ADT/list/record (e.g. `Ok((acc, tail))` from a JSON
+        // parser) carries the same dangling-string hazard as a directly-returned tuple: its string
+        // fields live in the callee's arena and the next call overwrites them. The enclosing composite
+        // is RC-allocated and escapes, so mark tuples runtime-managed too, letting LowerTupleLit
+        // materialize (copy out) their string fields. Restricted to string-field materialization —
+        // a scalar tuple still stays arena (see IsRuntimeManageableTupleElement).
+        _runtimeRcTupleAllocationRequested |=
+            runtimeManagedTuple || runtimeManagedAdt || runtimeManagedList || runtimeManagedRecord;
         _runtimeRcRecordAllocationRequested |= runtimeManagedRecord;
         _runtimeRcClosureAllocationRequested |= runtimeManagedClosure;
         try
@@ -8676,7 +8770,7 @@ public sealed partial class Lowering
         {
             Expr element = tuple.Elements[i];
             (int temp, TypeRef type) = LowerTupleElement(element);
-            elementTemps.Add(temp);
+            elementTemps.Add(MaterializeEscapingStringTupleElement(element, temp, type));
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
         }
@@ -8696,6 +8790,51 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tupleTemp, new TypeRef.TTuple(elementTypes));
+    }
+
+    // A bare string variable placed into a tuple that ESCAPES the function (the tuple is the
+    // runtime-managed result — _runtimeRcTupleAllocationRequested is set) points at a value in the
+    // callee's arena (a loop accumulator, a match-bound suffix). The next call reuses that arena and
+    // overwrites it, so the returned tuple reads back a later value. A directly-returned string is
+    // copied out at the call boundary; a string nested in a tuple field is not. Copy it out here so
+    // the escaping tuple owns an independent RC string. Gated on the escape flag, so non-escaping
+    // internal tuples (e.g. inside a fully-reusing specialization, where CopyOut is forbidden) are
+    // untouched. Producers (`a + b`, `fromInt`) already allocate fresh and are left alone.
+    private int MaterializeEscapingStringTupleElement(Expr element, int temp, TypeRef type)
+    {
+        // A bare string variable placed into an escaping tuple only dangles when it lives in an arena
+        // that is reused in place — the accumulator / match-bound suffix (`acc`, `tail`) of a TCO loop,
+        // whose arena is reset on every back-edge and overwritten by the next call. Outside a TCO loop
+        // the value either has no reuse hazard at all (a top-level `let text = fromInt(42) in (text, 2)`,
+        // which the test suite pins to stay arena-managed) or is already deep-copied at the callee's
+        // return boundary, so materializing would wrongly promote an otherwise arena tuple to an owning
+        // RC graph. Gate on being inside a TCO loop, and never copy a value that already owns a
+        // runtime-managed RC value (the ownership system keeps it alive independently of the arena).
+        //
+        // The element type may still be an unresolved type variable here (inference is interleaved
+        // with lowering, so a string accumulator's var is only unified with Str by a later `+`, and is
+        // indistinguishable from an Int accumulator's). For an unresolved var we emit the copy-out
+        // PROVISIONALLY with DeferredElementType and let ResolveDeferredTupleMaterializations undo it
+        // (rewrite to a plain Borrow) once the type resolves to a scalar. Concrete non-string heap
+        // accumulators (List/Adt/BigInt) resolve to their own type node and take their own copy paths.
+        var pruned = Prune(type);
+        if (!_runtimeRcTupleAllocationRequested
+            || _tcoCtx is null
+            || element is not Expr.Var varElement
+            || pruned is not (TypeRef.TStr or TypeRef.TVar)
+            || LookupOwnedValue(varElement.Name) is { RuntimeManaged: true })
+        {
+            return temp;
+        }
+
+        int materialized = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            materialized, temp, StaticSizeBytes: -1, RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization,
+            DeferredElementType: pruned is TypeRef.TVar ? type : null));
+        _runtimeManagedResultTemps.Add(materialized);
+        _hasDeferredTupleMaterializations |= pruned is TypeRef.TVar;
+        return materialized;
     }
 
     private (int Temp, TypeRef Type) LowerTupleElement(Expr element)

@@ -519,7 +519,14 @@ public abstract record IrInst
         int SrcTemp,
         int StaticSizeBytes,
         bool RuntimeManaged,
-        CopyOutPurpose Purpose
+        CopyOutPurpose Purpose,
+        /// <summary>When set, this copy-out was emitted provisionally for a tuple field whose element
+        /// type was still an unresolved type variable (a string accumulator's var is only unified with
+        /// Str by a later <c>+</c>). A post-lowering pass (<c>ResolveDeferredTupleMaterializations</c>)
+        /// prunes this type once inference is complete: if it is <c>TStr</c> the copy-out stays; if it
+        /// resolved to a scalar (Int/Float/Bool), the field never dangles and the copy-out is rewritten
+        /// to a plain <see cref="Borrow"/> alias so no bytes are mis-copied as a string.</summary>
+        TypeRef? DeferredElementType = null
     ) : IrInst
     {
         /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from

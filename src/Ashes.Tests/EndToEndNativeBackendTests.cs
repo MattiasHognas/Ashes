@@ -635,6 +635,83 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("consumed[ rest]\n");
     }
 
+    [Test]
+    public async Task Tco_loop_string_accumulator_returned_in_tuple_survives_next_call()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a tail-recursive loop returns its string accumulator inside a tuple
+        // (`(acc, rest)`). The accumulator lives in the callee's arena, which the loop resets in place
+        // on every back-edge; the returned tuple's string field was not copied out, so a SECOND call
+        // reusing the same arena overwrote the first call's word ("value=value" instead of
+        // "name=value"). MaterializeEscapingStringTupleElement now copies the field out to an
+        // independent RC string inside the TCO loop.
+        var src = """
+            let recursive readWord acc text =
+                match Ashes.Text.uncons(text) with
+                    | None -> (acc, "")
+                    | Some((h, t)) -> if h == " " then (acc, t) else readWord(acc + h)(t)
+            in match readWord("")("name value") with
+                | (w1, r1) ->
+                    match readWord("")(r1) with
+                        | (w2, r2) -> Ashes.IO.print(w1 + "=" + w2)
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("name=value\n");
+    }
+
+    [Test]
+    public async Task Tco_loop_string_accumulator_returned_in_adt_wrapped_tuple_survives_next_call()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression (text_json_parser_smoke): the same hazard when the tuple is wrapped in an ADT
+        // constructor (`Ok((acc, tail))`, as every hand-written parser's `parseStringBody` returns).
+        // ProducesFreshTuple now recurses into constructor arguments so the flag is set, and both the
+        // accumulator and the match-bound tail suffix are materialized out of the reused arena.
+        var src = """
+            let recursive readWord acc text =
+                match Ashes.Text.uncons(text) with
+                    | None -> Error("eof")
+                    | Some((h, t)) -> if h == " " then Ok((acc, t)) else readWord(acc + h)(t)
+            in match readWord("")("name value ") with
+                | Ok((w1, r1)) ->
+                    (match readWord("")(r1) with
+                        | Ok((w2, r2)) -> Ashes.IO.print(w1 + "=" + w2)
+                        | Error(e) -> Ashes.IO.print(e))
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("name=value\n");
+    }
+
+    [Test]
+    public async Task Tco_loop_int_accumulator_returned_in_tuple_is_not_corrupted_as_string()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Guards the deferred-materialization pass: a scalar (Int) accumulator returned in a tuple has
+        // the same unresolved element type as a string accumulator during lowering, but must NOT be
+        // byte-copied as a length-prefixed string. ResolveDeferredTupleMaterializations rewrites the
+        // provisional copy-out to a plain Borrow once the type resolves to Int.
+        var src = """
+            let recursive sumTo acc n =
+                if n == 0 then (acc, n) else sumTo(acc + n)(n - 1)
+            in match sumTo(0)(2) with
+                | (a, x) ->
+                    match sumTo(0)(3) with
+                        | (b, y) -> Ashes.IO.print(Ashes.Text.fromInt(a) + "=" + Ashes.Text.fromInt(b))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3=6\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();
