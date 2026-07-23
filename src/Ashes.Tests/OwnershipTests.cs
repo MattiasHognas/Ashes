@@ -404,6 +404,20 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_generic_adts_with_fresh_aggregate_payloads_transfer_ownership()
+    {
+        IrProgram list = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box([40, 2]) in box) in match escaped with | Box(values) -> match values with | [] -> 0 | head :: _ -> head");
+        IrProgram tuple = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box((40, 2)) in box) in match escaped with | Box((left, right)) -> left + right");
+
+        list.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+        list.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        list.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+        tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_fresh_recursive_adt_transfers_child_ownership()
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet escaped = (let tree = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in tree) in match escaped with | Leaf -> 0 | Node(left, value, _) -> match left with | Leaf -> value | Node(_, childValue, _) -> value + childValue");

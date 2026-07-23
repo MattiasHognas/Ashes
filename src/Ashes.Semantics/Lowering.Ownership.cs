@@ -1704,7 +1704,7 @@ public sealed partial class Lowering
                     && IsFreshListConstructionExpression(arguments[i]),
                 TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
                     && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
-                TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericScalarProducer(arguments[i]),
+                TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericPayload(arguments[i]),
                 _ => false,
             };
             if (!supported)
@@ -1718,15 +1718,35 @@ public sealed partial class Lowering
         return hasOwnedChild;
     }
 
-    private bool IsRuntimeManageableFreshGenericScalarProducer(Expr expression)
+    private bool IsRuntimeManageableFreshGenericPayload(Expr expression)
     {
         return IsRuntimeRcStringProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeStringProducer(expression)
             || IsRuntimeRcBytesProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBytesProducer(expression)
             || IsRuntimeRcBigIntProducer(expression)
-                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression);
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
+            || IsFreshCopyListExpression(expression)
+            || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple);
     }
+
+    private bool IsFreshGenericTupleExpression(Expr.TupleLit tuple)
+        => tuple.Elements.All(IsFreshGenericAggregateElement);
+
+    private bool IsFreshGenericAggregateElement(Expr expression)
+        => IsInlineCopyLiteral(expression)
+            || IsRuntimeManageableFreshGenericPayload(expression);
+
+    private static bool IsInlineCopyLiteral(Expr expression)
+        => expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit;
+
+    private static bool IsFreshCopyListExpression(Expr expression)
+        => expression switch
+        {
+            Expr.ListLit list => list.Elements.All(IsInlineCopyLiteral),
+            Expr.Cons cons => IsInlineCopyLiteral(cons.Head) && IsFreshCopyListExpression(cons.Tail),
+            _ => false,
+        };
 
     private bool CanRuntimeManageFreshTupleExpression(Expr.TupleLit expression, TypeRef.TTuple tuple)
     {

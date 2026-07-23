@@ -428,8 +428,8 @@ ADTs may also own fresh String, Bytes, BigInt, copy-element list, tuple, and rec
 synthesized tag-aware dropper releases only the live constructor's children. Borrowed recursive or
 pointer children remain gated until child ownership is proven. Single-constructor generic ADTs may own
 a fresh scalar String, Bytes, or BigInt producer once the constructor application specializes the type
-variable; generic copy payloads transfer through the same type-specialized boundary. Borrowed generic
-pointer payloads remain arena-managed.
+variable. Fully fresh copy-element lists and recursively fresh tuple payloads now specialize through the
+same boundary, as do generic copy payloads. Borrowed generic pointer payloads remain arena-managed.
 Fully fresh lists whose element type lowers as a copy value now transfer through the same direct-let
 boundary. Pointer-element lists remain arena-managed, and the type-directed list drop reclaims the
 entire transferred spine at the receiving scope.

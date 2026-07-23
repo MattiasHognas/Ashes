@@ -844,10 +844,12 @@ public sealed partial class Lowering
                     || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && IsRuntimeRcBigIntProducer(argument) && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument);
         _runtimeRcListAllocationRequested = saved.List
-            || runtimeManagedParent && fieldType is TypeRef.TList
+            || runtimeManagedParent && (fieldType is TypeRef.TList
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && IsFreshListConstructionExpression(argument);
         _runtimeRcTupleAllocationRequested = saved.Tuple
-            || runtimeManagedParent && fieldType is TypeRef.TTuple
+            || runtimeManagedParent && (fieldType is TypeRef.TTuple
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && argument is Expr.TupleLit;
         (int Temp, TypeRef Type) lowered = LowerExpr(argument);
         (_runtimeRcStringAllocationRequested,

@@ -2109,7 +2109,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 2).ConfigureAwait(false);
         List<MemoryExecutionResult> genericOwnedChild = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcGenericOwnedChildMemoryProgram,
-            outputPerIteration: 2).ConfigureAwait(false);
+            outputPerIteration: 84).ConfigureAwait(false);
         List<MemoryExecutionResult> higherOrderResult = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderResultMemoryProgram,
             outputPerIteration: 8).ConfigureAwait(false);
@@ -5318,10 +5318,21 @@ public sealed class LinuxBackendCoverageTests
             let recursive loop n total =
                 if n <= 0 then total
                 else
-                    let escaped =
+                    let textBox =
                         let box = Box(Ashes.Text.fromInt(42)) in box
-                    in match escaped with
-                        | Box(value) -> loop(n - 1)(total + Ashes.Text.byteLength(value))
+                    in match textBox with
+                        | Box(text) ->
+                            let listBox =
+                                let box = Box([40, 2]) in box
+                            in match listBox with
+                                | Box(values) ->
+                                    match values with
+                                        | [] -> loop(n - 1)(total)
+                                        | head :: _ ->
+                                            let tupleBox =
+                                                let box = Box((40, 2)) in box
+                                            in match tupleBox with
+                                                | Box((left, right)) -> loop(n - 1)(total + Ashes.Text.byteLength(text) + head + left + right)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
