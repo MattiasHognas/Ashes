@@ -7,6 +7,40 @@ namespace Ashes.Tests;
 public sealed class ReuseTokenTests
 {
     [Test]
+    public void Recursive_list_rewriter_specialization_reuses_untagged_cells()
+    {
+        IrProgram program = LowerProgram("""
+            let recursive bumpAll values =
+                match values with
+                    | [] -> []
+                    | value :: rest -> value + 1 :: bumpAll(rest)
+
+            let recursive repeat turns values =
+                if turns == 0
+                then values
+                else repeat(turns - 1)(bumpAll(values))
+
+            repeat(100)([1, 2, 3])
+            """);
+
+        IrFunction specialization = program.Functions.Single(function =>
+            function.Label.StartsWith("bumpAll__reuse", StringComparison.Ordinal));
+        IrInst.DropReuse[] tokens = specialization.Instructions
+            .OfType<IrInst.DropReuse>()
+            .Where(token => !token.RuntimeManaged)
+            .ToArray();
+        IrInst.AllocReusing[] allocations = specialization.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .Where(allocation => allocation.ListCell)
+            .ToArray();
+
+        tokens.Length.ShouldBe(1);
+        allocations.Length.ShouldBe(1);
+        allocations[0].RuntimeManaged.ShouldBeFalse();
+        allocations[0].TokenTemp.ShouldBe(tokens[0].Target);
+    }
+
+    [Test]
     public void Exhaustive_copy_adt_rebuild_uses_runtime_reuse_tokens()
     {
         IrProgram program = LowerProgram("""

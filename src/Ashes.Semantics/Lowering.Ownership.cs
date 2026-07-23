@@ -1362,7 +1362,9 @@ public sealed partial class Lowering
             int preRestoreEndSlot = NewLocal();
 
             if (CanArenaReset(resultType)
-                || resultTemp >= 0 && IsRuntimeManagedResultTemp(resultTemp))
+                || resultTemp >= 0
+                    && (IsRuntimeManagedResultTemp(resultTemp)
+                        || _reuseResultTemps.Contains(resultTemp)))
             {
                 // Copy-type results and independent runtime-managed heap results survive an arena
                 // reset. A one-shot post pushed during this scope still keeps the window alive.

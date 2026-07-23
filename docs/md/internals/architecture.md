@@ -686,13 +686,20 @@ contract:
    cell address as the token.
 2. If it is shared, decrement it and return null.
 3. `AllocReusing` overwrites a compatible non-null cell; a null token allocates
-   a fresh RC cell.
+   a fresh RC cell. Its layout discriminator keeps tagged ADTs distinct from
+   untagged two-word list cells.
 4. Any token not consumed by a compatible constructor is released.
 
 When an old child is also a field of the rebuilt constructor, the unique path
 moves that reference. The shared/null path duplicates it because the old shared
 parent still owns its field. This is reuse specialization, and it lets pure
 recursive code update unique data in place without changing source semantics.
+Recursive list-rewriter specializations use the same contract: an entry clone
+makes a scalar-element list unique, recursive suffix calls return reused cells
+below their call watermark, and each cons rebuild overwrites its matched
+untagged cell. Pointer-bearing list heads require an additional conditional
+child-transfer proof before they use this path: a unique parent moves each
+child, while a shared parent must retain the child before rebuilding.
 
 ### Scoped arenas
 

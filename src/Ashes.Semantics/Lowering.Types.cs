@@ -398,7 +398,8 @@ public sealed partial class Lowering
     private sealed record ReuseToken(
         int Temp,
         int FieldCount,
-        RuntimeReuseCleanup? RuntimeCleanup)
+        RuntimeReuseCleanup? RuntimeCleanup,
+        bool ListCell = false)
     {
         public bool RuntimeManaged => RuntimeCleanup is not null;
     }

@@ -41,7 +41,7 @@ All original audit findings have been addressed:
 | **Jump-table linking** | The image linkers apply switch jump-table relocations (`R_X86_64_64` in `.rela.rodata`, `IMAGE_REL_AMD64_ADDR64` in `.rdata`, defensive `R_AARCH64_ABS64`), so LLVM's O(1) table dispatch links and runs correctly; the `no-jump-tables` attribute was removed. |
 | **String-literal interning** | Identical string-literal `.rodata` globals are content-addressed and emitted once per module (`LlvmTargetContext.GetOrAddStringLiteralGlobal`), shared across all functions and internal call sites. Compile-time, bounded, leak-free. |
 | **Mutual-recursion TCO** | Eligible `let recursive … and …` groups (same arity, identical parameter types, a cross-member tail call) are merged into one self-recursive `dispatch` function with thin per-member wrappers, so the existing single-function TCO turns mutual recursion into a loop. Ineligible groups keep the closure path. **Design constraint:** members can legally have different parameter types (`ping: Int → Str` tail-calls `pong: Str → Str`), which a single shared typed parameter list cannot merge without unifying incompatible types; hence the same-arity + identical-parameter-types gate (verified against each member's inferred type). Heterogeneous-parameter generalization would need distinct per-member slots (an IR-level slot-union loop) or opaque-coercion dispatch. |
-| **In-place reuse (Perceus-style, no runtime RC)** | Immutable recursive-ADT accumulators are rebuilt in place instead of reallocated: a one-time defensive deep copy at loop entry makes the accumulator uniquely owned, then matched-and-rebuilt-with-the-same-constructor cells are overwritten (`AllocReusing`). Covers direct accumulators, helper-rebuild inlining, recursive-function specialization, and the full `Ashes.Map.set` shape (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity). Fresh heap leaf fields (Str/Bytes/tuple keys & values) are materialized into a persistent to-space/blob on insert and overwritten in place on update; a genuinely-new insert node also lands in to-space. Pure readers (result type ≠ the accumulator ADT, e.g. `Map.get : … → Maybe`) are kept off the reuse path so their result cell isn't stranded in the never-reset to-space. A conservative `IsFullyReusing` gate + `AccumulatorIsFullyPersistent` guard the per-iteration arena reset (extended to admit reset-safe accumulators + scalar resource-handle args). Result: string/int/tuple-valued `Map.set` folds are constant-memory. The nested-re-entry leak is addressed by the CO-2 elision below. |
+| **In-place reuse (Perceus-style, no runtime RC)** | Immutable recursive-ADT accumulators are rebuilt in place instead of reallocated: a one-time defensive deep copy at loop entry makes the accumulator uniquely owned, then matched-and-rebuilt-with-the-same-constructor cells are overwritten (`AllocReusing`). Covers direct accumulators, helper-rebuild inlining, recursive-function specialization, the full `Ashes.Map.set` shape (multi-param / nested-recursive-returning / helper-rebuilding / intermediate-value linearity), and recursive scalar-list rewriters (untagged cons-cell reuse). Fresh heap leaf fields (Str/Bytes/tuple keys & values) are materialized into a persistent to-space/blob on insert and overwritten in place on update; a genuinely-new insert node also lands in to-space. Pure readers (result type ≠ the accumulator, e.g. `Map.get : … → Maybe`) are kept off the reuse path so their result cell isn't stranded in the never-reset to-space. A conservative `IsFullyReusing` gate + `AccumulatorIsFullyPersistent` guard the per-iteration arena reset (extended to admit reset-safe accumulators + scalar resource-handle args). Result: string/int/tuple-valued `Map.set` folds and scalar-list rewrite loops are constant-memory. The nested-re-entry leak is addressed by the CO-2 elision below. |
 | **Move/linearity reuse-copy elision (CO-2)** | The reuse entry deep-copy (the specialization `f$reuse` path and the direct-reuse prologue) is elided when a whole-program move analysis (`Lowering.MoveAnalysis.cs`) proves the accumulator is uniquely owned at every external call site; the copy stays on any uncertainty, so it can only leak, never corrupt. An accumulator argument is a **move** when it is a sole-nullary seed, a fully-fresh construction, a move-linear reference to a move-safe accumulator parameter, a `let`-bound fresh value proven dead-after-use, or a **registered-function call admitted by the result-reachability (may-alias) summary**. That summary (`ComputeResultReach`, a monotone least fixpoint) records, per function, which of its own parameters the result may alias (per-parameter multiplicity capped at 2 — internal sharing poisons via hierarchical **path tokens** + per-binding identity tokens) plus a **poison** flag; `f(args)` is a move iff not poisoned and every reached parameter's argument is itself a move (`IsResultAliasMove`). Covers **result-fresh builders** (reach {}, incl. recursive `let recursive build`), **`wrap`-style result-alias builders** (reach {x}), **higher-order / closure-produced seeds** (capture-aware over-application reach), and **`Ashes.Map.set`-shape reuse-rewriting results** (nested-recursive-return registration; reach {map,key,value}). Remaining conservative (the correct boundary short of full ownership): a result the summary *poisons* — reaches a global or an unmodeled shape. Measured: nested `Map.set` re-entry `O(batches×size)`→constant; a recursive-builder-seeded fold 504 MB→4.7 MB; a `Map.set`-result-seeded fold ≈2× (200k-key). |
 | **Deterministic resource safety** | File/socket/process handles are closed deterministically without GC/RC (Ground Rule 6), via an affine ownership model: recursive `Drop` for resource-bearing aggregates (`Result(_,FileHandle)`, `Some(Socket)`, tuple/list of resources), move-on-destructure and move-on-construction (no double-close), resource drops at the TCO back-edge (fixes the loop-over-files fd leak), `Process` reaping on drop, and deterministic close of resources captured by an escaping closure (a dropper at `closure+24` invoked when the closure is dropped). All runtime gaps closed & verified (fd-bounded under `ulimit -n 64`). |
 | **Use-after-close for match-arm-bound resources (CO-4)** | The static use-after-close check (`ASH006`) already tracks resources whether bound by `let` or by a `match` arm, but the `FileHandle` read intrinsics (`Ashes.File.readChunk`, `Ashes.File.readLine`) never consulted it, so a handle destructured from `Ok(fh)` and read after an explicit `Ashes.File.close` compiled silently (it stayed runtime-safe — the read after close returns an `Error`). Wired `CheckUseAfterDrop` into both file-read intrinsics, so a read after close on a match-arm-bound (or `let`-bound) `FileHandle` is now flagged at compile time, matching the existing socket/process behaviour. |
@@ -158,14 +158,14 @@ the direct lifted-function parameter advertises adoption; earlier curried parame
 been captured in closure environments. Late-inferred TCO parameter eligibility resolves pending
 call flags before code generation. This restored reverse-complement from quadratic time
 (4.80 seconds at fasta N=30,000) to linear scaling (0.01 seconds at N=30,000; 0.06 seconds at
-N=100,000), with byte-identical output. See CRP-6 in the challenge regression sweep.
+N=100,000), with byte-identical output.
 
 The next scaling correction replaced the RC allocator's single unsorted exact-size free list with
 per-size bins for cached blocks up to 4 KiB. The old allocator linearly searched every differently
 sized released block, so workloads such as `Ashes.Text.join` became quadratic despite correct
 ownership and stable RSS. Direct bin lookup restored 1BRC to 0.01/0.03 seconds at 10,000/30,000
 rows, matching the pre-migration timings with byte-identical output. A variable-size recycling CPU
-gate covers the allocator shape. See CRP-7 in the challenge regression sweep.
+gate covers the allocator shape.
 
 Scalar folds received a separate borrowed-cursor correction. A tail-recursive walk over
 `List(Float)` had been normalized to RC and then duplicated/dropped one cons cell per iteration,
@@ -175,24 +175,23 @@ edge. Spectral norm N=5,500 returned from 10.95 seconds to a 4.639-second median
 pre-migration 4.683-second control with byte-identical output. Pointer-bearing consumed lists remain
 runtime-managed. The same rule removed Mandelbrot's duplicate packed-bitmap representation:
 N=16,000 peak RSS returned from 2,756,764 KB to 1,757,596 KB, within 0.23% of the 1,753,536 KB
-pre-migration control. See CRP-8 and CRP-9 in the challenge regression sweep.
+pre-migration control.
 
-Task-private arenas received a lazy-footer correction after the CRP-5 reclamation fix. Spawned
+Task-private arenas received a lazy-footer correction after their chunk-reclamation fix. Spawned
 handlers map a 4 MiB initial chunk; eagerly writing its footer touched the far page even when the
 handler used only its frame page, adding one recurring minor fault per connection. Reapers now
 derive the fixed first chunk from the task address, while genuinely grown chunks retain the common
 footer/previous-end chain. Minor faults for the 1,000-request diagnostic returned from 2,416 to the
 1,215 pre-migration level, and three interleaved 50,000-request TCP runs matched the pre-migration
 throughput at concurrency 1, 8, and 64. A native minor-fault gate and an 8 MiB receive stress cover
-the short-task and grown-chunk paths. See CRP-10 in the challenge regression sweep.
+the short-task and grown-chunk paths.
 
 The final standard-workload sweep found a scale-dependent TCO string-exit defect that small
 `pidigits` probes missed. Unreachable dummy stores after tail jumps obscured a returned-accumulator
 join, and its sibling exit concat retained stale arena provenance after late RC parameter
 promotion. Control-flow reachability now excludes those stores, derived exit concatenations adopt
 the managed regime, and runtime-managed `ConcatStrTip` consumes its predecessor uniformly across
-in-place and fallback paths. Standard N=10,000 is byte-identical and completes in 3.26 seconds; see
-CRP-11 in the challenge regression sweep.
+in-place and fallback paths. Standard N=10,000 is byte-identical and completes in 3.26 seconds.
 
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:

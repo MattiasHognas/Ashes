@@ -5577,11 +5577,8 @@ public sealed partial class Lowering
                 && !tco.RuntimeManagedParamSlots.Contains(accL.Slot)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
-                && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed
-                && !BuiltinRegistry.IsResourceTypeName(paramNamed.Symbol.Name)
-                && !IsResourceBearing(paramNamed)
-                && !CanCopyOutAdt(paramNamed, out _)
-                && TrySynthesizeAdtCopier(paramNamed) is not null)
+                && IsReusableSpecializationAccumulatorType(
+                    NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1)))
             {
                 _linearSpecializationAccumulators.Add(accName);
 
@@ -5604,6 +5601,20 @@ public sealed partial class Lowering
                 }
             }
         }
+    }
+
+    private bool IsReusableSpecializationAccumulatorType(TypeRef? type)
+    {
+        TypeRef? accumulator = type is null ? null : Prune(type);
+        return accumulator switch
+        {
+            TypeRef.TList list => IsDeepCopyOutSafeType(Prune(list.Element)),
+            TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && !IsResourceBearing(named)
+                && !CanCopyOutAdt(named, out _)
+                && TrySynthesizeAdtCopier(named) is not null,
+            _ => false,
+        };
     }
 
     private void LowerLambdaCoreEmitTcoLoopEntry(string label, TcoContext tco)
@@ -7359,6 +7370,8 @@ public sealed partial class Lowering
         var callResultType = Prune(currentType);
         LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
+        TrackStableReuseCallResult(currentTemp, stableReuseResult);
         CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
@@ -7368,7 +7381,7 @@ public sealed partial class Lowering
             callWmEndSlot,
             currentTemp,
             callResultType,
-            runtimeManagedResult,
+            runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp);
         if (runtimeManagedResult || normalizesRuntimeManagedResult)
         {
@@ -7376,6 +7389,21 @@ public sealed partial class Lowering
         }
 
         return (currentTemp, currentType);
+    }
+
+    private bool IsSpecializationSelfReuseCall(Expr rootExpr)
+        => _inSpecialization
+            && _specializingReuseLabel is not null
+            && rootExpr is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Self self
+            && string.Equals(self.FuncLabel, _specializingReuseLabel, StringComparison.Ordinal);
+
+    private void TrackStableReuseCallResult(int resultTemp, bool stableReuseResult)
+    {
+        if (stableReuseResult)
+        {
+            _reuseResultTemps.Add(resultTemp);
+        }
     }
 
     private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
@@ -9200,6 +9228,7 @@ public sealed partial class Lowering
                             result[v.Name] = ctorPattern.Name;
                             break;
                         }
+
                     }
                 }
 

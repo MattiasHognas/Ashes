@@ -504,6 +504,7 @@ public sealed partial class Lowering
         {
             Pattern.Constructor reuseCtorPat => reuseCtorPat.Patterns.Count,
             Pattern.Var pv when _constructorSymbols.TryGetValue(pv.Name, out var nc) && nc.Arity == 0 => 0,
+            Pattern.Cons => 2,
             _ => null,
         };
         if (reuseScrutineeName is not null
@@ -523,7 +524,11 @@ public sealed partial class Lowering
                 valueTemp,
                 reuseArityVal,
                 runtimeCleanup is not null));
-            _reuseTokens.Add(new ReuseToken(tokenTemp, reuseArityVal, runtimeCleanup));
+            _reuseTokens.Add(new ReuseToken(
+                tokenTemp,
+                reuseArityVal,
+                runtimeCleanup,
+                ListCell: match.Cases[i].Pattern is Pattern.Cons));
             RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
         }
 
@@ -1076,7 +1081,27 @@ public sealed partial class Lowering
         int nodeTemp = NewTemp();
         bool runtimeManaged = _runtimeRcListAllocationRequested
             && IsRuntimeManageableListElement(headType, headTemp);
-        Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
+        if (TryConsumeReuseToken(
+                2,
+                runtimeManaged,
+                out int reuseTokenTemp,
+                out RuntimeReuseCleanup? runtimeCleanup,
+                listCell: true))
+        {
+            Debug.Assert(runtimeCleanup is null, "Runtime-managed list reuse requires list-specific child cleanup.");
+            Emit(new IrInst.AllocReusing(
+                nodeTemp,
+                0,
+                2,
+                reuseTokenTemp,
+                RuntimeManaged: false,
+                ListCell: true));
+            _reuseResultTemps.Add(nodeTemp);
+        }
+        else
+        {
+            Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
+        }
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         if (runtimeManaged && _runtimeRcTcoListTailBinding is not null)

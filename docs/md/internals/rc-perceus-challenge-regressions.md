@@ -390,6 +390,14 @@ suffix and its final acceleration read have completed, or after a defensive uniq
 Verification must keep the standard output byte-identical, restore time close to the pre-migration
 control, and confirm a flat RSS slope across increasing and repeated workloads.
 
+The first implementation slice now specializes recursive scalar-list rewriters: `DropReuse`
+publishes a matched untagged cell, recursive suffix results stay below their call watermarks, and
+the rebuilt cons consumes that token. The focused 100,000-turn native loop completes at 8,204 KB
+peak RSS, and the reuse/arena unit classes plus `just ci-quick` pass. N-body's binary is intentionally
+unchanged at this point because `List(Body)` needs the conditional parent-to-child transfer above;
+the scalar path is the layout and recursive-call foundation, not a premature relaxation of that
+alias boundary.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against

@@ -802,11 +802,13 @@ public sealed partial class Lowering
         int fieldCount,
         bool allowRuntimeManaged,
         out int tokenTemp,
-        out RuntimeReuseCleanup? runtimeCleanup)
+        out RuntimeReuseCleanup? runtimeCleanup,
+        bool listCell = false)
     {
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
             if (_reuseTokens[i].FieldCount == fieldCount
+                && _reuseTokens[i].ListCell == listCell
                 && (allowRuntimeManaged || !_reuseTokens[i].RuntimeManaged))
             {
                 tokenTemp = _reuseTokens[i].Temp;
@@ -1194,7 +1196,13 @@ public sealed partial class Lowering
     // the general fix is to materialize fresh heap leaf fields on the update path too.
     private bool AccumulatorIsFullyPersistent(TypeRef accType)
     {
-        if (Prune(accType) is not TypeRef.TNamedType named)
+        TypeRef accumulator = Prune(accType);
+        if (accumulator is TypeRef.TList list)
+        {
+            return BuiltinRegistry.IsCopyType(Prune(list.Element));
+        }
+
+        if (accumulator is not TypeRef.TNamedType named)
         {
             return false;
         }
@@ -1275,9 +1283,13 @@ public sealed partial class Lowering
             current = Prune(funType.Ret);
         }
 
-        return lastParam is TypeRef.TNamedType paramNamed
-            && current is TypeRef.TNamedType resultNamed
-            && string.Equals(paramNamed.Symbol.Name, resultNamed.Symbol.Name, StringComparison.Ordinal);
+        return lastParam switch
+        {
+            TypeRef.TList when current is TypeRef.TList => true,
+            TypeRef.TNamedType paramNamed when current is TypeRef.TNamedType resultNamed
+                => string.Equals(paramNamed.Symbol.Name, resultNamed.Symbol.Name, StringComparison.Ordinal),
+            _ => false,
+        };
     }
 
     private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args, Expr callExpr)
