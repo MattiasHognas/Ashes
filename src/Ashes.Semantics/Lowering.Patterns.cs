@@ -64,21 +64,35 @@ public sealed partial class Lowering
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        MarkRuntimeManagedMatchResult(resultTemp, runtimeManagedResultArms, match.Cases.Count);
+        MarkRuntimeManagedMatchResult(resultTemp, runtimeManagedResultArms, match.Cases);
         return (resultTemp, Prune(resultType));
     }
 
     private void MarkRuntimeManagedMatchResult(
         int resultTemp,
         IReadOnlyList<bool>? runtimeManagedResultArms,
-        int caseCount)
+        IReadOnlyList<MatchCase> cases)
     {
         if (runtimeManagedResultArms is not null
-            && runtimeManagedResultArms.Count == caseCount
-            && runtimeManagedResultArms.All(runtimeManaged => runtimeManaged))
+            && runtimeManagedResultArms.Count == cases.Count
+            && runtimeManagedResultArms.Select((runtimeManaged, index) =>
+                runtimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body)).All(value => value))
         {
             _runtimeManagedResultTemps.Add(resultTemp);
         }
+    }
+
+    private bool MatchArmReturnsRuntimeManagedTcoParam(Expr body)
+    {
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        return result is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Local local
+            && _tcoCtx?.RuntimeManagedParamSlots.Contains(local.Slot) == true;
     }
 
     private List<bool>? LowerMatchArms(

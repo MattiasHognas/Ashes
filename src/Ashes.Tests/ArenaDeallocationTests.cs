@@ -698,10 +698,11 @@ public sealed class ArenaDeallocationTests
 
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        instructions.Any(instruction => instruction is IrInst.RcDup
+        instructions.Count(instruction => instruction is IrInst.RcDup
         {
             RuntimeManaged: true,
-        }).ShouldBeTrue("The consumed tail must receive an independent reference before its parent is released.");
+        }).ShouldBe(1,
+            "Borrowing the transferred tail must preserve RC provenance and avoid a second deferred dup.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
             TypeName: "Tuple",
@@ -744,29 +745,35 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Inferred_consumed_general_head_list_waits_for_pattern_transfer_facts()
+    public void Inferred_consumed_general_head_list_promotes_after_argument_types_resolve()
     {
         IrProgram ir = LowerProgram(
             """
-            let first pair =
+            let formatEntry pair =
                 match pair with
-                    | (key, _) -> key
+                    | (key, (a, b, c, d)) -> key + Ashes.Text.fromInt(a + b + c + d)
 
             let recursive formatAll pairs acc =
                 match pairs with
                     | [] -> acc
-                    | head :: tail -> formatAll(tail)(first(head) :: acc)
-            in formatAll([("a", 1), ("b", 2)])([])
+                    | head :: tail -> formatAll(tail)(formatEntry(head) :: acc)
+            in formatAll([("a", (1, 2, 3, 4)), ("b", (5, 6, 7, 8))])([])
             """);
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
         instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeFalse(
-                "Late general-head admission must not bypass match payload-transfer analysis.");
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
+            HeadCopy: IrInst.ListHeadCopyKind.String,
             RuntimeManaged: true,
-        }).ShouldBeFalse("Frame-coherent admission keeps every list parameter conservative together.");
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
+                "The resolved consumed tail must gain its independent reference before the old parent drops.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_drop", StringComparison.Ordinal)).ShouldBeFalse(
+                "The accumulator returned from the match must transfer to the caller rather than be dropped first.");
     }
 
     [Test]

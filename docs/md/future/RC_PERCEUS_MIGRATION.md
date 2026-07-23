@@ -776,9 +776,15 @@ whether its argument is normalized at the admitted loop entry; after the complet
 returns, the caller releases a consumed runtime argument without invalidating an intermediate closure
 capture. The repeated `consume(reverse(build(...)))(initial)` 2,000/10,000/50,000 profile covers both
 scalar and aggregate call results and plateaus within the standard RSS budget. Inferred general-head
-consumers remain conservative: their element type resolves while the body is lowered, after match
-payload-transfer facts would have to be recorded. The 1BRC `formatAll` gate verifies that late
-admission does not bypass those facts. `Bytes`-bearing heads remain excluded from deep normalization.
+consumers now promote after their back-edge argument types resolve. A direct consumed tail receives a
+null-safe `dup` after argument evaluation, then the old RC parent drops; rebuilt head values normalize
+independently, so the late path does not need to retroactively invent match payload-transfer facts.
+On the eager annotated path, a borrow of an already-transferred pattern alias preserves that owned RC
+provenance, preventing the deferred reset from taking a redundant reference and leaking the tail.
+Runtime-result joining for `match` also treats a direct now-promoted TCO parameter as owned, preventing
+the final accumulator from being dropped immediately before return. The full 1BRC `formatAll` output
+and 75,000/150,000/300,000-row RSS gate cover this inferred path. `Bytes`-bearing heads remain excluded
+from deep normalization.
 
 Deliverables:
 

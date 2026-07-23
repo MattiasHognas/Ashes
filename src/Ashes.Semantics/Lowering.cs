@@ -939,7 +939,7 @@ public sealed partial class Lowering
 
             TypeRef argType = Prune(info.ArgTypes[i]);
             normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
-                info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i]);
+                info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i], info.ConsumedListTail[i]);
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
                 && info.RuntimeManagedArgResults[i];
@@ -982,11 +982,17 @@ public sealed partial class Lowering
     private int TcoBackEdgeNormalizeRuntimeManagedArg(
         int sourceTemp,
         TypeRef argType,
-        bool alreadyRuntimeManaged)
+        bool alreadyRuntimeManaged,
+        bool consumedListTail)
     {
         if (alreadyRuntimeManaged)
         {
             return sourceTemp;
+        }
+
+        if (consumedListTail && argType is TypeRef.TList)
+        {
+            return EmitRuntimeManagedNullableDup(sourceTemp);
         }
 
         int normalizedTemp = NewTemp();
@@ -1029,6 +1035,26 @@ public sealed partial class Lowering
 
         _runtimeManagedResultTemps.Add(normalizedTemp);
         return normalizedTemp;
+    }
+
+    private int EmitRuntimeManagedNullableDup(int sourceTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonNullTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonNullTemp, sourceTemp, zeroTemp));
+        string duplicatedLabel = NewLabel("rc_nullable_duplicated");
+        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(duplicatedLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
     }
 
     private void TcoBackEdgeDropRuntimeManagedArg(PendingTcoReset info, int index, TypeRef argType)
@@ -1102,7 +1128,6 @@ public sealed partial class Lowering
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
                     || info.ConsumedListTail[index]
-                        && info.RuntimeManagedArgResults[index]
                     || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
             TypeRef.TFun => info.RuntimeManagedArgResults[index],
             _ => false,
@@ -2046,10 +2071,12 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        if (_activeRuntimeManagedTcoPatternAliases.Contains(v.Name)
+        bool transfersRuntimeReference = _activeRuntimeManagedTcoPatternAliases.Contains(v.Name);
+        bool runtimeManagedResult = transfersRuntimeReference
             || ownerInfo is { RuntimeManaged: true }
             || b is Binding.Local runtimeLocal
-                && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true)
+                && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true;
+        if (runtimeManagedResult)
         {
             _runtimeManagedResultTemps.Add(result.Temp);
         }
@@ -2059,6 +2086,10 @@ public sealed partial class Lowering
             Emit(new IrInst.Borrow(borrowTemp, result.Temp));
             ownerInfo.ActiveBorrows++;
             result = (borrowTemp, result.Type);
+            if (transfersRuntimeReference)
+            {
+                _runtimeManagedResultTemps.Add(borrowTemp);
+            }
         }
 
         return result;
@@ -6194,8 +6225,7 @@ public sealed partial class Lowering
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (tco.FreshRebuiltListParams.Contains(name)
                         || tco.AffineConsListParams.Contains(name)
-                        || tco.ConsumedListTailParams.Contains(name)
-                            && TryGetRuntimeManagedListHeadCopy(list.Element, out _));
+                        || tco.ConsumedListTailParams.Contains(name));
             if (!supported
                 || _linearReuseNames.Contains(name)
                 || _linearSpecializationAccumulators.Contains(name)
