@@ -1,13 +1,14 @@
 # RC Perceus Migration Plan
 
-Status: Phase 8 paper verification in progress. Phases 1-7 and their validation slices are
-implemented, but the final paper comparison has reopened the ordinary-value arena fallbacks listed
-under Phase 8. The migration is not complete until those blockers are removed or the declared full-RC
-target is explicitly reconsidered.
+Status: Phase 8 paper verification complete; repository-wide documentation audit in progress.
+Phases 1-7 and the Phase 8 remediation slices are implemented and validated. The migration is not
+complete until the permanent documentation and root README audit is finished.
 
 Decision snapshot:
 
-- Target full RC Perceus for ordinary heap values, not a narrow RC island.
+- Target RC Perceus as the general lifetime substrate for escaping ordinary heap values, not a
+  narrow RC island. Compiler-proven scoped region allocation remains a permitted allocation
+  optimization; it must not become an unbounded lifetime fallback.
 - Replace the arena/copy-out model long term. Arenas may remain only for scoped runtime scratch or
   deliberately-specialized regions.
 - Heap header and layout changes are acceptable, even if broad, as long as Ashes keeps compiling
@@ -801,6 +802,70 @@ constructor arguments make an unclassified new emitter a compile error. Focused 
 ordinary synchronous results to RC normalization and keep task-region relocation, task-region TCO,
 and explicit cloning visibly separate. `AllocAdtToSpace`/`CopyOutArenaToSpace` remain independently
 named operations confined to the persistent `Map`/`HashMap` region.
+
+Paper verification result (2026-07-23): complete, with no unresolved implementation blocker inside
+the declared Ashes memory model. The comparison covered the published PLDI paper and its extended
+report:
+
+- <https://www.microsoft.com/en-us/research/publication/perceus-garbage-free-reference-counting-with-reuse/>
+- <https://www.microsoft.com/en-us/research/uploads/prod/2021/06/perceus-pldi21.pdf>
+
+The conformance ledger is:
+
+- **Owned and borrowed environments.** `FunctionOwnershipSummary` materializes parameter
+  consumption, borrowing, captures, result reach, and uniqueness. `PerceusLifetimePlacement` moves
+  ordinary lifetime anchors to the last use or the entry of a branch where an owner dies, and inserts
+  a late `RcDup` when a consuming call splits an ownership path. Constructor, closure, match-payload,
+  and TCO lowering carry the same facts through shapes that need type-directed handling. Resource
+  affinity remains a separate source-language contract and cleanup path.
+- **One owner per reference.** A moved value contributes one ownership reference; retaining a value
+  emits one `RcDup`; a dead owner emits one `RcDrop`. Complete-graph normalization prevents an RC
+  parent from retaining arena children. Match payload transfer handles the paper's
+  `dup(children); drop(parent)` rule, including unique/shared parents, nil, aliases, and TCO moves.
+  Function exit transfers exactly one returned root and drops every other active owner.
+- **Precise drop and specialization.** Runtime `RcDrop` decrements a shared cell, while the
+  last-reference path recursively drops owned children and releases the cell. Known constructors and
+  deeply unique list/tree roots use specialized paths. The optimizer sinks branch-local duplicates
+  and fuses safe `dup`/`drop` pairs without crossing uniqueness observations.
+- **Reuse tokens.** `DropReuse` returns the consumed cell only when it is unique; otherwise it
+  decrements the shared cell and returns null. `AllocReusing` checks layout compatibility, overwrites a
+  non-null token, and allocates a fresh RC cell for null. Unconsumed tokens are released. Field
+  transfer and conditional fallback duplication implement reuse specialization when a rebuilt
+  constructor keeps an old child.
+- **Explicit control flow.** Ordinary synchronous control flow is ownership-lowered after branches,
+  matches, calls, and TCO edges are explicit. Capability handlers, async suspension, and task frames
+  are deliberately region-managed because their non-linear scheduler lifetime is not yet published
+  as ordinary RC ownership; their cleanup and bounded-RSS tests are the contract at that boundary.
+- **Concurrency.** Ashes does not implement the paper's recursive `tshare` marking or atomic shared
+  reference counts. Instead, RC ownership is thread-local. Structured-parallel captures and results
+  cross workers through independent deep copies, and worker regions plus RC allocator chunks are
+  reclaimed at join. Publishing an RC cell directly across threads remains forbidden until an atomic
+  or thread-share transition is implemented.
+- **Cycles.** The paper does not collect cycles. Ashes likewise admits only acyclic immutable
+  ordinary graphs to RC: inductive ADTs, lists, tuples, records, Strings, Bytes, BigInts, and
+  non-self-referential closure environments. Scheduler/task linkage remains region-owned. Any future
+  mutable reference or cyclic closure representation must add cycle handling or exclude that family
+  from RC admission explicitly.
+- **Selective borrowing and scoped regions.** Ashes extends the paper with inferred borrow-only
+  function parameters and retains compiler-proven scoped arena allocation. The Perceus
+  garbage-free theorem is therefore claimed for admitted RC graphs, not for an entire mixed
+  execution state. A scoped allocation must be reclaimed at its proven watermark and is guarded by
+  multi-scale RSS tests; it cannot silently escape. Borrowed mmap-backed `Bytes` views and lists that
+  contain them remain tied to their owning runtime/resource region so normalization never duplicates
+  an entire mapped buffer per element.
+- **Specialized regions and allocator policy.** The persistent `Map`/`HashMap` to-space is an
+  Ashes-specific reuse region with separate memory-slope gates. Small freed RC cells use a
+  per-thread exact-size free list over dense chunks, large cells return directly to the OS, and
+  thread teardown releases retained chunks. These policies change allocation cost and peak RSS but
+  not the Perceus ownership contract.
+
+This is intentionally a hybrid implementation rather than a claim that Ashes instantiates the
+paper's formal calculus verbatim. The release claim is precise: escaping ordinary graphs use RC
+ownership unless they cross one of the named scheduler, thread-publication, mmap/resource, or
+persistent-collection boundaries; proven scoped values may use regions as an allocation
+optimization. Every boundary has explicit IR classification and bounded-memory coverage. Permanent
+architecture and user documentation must preserve this scope instead of making an unqualified
+"all values are garbage-free" claim.
 
 Deliverables:
 
