@@ -505,6 +505,71 @@ public sealed class ReuseTokenTests
         reusingAllocations.ShouldBeGreaterThan(0);
     }
 
+    [Test]
+    public void Inspect_only_record_list_traversal_borrows_instead_of_normalizing()
+    {
+        // A tail-recursive reduction that only reads inline-copy fields of an all-scalar record
+        // element and returns a scalar never retains a cons cell or head, so the caller's graph is
+        // borrowed: no defensive per-entry RC normalization (CopyOutArena) and no runtime-managed
+        // list cell allocation. (Pointer-bearing analogue of the inline-element borrowed cursor.)
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | y: Int
+                | mass: Int
+
+            let recursive sumField bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, y, mass) -> sumField(rest)(acc + x * mass + y)
+
+            Ashes.IO.print(sumField([Body(x = 1, y = 2, mass = 3)])(0))
+            """);
+
+        foreach (IrFunction function in program.Functions.Prepend(program.EntryFunction))
+        {
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization })
+                .ShouldBeFalse("an inspect-only record-list traversal must borrow its argument, not RC-normalize it");
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.Alloc { RuntimeManaged: true })
+                .ShouldBeFalse("borrowing the caller's list allocates no runtime-managed cons cell");
+        }
+    }
+
+    [Test]
+    public void Record_list_traversal_that_hands_tail_to_another_function_still_normalizes()
+    {
+        // The tail escapes into a second function (not the tail self-call), so nothing proves it is
+        // only inspected: the borrow is declined and the defensive RC normalization is retained.
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let recursive countRest rest =
+                match rest with
+                    | [] -> 0
+                    | _ :: more -> 1 + countRest(more)
+
+            let recursive walk bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, mass) -> walk(rest)(acc + x * mass + countRest(rest))
+
+            Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
+            """);
+
+        program.Functions.Prepend(program.EntryFunction)
+            .Any(function => function.Instructions.Any(
+                instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
+            .ShouldBeTrue("a traversal whose tail escapes to another function must keep RC normalization");
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();

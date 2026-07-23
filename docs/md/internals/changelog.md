@@ -173,7 +173,7 @@ even though inline list heads have no child ownership to transfer. Such cursors 
 caller-owned graph, and scalar-only frames omit the otherwise-redundant arena reset at the back
 edge. Spectral norm N=5,500 returned from 10.95 seconds to a 4.639-second median, matching the
 pre-migration 4.683-second control with byte-identical output. Pointer-bearing consumed lists remain
-runtime-managed. The same rule removed Mandelbrot's duplicate packed-bitmap representation:
+runtime-managed unless the traversal is proven inspect-only (see the n-body borrow below). The same rule removed Mandelbrot's duplicate packed-bitmap representation:
 N=16,000 peak RSS returned from 2,756,764 KB to 1,757,596 KB, within 0.23% of the 1,753,536 KB
 pre-migration control.
 
@@ -198,8 +198,25 @@ This retains their aggregate inside the loop arena until the existing copy/reset
 of normalizing it to RC at an intermediate helper return. Ownership-summary freshness is the gate,
 and capture expansion supplies any functions referenced by the inlined helper. Combined with local
 list-and-record reuse, n-body's N=5,000,000 diagnostic improved from 4.05–4.11 seconds to
-3.62–3.72 seconds with byte-identical output and flat 8.2 MB peak RSS. The remaining gap to the
-pre-migration control is still tracked by the challenge regression sweep.
+3.62–3.72 seconds with byte-identical output and flat 8.2 MB peak RSS.
+
+The remaining gap closed by borrowing the inspected acceleration graph. Profiling the saturated
+`accel` call located a defensive whole-graph deep copy at every entry: `accel`'s `others` argument is
+`allBodies`, and because its `Body` element is a heap record the consumed-tail rule normalized the
+list — one 64-byte copy and one runtime-managed cons cell per element — even though `accel` only
+reads inline `Float` fields and returns a `Float` tuple. The borrowed-cursor rule now extends to
+pointer-bearing elements: a consumed-tail `List(record)` parameter whose recursive body only inspects
+the list (every bound head and tail is a match scrutinee or the same-position tail self-call argument,
+never returned, consed, stored, or passed in an owning position — proven by a structural escape
+analysis) and whose element is an all-inline-copy-field record is borrowed from the caller instead of
+normalized. This is the ordinary Perceus borrowed-vs-owned parameter distinction for a read-only
+traversal; owning traversals (`updateVel`/`updatePos` rebuild the list; `energy` hands its tail to
+`potential`) are excluded automatically, and the aliased `allBodies` read is preserved because a
+borrowed graph is never overwritten. n-body's N=5,000,000 diagnostic improved from 3.37 seconds to a
+1.56-second median — below the roughly 2.00-second pre-migration control — with byte-identical output
+through the standard N=50,000,000 workload and a flat RSS slope. Regressions:
+`ReuseTokenTests.Inspect_only_record_list_traversal_borrows_instead_of_normalizing` and its escaping
+counterpart.
 
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:

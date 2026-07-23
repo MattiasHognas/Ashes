@@ -1053,6 +1053,38 @@ public sealed partial class Lowering
         return normalizedTemps;
     }
 
+    /// <summary>
+    /// True when the tail-consumed list parameter at <paramref name="paramIndex"/> is only inspected
+    /// by the recursive body (nothing derived from it escapes — see
+    /// <see cref="TcoContext.BorrowableConsumedListParams"/>) AND its element is an all-inline-copy
+    /// record. Under both conditions the traversal reads only scalar fields and never retains a cell
+    /// or head, so the caller's graph can be borrowed instead of RC-normalized into a private copy.
+    /// </summary>
+    private bool IsBorrowableInspectOnlyList(TcoContext tco, int paramIndex, TypeRef.TList list)
+        => paramIndex >= 0
+            && tco.BorrowableConsumedListParams.Contains(tco.ParamNames[paramIndex])
+            && Prune(list.Element) is TypeRef.TNamedType element
+            && TryGetCopyOnlyRecordConstructor(element, out _);
+
+    private bool IsBorrowableInspectOnlyList(TcoContext tco, string name, TypeRef.TList list)
+    {
+        int paramIndex = tco.ParamNames is { } names ? IndexOfOrdinal(names, name) : -1;
+        return IsBorrowableInspectOnlyList(tco, paramIndex, list);
+    }
+
+    private static int IndexOfOrdinal(IReadOnlyList<string> names, string name)
+    {
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (string.Equals(names[i], name, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private bool TryGetCopyOnlyRecordConstructor(
         TypeRef.TNamedType named,
         out ConstructorSymbol constructor)
@@ -4642,6 +4674,7 @@ public sealed partial class Lowering
         if (hasTailSelfCalls)
         {
             var tcoParamNames = CollectLambdaParams(lam2);
+            var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext
             {
                 SelfName = letRecursive.Name,
@@ -4651,7 +4684,12 @@ public sealed partial class Lowering
                 LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
                 FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
-                ConsumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name),
+                ConsumedListTailParams = consumedListTailParams,
+                BorrowableConsumedListParams = CollectBorrowableConsumedListParams(
+                    innermostBody,
+                    tcoParamNames,
+                    letRecursive.Name,
+                    consumedListTailParams),
                 FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
             };
@@ -5647,7 +5685,8 @@ public sealed partial class Lowering
                     && CanRuntimeManageTcoListElement(list.Element)
                     && (freshRebuiltList
                         || affineConsList
-                        || consumedListTail && !CanArenaReset(Prune(list.Element)))
+                        || consumedListTail && !CanArenaReset(Prune(list.Element))
+                            && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
@@ -5682,7 +5721,8 @@ public sealed partial class Lowering
                 || tco.LoopInvariantParams.Contains(tco.ParamNames[index])
                 || Prune(parameter.T) is TypeRef.TList list
                     && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
-                    && CanArenaReset(Prune(list.Element))
+                    && (CanArenaReset(Prune(list.Element))
+                        || IsBorrowableInspectOnlyList(tco, index, list))
                 || tco.RuntimeManagedParamSlots.Contains(slot))
             {
                 continue;
@@ -7002,7 +7042,8 @@ public sealed partial class Lowering
                     && (tco.FreshRebuiltListParams.Contains(name)
                         || tco.AffineConsListParams.Contains(name)
                         || tco.ConsumedListTailParams.Contains(name)
-                            && !CanArenaReset(Prune(list.Element)));
+                            && !CanArenaReset(Prune(list.Element))
+                            && !IsBorrowableInspectOnlyList(tco, name, list));
             if (!supported
                 || _linearReuseNames.Contains(name)
                 || _linearSpecializationAccumulators.Contains(name)
@@ -7032,7 +7073,8 @@ public sealed partial class Lowering
                 && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
                 && !(type is TypeRef.TList list
                     && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
-                    && CanArenaReset(Prune(list.Element)))
+                    && (CanArenaReset(Prune(list.Element))
+                        || IsBorrowableInspectOnlyList(tco, index, list)))
                 && !tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[index]))
             {
                 ClearRuntimeManagedTcoParams(tco);

@@ -58,6 +58,16 @@ public sealed partial class Lowering
         public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> AffineConsListParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> ConsumedListTailParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Subset of ConsumedListTailParams that the recursive body only INSPECTS: every head and
+        // tail bound from the param is used solely as a match scrutinee (heads destructured into
+        // inline-copy scalar fields) or re-passed in the same tail position of the self-call, never
+        // returned, stored into a constructed value, or handed to another function in an owning
+        // position. Such a list can be BORROWED from the caller's graph — no per-entry RC
+        // normalization/dup/drop — because nothing derived from it escapes the traversal (the
+        // pointer-bearing analogue of the inline-element borrowed cursor). Gated additionally on an
+        // all-inline-copy-field record element type at the runtime-managed decision site.
+        public HashSet<string> BorrowableConsumedListParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> FreshClosureParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain

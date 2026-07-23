@@ -366,7 +366,42 @@ growing retained-output leak, and remains part of the final multi-scale memory c
 
 ### CRP-12 — P2: n-body immutable rebuild pays per-cell RC traffic
 
-**Open; isolated during the final standard-workload sweep.** Correctness remains restored: the
+**Resolved 2026-07-23 by borrowing the inspected acceleration graph.** Profiling the saturated
+captured `updateVel`/`accel` chain (the handoff's stated next step) located the remaining cost: it
+was not `updatePos`, RC allocation, the uniqueness preflight, or scalar field copies, but a
+defensive whole-graph deep copy at every `accel` entry. `accel` is a tail-recursive loop whose
+`others` argument is `allBodies`; because its element `Body` is a heap record, the consumed-tail
+rule classified the list as runtime-managed and normalized it — one `CopyOutArena` of every 64-byte
+`Body` plus one runtime-managed cons cell per element — on entry. `accel` is called once per body,
+so each timestep deep-copied the five-body graph five times (about twenty-five `Body` copies and
+twenty-five RC cons allocations per step) even though `accel` only reads inline `Float` fields and
+returns a `Float` tuple.
+
+The fix generalizes the inline-element borrowed cursor (the spectral-norm/mandelbrot fix) to
+pointer-bearing elements. A consumed-tail `List(record)` parameter whose recursive body only
+*inspects* the list — every bound head and tail is used solely as a match scrutinee or re-passed in
+the same tail position of the self-call, never returned, consed, stored into a constructed value, or
+handed to another function in an owning position — is proven by a structural escape analysis
+(`CollectBorrowableConsumedListParams`) and, when its element is an all-inline-copy-field record,
+BORROWED from the caller instead of normalized. Nothing derived from the graph escapes the
+traversal, the caller's owning reference is untouched, and the whole graph stays below the loop
+watermark, so no entry copy, dup, or drop is required. This is the standard Perceus borrowed-vs-owned
+parameter distinction: a read-only traversal takes its list by borrow. Owning traversals are
+excluded automatically — `updateVel`/`updatePos` rebuild the list (and are not even tail-recursive),
+and `energy` hands its tail to `potential`, so all three keep their prior behaviour. The crucial
+alias rule is preserved and strengthened: `accel` now borrows `allBodies` and never overwrites or
+frees it, so old bodies are provably intact while later accelerations read them.
+
+Native probes at N=0/1/2/3/10/1,000 stay byte-identical and standard N=50,000,000 remains
+`-0.169075164` / `-0.169059907`. Five interleaved N=5,000,000 runs improved from 3.37 s to 1.56 s
+(2.17x), now below the roughly 2.00-second pre-migration control rather than 1.6-1.7x above it, with
+a flat RSS slope across N=100,000 through N=10,000,000. Two focused `ReuseTokenTests` regressions lock
+the behaviour in: an inspect-only record-list traversal emits no RC normalization or runtime-managed
+cons allocation, while a traversal that hands its tail to a second function still normalizes. The
+full C# suite, LSP, CLI, and Registry suites and `just ci-quick` pass. The history that led here is
+retained below.
+
+**Original report — open; isolated during the final standard-workload sweep.** Correctness remains restored: the
 standard N=50,000,000 output is byte-identical to the pre-migration control
 (`-0.169075164` / `-0.169059907`). Peak RSS is also bounded at 8,204 KB versus 4,108 KB. Runtime,
 however, regressed from 20.40 to 37.00 seconds (1.81x); an N=5,000,000 diagnostic reproduces the

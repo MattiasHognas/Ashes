@@ -330,6 +330,312 @@ public sealed partial class Lowering
         return sawSelfCall ? candidates : [];
     }
 
+    /// <summary>
+    /// Of the <paramref name="consumedTailParams"/>, returns those the recursive body only inspects:
+    /// nothing derived from the list (a bound head or tail) escapes the traversal. A head may only be
+    /// a match scrutinee; a tail may only be a match scrutinee or the argument at the param's own
+    /// index in the tail self-call. Any other appearance of a head/tail variable (returned, consed,
+    /// stored in a record/tuple, or passed to another function) disqualifies the param. Such a param
+    /// can be borrowed from the caller instead of RC-normalized into a private copy. Purely
+    /// structural; the element-type inline-copy check is applied separately at the decision site.
+    /// </summary>
+    private static HashSet<string> CollectBorrowableConsumedListParams(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        HashSet<string> consumedTailParams)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string param in consumedTailParams)
+        {
+            int paramIndex = -1;
+            for (int i = 0; i < paramNames.Count; i++)
+            {
+                if (string.Equals(paramNames[i], param, StringComparison.Ordinal))
+                {
+                    paramIndex = i;
+                    break;
+                }
+            }
+
+            if (paramIndex < 0)
+            {
+                continue;
+            }
+
+            var tails = new HashSet<string>(StringComparer.Ordinal) { param };
+            if (BorrowInspectClean(body, tails, new HashSet<string>(StringComparer.Ordinal), paramNames, selfName, paramIndex))
+            {
+                result.Add(param);
+            }
+        }
+
+        return result;
+    }
+
+    // Returns true when no variable in `tails`/`heads` (or anything transitively bound from them)
+    // escapes `expression`. Approved uses that do NOT count as escapes: a tail/head var as a match
+    // scrutinee, and a tail var at `paramIndex` of the tail self-call. Every other bare reference to
+    // a tainted var is an escape. Unmodelled expression shapes fall back to `false` (conservative:
+    // the param simply keeps its current RC-normalized behaviour).
+    private static bool BorrowInspectClean(
+        Expr expression,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        int paramIndex)
+    {
+        switch (expression)
+        {
+            case Expr.Var v:
+                return !tails.Contains(v.Name) && !heads.Contains(v.Name);
+            case Expr.QualifiedVar:
+            case Expr.IntLit:
+            case Expr.BigIntLit:
+            case Expr.UIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                return true;
+            case Expr.If iff:
+                return BorrowInspectCleanAll([iff.Cond, iff.Then, iff.Else], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Let let:
+                return BorrowInspectCleanLet(let.Value, let.Name, let.Body, tails, heads, paramNames, selfName, paramIndex);
+            case Expr.LetResult letResult:
+                return BorrowInspectCleanAll([letResult.Value, letResult.Body], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.LetRecursive letRec:
+                return BorrowInspectCleanAll([letRec.Value, letRec.Body], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Match match:
+                return BorrowInspectCleanMatch(match, tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Call:
+                return BorrowInspectCleanCall(expression, tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Add a: return BorrowInspectCleanAll([a.Left, a.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Subtract s: return BorrowInspectCleanAll([s.Left, s.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Multiply m: return BorrowInspectCleanAll([m.Left, m.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Divide d: return BorrowInspectCleanAll([d.Left, d.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Modulo mo: return BorrowInspectCleanAll([mo.Left, mo.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.Equal eq: return BorrowInspectCleanAll([eq.Left, eq.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.NotEqual ne: return BorrowInspectCleanAll([ne.Left, ne.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.GreaterThan gt: return BorrowInspectCleanAll([gt.Left, gt.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.LessThan lt: return BorrowInspectCleanAll([lt.Left, lt.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.GreaterOrEqual ge: return BorrowInspectCleanAll([ge.Left, ge.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.LessOrEqual le: return BorrowInspectCleanAll([le.Left, le.Right], tails, heads, paramNames, selfName, paramIndex);
+            case Expr.TupleLit tuple: return BorrowInspectCleanAll(tuple.Elements, tails, heads, paramNames, selfName, paramIndex);
+            default:
+                return false;
+        }
+    }
+
+    private static bool BorrowInspectCleanAll(
+        IReadOnlyList<Expr> expressions,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        int paramIndex)
+    {
+        foreach (Expr expression in expressions)
+        {
+            if (!BorrowInspectClean(expression, tails, heads, paramNames, selfName, paramIndex))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool BorrowInspectCleanLet(
+        Expr value,
+        string name,
+        Expr letBody,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        int paramIndex)
+    {
+        // A bare-var alias of a tainted tail/head propagates the taint to the bound name; any other
+        // value that touches a tainted var is caught as an escape by checking the value directly.
+        if (value is Expr.Var alias && tails.Contains(alias.Name))
+        {
+            return BorrowInspectClean(letBody, Extend(tails, name), heads, paramNames, selfName, paramIndex);
+        }
+
+        if (value is Expr.Var headAlias && heads.Contains(headAlias.Name))
+        {
+            return BorrowInspectClean(letBody, tails, Extend(heads, name), paramNames, selfName, paramIndex);
+        }
+
+        return BorrowInspectClean(value, tails, heads, paramNames, selfName, paramIndex)
+            && BorrowInspectClean(letBody, tails, heads, paramNames, selfName, paramIndex);
+    }
+
+    private static bool BorrowInspectCleanMatch(
+        Expr.Match match,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        int paramIndex)
+    {
+        bool tailScrutinee = match.Value is Expr.Var sv1 && tails.Contains(sv1.Name);
+        bool headScrutinee = match.Value is Expr.Var sv2 && heads.Contains(sv2.Name);
+        if (!tailScrutinee && !headScrutinee)
+        {
+            if (!BorrowInspectClean(match.Value, tails, heads, paramNames, selfName, paramIndex))
+            {
+                return false;
+            }
+
+            foreach (MatchCase matchCase in match.Cases)
+            {
+                if (!BorrowInspectClean(matchCase.Body, tails, heads, paramNames, selfName, paramIndex))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            HashSet<string> caseTails = tails;
+            HashSet<string> caseHeads = heads;
+            if (tailScrutinee)
+            {
+                if (!BorrowInspectBindTailPattern(matchCase.Pattern, tails, heads, out caseTails, out caseHeads))
+                {
+                    return false;
+                }
+            }
+            else if (!BorrowInspectBindHeadPattern(matchCase.Pattern, tails, heads, out caseTails, out caseHeads))
+            {
+                return false;
+            }
+
+            if (!BorrowInspectClean(matchCase.Body, caseTails, caseHeads, paramNames, selfName, paramIndex))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Destructuring a borrowed tail cell: `[]`/`_`/whole-list bind nothing pointer-bearing beyond an
+    // aliased tail; `head :: tail` may only bind simple variables (or wildcards), yielding a fresh
+    // head taint and a fresh tail taint. Anything more complex is rejected.
+    private static bool BorrowInspectBindTailPattern(
+        Pattern pattern,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        out HashSet<string> caseTails,
+        out HashSet<string> caseHeads)
+    {
+        caseTails = tails;
+        caseHeads = heads;
+        switch (pattern)
+        {
+            case Pattern.EmptyList:
+            case Pattern.Wildcard:
+                return true;
+            case Pattern.Var whole:
+                caseTails = Extend(tails, whole.Name);
+                return true;
+            case Pattern.Cons cons:
+                if (cons.Head is Pattern.Var headVar)
+                {
+                    caseHeads = Extend(heads, headVar.Name);
+                }
+                else if (cons.Head is not Pattern.Wildcard)
+                {
+                    return false;
+                }
+
+                if (cons.Tail is Pattern.Var tailVar)
+                {
+                    caseTails = Extend(caseTails, tailVar.Name);
+                }
+                else if (cons.Tail is not Pattern.Wildcard)
+                {
+                    return false;
+                }
+
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Destructuring a borrowed head: a constructor pattern binds the record's fields. Those field
+    // variables are left untainted here and are only sound to release when the element is an
+    // all-inline-copy-field record — enforced at the runtime-managed decision site. A bare-var alias
+    // re-taints the head; wildcards bind nothing.
+    private static bool BorrowInspectBindHeadPattern(
+        Pattern pattern,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        out HashSet<string> caseTails,
+        out HashSet<string> caseHeads)
+    {
+        caseTails = tails;
+        caseHeads = heads;
+        switch (pattern)
+        {
+            case Pattern.Wildcard:
+                return true;
+            case Pattern.Var alias:
+                caseHeads = Extend(heads, alias.Name);
+                return true;
+            case Pattern.Constructor:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool BorrowInspectCleanCall(
+        Expr expression,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        IReadOnlyList<string> paramNames,
+        string selfName,
+        int paramIndex)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        bool isSelfCall = root is Expr.Var function
+            && string.Equals(function.Name, selfName, StringComparison.Ordinal)
+            && arguments.Count == paramNames.Count;
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (isSelfCall
+                && i == paramIndex
+                && arguments[i] is Expr.Var tailArg
+                && tails.Contains(tailArg.Name))
+            {
+                continue;
+            }
+
+            if (!BorrowInspectClean(arguments[i], tails, heads, paramNames, selfName, paramIndex))
+            {
+                return false;
+            }
+        }
+
+        return root is Expr.Var or Expr.QualifiedVar
+            || BorrowInspectClean(root, tails, heads, paramNames, selfName, paramIndex);
+    }
+
+    private static HashSet<string> Extend(HashSet<string> set, string name)
+    {
+        var extended = new HashSet<string>(set, StringComparer.Ordinal) { name };
+        return extended;
+    }
+
     private static HashSet<string> CollectFreshClosureParams(
         Expr body,
         IReadOnlyList<string> paramNames,
