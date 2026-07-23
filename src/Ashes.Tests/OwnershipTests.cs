@@ -486,6 +486,21 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Higher_order_function_normalizes_copy_list_results_to_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            "let apply : (Int -> List(Int)) -> List(Int) = given f -> f(0)\nlet source = [40, 2] in let borrow = given unit -> source in let result = apply(borrow) in match result with | [] -> 0 | head :: _ -> head");
+
+        ir.Functions.Any(function =>
+            function.Instructions.Any(instruction => instruction is IrInst.CallClosure)
+            && function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
+            "The concrete higher-order List(Int) result should normalize an arena result into RC cells.");
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");

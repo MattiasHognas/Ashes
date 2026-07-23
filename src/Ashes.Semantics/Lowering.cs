@@ -5697,9 +5697,10 @@ public sealed partial class Lowering
 
         var callResultType = Prune(currentType);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        CopyOutKind callResultCopyKind = GetCopyOutKind(callResultType, out _);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
-            && GetCopyOutKind(callResultType, out _) == CopyOutKind.Shallow;
+            && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
         currentTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
@@ -5839,7 +5840,7 @@ public sealed partial class Lowering
                     && !_inCoroutineBody
                     && CapabilityGlobalCount == 0
                     && i == collectedArgs.Count - 1
-                    && GetCopyOutKind(Prune(funType.Ret), out _) == CopyOutKind.Shallow,
+                    && GetCopyOutKind(Prune(funType.Ret), out _) is CopyOutKind.Shallow or CopyOutKind.List,
                 currentTemp, argTemp, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
@@ -5931,6 +5932,7 @@ public sealed partial class Lowering
                 callPreRestoreEndSlot,
                 currentTemp,
                 runtimeManagedResultFlagTemp,
+                callCopyOutKind,
                 callCopySize);
         }
 
@@ -5943,6 +5945,7 @@ public sealed partial class Lowering
         int callPreRestoreEndSlot,
         int currentTemp,
         int runtimeManagedResultFlagTemp,
+        CopyOutKind callCopyOutKind,
         int callCopySize)
     {
         int resultSlot = NewLocal();
@@ -5955,7 +5958,14 @@ public sealed partial class Lowering
         Emit(new IrInst.Jump(reclaimLabel));
         Emit(new IrInst.Label(copyLabel));
         int copiedTemp = NewTemp();
-        Emit(new IrInst.CopyOutArena(copiedTemp, currentTemp, callCopySize, RuntimeManaged: true));
+        if (callCopyOutKind == CopyOutKind.List)
+        {
+            Emit(new IrInst.CopyOutList(copiedTemp, currentTemp, RuntimeManaged: true));
+        }
+        else
+        {
+            Emit(new IrInst.CopyOutArena(copiedTemp, currentTemp, callCopySize, RuntimeManaged: true));
+        }
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));

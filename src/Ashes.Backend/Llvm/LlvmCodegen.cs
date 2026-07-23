@@ -2084,7 +2084,7 @@ internal static partial class LlvmCodegen
             IrInst.CopyFixedInto copyInto => EmitCopyFixedInto(state, copyInto.DestTemp, copyInto.SrcTemp, copyInto.SizeBytes),
             IrInst.CopyStringIntoOrFresh copyStr => StoreTemp(state, copyStr.DestTemp, EmitCopyStringIntoOrFresh(state, copyStr.OldBlobTemp, copyStr.SrcTemp)),
             IrInst.CopyFixedIntoOrFresh copyFixed => StoreTemp(state, copyFixed.DestTemp, EmitCopyFixedIntoOrFresh(state, copyFixed.OldBlobTemp, copyFixed.SrcTemp, copyFixed.SizeBytes)),
-            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy)),
+            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy, copyOutList.RuntimeManaged)),
             IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
             IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
             _ => (bool?)null,

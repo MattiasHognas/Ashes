@@ -553,7 +553,12 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutList(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy = ListHeadCopyKind.Inline) : IrInst;
+    public sealed record CopyOutList(
+        int DestTemp,
+        int SrcTemp,
+        ListHeadCopyKind HeadCopy = ListHeadCopyKind.Inline,
+        bool RuntimeManaged = false
+    ) : IrInst;
 
     /// <summary>
     /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its

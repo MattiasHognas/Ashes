@@ -560,7 +560,7 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Stdlib_list_map_shape_erases_legacy_rc_markers()
+    public void Stdlib_list_map_shape_erases_markers_but_preserves_runtime_list_ownership()
     {
         IrProgram lowered = LowerProgram("""
             let map : (Int -> Int) -> List(Int) -> List(Int) =
@@ -582,7 +582,8 @@ public sealed class IrOptimizerTests
 
         CountErasedRcOperations(lowered).ShouldBeGreaterThan(0);
         CountErasedRcOperations(optimized).ShouldBe(0);
-        CountRuntimeRcOperations(optimized).ShouldBe(0);
+        CountRuntimeRcOperations(optimized).ShouldBe(3,
+            "The optimizer must retain the runtime-managed result list's lifetime operations.");
     }
 
     [Test]

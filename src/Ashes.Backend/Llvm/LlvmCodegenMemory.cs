@@ -1472,14 +1472,14 @@ internal static partial class LlvmCodegen
     /// cached head (an inner list pointer) is deep-copied recursively with inline heads.
     /// </para>
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp, ListHeadCopyKind headCopy)
-        => EmitCopyOutListCore(state, LoadTemp(state, srcTemp), headCopy, "copy_list");
+    private static LlvmValueHandle EmitCopyOutList(LlvmCodegenState state, int srcTemp, ListHeadCopyKind headCopy, bool runtimeManaged)
+        => EmitCopyOutListCore(state, LoadTemp(state, srcTemp), headCopy, runtimeManaged, "copy_list");
 
     /// <summary>
     /// Shared three-phase copy-out over a cons-cell chain given as a pointer value: nil guard,
     /// then the count, cache, and build phases, all named under <paramref name="prefix"/>.
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutListCore(LlvmCodegenState state, LlvmValueHandle srcPtr, ListHeadCopyKind headCopy, string prefix)
+    private static LlvmValueHandle EmitCopyOutListCore(LlvmCodegenState state, LlvmValueHandle srcPtr, ListHeadCopyKind headCopy, bool runtimeManaged, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -1497,7 +1497,7 @@ internal static partial class LlvmCodegen
 
         LlvmValueHandle totalCells = EmitCopyOutListCoreCount(state, srcPtr, prefix);
         var (headBufAddr, headBufBytes, headBufIsOsSlot, headBuf) = EmitCopyOutListCoreCacheHeads(state, srcPtr, totalCells, prefix);
-        LlvmValueHandle firstCell = EmitCopyOutListCoreBuild(state, headBuf, totalCells, headCopy, prefix);
+        LlvmValueHandle firstCell = EmitCopyOutListCoreBuild(state, headBuf, totalCells, headCopy, runtimeManaged, prefix);
 
         // Done
         EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, prefix + "_head_buf");
@@ -1587,7 +1587,7 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>Build phase of <see cref="EmitCopyOutListCore"/>: allocates and links the destination cells from the cached heads, returning the first cell.</summary>
-    private static LlvmValueHandle EmitCopyOutListCoreBuild(LlvmCodegenState state, LlvmValueHandle headBuf, LlvmValueHandle totalCells, ListHeadCopyKind headCopy, string prefix)
+    private static LlvmValueHandle EmitCopyOutListCoreBuild(LlvmCodegenState state, LlvmValueHandle headBuf, LlvmValueHandle totalCells, ListHeadCopyKind headCopy, bool runtimeManaged, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -1605,7 +1605,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle firstHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [zero], prefix + "_first_head_slot");
         LlvmValueHandle firstHeadVal = LlvmApi.BuildLoad2(builder, state.I64, firstHeadSlot, prefix + "_first_head_val");
         LlvmValueHandle firstHeadCopied = EmitCopyOutListHead(state, firstHeadVal, headCopy);
-        LlvmValueHandle firstCell = EmitAllocDynamic(state, cellSize);
+        LlvmValueHandle firstCell = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, cellSize, prefix + "_first_rc")
+            : EmitAllocDynamic(state, cellSize);
         StoreListHead(state, firstCell, firstHeadCopied, prefix + "_store_first_head");
         StoreListTail(state, firstCell, zero, prefix + "_store_first_tail");
         LlvmApi.BuildStore(builder, firstCell, prevCellSlot);
@@ -1626,7 +1628,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle buildHeadSlot = LlvmApi.BuildGEP2(builder, state.I64, headBuf, [buildIdx], prefix + "_build_head_slot");
         LlvmValueHandle buildHeadVal = LlvmApi.BuildLoad2(builder, state.I64, buildHeadSlot, prefix + "_build_head_val");
         LlvmValueHandle buildHeadCopied = EmitCopyOutListHead(state, buildHeadVal, headCopy);
-        LlvmValueHandle newCell = EmitAllocDynamic(state, cellSize);
+        LlvmValueHandle newCell = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, cellSize, prefix + "_cell_rc")
+            : EmitAllocDynamic(state, cellSize);
         StoreListHead(state, newCell, buildHeadCopied, prefix + "_store_head");
         StoreListTail(state, newCell, zero, prefix + "_store_tail");
 
@@ -1742,7 +1746,7 @@ internal static partial class LlvmCodegen
     /// <see cref="ListHeadCopyKind.InnerList"/> copy-out.
     /// </summary>
     private static LlvmValueHandle EmitCopyOutListFromValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
-        => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, "copy_inner");
+        => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, runtimeManaged: false, prefix: "copy_inner");
 
     /// <summary>
     /// Copies a closure ({code, env, packed env_size/result ownership, dropper}) and its environment

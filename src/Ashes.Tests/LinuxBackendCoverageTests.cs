@@ -2145,6 +2145,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_higher_order_list_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderListResultMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC higher-order list result", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_string_concat_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -5370,6 +5385,23 @@ public sealed class LinuxBackendCoverageTests
                     let first = apply(make) in
                     let second = apply(literal) in
                     loop(n - 1)(total + Ashes.Text.byteLength(first) + Ashes.Text.byteLength(second))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(Int)) -> List(Int) = given f -> f(0)
+            let source = [40, 2]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
