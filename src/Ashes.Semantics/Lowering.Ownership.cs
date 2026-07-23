@@ -1704,6 +1704,7 @@ public sealed partial class Lowering
                     && IsFreshListConstructionExpression(arguments[i]),
                 TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
                     && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
+                TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericScalarProducer(arguments[i]),
                 _ => false,
             };
             if (!supported)
@@ -1715,6 +1716,16 @@ public sealed partial class Lowering
         }
 
         return hasOwnedChild;
+    }
+
+    private bool IsRuntimeManageableFreshGenericScalarProducer(Expr expression)
+    {
+        return IsRuntimeRcStringProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(expression)
+            || IsRuntimeRcBytesProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression)
+            || IsRuntimeRcBigIntProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression);
     }
 
     private bool CanRuntimeManageFreshTupleExpression(Expr.TupleLit expression, TypeRef.TTuple tuple)

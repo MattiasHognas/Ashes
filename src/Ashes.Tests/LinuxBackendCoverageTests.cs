@@ -2107,6 +2107,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> variantOwnedChild = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcVariantOwnedChildMemoryProgram,
             outputPerIteration: 2).ConfigureAwait(false);
+        List<MemoryExecutionResult> genericOwnedChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcGenericOwnedChildMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2126,6 +2129,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC record owned child", recordOwnedChild);
         AssertMemoryPlateaus("runtime-RC variant owned child", variantOwnedChild);
+        AssertMemoryPlateaus("runtime-RC generic owned child", genericOwnedChild);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
         AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
@@ -5298,6 +5302,22 @@ public sealed class LinuxBackendCoverageTests
                     in match escaped with
                         | Empty -> loop(n - 1)(total)
                         | Text(value) -> loop(n - 1)(total + Ashes.Text.byteLength(value))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcGenericOwnedChildMemoryProgram(int iterations)
+        => $$"""
+            type Box(a) =
+                | Box(a)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let box = Box(Ashes.Text.fromInt(42)) in box
+                    in match escaped with
+                        | Box(value) -> loop(n - 1)(total + Ashes.Text.byteLength(value))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

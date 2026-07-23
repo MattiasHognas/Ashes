@@ -832,13 +832,16 @@ public sealed partial class Lowering
             _runtimeRcListAllocationRequested,
             _runtimeRcTupleAllocationRequested);
         _runtimeRcStringAllocationRequested = saved.String
-            || runtimeManagedParent && fieldType is TypeRef.TStr
+            || runtimeManagedParent && (fieldType is TypeRef.TStr
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && IsRuntimeRcStringProducer(argument) && IsRuntimeRcClosureCaptureSafeStringProducer(argument);
         _runtimeRcBytesAllocationRequested = saved.Bytes
-            || runtimeManagedParent && fieldType is TypeRef.TBytes
+            || runtimeManagedParent && (fieldType is TypeRef.TBytes
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && IsRuntimeRcBytesProducer(argument) && IsRuntimeRcClosureCaptureSafeBytesProducer(argument);
         _runtimeRcBigIntAllocationRequested = saved.BigInt
-            || runtimeManagedParent && fieldType is TypeRef.TBigInt
+            || runtimeManagedParent && (fieldType is TypeRef.TBigInt
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && IsRuntimeRcBigIntProducer(argument) && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument);
         _runtimeRcListAllocationRequested = saved.List
             || runtimeManagedParent && fieldType is TypeRef.TList
