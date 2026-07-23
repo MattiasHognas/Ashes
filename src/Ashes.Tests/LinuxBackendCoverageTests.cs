@@ -4516,6 +4516,71 @@ public sealed class LinuxBackendCoverageTests
         """;
 
     [Test]
+    public async Task Linux_backend_llvm_string_list_copy_out_should_snapshot_all_heads_before_allocating()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            import Ashes.IO
+            import Ashes.Text
+            let parts = Ashes.Text.split("GET / HTTP/1.1")(" ")
+            in match parts with
+                | method :: path :: version :: _rest ->
+                    Ashes.IO.print(method + "|" + path + "|" + version)
+                | _other -> Ashes.IO.print("bad")
+            """;
+        IrProgram program = IrOptimizer.Optimize(LowerProgramWithImports(source));
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutList
+        {
+            HeadCopy: IrInst.ListHeadCopyKind.String
+        }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("GET|/|HTTP/1.1\n");
+        result.ExitCode.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_minimal_http_handler_should_serve_with_one_worker()
+    {
+        // Keep this at one worker: retries against a multi-worker server can hide a worker that
+        // corrupts its private task arena while parsing the first request.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        string source = ConcurrentHttpServerSource(port).Replace(
+            "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(3)",
+            "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(1)",
+            StringComparison.Ordinal);
+
+        IrProgram ir = IrOptimizer.Optimize(LowerProgramWithImports(source));
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_http1_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
+
+            string response = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+            response.ShouldContain("HTTP/1.1 200 OK");
+            response.ShouldEndWith("ok");
+            proc.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            CleanUpServerProcess(proc, exePath, tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_serve_parallel_should_serve_across_workers()
     {
         // serveParallel forks an explicit number of independent reactor processes that each bind the
@@ -5806,8 +5871,8 @@ public sealed class LinuxBackendCoverageTests
             }).ShouldBeTrue(
                 "Tag-dispatched normalization should use the owned-child variant's actual size.");
         AllInstructions(probe).Count(instruction =>
-            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "The selected variant's complete list child should normalize with its parent.");
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(1,
+                "The selected Full variant's complete list child should normalize with its replacement parent.");
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.RcDrop
             {

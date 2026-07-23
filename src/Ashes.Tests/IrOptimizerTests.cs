@@ -299,6 +299,31 @@ public sealed class IrOptimizerTests
             "Dead LoadConstInt instructions should be eliminated after folding.");
     }
 
+    [Test]
+    public void Dead_code_preserves_stores_read_implicitly_by_arena_reset()
+    {
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 100),
+            new IrInst.LoadConstInt(1, 200),
+            new IrInst.StoreLocal(2, 0),
+            new IrInst.StoreLocal(3, 1),
+            new IrInst.RestoreArenaState(2, 3, 4),
+            new IrInst.ReclaimArenaChunks(3, 4),
+            new IrInst.RcDrop(0, "Int"),
+            new IrInst.Return(0),
+        ];
+        IrFunction function = new("entry", instructions, 5, 2, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.StoreLocal { Slot: 2 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.StoreLocal { Slot: 3 }).ShouldBeTrue();
+    }
+
     // Observable behavior preservation tests
 
     [Test]

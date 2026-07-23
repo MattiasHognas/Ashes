@@ -1649,13 +1649,15 @@ public static class IrOptimizer
             CollectUsedTemps(inst, usedTemps);
         }
 
-        // Collect all local slots that are read by any LoadLocal
+        // Collect all local slots read explicitly or implicitly. Arena reset instructions read
+        // watermark slots without a LoadLocal, so treating only LoadLocal as a use can delete the
+        // coroutine stores that restore those watermarks after suspension.
         var loadedSlots = new HashSet<int>();
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.LoadLocal ll)
+            foreach (int slot in StateMachineTransform.GetReadLocalSlots(inst))
             {
-                loadedSlots.Add(ll.Slot);
+                loadedSlots.Add(slot);
             }
         }
 
@@ -1816,9 +1818,9 @@ public static class IrOptimizer
         for (int i = 0; i < instructions.Count; i++)
         {
             if (toRemove.Contains(i)) continue;
-            if (instructions[i] is IrInst.LoadLocal ll)
+            foreach (int slot in StateMachineTransform.GetReadLocalSlots(instructions[i]))
             {
-                slotLoadCount[ll.Slot] = slotLoadCount.GetValueOrDefault(ll.Slot) + 1;
+                slotLoadCount[slot] = slotLoadCount.GetValueOrDefault(slot) + 1;
             }
         }
 

@@ -396,8 +396,10 @@ public abstract record IrInst
     // emission time because an argument's type was still an unresolved inference variable (e.g. an
     // accumulator only constrained by a deferred '+' or by the caller). Replaced in place — with the
     // real reset/copy-out block, or with nothing when the resolved types do not qualify — by
-    // ResolveDeferredTcoResets at the end of lowering. Carries no temps; never reaches the backend.
-    public sealed record TcoResetPending(int Id) : IrInst;
+    // ResolveDeferredTcoResets at the end of lowering. The conservative temp/local use summaries
+    // let coroutine state-machine liveness preserve everything the resolved block may read across
+    // an await; the placeholder itself never reaches the backend.
+    public sealed record TcoResetPending(int Id, int[] UsedTemps, int[] ReadLocalSlots) : IrInst;
 
     public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst
     {

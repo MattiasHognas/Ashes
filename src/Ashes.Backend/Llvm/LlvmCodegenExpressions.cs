@@ -2004,24 +2004,31 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Frees a completed spawned task's private arena chunk chain (the task struct itself lives in the
-    /// first chunk, so this must run after the last read of the task). Walks the chunks from the most
-    /// recent (<c>ArenaEnd - HeapChunkBytes</c>) back through each chunk header's previous-chunk pointer.
+    /// first chunk, so this must run after the last read of the task). Walks from each chunk footer to
+    /// its base and then through the header's previous-end link, matching the main arena's variable-size
+    /// chunk format.
     /// </summary>
     private static void EmitReapTaskArena(LlvmCodegenState state, LlvmValueHandle task, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle freeBaseSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_free_base_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), prefix + "_last_chunk"), freeBaseSlot);
+        LlvmValueHandle currentEndSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_current_end_slot");
+        LlvmApi.BuildStore(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), currentEndSlot);
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_check");
         LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_body");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_done");
         LlvmApi.BuildBr(builder, checkBlock);
         LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, freeBaseSlot, prefix + "_free_base");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
+        LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, currentEndSlot, prefix + "_current_end");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentEnd, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
         LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-        LlvmApi.BuildStore(builder, LoadMemory(state, freeBase, 0, prefix + "_prev_chunk"), freeBaseSlot);
-        EmitFreeOsMemory(state, freeBase, HeapChunkBytes, prefix + "_free_chunk");
+        LlvmValueHandle freeEnd = LlvmApi.BuildLoad2(builder, state.I64, currentEndSlot, prefix + "_free_end_value");
+        LlvmValueHandle freeBase = LoadMemory(state, freeEnd, 0, prefix + "_free_base");
+        LlvmValueHandle previousEnd = LoadMemory(state, freeBase, 0, prefix + "_previous_end");
+        LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, freeEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), prefix + "_chunk_top"),
+            freeBase, prefix + "_chunk_size");
+        LlvmApi.BuildStore(builder, previousEnd, currentEndSlot);
+        EmitFreeOsMemory(state, freeBase, chunkSize, prefix + "_free_chunk");
         LlvmApi.BuildBr(builder, checkBlock);
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
@@ -2724,10 +2731,14 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Private arena chunk for the task; header slot 0 = no previous chunk.
+        // Private arena chunk for the task. It uses the same header/footer representation as the
+        // main arena so ordinary resets and variable-size growth can reclaim it safely.
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_chunk");
         EmitHeapChunkInitCheck(state, chunkBase);
         StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_chunk_prev");
+        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), "spawn_chunk_end");
+        StoreMemory(state, chunkEnd, 0, chunkBase, "spawn_chunk_self");
 
         // Copy the task frame (header + captures + live slots) into the chunk.
         LlvmValueHandle frameSize = LoadMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes, "spawn_frame_size");
@@ -2743,7 +2754,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, copyPtr, TaskStructLayout.ArenaCursor,
             LlvmApi.BuildAdd(builder, copyPtr, alignedSize, "spawn_arena_cursor"), "spawn_arena_cursor_store");
         StoreMemory(state, copyPtr, TaskStructLayout.ArenaEnd,
-            LlvmApi.BuildAdd(builder, chunkBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_arena_end"), "spawn_arena_end_store");
+            chunkEnd, "spawn_arena_end_store");
 
         if (state.UseRunQueueScheduler)
         {
@@ -2874,8 +2885,7 @@ internal static partial class LlvmCodegen
         // Capture the arena end BEFORE freeing (the task lives inside its first chunk).
         LlvmValueHandle reapCur = LlvmApi.BuildLoad2(builder, state.I64, layout.CurSlot, "rd_reap_cur");
         LlvmValueHandle reapEnd = LoadMemory(state, reapCur, TaskStructLayout.ArenaEnd, "rd_reap_end");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, reapEnd,
-            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "rd_last_chunk_base"), layout.FreeBaseSlot);
+        LlvmApi.BuildStore(builder, reapEnd, layout.FreeBaseSlot);
         LlvmValueHandle reapPrev = LlvmApi.BuildLoad2(builder, state.I64, layout.PrevSlot, "rd_reap_prev");
         LlvmValueHandle prevIsHead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, reapPrev, LlvmApi.ConstInt(state.I64, 0, 0), "rd_prev_is_head");
         LlvmApi.BuildCondBr(builder, prevIsHead, layout.UnlinkHeadBlock, layout.UnlinkMidBlock);
@@ -2894,14 +2904,19 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeCheckBlock);
-        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_base");
-        LlvmValueHandle freeDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), "rd_free_done_check");
+        LlvmValueHandle freeEnd = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_end");
+        LlvmValueHandle freeDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEnd, LlvmApi.ConstInt(state.I64, 0, 0), "rd_free_done_check");
         LlvmApi.BuildCondBr(builder, freeDone, layout.FreeDoneBlock, layout.FreeBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeBodyBlock);
-        LlvmValueHandle freeBaseBody = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_base_body");
-        LlvmApi.BuildStore(builder, LoadMemory(state, freeBaseBody, 0, "rd_prev_chunk"), layout.FreeBaseSlot);
-        EmitFreeOsMemory(state, freeBaseBody, HeapChunkBytes, "rd_free_chunk");
+        LlvmValueHandle freeEndBody = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_end_body");
+        LlvmValueHandle freeBaseBody = LoadMemory(state, freeEndBody, 0, "rd_free_base_body");
+        LlvmValueHandle previousEnd = LoadMemory(state, freeBaseBody, 0, "rd_previous_end");
+        LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, freeEndBody, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "rd_chunk_top"),
+            freeBaseBody, "rd_chunk_size");
+        LlvmApi.BuildStore(builder, previousEnd, layout.FreeBaseSlot);
+        EmitFreeOsMemory(state, freeBaseBody, chunkSize, "rd_free_chunk");
         LlvmApi.BuildBr(builder, layout.FreeCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeDoneBlock);

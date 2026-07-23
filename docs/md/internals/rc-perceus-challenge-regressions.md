@@ -39,7 +39,7 @@ into hours of known-bad execution. Every challenge program was exercised.
 | spectral-norm | correct | correct, byte-identical | through standard N=5,500 |
 | 1BRC | correct | correct at completed scales | byte-identical through 100,000 rows |
 | TCP server | correct | correct in the sampled sweep | zero request errors |
-| HTTP server | correct | **cannot serve one request** | corrupt allocation length produces repeated `ENOMEM` |
+| HTTP server | correct | correct in the sampled sweep | zero request errors; keep-alive RSS plateau passes |
 
 ## Performance and peak RSS
 
@@ -86,8 +86,18 @@ stage. This short run is intentionally diagnostic and noisy.
 | 64 | 85,989 req/s | 60,166 req/s | 0.70x |
 
 TCP remains functional; the c=64 result is a provisional ~30% regression that needs a longer
-interleaved A/B run after the correctness blockers are fixed. HTTP has no throughput result because
-the RC build fails before one valid response.
+interleaved A/B run after the correctness blockers are fixed.
+
+After CRP-5 was fixed, a fresh 5,000-request HTTP diagnostic run completed without errors:
+
+| HTTP concurrency | RC Perceus |
+|---:|---:|
+| 1 | 17,016 req/s |
+| 8 | 39,603 req/s |
+| 64 | 20,336 req/s |
+
+These are correctness/load samples, not a replacement for the final interleaved A/B performance
+run.
 
 ## Actionable defect ledger
 
@@ -182,6 +192,26 @@ minus-one free-list signature, so treat this as a likely escaping substitution s
 use-after-free unless CRP-1's fix also removes it.
 
 ### CRP-5 — P1: HTTP request handling uses a corrupt allocation length
+
+**Resolved 2026-07-23.** Three arena/coroutine inconsistencies first had to be removed:
+
+- spawned task-private arenas still used the old fixed-size chunk-end convention, while reclaim now
+  follows variable-size chunk footers;
+- deferred TCO reset placeholders did not expose their future temp/local reads to coroutine
+  liveness, and dead-store elimination counted only explicit `LoadLocal` reads instead of implicit
+  arena/stack/reservation-slot reads;
+- `CopyOutList(String)` cached only string pointers before restoring the arena. Building the copied
+  list could then overwrite a later source string before its bytes were read. The corrupted header
+  was interpreted as a length and became the approximately 254 TiB allocation below.
+
+Task-private chunks now use the common header/footer representation; state-machine and optimizer
+slot/temp analyses cover the arena, stack, affine-reservation, copy-out, process, and task
+instructions they consume; and list copy-out snapshots complete string objects in stack/OS scratch
+memory before allocating any destination cells.
+
+The optimized one-worker minimal HTTP regression, routing/buffering, concurrent workers, parking
+receive, and the 3,000-request keep-alive RSS plateau test pass. The actual `http_echo.ash` challenge
+also completed 5,000 requests at each of concurrency 1, 8, and 64 with zero errors at `-O2`.
 
 One request is enough. Under:
 

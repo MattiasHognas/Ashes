@@ -6705,7 +6705,37 @@ public sealed partial class Lowering
         // would freeze an incomplete ownership set and let arena pointers escape across its reset.
         int pendingId = _nextTcoResetId++;
         _pendingTcoResets[pendingId] = resetInfo;
-        Emit(new IrInst.TcoResetPending(pendingId));
+        Emit(new IrInst.TcoResetPending(
+            pendingId,
+            PendingTcoResetUsedTemps(resetInfo),
+            PendingTcoResetReadLocalSlots(resetInfo)));
+    }
+
+    private static int[] PendingTcoResetUsedTemps(PendingTcoReset info)
+        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps];
+
+    private static int[] PendingTcoResetReadLocalSlots(PendingTcoReset info)
+    {
+        var slots = new HashSet<int>();
+        AddPendingTcoResetSlots(slots, info.ParamSlots);
+        AddPendingTcoResetSlots(slots, info.RuntimeManagedParamActiveSlots);
+        AddPendingTcoResetSlots(slots, info.RuntimeManagedClosureActiveSlots);
+        AddPendingTcoResetSlots(slots, info.ArgResvStartSlots);
+        AddPendingTcoResetSlots(slots, info.ArgResvEndSlots);
+        AddPendingTcoResetSlots(slots,
+            [info.FixedCursorSlot, info.FixedEndSlot, info.ArenaCursorSlot, info.ArenaEndSlot, info.CompactionSizeSlot]);
+        return [.. slots];
+    }
+
+    private static void AddPendingTcoResetSlots(HashSet<int> destination, IEnumerable<int> slots)
+    {
+        foreach (int slot in slots)
+        {
+            if (slot >= 0)
+            {
+                destination.Add(slot);
+            }
+        }
     }
 
     // Async-loop helper call site: the helper's closure returns a transparent coroutine task, so

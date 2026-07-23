@@ -667,6 +667,8 @@ public static class StateMachineTransform
         return inst switch
         {
             IrInst.StoreLocal s => [s.Slot],
+            IrInst.ConcatStrTip c => [c.ResvStartSlot, c.ResvEndSlot],
+            IrInst.SaveStackPointer s => [s.Slot],
             IrInst.SaveArenaState s => [s.CursorLocalSlot, s.EndLocalSlot],
             IrInst.RestoreArenaState r => [r.PreRestoreEndSlot],
             _ => []
@@ -675,15 +677,18 @@ public static class StateMachineTransform
 
     /// <summary>
     /// Returns all local slots read (used) by an instruction.
-    /// Includes explicit LoadLocal and implicit reads by arena instructions.
+    /// Includes explicit LoadLocal and implicit reads by arena, stack, and reservation instructions.
     /// </summary>
-    private static IEnumerable<int> GetReadLocalSlots(IrInst inst)
+    internal static IEnumerable<int> GetReadLocalSlots(IrInst inst)
     {
         return inst switch
         {
             IrInst.LoadLocal l => [l.Slot],
+            IrInst.ConcatStrTip c => [c.ResvStartSlot, c.ResvEndSlot],
+            IrInst.RestoreStackPointer r => [r.Slot],
             IrInst.RestoreArenaState r => [r.CursorLocalSlot, r.EndLocalSlot],
             IrInst.ReclaimArenaChunks r => [r.SavedEndSlot, r.PreRestoreEndSlot],
+            IrInst.TcoResetPending p => p.ReadLocalSlots,
             _ => []
         };
     }
@@ -719,6 +724,10 @@ public static class StateMachineTransform
             IrInst.SubFloat i => [i.Target],
             IrInst.MulFloat i => [i.Target],
             IrInst.DivFloat i => [i.Target],
+            IrInst.IntToFloat i => [i.Target],
+            IrInst.FloatToInt i => [i.Target],
+            IrInst.FloatUnaryIntrinsic i => [i.Target],
+            IrInst.CallLibm i => [i.Target],
             IrInst.CmpIntGt i => [i.Target],
             IrInst.CmpIntGe i => [i.Target],
             IrInst.CmpIntLt i => [i.Target],
@@ -787,6 +796,17 @@ public static class StateMachineTransform
             IrInst.BigIntCompare i => [i.Target],
             IrInst.TextToHex i => [i.Target],
             IrInst.TextAsciiCase i => [i.Target],
+            IrInst.TextByteLength i => [i.Target],
+            IrInst.ReadExact i => [i.Target],
+            IrInst.ConsolePoll i => [i.Target],
+            IrInst.FileReadAllBytes i => [i.Target],
+            IrInst.FileMmap i => [i.Target],
+            IrInst.SpawnProcess i => [i.Target],
+            IrInst.ProcessWriteStdin i => [i.Target],
+            IrInst.ProcessReadStdoutLine i => [i.Target],
+            IrInst.ProcessReadStderrLine i => [i.Target],
+            IrInst.ProcessWaitForExit i => [i.Target],
+            IrInst.ProcessKill i => [i.Target],
             _ => GetDefinedTempsNetAndBytes(inst)
         };
     }
@@ -843,6 +863,15 @@ public static class StateMachineTransform
             IrInst.DropReuse i => [i.Target],
             IrInst.RcDup i => [i.Target],
             IrInst.RcIsUnique i => [i.Target],
+            IrInst.CopyOutArena i => [i.DestTemp],
+            IrInst.CopyOutArenaToSpace i => [i.DestTemp],
+            IrInst.CopyFixedInto i => [i.DestTemp],
+            IrInst.CopyStringIntoOrFresh i => [i.DestTemp],
+            IrInst.CopyFixedIntoOrFresh i => [i.DestTemp],
+            IrInst.CopyOutList i => [i.DestTemp],
+            IrInst.CopyOutClosure i => [i.DestTemp],
+            IrInst.CopyOutTcoListCell i => [i.DestTemp],
+            IrInst.AllocReusing i => [i.Target],
             IrInst.CreateTask i => [i.Target],
             IrInst.CreateCompletedTask i => [i.Target],
             IrInst.AwaitTask i => [i.Target],
@@ -854,6 +883,8 @@ public static class StateMachineTransform
             IrInst.CreateTcpReceiveTask i => [i.Target],
             IrInst.CreateTcpCloseTask i => [i.Target],
             IrInst.CreateTcpListenTask i => [i.Target],
+            IrInst.CreateForkWorkersTask i => [i.Target],
+            IrInst.SetDrainTimeout i => [i.Target],
             IrInst.CreateTcpAcceptTask i => [i.Target],
             IrInst.CreateHttpGetTask i => [i.Target],
             IrInst.CreateHttpPostTask i => [i.Target],
@@ -904,6 +935,10 @@ public static class StateMachineTransform
             IrInst.SubFloat s => [s.Left, s.Right],
             IrInst.MulFloat m => [m.Left, m.Right],
             IrInst.DivFloat d => [d.Left, d.Right],
+            IrInst.IntToFloat i => [i.ValueTemp],
+            IrInst.FloatToInt f => [f.ValueTemp],
+            IrInst.FloatUnaryIntrinsic u => [u.ValueTemp],
+            IrInst.CallLibm c => c.Args,
             IrInst.CmpIntGt c => [c.Left, c.Right],
             IrInst.CmpIntGe c => [c.Left, c.Right],
             IrInst.CmpIntLt c => [c.Left, c.Right],
@@ -931,6 +966,7 @@ public static class StateMachineTransform
             IrInst.CallKnown ck => [ck.EnvTemp, ck.ArgTemp],
             IrInst.ToCString c => [c.StrTemp],
             IrInst.CallExternal c => c.ArgTemps,
+            IrInst.TcoResetPending p => p.UsedTemps,
             _ => GetUsedTempsAdtFileText(inst)
         };
     }
@@ -971,6 +1007,17 @@ public static class StateMachineTransform
             IrInst.BigIntCompare t => [t.Left, t.Right],
             IrInst.TextToHex t => [t.ValueTemp],
             IrInst.TextAsciiCase t => [t.SourceTemp],
+            IrInst.TextByteLength t => [t.TextTemp],
+            IrInst.ReadExact r => [r.CountTemp],
+            IrInst.ConsolePoll c => [c.TimeoutTemp],
+            IrInst.FileReadAllBytes f => [f.PathTemp],
+            IrInst.FileMmap f => [f.PathTemp],
+            IrInst.SpawnProcess p => [p.ExeTemp, p.ArgsTemp],
+            IrInst.ProcessWriteStdin p => [p.ProcessTemp, p.TextTemp],
+            IrInst.ProcessReadStdoutLine p => [p.ProcessTemp],
+            IrInst.ProcessReadStderrLine p => [p.ProcessTemp],
+            IrInst.ProcessWaitForExit p => [p.ProcessTemp],
+            IrInst.ProcessKill p => [p.ProcessTemp],
             _ => GetUsedTempsNetAndBytes(inst)
         };
     }
@@ -1029,17 +1076,28 @@ public static class StateMachineTransform
             IrInst.RcDup d => [d.SourceTemp],
             IrInst.RcIsUnique u => [u.SourceTemp],
             IrInst.Borrow b => [b.SourceTemp],
+            IrInst.CopyOutArena c => [c.SrcTemp],
+            IrInst.CopyOutArenaToSpace c => [c.SrcTemp],
+            IrInst.CopyFixedInto c => [c.DestTemp, c.SrcTemp],
+            IrInst.CopyStringIntoOrFresh c => [c.OldBlobTemp, c.SrcTemp],
+            IrInst.CopyFixedIntoOrFresh c => [c.OldBlobTemp, c.SrcTemp],
+            IrInst.CopyOutList c => [c.SrcTemp],
+            IrInst.CopyOutClosure c => [c.SrcTemp],
+            IrInst.CopyOutTcoListCell c => [c.SrcTemp],
             IrInst.CreateTask ct => [ct.ClosureTemp],
             IrInst.CreateCompletedTask ct => [ct.ResultTemp],
             IrInst.AwaitTask at => [at.TaskTemp],
             IrInst.RunTask rt => [rt.TaskTemp],
             IrInst.SpawnTask st => [st.TaskTemp],
+            IrInst.AllocReusing a => [a.TokenTemp],
             IrInst.AsyncSleep sl => [sl.MillisecondsTemp],
             IrInst.CreateTcpConnectTask t => [t.HostTemp, t.PortTemp],
             IrInst.CreateTcpSendTask t => [t.SocketTemp, t.TextTemp],
             IrInst.CreateTcpReceiveTask t => [t.SocketTemp, t.MaxBytesTemp],
             IrInst.CreateTcpCloseTask t => [t.SocketTemp],
             IrInst.CreateTcpListenTask t => [t.PortTemp],
+            IrInst.CreateForkWorkersTask t => [t.PortTemp, t.CountTemp],
+            IrInst.SetDrainTimeout t => [t.MsTemp],
             IrInst.CreateTcpAcceptTask t => [t.SocketTemp],
             IrInst.CreateHttpGetTask t => [t.UrlTemp],
             IrInst.CreateHttpPostTask t => [t.UrlTemp, t.BodyTemp],
@@ -1058,11 +1116,14 @@ public static class StateMachineTransform
             IrInst.ParallelFork p => [p.RightClosureTemp],
             IrInst.ParallelJoin p => [p.DescTemp],
             IrInst.ParallelCleanup p => [p.DescTemp],
+            IrInst.StoreParallelWorkerOverride p => [p.Source],
             IrInst.ParallelQueueStart p => [p.FClosureTemp, p.CombineClosureTemp, p.ListTemp],
             IrInst.ParallelQueueAwait p => [p.DescTemp],
             IrInst.ParallelQueueCleanup p => [p.DescTemp],
             IrInst.PanicStr p => [p.Source],
+            IrInst.StoreCapabilityHandler s => [s.Source],
             IrInst.JumpIfFalse j => [j.CondTemp],
+            IrInst.SwitchTag s => [s.TagTemp],
             IrInst.Return r => [r.Source],
             _ => []
         };
