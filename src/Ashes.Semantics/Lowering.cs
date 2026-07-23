@@ -966,7 +966,7 @@ public sealed partial class Lowering
             Emit(new IrInst.CopyOutArena(
                 normalizedTemp,
                 sourceTemp,
-                argType is TypeRef.TBigInt ? IrInst.CopyOutArena.BigIntSize : -1,
+                TcoRuntimeManagedCopySize(argType),
                 RuntimeManaged: true));
         }
 
@@ -984,7 +984,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RcDrop(
             sourceTemp,
-            argType is TypeRef.TBigInt ? "BigInt" : "String",
+            TcoRuntimeManagedTypeName(argType),
             OwnerSlot: -1,
             RuntimeManaged: true));
     }
@@ -999,6 +999,7 @@ public sealed partial class Lowering
         return Prune(info.ArgTypes[index]) switch
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
+            TypeRef.TTuple tuple => tuple.Elements.All(element => CanArenaReset(Prune(element))),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
@@ -1006,6 +1007,22 @@ public sealed partial class Lowering
             _ => false,
         };
     }
+
+    private static int TcoRuntimeManagedCopySize(TypeRef type)
+        => type switch
+        {
+            TypeRef.TBigInt => IrInst.CopyOutArena.BigIntSize,
+            TypeRef.TTuple tuple => tuple.Elements.Count * 8,
+            _ => -1,
+        };
+
+    private static string TcoRuntimeManagedTypeName(TypeRef type)
+        => type switch
+        {
+            TypeRef.TBigInt => "BigInt",
+            TypeRef.TTuple => "Tuple",
+            _ => "String",
+        };
 
     /// <summary>
     /// Emits the plain per-iteration reset when every argument is reset-safe; returns false (and
@@ -4622,17 +4639,15 @@ public sealed partial class Lowering
             bool affineConsList = paramIndex >= 0
                 && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
+                || parameterType is TypeRef.TTuple tuple
+                    && tuple.Elements.All(element => CanArenaReset(Prune(element)))
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
                     && (freshRebuiltList || affineConsList))
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
                 tco.RuntimeManagedParamTypes[slot] = parameterType;
-                if (parameterType is TypeRef.TBigInt)
-                {
-                    tco.RuntimeManagedBigIntParamSlots.Add(slot);
-                }
-                else if (parameterType is TypeRef.TList)
+                if (parameterType is TypeRef.TList)
                 {
                     tco.RuntimeManagedListParamSlots.Add(slot);
                 }
@@ -4978,9 +4993,7 @@ public sealed partial class Lowering
             }
             else
             {
-                int copySize = tco.RuntimeManagedBigIntParamSlots.Contains(slot)
-                    ? IrInst.CopyOutArena.BigIntSize
-                    : -1;
+                int copySize = TcoRuntimeManagedCopySize(tco.RuntimeManagedParamTypes[slot]);
                 Emit(new IrInst.CopyOutArena(normalizedTemp, sourceTemp, copySize, RuntimeManaged: true));
             }
             _runtimeManagedResultTemps.Add(normalizedTemp);
@@ -5011,7 +5024,7 @@ public sealed partial class Lowering
             }
             else
             {
-                string typeName = tco.RuntimeManagedBigIntParamSlots.Contains(slot) ? "BigInt" : "String";
+                string typeName = TcoRuntimeManagedTypeName(tco.RuntimeManagedParamTypes[slot]);
                 Emit(new IrInst.RcDrop(sourceTemp, typeName, slot, RuntimeManaged: true));
             }
         }

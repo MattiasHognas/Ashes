@@ -684,8 +684,11 @@ whole-spine clone, `dup`, or back-edge drop. The final recursive drop releases t
 and the growing-list 2,000/10,000/50,000 profile plateaus. That profile also exposed page-per-object
 fragmentation in the first RC allocator: small RC blocks are now densely bump-allocated in a dedicated
 per-thread RC region, released cells retain exact-size free-list reuse, large blocks keep direct OS
-allocation/free, and worker cleanup releases RC-region chunks as a unit. Additional aggregate TCO
-families, closure graph normalization, and the final emitter census remain.
+allocation/free, and worker cleanup releases RC-region chunks as a unit. The next aggregate TCO
+path covers copy-only tuples: their fixed payload is shallow-normalized at entry and
+replacement, the previous tuple is dropped at the back-edge, and the 2,000/10,000/50,000 profile
+plateaus without non-runtime relocation. Pointer-bearing tuples, records/ADTs, closure graph
+normalization, and the final emitter census remain.
 
 Deliverables:
 

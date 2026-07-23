@@ -2793,6 +2793,7 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(growingStringProbe).Count(instruction =>
             instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
                 "An affine TCO accumulator should move into its replacement without an extra reference.");
+        AssertRuntimeRcTupleTcoProbe();
 
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaStringMemoryProgram,
@@ -2803,10 +2804,14 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> growingStrings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaGrowingStringMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> tuples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
         AssertMemoryPlateaus("runtime-RC growing string accumulator", growingStrings);
+        AssertMemoryPlateaus("runtime-RC tuple TCO accumulator", tuples);
     }
 
     [Test]
@@ -5520,6 +5525,33 @@ public sealed class LinuxBackendCoverageTests
             $"{workload} RSS grew {lateGrowthKb} KB from middle to last sample; samples: {sampleSummary}");
     }
 
+    private static void AssertRuntimeRcTupleTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcTupleTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 16,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated tuple TCO accumulator should normalize at loop entry and replacement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Tuple",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tuple replacement must release its old RC cell at the back-edge.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 16,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                "The migrated tuple TCO path must not relocate through an arena allocation.");
+    }
+
     private static string BuildRuntimeRcListMemoryProgram(int iterations)
         => $$"""
             let recursive loop n total =
@@ -6686,6 +6718,17 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(text + "x")
 
             Ashes.IO.print(loop({{iterations}})(""))
+            """;
+
+    private static string BuildRuntimeRcTupleTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Int, Int) -> Int = given n -> given limit -> given pair ->
+                if n <= 0 then
+                    match pair with
+                        | (_, _) -> limit
+                else loop(n - 1)(limit)((n, n + 1))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})((0, 0)))
             """;
 
     private static string BuildLegacyArenaBytesMemoryProgram(int iterations)

@@ -745,8 +745,7 @@ internal static partial class LlvmCodegen
             (LlvmValueHandle rcFreeListGlobal, LlvmValueHandle rcArenaCursorGlobal, LlvmValueHandle rcArenaEndGlobal) = AddRuntimeRcGlobals(target, i64);
 
             // arm64 has no spare thread register (linux-x64 uses GS, win-x64 uses the TEB), so its
-            // per-thread allocator state is real ELF TLS: mark the arena cursors and RC free list
-            // thread-local and LLVM
+            // per-thread allocator state is real ELF TLS: mark its slots thread-local and LLVM
             // (static reloc → local-exec) emits the mrs tpidr_el0 + TPREL sequence the ELF linker
             // resolves. Enabled for every arm64 image — including dynamically linked (networking /
             // external) ones, whose loader reserves this image's local-exec PT_TLS in the static-TLS

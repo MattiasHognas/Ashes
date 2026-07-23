@@ -38,7 +38,6 @@ public sealed partial class Lowering
         public List<string> ParamNames { get; init; } = [];
         public List<int> ParamSlots { get; init; } = [];
         public HashSet<int> RuntimeManagedParamSlots { get; } = [];
-        public HashSet<int> RuntimeManagedBigIntParamSlots { get; } = [];
         public HashSet<int> RuntimeManagedListParamSlots { get; } = [];
         public Dictionary<int, TypeRef> RuntimeManagedParamTypes { get; } = [];
         public bool InTailPosition { get; set; }
