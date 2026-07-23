@@ -792,7 +792,8 @@ public sealed partial class Lowering
     }
 
     /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
-    /// block can be generated later (after inference resolves the argument types) at the exact
+    /// block can be generated later (after inference resolves the argument types and all sibling
+    /// branches establish the final runtime-managed parameter set) at the exact
     /// point marked by an <see cref="IrInst.TcoResetPending"/> placeholder. The
     /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
     /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
@@ -816,9 +817,11 @@ public sealed partial class Lowering
         };
 
     private sealed record PendingTcoReset(
+        TcoContext Tco,
         int[] ArgTemps,
         TypeRef[] ArgTypes,
         bool[] RuntimeManagedArgResults,
+        bool[] RuntimeManagedPredecessorAliases,
         bool[] PassThrough,
         bool[] SingleFreshCons,
         bool[] FreshListRebuild,
@@ -854,13 +857,13 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Emits the TCO back-edge arena block — the plain per-iteration reset, or the two-pass
-    /// copy-out with the fixed/advancing watermark choice — from the captured facts. Called inline
-    /// at the back edge when every argument type is already resolved, or from
-    /// <see cref="ResolveDeferredTcoResets"/> (with <c>_inst</c> pointed at the splice list) when
-    /// the decision had to wait for inference.
+    /// copy-out with the fixed/advancing watermark choice — from the captured facts. Called from
+    /// <see cref="ResolveDeferredTcoResets"/> with <c>_inst</c> pointed at the splice list after
+    /// inference and runtime-managed parameter discovery are complete.
     /// </summary>
     private void EmitTcoBackEdgeArenaBlock(PendingTcoReset info)
     {
+        info = TcoBackEdgeRefreshRuntimeManagedParams(info);
         var argTypes = info.ArgTypes;
         int tcoPreRestoreEndSlot = NewLocal();
 
@@ -914,6 +917,20 @@ public sealed partial class Lowering
         EndLivePostsGuard(tcoCopySkipLabel);
     }
 
+    private static PendingTcoReset TcoBackEdgeRefreshRuntimeManagedParams(PendingTcoReset info)
+        => info with
+        {
+            RuntimeManagedParams = info.ParamSlots
+                .Select(info.Tco.RuntimeManagedParamSlots.Contains)
+                .ToArray(),
+            RuntimeManagedParamActiveSlots = info.ParamSlots
+                .Select(slot => info.Tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1))
+                .ToArray(),
+            RuntimeManagedClosureActiveSlots = info.ParamSlots
+                .Select(slot => info.Tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1))
+                .ToArray()
+        };
+
     private bool TcoBackEdgeTryEmitRuntimeManagedReset(
         PendingTcoReset info,
         int tcoPreRestoreEndSlot)
@@ -929,25 +946,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        int[] normalizedTemps = Enumerable.Repeat(-1, info.ArgTypes.Length).ToArray();
-        for (int i = 0; i < info.ArgTypes.Length; i++)
-        {
-            if (!info.RuntimeManagedParams[i] || info.PassThrough[i])
-            {
-                continue;
-            }
-
-            TypeRef argType = Prune(info.ArgTypes[i]);
-            normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
-                info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i], info.ConsumedListTail[i]);
-            bool movedListTail = argType is TypeRef.TList
-                && info.SingleFreshCons[i]
-                && info.RuntimeManagedArgResults[i];
-            if (!movedListTail)
-            {
-                TcoBackEdgeDropRuntimeManagedArg(info, i, argType);
-            }
-        }
+        int[] normalizedTemps = TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(info);
 
         int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = info.FixedEndSlot >= 0 ? info.FixedEndSlot : info.ArenaEndSlot;
@@ -979,15 +978,55 @@ public sealed partial class Lowering
         return true;
     }
 
+    private int[] TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(PendingTcoReset info)
+    {
+        int[] normalizedTemps = Enumerable.Repeat(-1, info.ArgTypes.Length).ToArray();
+        var dropPredecessor = new bool[info.ArgTypes.Length];
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (!info.RuntimeManagedParams[i] || info.PassThrough[i])
+            {
+                continue;
+            }
+
+            TypeRef argType = Prune(info.ArgTypes[i]);
+            normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
+                info.ArgTemps[i],
+                argType,
+                info.RuntimeManagedArgResults[i],
+                info.RuntimeManagedPredecessorAliases[i],
+                info.ConsumedListTail[i]);
+            bool movedListTail = argType is TypeRef.TList
+                && info.SingleFreshCons[i]
+                && info.RuntimeManagedArgResults[i];
+            dropPredecessor[i] = !movedListTail;
+        }
+
+        // A tail call is a parallel assignment. Successor arguments may alias more than one
+        // predecessor parameter, so releasing a predecessor while later successors are still
+        // being normalized lets the exact-size free list reuse and overwrite storage that those
+        // later normalizations still need. Establish ownership for every successor first.
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (dropPredecessor[i])
+            {
+                TcoBackEdgeDropRuntimeManagedArg(info, i, Prune(info.ArgTypes[i]));
+            }
+        }
+
+        return normalizedTemps;
+    }
+
     private int TcoBackEdgeNormalizeRuntimeManagedArg(
         int sourceTemp,
         TypeRef argType,
         bool alreadyRuntimeManaged,
+        bool aliasesPredecessor,
         bool consumedListTail)
     {
         if (alreadyRuntimeManaged)
         {
-            return sourceTemp;
+            return TcoBackEdgeRetainRuntimeManagedArg(sourceTemp, argType, aliasesPredecessor);
         }
 
         if (consumedListTail && argType is TypeRef.TList)
@@ -1041,6 +1080,27 @@ public sealed partial class Lowering
 
         _runtimeManagedResultTemps.Add(normalizedTemp);
         return normalizedTemp;
+    }
+
+    private int TcoBackEdgeRetainRuntimeManagedArg(
+        int sourceTemp,
+        TypeRef argType,
+        bool aliasesPredecessor)
+    {
+        if (!aliasesPredecessor)
+        {
+            return sourceTemp;
+        }
+
+        if (argType is TypeRef.TList)
+        {
+            return EmitRuntimeManagedNullableDup(sourceTemp);
+        }
+
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
+        _runtimeManagedResultTemps.Add(duplicatedTemp);
+        return duplicatedTemp;
     }
 
     private int EmitRuntimeManagedNullableDup(int sourceTemp)
@@ -1713,9 +1773,8 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder — a back-edge whose copy-out
-    /// decision was deferred because an argument type was still an unresolved inference variable —
-    /// with the real arena block (or with nothing, when the now-resolved types do not qualify).
+    /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder with the real arena block (or
+    /// with nothing, when the resolved types do not qualify).
     /// Runs at the end of lowering, after the deferred operator resolutions, so the pruned types
     /// are as concrete as they will ever be. Splices in place per function, temporarily pointing
     /// <c>_inst</c> and the temp/local counters at the target function.
@@ -5626,7 +5685,7 @@ public sealed partial class Lowering
             Emit(new IrInst.RcDrop(
                 sourceTemp,
                 TcoRuntimeManagedTypeName(type),
-                slot,
+                OwnerSlot: -1,
                 RuntimeManaged: true));
         }
         Emit(new IrInst.Label(skipLabel));
@@ -6251,14 +6310,11 @@ public sealed partial class Lowering
 
     private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)
     {
-        int[] oldRuntimeParamTemps = Enumerable.Repeat(-1, tco.ParamSlots.Count).ToArray();
+        var oldRuntimeParamTemps = new int[tco.ParamSlots.Count];
         for (int i = 0; i < tco.ParamSlots.Count; i++)
         {
-            if (tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[i]))
-            {
-                oldRuntimeParamTemps[i] = NewTemp();
-                Emit(new IrInst.LoadLocal(oldRuntimeParamTemps[i], tco.ParamSlots[i]));
-            }
+            oldRuntimeParamTemps[i] = NewTemp();
+            Emit(new IrInst.LoadLocal(oldRuntimeParamTemps[i], tco.ParamSlots[i]));
         }
 
         return oldRuntimeParamTemps;
@@ -6521,9 +6577,12 @@ public sealed partial class Lowering
     private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, int[] oldRuntimeParamTemps, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
         var resetInfo = new PendingTcoReset(
+            tco,
             newArgTemps,
             newArgTypes,
             newArgTemps.Select(IsRuntimeManagedResultTemp).ToArray(),
+            collectedArgs.Select(argument => argument is Expr.Var variable
+                && tco.ParamNames.Contains(variable.Name)).ToArray(),
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
@@ -6545,16 +6604,12 @@ public sealed partial class Lowering
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
                 k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
 
-        if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
-        {
-            int pendingId = _nextTcoResetId++;
-            _pendingTcoResets[pendingId] = resetInfo;
-            Emit(new IrInst.TcoResetPending(pendingId));
-        }
-        else
-        {
-            EmitTcoBackEdgeArenaBlock(resetInfo);
-        }
+        // Every reset is resolved after the complete lambda body has been lowered. A later sibling
+        // branch can promote additional parameters to runtime RC; emitting an earlier branch here
+        // would freeze an incomplete ownership set and let arena pointers escape across its reset.
+        int pendingId = _nextTcoResetId++;
+        _pendingTcoResets[pendingId] = resetInfo;
+        Emit(new IrInst.TcoResetPending(pendingId));
     }
 
     // Async-loop helper call site: the helper's closure returns a transparent coroutine task, so

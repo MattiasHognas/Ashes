@@ -505,6 +505,69 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Runtime_managed_TCO_parameter_exit_drop_stays_inside_its_active_guard()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build = given (n) -> given (text) ->
+                if n == 0 then text
+                else build(n - 1)(text + "x")
+            in build(5)("")
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.OfType<IrInst.RcDrop>()
+            .Where(drop => string.Equals(drop.TypeName, "String", StringComparison.Ordinal)
+                && drop.RuntimeManaged)
+            .All(drop => drop.OwnerSlot == -1)
+            .ShouldBeTrue(
+                "TCO replacement and conditional exit drops are manually placed; lifetime placement " +
+                "must not move an exit drop out of its active/returned-value guard.");
+    }
+
+    [Test]
+    public void Runtime_managed_TCO_normalizes_all_successor_arguments_before_dropping_predecessors()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> BigInt -> BigInt -> BigInt =
+                given n -> given left -> given right ->
+                    if n == 0 then left
+                    else build(n - 1)(right)(left * right)
+            in build(5)(1N)(2N)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+        int firstReplacementDrop = instructions.FindIndex(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "BigInt",
+            OwnerSlot: -1,
+            RuntimeManaged: true,
+        });
+        int backEdgeRestore = instructions.FindIndex(
+            firstReplacementDrop,
+            instruction => instruction is IrInst.RestoreArenaState);
+
+        firstReplacementDrop.ShouldBeGreaterThanOrEqualTo(0);
+        backEdgeRestore.ShouldBeGreaterThan(firstReplacementDrop);
+        instructions.Skip(firstReplacementDrop).Take(backEdgeRestore - firstReplacementDrop)
+            .Any(instruction => instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: true,
+                Purpose: IrInst.CopyOutPurpose.RcNormalization,
+            })
+            .ShouldBeFalse(
+                "Parallel TCO assignment may alias predecessor parameters; every successor must own " +
+                "its normalized value before any predecessor can be released and reused.");
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "A direct successor reference to another RC parameter needs its own ownership before " +
+            "the predecessor parameter set is released.");
+    }
+
+    [Test]
     public void TCO_loop_with_list_of_list_arg_uses_runtime_ownership()
     {
         // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it

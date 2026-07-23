@@ -93,6 +93,21 @@ the RC build fails before one valid response.
 
 ### CRP-1 — P1: TCO/exit double-drop corrupts the exact-size RC free list
 
+**Resolved 2026-07-23.** Three ownership errors combined here:
+
+- guarded TCO exit drops were incorrectly eligible for lexical lifetime placement, which moved
+  them outside their active/result-transfer guards;
+- parallel TCO assignment could release predecessor values before every successor was normalized,
+  and a successor that directly aliases an RC predecessor did not retain that value;
+- an early control-flow branch captured the runtime-managed parameter set before later sibling
+  branches promoted additional parameters, allowing arena pointers to survive its reset.
+
+All back-edge resets now resolve after the complete lambda body establishes the final managed
+parameter set, while retaining branch-specific argument facts. The `ArenaDeallocationTests` class,
+dedicated multi-BigInt and late-sibling-promotion native regressions, runtime-RC plateau tests, and
+`binary-trees 10`, `pidigits 100`, `fasta 1000`, and `k-nucleotide` over that fasta output pass at
+`-O2`.
+
 Minimal reproducers:
 
 ```bash
