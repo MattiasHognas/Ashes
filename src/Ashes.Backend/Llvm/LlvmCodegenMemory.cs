@@ -1175,7 +1175,11 @@ internal static partial class LlvmCodegen
     /// lists in TCO copy-out where the tail pointer is nil.
     /// </para>
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutArena(LlvmCodegenState state, int srcTemp, int staticSizeBytes)
+    private static LlvmValueHandle EmitCopyOutArena(
+        LlvmCodegenState state,
+        int srcTemp,
+        int staticSizeBytes,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
@@ -1184,7 +1188,7 @@ internal static partial class LlvmCodegen
         // {header:0} heap object, never null), like strings — no nil guard needed.
         if (staticSizeBytes == IrInst.CopyOutArena.BigIntSize)
         {
-            return EmitCopyOutBigIntValue(state, srcPtr);
+            return EmitCopyOutBigIntValue(state, srcPtr, runtimeManaged);
         }
 
         // Fixed-size objects (e.g. cons cells) may have a nil source pointer —
@@ -1207,7 +1211,9 @@ internal static partial class LlvmCodegen
             // Non-nil path: allocate and copy.
             LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
             LlvmValueHandle sizeBytes = LlvmApi.ConstInt(state.I64, (ulong)staticSizeBytes, 0);
-            LlvmValueHandle destPtr = EmitAllocDynamic(state, sizeBytes);
+            LlvmValueHandle destPtr = runtimeManaged
+                ? EmitRuntimeRcAllocDynamic(state, sizeBytes, "copy_out_rc")
+                : EmitAllocDynamic(state, sizeBytes);
             LlvmValueHandle srcPtrBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_src_ptr");
             LlvmValueHandle destPtrBytes = LlvmApi.BuildIntToPtr(builder, destPtr, state.I8Ptr, "copy_out_dest_ptr");
             EmitMoveBytes(state, destPtrBytes, srcPtrBytes, sizeBytes, "copy_out");
@@ -1222,7 +1228,7 @@ internal static partial class LlvmCodegen
         // Dynamic size (strings): source is never nil — Ashes strings are always
         // heap-allocated {length, bytes} structs; the type system has no nullable
         // string representation, so every TStr value is a valid non-zero pointer.
-        return EmitCopyOutStringValue(state, srcPtr);
+        return EmitCopyOutStringValue(state, srcPtr, runtimeManaged);
     }
 
     /// <summary>
@@ -1230,8 +1236,28 @@ internal static partial class LlvmCodegen
     /// Reads the length field to determine total size (8 + length), allocates that many bytes,
     /// and memcpy's the entire string. The source pointer must be non-nil.
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
-        => EmitCopyOutStringValue(state, srcPtr, state.HeapCursorSlot, state.HeapEndSlot);
+    private static LlvmValueHandle EmitCopyOutStringValue(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr,
+        bool runtimeManaged = false)
+        => runtimeManaged
+            ? EmitCopyOutRuntimeManagedStringValue(state, srcPtr)
+            : EmitCopyOutStringValue(state, srcPtr, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static LlvmValueHandle EmitCopyOutRuntimeManagedStringValue(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle length = LoadStringLength(state, srcPtr, "copy_out_rc_str_len");
+        LlvmValueHandle srcBytes = GetStringBytesPointer(state, srcPtr, "copy_out_rc_src");
+        LlvmValueHandle size = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_rc_str_total");
+        LlvmValueHandle destination = EmitRuntimeRcAllocDynamic(state, size, "copy_out_rc_str");
+        StoreMemory(state, destination, 0, length, "copy_out_rc_str_dest_len");
+        LlvmValueHandle destinationBytes = GetStringBytesPointer(state, destination, "copy_out_rc_dest");
+        EmitMoveBytes(state, destinationBytes, srcBytes, length, "copy_out_rc");
+        return destination;
+    }
 
     private static LlvmValueHandle EmitCopyOutStringValue(LlvmCodegenState state, LlvmValueHandle srcPtr, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
@@ -1256,7 +1282,10 @@ internal static partial class LlvmCodegen
     /// (the normalized prefix), read from the header, and the whole thing is memcpy'd. The source
     /// pointer is always non-nil (BigInt zero is a header-0 heap object).
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutBigIntValue(LlvmCodegenState state, LlvmValueHandle srcPtr)
+    private static LlvmValueHandle EmitCopyOutBigIntValue(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr,
+        bool runtimeManaged = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle headerPtr = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I64Ptr, "copy_out_bigint_hdr_ptr");
@@ -1264,7 +1293,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle limbCount = LlvmApi.BuildAnd(builder, header, LlvmApi.ConstInt(state.I64, 0xFFFFFFFF, 0), "copy_out_bigint_limbs");
         LlvmValueHandle limbBytes = LlvmApi.BuildMul(builder, limbCount, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_bigint_limb_bytes");
         LlvmValueHandle size = LlvmApi.BuildAdd(builder, limbBytes, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_bigint_size");
-        LlvmValueHandle dest = EmitAllocDynamic(state, size);
+        LlvmValueHandle dest = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, size, "copy_out_rc_bigint")
+            : EmitAllocDynamic(state, size);
         LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_bigint_src");
         LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "copy_out_bigint_dest");
         EmitMoveBytes(state, destBytes, srcBytes, size, "copy_out_bigint");
@@ -1714,7 +1745,7 @@ internal static partial class LlvmCodegen
         => EmitCopyOutListCore(state, srcPtr, ListHeadCopyKind.Inline, "copy_inner");
 
     /// <summary>
-    /// Copies a closure (24 bytes: {code, env, env_size}) and its environment
+    /// Copies a closure ({code, env, packed env_size/result ownership, dropper}) and its environment
     /// out of the arena. If the env pointer is non-nil, allocates a fresh env of
     /// env_size bytes and memcpy's it, then allocates a fresh 24-byte closure and
     /// stores the new env pointer.
@@ -1727,7 +1758,9 @@ internal static partial class LlvmCodegen
         // Load fields from source closure
         LlvmValueHandle code = LoadMemory(state, srcPtr, 0, "copy_closure_code");
         LlvmValueHandle envPtr = LoadMemory(state, srcPtr, 8, "copy_closure_env");
-        LlvmValueHandle envSize = LoadMemory(state, srcPtr, 16, "copy_closure_env_size");
+        LlvmValueHandle packedEnvironmentSize = LoadMemory(state, srcPtr, 16, "copy_closure_env_size");
+        LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+            LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "copy_closure_env_size_masked");
         LlvmValueHandle dropper = LoadMemory(state, srcPtr, 24, "copy_closure_dropper");
 
         // Alloca for the new env pointer (nil path: keep 0; non-nil path: new alloc)
@@ -1756,7 +1789,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle newClosure = EmitAllocDynamic(state, closureSize);
         StoreMemory(state, newClosure, 0, code, "copy_closure_store_code");
         StoreMemory(state, newClosure, 8, newEnvPtr, "copy_closure_store_env");
-        StoreMemory(state, newClosure, 16, envSize, "copy_closure_store_env_size");
+        StoreMemory(state, newClosure, 16, packedEnvironmentSize, "copy_closure_store_env_size");
         StoreMemory(state, newClosure, 24, dropper, "copy_closure_store_dropper");
 
         return newClosure;

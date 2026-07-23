@@ -186,9 +186,16 @@ public abstract record IrInst
         string FuncLabel,
         int EnvPtrTemp,
         int EnvSizeBytes,
-        bool RuntimeManaged = false
-    ) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
-    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
+        bool RuntimeManaged = false,
+        bool ReturnsRuntimeManaged = false
+    ) : IrInst; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
+    public sealed record MakeClosureStack(
+        int Target,
+        string FuncLabel,
+        int EnvPtrTemp,
+        int EnvSizeBytes,
+        bool ReturnsRuntimeManaged = false
+    ) : IrInst; // stack alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
     /// into an escaping closure's dropper slot, so a resource a closure captured is closed
@@ -464,7 +471,12 @@ public abstract record IrInst
     /// ensuring the tail pointer to a pre-watermark cell is preserved.
     /// </para>
     /// </summary>
-    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst
+    public sealed record CopyOutArena(
+        int DestTemp,
+        int SrcTemp,
+        int StaticSizeBytes,
+        bool RuntimeManaged = false
+    ) : IrInst
     {
         /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from
         /// the header limb count). Distinct from -1 (string, size from the length word).</summary>
@@ -547,7 +559,7 @@ public abstract record IrInst
     /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its
     /// environment out of the arena to a fresh allocation. Reads the env_size field
     /// from the source closure at offset 16, allocates env_size bytes for the env
-    /// copy, then allocates 24 bytes for the closure copy. Relinks the env pointer
+    /// copy, then allocates the closure payload. Relinks the env pointer
     /// in the new closure to point to the new env copy.
     /// <para>
     /// If the env pointer is 0 (no captures), only the 24-byte closure struct is

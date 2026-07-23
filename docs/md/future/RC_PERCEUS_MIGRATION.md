@@ -474,8 +474,16 @@ BigInt, copy-element List, copy-field ADT, and fresh record results so the prove
 coupled to one payload representation.
 An exact let alias of a statically known function now retains that label provenance by local-slot
 identity, including curried saturation. The exact label also follows that alias into a closure
-environment by its capture index. Function parameters and arbitrary closure-producing control flow
-still lose the label and therefore keep the conservative higher-order copy-out boundary.
+environment by its capture index. Each closure now carries an immediate-result ownership bit, so an
+indirect function parameter or arbitrary closure-producing control-flow result can distinguish an
+independent RC result at runtime. When the higher-order result has a concrete shallow heap type, it is
+normalized to RC ownership: an arena result is copied into an RC allocation, while an already-owned
+result is retained without copying. The normalized result then participates in ordinary scope drops
+and may itself cross another higher-order return boundary without losing ownership provenance.
+Unresolved polymorphic results, lists, and closures still use their legacy behavior until a runtime
+layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
+the established task-region boundary for now; enabling this closure-result channel there caused the
+HTTP keep-alive RSS gate to grow linearly and is therefore blocked on suspension-aware ownership.
 
 Deliverables:
 

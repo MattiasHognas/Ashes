@@ -31,18 +31,24 @@ internal static partial class LlvmCodegen
             : LlvmApi.BuildLShr(builder, value, maskedAmount, name);
     }
 
-    // Closure layout: {code@0, env@8, env_size@16, dropper@24}. The dropper is a code pointer that
+    // Closure layout: {code@0, env@8, packed_env_size@16, dropper@24}. The high bit of the packed
+    // size records runtime-managed immediate results; the low 63 bits retain the environment size.
+    // The result flag lets an indirect caller reclaim call scratch without copying an independent
+    // runtime-RC result. The dropper is a code pointer that
     // closes resources moved into the closure's env (set only when a captured resource escapes with
     // the closure — see SetClosureDropper); 0 for ordinary closures. Invoked when the closure is
     // cleaned up (CleanupResource "Function").
     private const int ClosureSizeBytes = 32;
+    private const ulong ClosureResultOwnershipBit = 1UL << 63;
+    private const ulong ClosureEnvironmentSizeMask = long.MaxValue;
 
     private static LlvmValueHandle EmitMakeClosure(
         LlvmCodegenState state,
         string funcLabel,
         LlvmValueHandle envPtr,
         int envSizeBytes,
-        bool runtimeManaged = false)
+        bool runtimeManaged = false,
+        bool returnsRuntimeManaged = false)
     {
         LlvmValueHandle closurePtr = runtimeManaged
             ? EmitRuntimeRcAlloc(state, ClosureSizeBytes, "rc_closure")
@@ -50,7 +56,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
-        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_env_size_store_{funcLabel}");
+        ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
+            | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0);
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
     }
@@ -58,7 +66,9 @@ internal static partial class LlvmCodegen
     private static bool EmitRuntimeRcClosureDrop(LlvmCodegenState state, LlvmValueHandle closurePtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle envSize = LoadMemory(state, closurePtr, 16, "rc_closure_env_size");
+        LlvmValueHandle packedEnvironmentSize = LoadMemory(state, closurePtr, 16, "rc_closure_env_size");
+        LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+            LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "rc_closure_env_size_masked");
         LlvmValueHandle hasEnv = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, envSize,
             LlvmApi.ConstInt(state.I64, 0, 0), "rc_closure_has_env");
         LlvmBasicBlockHandle dropEnvBlock = LlvmApi.AppendBasicBlockInContext(
@@ -76,13 +86,20 @@ internal static partial class LlvmCodegen
         return EmitRuntimeRcDrop(state, closurePtr);
     }
 
-    private static LlvmValueHandle EmitMakeClosureStack(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
+    private static LlvmValueHandle EmitMakeClosureStack(
+        LlvmCodegenState state,
+        string funcLabel,
+        LlvmValueHandle envPtr,
+        int envSizeBytes,
+        bool returnsRuntimeManaged)
     {
         LlvmValueHandle closurePtr = EmitStackAlloc(state, ClosureSizeBytes, $"closure_stack_{funcLabel}");
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_stack_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_stack_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_stack_env_store_{funcLabel}");
-        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_stack_env_size_store_{funcLabel}");
+        ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
+            | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0);
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_stack_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_stack_dropper_store_{funcLabel}");
         return closurePtr;
     }

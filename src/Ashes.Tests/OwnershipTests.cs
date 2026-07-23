@@ -456,6 +456,22 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Higher_order_function_normalizes_shallow_heap_results_to_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            "let apply : (Int -> Str) -> Str = given f -> f(0)\nlet make unit = let text = \"ab\" + \"cd\" in text\nlet literal unit = \"wxyz\"\nlet first = apply(make) in let second = apply(literal) in Ashes.Text.byteLength(first) + Ashes.Text.byteLength(second)");
+
+        ir.Functions.SelectMany(function => function.Instructions).Any(inst =>
+            inst is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        ir.Functions.Any(function =>
+            function.Instructions.Any(inst => inst is IrInst.CallClosure)
+            && function.Instructions.Any(inst => inst is IrInst.CopyOutArena { RuntimeManaged: true })
+            && function.Instructions.All(inst => inst is not IrInst.CopyOutArena { RuntimeManaged: false })).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Count(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
     public void Local_bytes_append_consumed_by_length_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)");

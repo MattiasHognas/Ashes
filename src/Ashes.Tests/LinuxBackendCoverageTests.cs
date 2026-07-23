@@ -2110,6 +2110,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> genericOwnedChild = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcGenericOwnedChildMemoryProgram,
             outputPerIteration: 2).ConfigureAwait(false);
+        List<MemoryExecutionResult> higherOrderResult = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderResultMemoryProgram,
+            outputPerIteration: 8).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2130,6 +2133,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC record owned child", recordOwnedChild);
         AssertMemoryPlateaus("runtime-RC variant owned child", variantOwnedChild);
         AssertMemoryPlateaus("runtime-RC generic owned child", genericOwnedChild);
+        AssertMemoryPlateaus("runtime-RC higher-order result", higherOrderResult);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
         AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
@@ -5318,6 +5322,22 @@ public sealed class LinuxBackendCoverageTests
                         let box = Box(Ashes.Text.fromInt(42)) in box
                     in match escaped with
                         | Box(value) -> loop(n - 1)(total + Ashes.Text.byteLength(value))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> Str) -> Str = given f -> f(0)
+            let make unit = let text = "ab" + "cd" in text
+            let literal unit = "wxyz"
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let first = apply(make) in
+                    let second = apply(literal) in
+                    loop(n - 1)(total + Ashes.Text.byteLength(first) + Ashes.Text.byteLength(second))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

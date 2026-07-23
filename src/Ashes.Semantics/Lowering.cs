@@ -1630,7 +1630,13 @@ public sealed partial class Lowering
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
-            Emit(new IrInst.MakeClosure(closTemp, topRef.Label, envTemp, 0));
+            Emit(new IrInst.MakeClosure(
+                closTemp,
+                topRef.Label,
+                envTemp,
+                0,
+                ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                    && _runtimeManagedFunctionResultLabels.Contains(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
@@ -1692,7 +1698,9 @@ public sealed partial class Lowering
             case Binding.Self self:
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
-                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes));
+                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
+                    ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                        && _runtimeManagedFunctionResultLabels.Contains(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
 
@@ -4617,21 +4625,19 @@ public sealed partial class Lowering
 
     private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
     {
-        // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
+        // Produce closure object: alloc 32 bytes and store code, env, packed env size, and dropper.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
+        bool returnsRuntimeManaged = !_usesAsync && CapabilityGlobalCount == 0
+            && _runtimeManagedFunctionResultLabels.Contains(label);
         if (stackAllocateClosure)
         {
-            Emit(new IrInst.MakeClosureStack(closureTemp, label, envPtrTemp, envSizeBytes));
+            Emit(new IrInst.MakeClosureStack(closureTemp, label, envPtrTemp, envSizeBytes, returnsRuntimeManaged));
         }
         else
         {
-            Emit(new IrInst.MakeClosure(
-                closureTemp,
-                label,
-                envPtrTemp,
-                envSizeBytes,
-                _runtimeRcClosureAllocationRequested));
+            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes,
+                _runtimeRcClosureAllocationRequested, returnsRuntimeManaged));
         }
 
         // Record any resource captured by this closure, with its env offset (capture i lives at
@@ -5579,20 +5585,25 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArgs, collectedArgs.Count);
         }
 
-        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType) is { } earlyResult)
+        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
+                out int runtimeManagedResultFlagTemp) is { } earlyResult)
         {
             return earlyResult;
         }
 
         var callResultType = Prune(currentType);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        bool normalizesRuntimeManagedResult = !runtimeManagedResult
+            && runtimeManagedResultFlagTemp >= 0
+            && GetCopyOutKind(callResultType, out _) == CopyOutKind.Shallow;
         currentTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
             currentTemp,
             callResultType,
-            runtimeManagedResult);
-        if (runtimeManagedResult)
+            runtimeManagedResult,
+            runtimeManagedResultFlagTemp);
+        if (runtimeManagedResult || normalizesRuntimeManagedResult)
         {
             _runtimeManagedResultTemps.Add(currentTemp);
         }
@@ -5673,8 +5684,11 @@ public sealed partial class Lowering
     // Applies the collected arguments one closure call at a time, unifying each parameter and
     // recording the applied arrow's capabilities. Returns a diagnostic result to propagate on an
     // early error, or null when the whole chain applied cleanly.
-    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, ref int currentTemp, ref TypeRef currentType)
+    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
+        ref int currentTemp, ref TypeRef currentType,
+        out int runtimeManagedResultFlagTemp)
     {
+        runtimeManagedResultFlagTemp = -1;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(collectedArgs[i]);
@@ -5715,24 +5729,52 @@ public sealed partial class Lowering
                 SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
 
-            // A resource passed to an opaque function normally moves into the callee (no borrowing: the
-            // caller must not use or drop it afterwards, or it double-closes). Borrow inference skips the
-            // move when the callee provably only READS this parameter — never closing, storing,
-            // returning, or capturing it — so the caller keeps ownership and drops it once. Conservative:
-            // only proven borrows are skipped; everything else still moves.
-            bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, i);
-            if (!borrowsOnly)
-            {
-                MarkResourceArgMoved(collectedArgs[i]);
-            }
-
-            int target = NewTemp();
-            EmitClosureCall(target, currentTemp, argTemp, borrowsOnly);
-            currentTemp = target;
+            currentTemp = LowerAppliedClosureCall(
+                rootExpr, collectedArgs[i], i,
+                !_usesAsync
+                    && !_inCoroutineBody
+                    && CapabilityGlobalCount == 0
+                    && i == collectedArgs.Count - 1
+                    && GetCopyOutKind(Prune(funType.Ret), out _) == CopyOutKind.Shallow,
+                currentTemp, argTemp, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
 
         return null;
+    }
+
+    private int LowerAppliedClosureCall(
+        Expr rootExpr,
+        Expr argument,
+        int argumentIndex,
+        bool needsResultOwnership,
+        int closureTemp,
+        int argumentTemp,
+        ref int runtimeManagedResultFlagTemp)
+    {
+        // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
+        bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);
+        if (!borrowsOnly)
+        {
+            MarkResourceArgMoved(argument);
+        }
+
+        if (needsResultOwnership)
+        {
+            int packedEnvironmentSizeTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+            int ownershipShiftTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
+            runtimeManagedResultFlagTemp = NewTemp();
+            Emit(new IrInst.ShrInt(
+                runtimeManagedResultFlagTemp,
+                packedEnvironmentSizeTemp,
+                ownershipShiftTemp));
+        }
+
+        int target = NewTemp();
+        EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly);
+        return target;
     }
 
     private void EmitClosureCall(int target, int closureTemp, int argumentTemp, bool borrowsArgument)
@@ -5756,7 +5798,8 @@ public sealed partial class Lowering
         int callWmEndSlot,
         int currentTemp,
         TypeRef callResultType,
-        bool runtimeManagedResult)
+        bool runtimeManagedResult,
+        int runtimeManagedResultFlagTemp)
     {
         int callPreRestoreEndSlot = NewLocal();
         if (runtimeManagedResult || CanArenaReset(callResultType))
@@ -5776,7 +5819,46 @@ public sealed partial class Lowering
             return currentTemp;
         }
 
+        if (runtimeManagedResultFlagTemp >= 0)
+        {
+            return LowerCallConditionalCopyOutResult(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                runtimeManagedResultFlagTemp,
+                callCopySize);
+        }
+
         return LowerCallCopyOutResult(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot, currentTemp, callCopyOutKind, callCopySize);
+    }
+
+    private int LowerCallConditionalCopyOutResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        int runtimeManagedResultFlagTemp,
+        int callCopySize)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+
+        string copyLabel = NewLabel("call_copy_arena_result");
+        string reclaimLabel = NewLabel("call_reclaim_owned_result");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(reclaimLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(copiedTemp, currentTemp, callCopySize, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(reclaimLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private int LowerCallCopyOutResult(int callWmCursorSlot, int callWmEndSlot, int callPreRestoreEndSlot, int currentTemp, CopyOutKind callCopyOutKind, int callCopySize)

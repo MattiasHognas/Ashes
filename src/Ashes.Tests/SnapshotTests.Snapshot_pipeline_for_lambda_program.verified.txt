@@ -212,7 +212,8 @@
         {},
         {
           Target: 1,
-          FuncLabel: lambda_0
+          FuncLabel: lambda_0,
+          ReturnsRuntimeManaged: false
         },
         {
           Slot: 2,
@@ -287,7 +288,8 @@
         {
           DestTemp: 10,
           SrcTemp: 8,
-          StaticSizeBytes: 8
+          StaticSizeBytes: 8,
+          RuntimeManaged: false
         },
         {
           SavedEndSlot: 1,
@@ -367,7 +369,8 @@
             Target: 2,
             FuncLabel: lambda_1,
             EnvSizeBytes: 8,
-            RuntimeManaged: false
+            RuntimeManaged: false,
+            ReturnsRuntimeManaged: false
           },
           {
             Source: 2
