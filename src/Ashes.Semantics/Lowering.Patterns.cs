@@ -167,7 +167,8 @@ public sealed partial class Lowering
         TypeRef valueType,
         bool matchIsInTailPosition)
     {
-        if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name))
+        if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name)
+            && !IsArenaReuseUnsafeForRuntimeManagedChildren(variable, valueType))
         {
             return (variable.Name, null);
         }
@@ -258,6 +259,20 @@ public sealed partial class Lowering
         runtimeType = matchedType;
         return true;
     }
+
+    // Arena in-place reuse of a TCO accumulator's ADT cell is unsound when the ADT carries
+    // runtime-managed (pointer-bearing) children: the cell is arena-managed but its children are RC,
+    // so the back-edge deferred drop (TcoBackEdgeDropRuntimeManagedArgCore) releases the previous
+    // value by re-reading THIS cell's fields — which the arena AllocReusing has already overwritten
+    // with the new children, freeing the live new children (observed: a shared-tail child loses cells
+    // across iterations). Keeping the old cell intact (a fresh rebuild) lets the deferred drop
+    // release the real old value. The runtime-managed reuse path (CanCopyOutAdt / TryGetRuntimeManaged
+    // ReuseScrutinee) manages its children explicitly and is unaffected.
+    private bool IsArenaReuseUnsafeForRuntimeManagedChildren(Expr.Var scrutinee, TypeRef valueType)
+        => Lookup(scrutinee.Name) is Binding.Local local
+            && _tcoCtx?.ParamSlots.Contains(local.Slot) == true
+            && Prune(valueType) is TypeRef.TNamedType named
+            && !CanCopyOutAdt(named, out _);
 
     private bool TryFindRuntimeReuseConstructorArguments(
         Expr body,

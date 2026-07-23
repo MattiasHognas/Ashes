@@ -517,6 +517,52 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("12\n");
     }
 
+    [Test]
+    public async Task Tco_adt_with_shared_tail_list_children_survives_across_iterations()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a TCO loop threading an ADT with two runtime-managed List children, each
+        // rebuilt from a shared tail (`value :: rest`). The ADT cell must NOT be reused in place —
+        // the back-edge deferred drop re-reads that cell to release the previous children, and an
+        // in-place overwrite would leave it pointing at the NEW children, freeing them (the last
+        // child then loses its tail, printing 14 instead of 18). Needs two children and >= 2
+        // iterations to surface, so this exact shape is the guard.
+        var src = """
+            type State =
+                | S(List(Int), List(Int))
+
+            let replaceFirst value values =
+                match values with
+                    | [] -> [value]
+                    | _ :: rest -> value :: rest
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | value :: rest -> sum(rest)(total + value)
+
+            let recursive loop n state =
+                if n == 0
+                then
+                    match state with
+                        | S(left, right) -> sum(left)(sum(right)(0))
+                else
+                    match state with
+                        | S(left, right) ->
+                            let nextLeft = replaceFirst(n)(left)
+                            in
+                                let nextRight = replaceFirst(n + 10)(right)
+                                in loop(n - 1)(S(nextLeft)(nextRight))
+
+            Ashes.IO.print(loop(2)(S([1, 2])([3, 4])))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("18\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

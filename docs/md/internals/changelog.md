@@ -218,6 +218,17 @@ through the standard N=50,000,000 workload and a flat RSS slope. Regressions:
 `ReuseTokenTests.Inspect_only_record_list_traversal_borrows_instead_of_normalizing` and its escaping
 counterpart.
 
+Arena in-place reuse of a TCO accumulator's ADT cell is now declined when the ADT carries
+runtime-managed (pointer-bearing) children. Such an accumulator's cell is arena-managed while its
+children are RC, so the back-edge deferred drop releases the previous value by re-reading THIS cell's
+fields — but an arena `AllocReusing` had already overwritten them with the new children, freeing the
+live new children (a child rebuilt from a shared tail, `value :: rest`, lost cells across
+iterations). Keeping the old cell intact by rebuilding fresh lets the deferred drop release the real
+old value; the runtime-managed reuse path, which manages its children explicitly, is unaffected. The
+extra per-iteration cell is bounded (the deferred drop reclaims it). Regression:
+`EndToEndNativeBackendTests.Tco_adt_with_shared_tail_list_children_survives_across_iterations` and the
+native `tests/runtime_rc_tco_positional_adt_children.ash`.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 
