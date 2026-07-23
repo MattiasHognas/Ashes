@@ -1,8 +1,7 @@
-# RC Perceus Migration Plan
+# RC Perceus Migration Record
 
-Status: Phase 8 paper verification complete; repository-wide documentation audit in progress.
-Phases 1-7 and the Phase 8 remediation slices are implemented and validated. The migration is not
-complete until the permanent documentation and root README audit is finished.
+Status: **Complete (2026-07-23).** Phases 0-8, the paper comparison, leak and memory-slope
+verification, cross-target gates, permanent documentation audit, and root README update are complete.
 
 Decision snapshot:
 
@@ -18,10 +17,12 @@ Decision snapshot:
 - Development should be TDD-led with focused tests, targeted memory checks, and leak/use-after-free
   measurement instead of repeatedly running the full slow suite.
 
-This document sketches a migration from Ashes' current arena plus static-reuse memory model toward
-an RC Perceus model. It is based on the Perceus technical report, "Perceus: Garbage Free Reference
-Counting with Reuse" (MSR-TR-2020-42, v2, 2020-11-29), and the current Ashes compiler/runtime shape
-on `origin/main` at `fbef40c`.
+This document records the completed migration from Ashes' arena plus static-reuse baseline toward
+its hybrid RC Perceus model. It is based on the Perceus technical report, "Perceus: Garbage Free
+Reference Counting with Reuse" (MSR-TR-2020-42), and began from the Ashes compiler/runtime shape on
+`origin/main` at `fbef40c`. Sections describing "current state" before a phase are historical
+baselines; the authoritative final behavior is in
+[`docs/md/internals/architecture.md`](../internals/architecture.md#memory-model).
 
 ## 1. What Perceus Is Trying To Buy Us
 
@@ -893,6 +894,23 @@ Validation:
 - Cross-check user-facing documentation examples against the final compiler and runtime behavior.
 - Do not mark the RC Perceus migration complete until the repository-wide documentation audit is
   finished.
+
+Completion evidence (2026-07-23):
+
+- The final paper ledger above covers ownership environments, precise `dup`/`drop`, recursive drop
+  specialization, reuse tokens and null fallback, explicit control flow, threads, cycles, selective
+  borrowing, regions, and allocator policy. No unresolved implementation blocker remains within the
+  declared Ashes memory model.
+- Permanent behavior is documented in the language specification, standard-library reference,
+  compiler architecture, IR reference, development/testing guides, future-feature index, compiler
+  changelog, documentation sidebar, root README, and WASM design boundary.
+- The root README names Koka under Inspirations and links the authoritative ownership, memory,
+  thread, task, reuse, and migration pages. `tests/readme_showcase.ash` passes.
+- The stale-term/link audit finds no unmarked arena-only or no-runtime-RC claim outside explicitly
+  historical passages. The VitePress production build succeeds.
+- `dotnet build Ashes.slnx --no-restore` succeeds with zero warnings; `dotnet format Ashes.slnx
+  --verify-no-changes --no-restore` is clean; the complete compiler suite passes 1,641/1,641,
+  including the native multi-scale RSS leak gates.
 
 ## 6. Codebase Task Map
 
