@@ -1137,6 +1137,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Fresh_owned_list_head_shares_existing_runtime_tail_once()
+    {
+        IrProgram ir = LowerProgram("let tail = [Ashes.Text.fromInt(2)] in let values = Ashes.Text.fromInt(40) :: tail in match values with | [] -> 0 | head :: _ -> match tail with | [] -> 0 | tailHead :: _ -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tailHead)");
+
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Pointer_element_list_consumed_by_match_remains_arena_managed()
     {
         IrProgram ir = LowerProgram("let values = [\"one\", \"two\"] in match values with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");

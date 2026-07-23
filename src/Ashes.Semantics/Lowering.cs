@@ -2836,8 +2836,7 @@ public sealed partial class Lowering
         }
 
         OwnershipInfo? info = LookupOwnedValue(tail.Name);
-        if (info is not { RuntimeManaged: true, IsDropped: false, Type: TypeRef.TList list }
-            || !CanArenaReset(Prune(list.Element)))
+        if (info is not { RuntimeManaged: true, IsDropped: false, Type: TypeRef.TList })
         {
             return false;
         }
@@ -6284,9 +6283,9 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (headTemp, headType) = LowerExpr(cons.Head);
+        var (headTemp, headType) = LowerRuntimeManagedListElement(cons.Head);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
-        if (_runtimeRcListAllocationRequested && CanArenaReset(headType))
+        if (_runtimeRcListAllocationRequested && IsRuntimeManageableListElement(headType, headTemp))
         {
             tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp);
         }

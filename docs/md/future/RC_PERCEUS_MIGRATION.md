@@ -433,7 +433,8 @@ same boundary, as do generic copy payloads. Borrowed generic pointer payloads re
 Fully fresh lists whose elements are copy values or fresh owned String, Bytes, BigInt, tuple, list, or
 user-ADT producers now transfer through the same direct-let boundary. The type-directed list drop
 releases an owned head only from a unique cell and stops after decrementing a shared spine. Literal or
-borrowed pointer elements remain arena-managed.
+borrowed pointer elements remain arena-managed. Fresh owned `head :: tail` construction uses the same
+rule; retaining the runtime-managed tail emits exactly one `dup`, while a consumed tail moves directly.
 Fresh monomorphic records with copy fields, including recursively nested fresh record literals, now
 transfer directly as well. Fresh String, Bytes, BigInt, copy-element list, and fully fresh tuple fields
 are owned and released by the record's type-directed drop. Records that would need to borrow an
