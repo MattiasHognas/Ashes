@@ -9,8 +9,10 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-Every defect the suite surfaced is triaged in **[BUGS.md](BUGS.md)** — 18 found, 17 fixed, one
-partial remainder. The analysis and measurements for each fix live in
+Every defect the suite surfaced is triaged in **[BUGS.md](BUGS.md)**. The post-migration
+**[RC Perceus regression sweep](../docs/md/internals/rc-perceus-challenge-regressions.md)**
+currently records correctness, performance-scaling, and peak-RSS regressions that must be fixed
+before replacing the historical numbers below. The analysis and measurements for shipped fixes live in
 [`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md), each fix ships with a
 regression test under `tests/`, and every benchmark below is written in its natural,
 workaround-free form.
@@ -28,8 +30,9 @@ workaround-free form.
 
 ## Benchmarks Game results
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64, `-O2`, single-threaded. All outputs match
-the reference implementations.
+These are the last known-good pre-RC-migration results, measured on a 32-thread AMD Ryzen 9
+9950X3D, Linux x64, `-O2`, single-threaded. All outputs matched the reference implementations at
+that revision. See the linked RC Perceus sweep for the current regression status.
 
 | Challenge | Standard workload | Time | Peak RSS | Note |
 |---|---|---|---|---|

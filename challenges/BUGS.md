@@ -1,9 +1,13 @@
 # Bugs & gaps surfaced by the challenge benchmarks
 
-Running the full Benchmarks Game suite in its **natural spelling** surfaced 18 real defects and
-gaps — 16 from writing the benchmarks (a further report was removed as unreproducible) and 2 more
-from re-running them at full scale (the large-list copy-out stack overflow, CO-37, and the
-whole-list DeepAdt clone mis-gating that regressed 1brc ~400x). **All but one are fixed.**
+Running the full Benchmarks Game suite in its **natural spelling** originally surfaced 18 real
+defects and gaps — 16 from writing the benchmarks (a further report was removed as unreproducible)
+and 2 more from re-running them at full scale. All but one of that original set were fixed.
+
+The post-migration RC Perceus sweep then found new correctness, scaling, and peak-RSS regressions.
+The measurements, minimal reproducers, debugger evidence, and fix order are tracked in the
+**[RC Perceus challenge regression sweep](../docs/md/internals/rc-perceus-challenge-regressions.md)**.
+Its P1 failures supersede the historical "one partial remainder" status below.
 
 Fixed entries are cleared from this file once shipped — the analysis and measurements live in
 [`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md) (rows CO-28 through CO-37
@@ -17,6 +21,13 @@ Reproduce any snippet with the prebuilt compiler:
 `src/Ashes.Cli/bin/Debug/net10.0/ashes run <file.ash>`.
 
 ## Open
+
+### RC Perceus regression sweep
+
+Ten regression clusters are currently open: five correctness/ownership failures, three major
+performance-scaling failures, one peak-RSS regression, and one provisional high-concurrency server
+regression. Start with **CRP-1**, the TCO/exit double-drop that corrupts the RC free list; it can mask
+other failures.
 
 ### 1. (P2) List-of-small-`Str` representation constant (~96 B/base) — [PARTIAL]
 The last remainder of the growing-accumulator arc. Every quadratic-memory and quadratic-time hole

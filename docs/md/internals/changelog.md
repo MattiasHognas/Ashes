@@ -140,6 +140,15 @@ The final exit gates were:
   and a win-arm64 PE machine-field smoke test;
 - README showcase and the VitePress production documentation build.
 
+> **Post-migration challenge status (2026-07-23):** the exit gates above did
+> not run the opt-in `challenges/` suite. A fresh pre/post A/B subsequently
+> found P1 ownership failures plus severe scaling and peak-RSS regressions.
+> Minimal reproducers, debugger evidence, measurements, and the required
+> retest order are recorded in the
+> [RC Perceus challenge regression sweep](rc-perceus-challenge-regressions.md).
+> The migration's design and paper comparison remain the intended model, but
+> full challenge conformance is not verified until that ledger is cleared.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 
