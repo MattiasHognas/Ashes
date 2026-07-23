@@ -128,6 +128,18 @@ and should be retested against this fix before being split into another defect.
 
 ### CRP-2 — P1: returned n-body list aliases consumed caller input
 
+**Resolved 2026-07-23.** The initial alias hypothesis was incomplete. `run` promotes its list
+parameter to runtime RC only when the later recursive branch is lowered. Its earlier `n == 0`
+return therefore lost runtime-managed provenance at the `if` join. Function-exit cleanup dropped
+the returned list, and the caller received a pointer into the exact-size free list; its reversed
+free-list links made the result look like a one-body system.
+
+TCO result provenance is now refreshed after the complete body establishes the final managed
+parameter set. Provenance flows through parameter loads, borrows, duplicates, and locals whose
+every incoming value is managed, so the exit transfer guard retains the selected returned owner
+without treating mixed managed/arena joins as RC. A dedicated early-return regression passes, as
+do `n-body 0` and `n-body 1000` at `-O2`; the latter again ends at `-0.169087605`.
+
 `n-body 0` should print the same initial and final energy. The RC build instead prints:
 
 ```text

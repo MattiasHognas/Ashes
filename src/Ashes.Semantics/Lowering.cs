@@ -4653,8 +4653,8 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
-        LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex);
-        LowerLambdaCoreRecordAccStableFold(lam, savedTcoCtx, specElidedAccs);
+        LowerLambdaCoreFinalizeTcoOwnership(
+            lam, reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
 
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
@@ -4669,6 +4669,67 @@ public sealed partial class Lowering
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
         return (closureTemp, funTy);
+    }
+
+    private void LowerLambdaCoreFinalizeTcoOwnership(
+        Expr.Lambda lam,
+        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
+        HashSet<int> directReuseSlots,
+        TcoContext? tco,
+        int reuseInsertIndex,
+        HashSet<string> specElidedAccs,
+        int bodyTemp)
+    {
+        LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, tco, reuseInsertIndex);
+        LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
+        LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
+    }
+
+    private void LowerLambdaCoreRefreshRuntimeManagedTcoResult(TcoContext? tco, int bodyTemp)
+    {
+        if (tco is null || tco.RuntimeManagedParamSlots.Count == 0)
+        {
+            return;
+        }
+
+        var managedTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var managedLocals = new HashSet<int>();
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (IrInst instruction in _inst)
+            {
+                changed |= instruction switch
+                {
+                    IrInst.LoadLocal load
+                        when tco.RuntimeManagedParamSlots.Contains(load.Slot)
+                            || managedLocals.Contains(load.Slot)
+                        => managedTemps.Add(load.Target),
+                    IrInst.Borrow borrow when managedTemps.Contains(borrow.SourceTemp)
+                        => managedTemps.Add(borrow.Target),
+                    IrInst.RcDup duplicate when managedTemps.Contains(duplicate.SourceTemp)
+                        => managedTemps.Add(duplicate.Target),
+                    _ => false,
+                };
+            }
+
+            foreach (IGrouping<int, IrInst.StoreLocal> stores in _inst
+                         .OfType<IrInst.StoreLocal>()
+                         .GroupBy(store => store.Slot))
+            {
+                if (stores.All(store => managedTemps.Contains(store.Source)))
+                {
+                    changed |= managedLocals.Add(stores.Key);
+                }
+            }
+        }
+        while (changed);
+
+        if (managedTemps.Contains(bodyTemp))
+        {
+            _runtimeManagedResultTemps.Add(bodyTemp);
+        }
     }
 
     private void RecordTcoParamLabel(string paramName, string label)
