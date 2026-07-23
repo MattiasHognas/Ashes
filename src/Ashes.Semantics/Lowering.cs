@@ -1908,15 +1908,18 @@ public sealed partial class Lowering
     {
         bool runtimeManagedString = IsRuntimeRcStringProducer(body);
         bool runtimeManagedAdt = IsFreshRuntimeManageableAdtExpression(body);
-        if (!runtimeManagedString && !runtimeManagedAdt)
+        bool runtimeManagedList = IsFreshListConstructionExpression(body);
+        if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList)
         {
             return LowerExpr(body);
         }
 
         bool savedStringRequest = _runtimeRcStringAllocationRequested;
         bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
+        bool savedListRequest = _runtimeRcListAllocationRequested;
         _runtimeRcStringAllocationRequested |= runtimeManagedString;
         _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
+        _runtimeRcListAllocationRequested |= runtimeManagedList;
         try
         {
             return LowerExpr(body);
@@ -1925,6 +1928,7 @@ public sealed partial class Lowering
         {
             _runtimeRcStringAllocationRequested = savedStringRequest;
             _runtimeRcCopyAdtAllocationRequested = savedAdtRequest;
+            _runtimeRcListAllocationRequested = savedListRequest;
         }
     }
 

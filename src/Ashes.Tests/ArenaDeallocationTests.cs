@@ -101,7 +101,7 @@ public sealed class ArenaDeallocationTests
             "Int-result match should emit RestoreArenaState on both cleanup and success paths.");
     }
 
-    // --- RestoreArenaState NOT emitted for heap-type results ---
+    // --- RestoreArenaState for heap-type results depends on result provenance ---
 
     [Test]
     public void String_body_let_does_not_emit_RestoreArenaState()
@@ -112,11 +112,11 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_body_let_does_not_emit_RestoreArenaState()
+    public void Runtime_managed_list_body_let_emits_RestoreArenaState()
     {
         var ir = LowerProgram("let x = 42 in [1, 2, 3]");
-        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeFalse(
-            "Let expression with List body should NOT emit RestoreArenaState.");
+        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue(
+            "An independent runtime-managed list result permits the let arena to reset.");
     }
 
     [Test]
@@ -900,12 +900,15 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_body_let_emits_CopyOutList()
+    public void Fresh_list_body_let_uses_runtime_managed_allocation()
     {
-        // Lists are deep-copied (entire cons chain) via CopyOutList.
         var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List(Int) result with owned binding should emit CopyOutList from a let scope.");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh list result should allocate through runtime RC.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "A runtime-managed list should not be deep-copied at scope exit.");
     }
 
     [Test]
@@ -1035,14 +1038,15 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_of_list_does_not_emit_CopyOutList()
+    public void Fresh_nested_list_body_uses_recursive_runtime_management()
     {
-        // List(List(Int)) — the head elements are list pointers, which are
-        // not copy-type or TStr. Deep copy of the outer chain doesn't help
-        // because inner lists may also be in the arena.
         var ir = LowerProgram("let s = \"hello\" in [[1, 2], [3, 4]]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeFalse(
-            "List(List(Int)) should NOT emit CopyOutList (nested list heads are not safe).");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Count(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeGreaterThan(2,
+            "Both the outer and inner fresh list cells should allocate through runtime RC.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "A recursively runtime-managed nested list should not be deep-copied at scope exit.");
     }
 
     // --- Extended copy-out: ADT ---
@@ -1167,12 +1171,14 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_of_int_let_result_emits_CopyOutList()
+    public void List_of_int_let_result_avoids_CopyOutList()
     {
-        // List(Int): deep cons-chain copy via CopyOutList.
         var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List(Int) result with owned binding should emit CopyOutList.");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "List(Int) should survive through its RC cells instead of a deep arena copy-out.");
     }
 
     [Test]
