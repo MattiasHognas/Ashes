@@ -1466,9 +1466,6 @@ public sealed partial class Lowering
                     resultTemp,
                     RuntimeManaged: runtimeManaged));
                 break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(copyDest, resultTemp));
-                break;
         }
     }
 
@@ -2281,7 +2278,6 @@ public sealed partial class Lowering
     ///     Copy only the top cons cell; the string head value is also copied, while the tail remains in pre-watermark memory.</item>
     ///   <item><b>List with inner-list element (TList(TList(copy-type))):</b>
     ///     Copy only the top cons cell; the inner-list head value is deep-copied, while the tail remains in pre-watermark memory.</item>
-    ///   <item><b>Closure (TFun):</b> Closure struct + env copy (24 bytes + env block).</item>
     ///   <item><b>ADT (TNamedType):</b> Shallow copy when all fields are copy types.</item>
     /// </list>
     /// </para>
@@ -2302,9 +2298,6 @@ public sealed partial class Lowering
                 break;
             case CopyOutKind.List:
                 Emit(new IrInst.CopyOutList(destTemp, srcTemp, listHeadCopy));
-                break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(destTemp, srcTemp));
                 break;
             case CopyOutKind.TcoListCell:
                 Emit(new IrInst.CopyOutTcoListCell(destTemp, srcTemp, listHeadCopy));

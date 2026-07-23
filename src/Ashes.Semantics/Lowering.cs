@@ -273,7 +273,6 @@ public sealed partial class Lowering
         }
     }
 
-
     // Non-recursive top-level functions, by name → (param names, body). When such a function is
     // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
     // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
@@ -724,6 +723,11 @@ public sealed partial class Lowering
 
     public IrProgram Lower(Expr expr)
     {
+        // Async syntax may occur after a pure helper in source order. Establish the program-wide
+        // boundary before lowering that helper so it cannot be admitted to synchronous-only RC.
+        _usesAsync |= ExprContainsAwait(expr)
+            || ContainsAsyncSpawn(expr)
+            || FreeVars(expr, []).Contains("async");
         // Entry function lowering (no env/arg params)
         var (resultTemp, resultType) = LowerExpr(expr);
         Emit(new IrInst.Return(resultTemp));
@@ -801,6 +805,7 @@ public sealed partial class Lowering
     private sealed record PendingTcoReset(
         int[] ArgTemps,
         TypeRef[] ArgTypes,
+        bool[] RuntimeManagedArgResults,
         bool[] PassThrough,
         bool[] SingleFreshCons,
         bool[] FreshListRebuild,
@@ -918,10 +923,11 @@ public sealed partial class Lowering
             }
 
             TypeRef argType = Prune(info.ArgTypes[i]);
-            normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(info.ArgTemps[i], argType);
+            normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
+                info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i]);
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
-                && IsRuntimeManagedResultTemp(info.ArgTemps[i]);
+                && info.RuntimeManagedArgResults[i];
             if (!movedListTail)
             {
                 TcoBackEdgeDropRuntimeManagedArg(info, i, argType);
@@ -952,9 +958,12 @@ public sealed partial class Lowering
         return true;
     }
 
-    private int TcoBackEdgeNormalizeRuntimeManagedArg(int sourceTemp, TypeRef argType)
+    private int TcoBackEdgeNormalizeRuntimeManagedArg(
+        int sourceTemp,
+        TypeRef argType,
+        bool alreadyRuntimeManaged)
     {
-        if (IsRuntimeManagedResultTemp(sourceTemp))
+        if (alreadyRuntimeManaged)
         {
             return sourceTemp;
         }
@@ -1047,8 +1056,8 @@ public sealed partial class Lowering
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
-                    || info.SingleFreshCons[index] && IsRuntimeManagedResultTemp(info.ArgTemps[index])),
-            TypeRef.TFun => IsRuntimeManagedResultTemp(info.ArgTemps[index]),
+                    || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
+            TypeRef.TFun => info.RuntimeManagedArgResults[index],
             _ => false,
         };
     }
@@ -1619,6 +1628,7 @@ public sealed partial class Lowering
             _localTypes[kv.Key] = kv.Value;
         }
     }
+
 
     // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
     // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
@@ -4808,7 +4818,9 @@ public sealed partial class Lowering
 
     private void LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
         IReadOnlyDictionary<string, Binding> scope,
-        TcoContext tco)
+        TcoContext tco,
+        bool includeFreshClosures = true,
+        IReadOnlySet<int>? excludedSlots = null)
     {
         if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
         {
@@ -4817,6 +4829,11 @@ public sealed partial class Lowering
 
         foreach (int slot in tco.ParamSlots)
         {
+            if (excludedSlots?.Contains(slot) == true)
+            {
+                continue;
+            }
+
             Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
                 .FirstOrDefault(local => local.Slot == slot);
             if (parameter is null)
@@ -4841,7 +4858,7 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
                     && (freshRebuiltList || affineConsList)
-                || parameterType is TypeRef.TFun && freshClosure)
+                || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
                 tco.RuntimeManagedParamTypes[slot] = parameterType;
@@ -5732,6 +5749,7 @@ public sealed partial class Lowering
         tco.InTailPosition = false;
 
         var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+        LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
         int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
         // Store new values into TCO param slots
@@ -5795,6 +5813,44 @@ public sealed partial class Lowering
         }
 
         return oldRuntimeParamTemps;
+    }
+
+    private void LowerCallTcoPromoteResolvedRuntimeParams(TcoContext tco, TypeRef[] argTypes)
+    {
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
+        {
+            int slot = tco.ParamSlots[index];
+            string name = tco.ParamNames[index];
+            TypeRef type = Prune(argTypes[index]);
+            bool supported = type is TypeRef.TStr or TypeRef.TBigInt
+                || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
+                || type is TypeRef.TNamedType named && (CanCopyOutAdt(named, out _)
+                    || CanRuntimeManageAdt(named)
+                    || CanRuntimeManageOwnedChildAdt(named))
+                || type is TypeRef.TList list
+                    && CanArenaReset(Prune(list.Element))
+                    && (tco.FreshRebuiltListParams.Contains(name)
+                        || tco.AffineConsListParams.Contains(name));
+            if (!supported
+                || _linearReuseNames.Contains(name)
+                || _linearSpecializationAccumulators.Contains(name)
+                || _resetSafeAccumulators.Contains(name))
+            {
+                continue;
+            }
+
+            tco.RuntimeManagedParamSlots.Add(slot);
+            tco.RuntimeManagedParamTypes[slot] = type;
+            if (type is TypeRef.TList)
+            {
+                tco.RuntimeManagedListParamSlots.Add(slot);
+            }
+        }
     }
 
     private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
@@ -6003,6 +6059,7 @@ public sealed partial class Lowering
         var resetInfo = new PendingTcoReset(
             newArgTemps,
             newArgTypes,
+            newArgTemps.Select(IsRuntimeManagedResultTemp).ToArray(),
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
@@ -6022,12 +6079,6 @@ public sealed partial class Lowering
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
                 k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
 
-        // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
-        // still be an unresolved inference variable here (e.g. constrained only by a deferred
-        // `+`, or by the caller, lowered later). Deciding on a TVar would silently decline the
-        // reset and leak every iteration. Emit a placeholder instead and let
-        // ResolveDeferredTcoResets re-run the decision at the end of lowering, when the types
-        // are as resolved as they will ever be.
         if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
         {
             int pendingId = _nextTcoResetId++;
@@ -6750,9 +6801,6 @@ public sealed partial class Lowering
                     currentTemp,
                     listHeadCopy,
                     RuntimeManaged: normalizeToRuntimeOwnership));
-                break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
                 break;
         }
         if (normalizeToRuntimeOwnership)
@@ -7586,6 +7634,9 @@ public sealed partial class Lowering
                 FreeVarsVisit(l.Value, boundWithRecursiveVar, res);
                 FreeVarsVisit(l.Body, boundWithRecursiveVar, res);
                 return;
+            case RecursiveGroupExpr group:
+                FreeVarsVisitRecursiveGroup(group, bnd, res);
+                return;
             case Expr.Lambda lam:
                 var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
                 FreeVarsVisit(lam.Body, boundWithParam, res);
@@ -7621,6 +7672,18 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(ex.GetType().Name);
         }
+    }
+
+    private void FreeVarsVisitRecursiveGroup(RecursiveGroupExpr group, HashSet<string> bnd, HashSet<string> res)
+    {
+        var boundWithRecursiveGroup = new HashSet<string>(bnd, StringComparer.Ordinal);
+        boundWithRecursiveGroup.UnionWith(group.Bindings.Select(binding => binding.Name));
+        foreach ((_, Expr value) in group.Bindings)
+        {
+            FreeVarsVisit(value, boundWithRecursiveGroup, res);
+        }
+
+        FreeVarsVisit(group.Body, boundWithRecursiveGroup, res);
     }
 
     private void FreeVarsVisitHandle(Expr.Handle handleExpr, HashSet<string> bnd, HashSet<string> res)

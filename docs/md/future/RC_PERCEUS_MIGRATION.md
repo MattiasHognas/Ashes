@@ -711,7 +711,15 @@ arena closure from RC replacements: the first back-edge does not falsely drop th
 back-edges release the prior closure, and function exit releases the final replacement. Arena-backed,
 resource-bearing, or nested-function captures decline the reset without emitting shallow
 `CopyOutClosure`. The 2,000/10,000/50,000 replacement profile plateaus, and the final emitter census
-remains.
+remains. A TCO back-edge now upgrades newly resolved supported parameter types before it captures its
+reset contract; genuinely unresolved types retain the established end-of-inference deferral. This
+gives inferred supported accumulators the same RC paths as annotated ones while excluding slots owned
+by the specialized reuse regime; inferred cons-growing `List(Int)` and copy-field ADT accumulators now
+have no non-runtime relocation. Deferred reset records snapshot result ownership explicitly so later
+function frames cannot alias temp IDs. Dead scope, call, and TCO
+`CopyOutKind.Closure` branches have been removed, leaving closure copy construction only in explicit
+deep-copy/thread-transfer machinery and the RC normalizer. The remaining census is focused on the
+legacy non-runtime aggregate/string/list deep-copy paths and their intentional boundary uses.
 
 Deliverables:
 

@@ -463,36 +463,25 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_list_of_int_arg_emits_RestoreArenaState_and_CopyOutArena_before_jump()
+    public void TCO_loop_with_inferred_list_of_int_arg_uses_runtime_ownership()
     {
-        // When a tail-call argument is a TList(Int) (cons cell with copy-type head),
-        // the cons cell is self-contained (head is a direct i64, tail points to pre-watermark
-        // memory from the previous iteration). Emitting RestoreArenaState + CopyOutArena(16)
-        // allows the iteration's arena to be reclaimed while the accumulator survives.
-        var ir = LowerProgram(
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) (n :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
-        bool foundCopyOutSequence = false;
-        for (int i = 0; i < insts.Count - 3; i++)
+        instructions.Any(instruction => instruction is IrInst.Alloc
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.CopyOutArena copyOut
-                && copyOut.StaticSizeBytes == 16)
-            {
-                foundCopyOutSequence = true;
-                break;
-            }
-        }
-        foundCopyOutSequence.ShouldBeTrue(
-            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16).");
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is
+            IrInst.CopyOutArena { RuntimeManaged: false }
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
     }
 
     [Test]
@@ -717,7 +706,7 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_adt_copy_type_arg_emits_RestoreArenaState_and_CopyOutArena()
+    public void TCO_loop_with_inferred_copy_adt_arg_uses_runtime_ownership()
     {
         // TNamedType with copy-type fields: ADT can be shallow-copied.
         var ir = LowerProgram(
@@ -729,51 +718,22 @@ public sealed class ArenaDeallocationTests
                 else build (n - 1) (Box(n))
             in build 5 (Box(0))
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 3; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutArena
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            var copyOutIndex = -1;
-            for (int j = i + 1; j < insts.Count - 1; j++)
-            {
-                if (insts[j] is IrInst.CopyOutArena c && c.StaticSizeBytes == 16)
-                {
-                    copyOutIndex = j;
-                    break;
-                }
-            }
-
-            if (copyOutIndex == -1)
-            {
-                continue;
-            }
-
-            var reclaimIndex = -1;
-            for (int j = copyOutIndex + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
-
-            if (reclaimIndex != -1)
-            {
-                found = true;
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with ADT(Int) arg should emit RestoreArenaState -> CopyOutArena(16) before ReclaimArenaChunks.");
+            StaticSizeBytes: 16,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutArena
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Box",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
