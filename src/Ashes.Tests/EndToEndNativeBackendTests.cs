@@ -563,6 +563,46 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("18\n");
     }
 
+    [Test]
+    public async Task Runtime_managed_string_passed_through_identity_then_consuming_call_is_not_freed()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a runtime-managed string routed through a function that returns its parameter
+        // (`skipWs` returns `text` unchanged), then passed to a consuming call (`consumeExact`), is
+        // handled by the conditional runtime-argument retain, which stores the borrowed value into a
+        // fresh slot and reloads it for the call. The lifetime placement lost that borrow across the
+        // slot and dropped the string before the call — a use-after-free (segfault or garbage). The
+        // JSON stdlib and hand-written parsers hit this on every keyword/literal.
+        var src = """
+            let recursive skipWs text =
+                match Ashes.Text.uncons(text) with
+                    | None -> ""
+                    | Some((h, t)) -> if h == " " then skipWs(t) else text
+
+            let recursive consumeExact expected txt =
+                match Ashes.Text.uncons(expected) with
+                    | None -> Ok(txt)
+                    | Some((w, wr)) ->
+                        match Ashes.Text.uncons(txt) with
+                            | None -> Error("end")
+                            | Some((g, gr)) -> if g == w then consumeExact(wr)(gr) else Error("char")
+
+            let parseNull text =
+                (let trimmed = skipWs(text)
+                in
+                    match consumeExact("null")(trimmed) with
+                        | Ok(after) -> "consumed[" + after + "]"
+                        | Error(e) -> e)
+
+            Ashes.IO.print(parseNull("null rest"))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("consumed[ rest]\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

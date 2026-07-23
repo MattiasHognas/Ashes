@@ -229,6 +229,18 @@ extra per-iteration cell is bounded (the deferred drop reclaims it). Regression:
 `EndToEndNativeBackendTests.Tco_adt_with_shared_tail_list_children_survives_across_iterations` and the
 native `tests/runtime_rc_tco_positional_adt_children.ash`.
 
+The lifetime placement now follows an owner's borrow through a local slot. The conditional
+runtime-argument retain (`EmitConditionallyRetainedRuntimeArgument`, used when a non-fresh
+runtime-managed value is passed to a closure that may adopt it) stores the borrowed owner into a
+fresh slot and reloads it for the call, so the drop-placement alias walk — which followed `Borrow`
+but not `StoreLocal`/`LoadLocal` — lost the borrow and placed the owner's drop before the call: a
+use-after-free that segfaulted or corrupted every JSON keyword/literal parse (`Ashes.Text.Json.parse`
+and hand-written string parsers). `CollectOwnerAliases` now also follows an alias through any slot it
+is stored into and reloaded from, to a fixpoint. This only lengthens liveness (the drop lands after
+the last real use, never earlier), so it cannot introduce a premature free. Regression:
+`EndToEndNativeBackendTests.Runtime_managed_string_passed_through_identity_then_consuming_call_is_not_freed`
+plus the recovered `tests/stdlib_json.ash` and `tests/namespace_nested_modules.ash`.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

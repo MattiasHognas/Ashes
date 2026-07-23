@@ -256,14 +256,34 @@ internal static class PerceusLifetimePlacement
             }
         }
 
-        foreach (int blockIndex in region.OrderBy(index => blocks[index].Start))
+        // Follow aliases through Borrow, and — to a fixpoint — through a local slot that only ever
+        // holds an alias of this owner (StoreLocal of an alias temp, then LoadLocal back). The
+        // conditional runtime-argument retain (EmitConditionallyRetainedRuntimeArgument) routes a
+        // borrowed owner into a fresh slot and reloads it for the call; without this the owner looks
+        // dead at the store and its drop is placed before the call (a use-after-free). Extending the
+        // alias set only lengthens liveness, so the drop lands after the last real use — never earlier.
+        var aliasHoldingSlots = new HashSet<int>();
+        bool changed = true;
+        while (changed)
         {
-            Block block = blocks[blockIndex];
-            for (int i = block.Start; i < block.End; i++)
+            changed = false;
+            foreach (int blockIndex in region.OrderBy(index => blocks[index].Start))
             {
-                if (instructions[i] is IrInst.Borrow borrow && aliases.Contains(borrow.SourceTemp))
+                Block block = blocks[blockIndex];
+                for (int i = block.Start; i < block.End; i++)
                 {
-                    aliases.Add(borrow.Target);
+                    switch (instructions[i])
+                    {
+                        case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
+                            changed |= aliases.Add(borrow.Target);
+                            break;
+                        case IrInst.StoreLocal store when aliases.Contains(store.Source):
+                            changed |= aliasHoldingSlots.Add(store.Slot);
+                            break;
+                        case IrInst.LoadLocal load when aliasHoldingSlots.Contains(load.Slot):
+                            changed |= aliases.Add(load.Target);
+                            break;
+                    }
                 }
             }
         }
