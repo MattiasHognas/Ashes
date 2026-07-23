@@ -9,13 +9,12 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-Every open defect and remaining benchmark gap is triaged in the
-**[RC Perceus regression sweep](../docs/md/internals/rc-perceus-challenge-regressions.md)**.
-It currently records correctness, performance-scaling, and peak-RSS regressions that must be fixed
-before replacing the historical numbers below. The analysis and measurements for shipped fixes live in
-[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md), each fix ships with a
-regression test under `tests/`, and every benchmark below is written in its natural,
-workaround-free form.
+The RC Perceus memory-model migration and the challenge-regression sweep that followed it — every
+correctness, performance-scaling, and peak-RSS fix, with measurements — are recorded in
+[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md); each fix ships with a
+regression test under `tests/`, and the remaining forward-looking benchmark gaps are tracked in that
+file's [Deferred](../docs/md/internals/changelog.md#deferred) section. Every benchmark below is
+written in its natural, workaround-free form.
 
 ## The suite
 
