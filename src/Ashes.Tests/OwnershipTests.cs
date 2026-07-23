@@ -337,6 +337,18 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_adt_with_fresh_tuple_child_transfers_ownership()
+    {
+        IrProgram ir = LowerProgram("type Wrapped = | Wrapped((Int, Int))\nlet escaped = (let value = Wrapped((40, 2)) in value) in match escaped with | Wrapped((left, right)) -> left + right");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Wrapped", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {
         IrProgram ir = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box(42) in box) in match escaped with | Box(value) -> value");

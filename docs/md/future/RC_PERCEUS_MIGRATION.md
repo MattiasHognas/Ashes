@@ -445,7 +445,8 @@ rejected.
 Single-constructor user ADTs may now directly own a fresh String producer. Their parent uniqueness
 check guards the String drop; literal and borrowed String fields remain non-owning and keep the ADT
 on the arena path. Fresh Bytes, BigInt, and copy-element list fields use the same field descriptor and
-recursive drop; borrowed values remain rejected.
+recursive drop. Fully fresh tuple fields are admitted recursively as well; borrowed values remain
+rejected.
 Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
 tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
 drop releases nested children only for the last owner; the immediate-match path retains the same contract.

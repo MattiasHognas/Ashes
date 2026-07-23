@@ -1676,6 +1676,8 @@ public sealed partial class Lowering
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
                 TypeRef.TList list => CanArenaReset(Prune(list.Element))
                     && IsFreshListConstructionExpression(arguments[i]),
+                TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
+                    && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
                 _ => false,
             };
             if (!supported)
@@ -1687,6 +1689,40 @@ public sealed partial class Lowering
         }
 
         return hasOwnedChild;
+    }
+
+    private bool CanRuntimeManageFreshTupleExpression(Expr.TupleLit expression, TypeRef.TTuple tuple)
+    {
+        if (expression.Elements.Count != tuple.Elements.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            TypeRef elementType = Prune(tuple.Elements[i]);
+            Expr element = expression.Elements[i];
+            bool supported = CanArenaReset(elementType) || elementType switch
+            {
+                TypeRef.TStr => IsRuntimeRcStringProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(element),
+                TypeRef.TBytes => IsRuntimeRcBytesProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element),
+                TypeRef.TBigInt => IsRuntimeRcBigIntProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
+                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                    && IsFreshListConstructionExpression(element),
+                TypeRef.TTuple child => element is Expr.TupleLit childExpression
+                    && CanRuntimeManageFreshTupleExpression(childExpression, child),
+                _ => false,
+            };
+            if (!supported)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

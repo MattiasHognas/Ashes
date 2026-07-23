@@ -825,11 +825,12 @@ public sealed partial class Lowering
         TypeRef fieldType,
         bool runtimeManagedParent)
     {
-        (bool String, bool Bytes, bool BigInt, bool List) saved = (
+        (bool String, bool Bytes, bool BigInt, bool List, bool Tuple) saved = (
             _runtimeRcStringAllocationRequested,
             _runtimeRcBytesAllocationRequested,
             _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested);
+            _runtimeRcListAllocationRequested,
+            _runtimeRcTupleAllocationRequested);
         _runtimeRcStringAllocationRequested = saved.String
             || runtimeManagedParent && fieldType is TypeRef.TStr
                 && IsRuntimeRcStringProducer(argument) && IsRuntimeRcClosureCaptureSafeStringProducer(argument);
@@ -842,11 +843,15 @@ public sealed partial class Lowering
         _runtimeRcListAllocationRequested = saved.List
             || runtimeManagedParent && fieldType is TypeRef.TList
                 && IsFreshListConstructionExpression(argument);
+        _runtimeRcTupleAllocationRequested = saved.Tuple
+            || runtimeManagedParent && fieldType is TypeRef.TTuple
+                && argument is Expr.TupleLit;
         (int Temp, TypeRef Type) lowered = LowerExpr(argument);
         (_runtimeRcStringAllocationRequested,
             _runtimeRcBytesAllocationRequested,
             _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested) = saved;
+            _runtimeRcListAllocationRequested,
+            _runtimeRcTupleAllocationRequested) = saved;
         return lowered;
     }
 
