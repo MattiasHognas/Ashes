@@ -173,7 +173,9 @@ even though inline list heads have no child ownership to transfer. Such cursors 
 caller-owned graph, and scalar-only frames omit the otherwise-redundant arena reset at the back
 edge. Spectral norm N=5,500 returned from 10.95 seconds to a 4.639-second median, matching the
 pre-migration 4.683-second control with byte-identical output. Pointer-bearing consumed lists remain
-runtime-managed. See CRP-8 in the challenge regression sweep.
+runtime-managed. The same rule removed Mandelbrot's duplicate packed-bitmap representation:
+N=16,000 peak RSS returned from 2,756,764 KB to 1,757,596 KB, within 0.23% of the 1,753,536 KB
+pre-migration control. See CRP-8 and CRP-9 in the challenge regression sweep.
 
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:

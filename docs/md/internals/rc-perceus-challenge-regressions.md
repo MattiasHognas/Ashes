@@ -288,11 +288,20 @@ three-run `hyperfine` at the standard N=5,500 measured 4.639 s ± 0.001 for the 
 4.683 s ± 0.033 before migration; output remained byte-identical. The focused IR regression forbids
 both list RC traffic and the redundant scalar-frame reset.
 
-### CRP-9 — P2: mandelbrot standard peak RSS grows 57%
+### CRP-9 — P2: mandelbrot standard peak RSS grows 57% — resolved
 
-Runtime and output are unchanged, but peak RSS rises from 1,753,540 KB to 2,756,764 KB at N=16,000.
-Compare the packed-bitmap list's old copy-out representation with RC headers, duplicates, and
-simultaneously live graphs. The fix gate is no regression in the multi-scale RSS slope.
+**Resolved 2026-07-23.** The packed bitmap is accumulated as a `List(Int)` whose elements are inline
+scalars. As with spectral norm, treating its tail-recursive cursor as runtime-managed added RC
+headers and normalization copies to a graph that could safely remain borrowed below the loop
+watermark. CRP-8's inline-element borrowed-cursor correction therefore fixes this memory regression
+as well; no Mandelbrot-specific ownership rule was required.
+
+Fresh `-O2` output remained byte-identical at N=1,000, N=4,000, and N=16,000. Peak RSS for the fixed
+binary was 9,440/114,200/1,757,596 KB versus 5,172/110,144/1,753,536 KB before migration. The small
+fixed process overhead is visible at N=1,000, but the absolute difference stays approximately
+4 MiB while the live bitmap grows: at the standard N=16,000 scale, fixed RSS is only 0.23% above
+the pre-migration control rather than 57% above it. Runtime remained comparable at 14.18 seconds
+versus 13.94 seconds in the final diagnostic run.
 
 ### CRP-10 — P2: TCP high-concurrency throughput may regress
 
