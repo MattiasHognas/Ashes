@@ -586,6 +586,25 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_copy_tuple_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let pair = (40, 2) in pair) in match escaped with | (left, right) -> left + right");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_pointer_tuple_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let escaped = (let pair = (\"hello\", 2) in pair) in match escaped with | (text, _) -> Ashes.IO.print(text)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Result_adt_binding_emits_rc_drop()
     {
         // Ashes.IO.File.exists returns Result(Str, Bool) — an ADT

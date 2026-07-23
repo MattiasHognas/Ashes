@@ -456,6 +456,7 @@ public sealed partial class Lowering
     private bool _runtimeRcScalarResultAllocationRequested;
     private bool _runtimeRcBigIntParseResultAllocationRequested;
     private bool _runtimeRcTextUnconsResultAllocationRequested;
+    private bool _runtimeRcTupleAllocationRequested;
 
     // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
     private bool _runtimeRcListAllocationRequested;
@@ -1957,6 +1958,11 @@ public sealed partial class Lowering
             return loweredRecord;
         }
 
+        if (TryLowerRuntimeRcTupleLet(let, out (int Temp, TypeRef Type) loweredTuple))
+        {
+            return loweredTuple;
+        }
+
         if (TryLowerRuntimeRcListLet(let, out (int Temp, TypeRef Type) loweredList))
         {
             return loweredList;
@@ -2420,6 +2426,27 @@ public sealed partial class Lowering
         {
             _runtimeRcRecordAllocationRequested = savedRequest;
             _runtimeRcAdtChildBindings = savedChildBindings;
+        }
+    }
+
+    private bool TryLowerRuntimeRcTupleLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (let.Value is not Expr.TupleLit || !IsDirectBindingResult(let.Body, let.Name))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcTupleAllocationRequested;
+        _runtimeRcTupleAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcTupleAllocationRequested = savedRequest;
         }
     }
 
@@ -6080,7 +6107,9 @@ public sealed partial class Lowering
         }
 
         int tupleTemp = NewTemp();
-        Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8));
+        bool runtimeManaged = _runtimeRcTupleAllocationRequested
+            && elementTypes.All(CanArenaReset);
+        Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elementTemps.Count; i++)
         {
             Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elementTemps[i]));

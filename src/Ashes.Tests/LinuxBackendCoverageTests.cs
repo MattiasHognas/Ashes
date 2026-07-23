@@ -2092,6 +2092,12 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> list = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcListMemoryProgram,
             outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> escapingList = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingListMemoryProgram,
+            outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> tuple = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
             outputPerIteration: 109).ConfigureAwait(false);
@@ -2109,6 +2115,8 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 42).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC list", list);
+        AssertMemoryPlateaus("runtime-RC escaping list", escapingList);
+        AssertMemoryPlateaus("runtime-RC tuple", tuple);
         AssertMemoryPlateaus("runtime-RC ADT", adt);
         AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
         AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
@@ -5112,6 +5120,35 @@ public sealed class LinuxBackendCoverageTests
                             match tail with
                                 | [] -> loop(n - 1)(total)
                                 | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = (let fresh = [40, 2] in fresh) in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTupleMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let pair = (let fresh = (40, 2) in fresh) in
+                    match pair with
+                        | (left, right) -> loop(n - 1)(total + left + right)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
