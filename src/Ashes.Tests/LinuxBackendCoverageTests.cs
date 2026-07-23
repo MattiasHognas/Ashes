@@ -2812,6 +2812,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_unreturned_TCO_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcUnreturnedTcoParameterMemoryProgram,
+            outputPerIteration: 64).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC unreturned TCO parameter", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -7057,6 +7072,25 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(limit)((n, "value") :: values)
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcUnreturnedTcoParameterMemoryProgram(int iterations)
+        => $$"""
+            let recursive build : Int -> List(Int) -> List(Int) -> List(Int) =
+                given n -> given returned -> given discarded ->
+                    if n <= 0 then returned
+                    else build(n - 1)(n :: returned)(n :: discarded)
+
+            let recursive consume : List(Int) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | value :: tail -> consume(tail)(total + 1)
+
+            let recursive loop : Int -> Int -> Int = given n -> given total ->
+                if n <= 0 then total
+                else loop(n - 1)(total + consume(build(64)([])([]))(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
             """;
 
     private static string BuildRuntimeRcRecordHeadListTcoMemoryProgram(int iterations)

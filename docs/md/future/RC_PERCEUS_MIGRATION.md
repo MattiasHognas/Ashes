@@ -785,6 +785,13 @@ Runtime-result joining for `match` also treats a direct now-promoted TCO paramet
 the final accumulator from being dropped immediately before return. The full 1BRC `formatAll` output
 and 75,000/150,000/300,000-row RSS gate cover this inferred path. `Bytes`-bearing heads remain excluded
 from deep normalization.
+The final-exit census found that an RC result previously suppressed cleanup for every active
+runtime-managed TCO parameter. Exit transfer is now selected dynamically by root identity: exactly
+one active parameter whose pointer is the returned pointer transfers its ownership to the caller,
+while every other active parameter follows its type-directed recursive drop path. This remains
+correct when two parameters alias or different branches return different parameters. A loop that
+builds two independent `List(Int)` accumulators, returns one, consumes it, and discards the other
+plateaus across 2,000/10,000/50,000 repeated calls; the unreturned graph no longer leaks.
 
 Deliverables:
 

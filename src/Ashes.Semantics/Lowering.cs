@@ -5520,25 +5520,70 @@ public sealed partial class Lowering
 
     private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(TcoContext? tco, int bodyTemp)
     {
-        if (tco is null || IsRuntimeManagedResultTemp(bodyTemp))
+        if (tco is null)
         {
             return;
+        }
+
+        int transferSelectedSlot = -1;
+        int zeroTemp = -1;
+        if (IsRuntimeManagedResultTemp(bodyTemp))
+        {
+            transferSelectedSlot = NewLocal();
+            zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(transferSelectedSlot, zeroTemp));
         }
 
         foreach (int slot in tco.RuntimeManagedParamSlots)
         {
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
-            if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            if (transferSelectedSlot < 0)
             {
-                EmitRuntimeManagedClosureDropIfActive(
-                    sourceTemp,
-                    tco.RuntimeManagedClosureActiveSlots[slot]);
+                EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+                continue;
             }
-            else
-            {
-                EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp);
-            }
+
+            int activeSlot = tco.RuntimeManagedClosureParamSlots.Contains(slot)
+                ? tco.RuntimeManagedClosureActiveSlots[slot]
+                : tco.RuntimeManagedParamActiveSlots[slot];
+            int activeTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+            int matchesResultTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(matchesResultTemp, sourceTemp, bodyTemp));
+            int transferSelectedTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(transferSelectedTemp, transferSelectedSlot));
+            int transferAvailableTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(transferAvailableTemp, transferSelectedTemp, zeroTemp));
+            int activeMatchTemp = NewTemp();
+            Emit(new IrInst.AndInt(activeMatchTemp, activeTemp, matchesResultTemp));
+            int canTransferTemp = NewTemp();
+            Emit(new IrInst.AndInt(canTransferTemp, activeMatchTemp, transferAvailableTemp));
+            string dropLabel = NewLabel("rc_tco_exit_transfer_not_selected");
+            string doneLabel = NewLabel("rc_tco_exit_transfer_done");
+            Emit(new IrInst.JumpIfFalse(canTransferTemp, dropLabel));
+            int oneTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(oneTemp, 1));
+            Emit(new IrInst.StoreLocal(transferSelectedSlot, oneTemp));
+            Emit(new IrInst.Jump(doneLabel));
+            Emit(new IrInst.Label(dropLabel));
+            EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+            Emit(new IrInst.Label(doneLabel));
+        }
+    }
+
+    private void EmitRuntimeManagedTcoExitParamDrop(TcoContext tco, int slot, int sourceTemp)
+    {
+        if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+        {
+            EmitRuntimeManagedClosureDropIfActive(
+                sourceTemp,
+                tco.RuntimeManagedClosureActiveSlots[slot]);
+        }
+        else
+        {
+            EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp);
         }
     }
 

@@ -611,12 +611,9 @@ public sealed class ArenaDeallocationTests
             SizeBytes: 16,
             RuntimeManaged: true,
         }).ShouldBeTrue("The tuple head itself must be allocated under RC before the list owns it.");
-        instructions.Any(instruction => instruction is IrInst.RcDrop
-        {
-            TypeName: "List",
-            RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "The final accumulator transfers to the caller; the builder must not drop its graph before returning it.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
+                "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
@@ -639,12 +636,9 @@ public sealed class ArenaDeallocationTests
 
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        instructions.Any(instruction => instruction is IrInst.RcDrop
-        {
-            TypeName: "List",
-            RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "The final accumulator transfers to the caller; the builder must not drop its graph before returning it.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
+                "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
@@ -771,9 +765,29 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
                 "The resolved consumed tail must gain its independent reference before the old parent drops.");
-        instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_tco_exit_drop", StringComparison.Ordinal)).ShouldBeFalse(
-                "The accumulator returned from the match must transfer to the caller rather than be dropped first.");
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
+                "Exactly one matching active parameter transfers; the other parameter follows its exit-drop path.");
+    }
+
+    [Test]
+    public void TCO_exit_transfers_only_the_returned_runtime_parameter()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> List(Int) -> List(Int) -> List(Int) =
+                given n -> given returned -> given discarded ->
+                    if n == 0 then returned
+                    else build(n - 1)(n :: returned)(n :: discarded)
+            in build(5)([])([])
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
+                "Exactly one matching active list transfers; the other list follows its exit-drop path.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
 
     [Test]
