@@ -613,9 +613,10 @@ public sealed class ArenaDeallocationTests
         }).ShouldBeTrue("The tuple head itself must be allocated under RC before the list owns it.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
-            TypeName: "Tuple",
+            TypeName: "List",
             RuntimeManaged: true,
-        }).ShouldBeTrue();
+        }).ShouldBeFalse(
+            "The final accumulator transfers to the caller; the builder must not drop its graph before returning it.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
@@ -640,9 +641,10 @@ public sealed class ArenaDeallocationTests
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
-            TypeName: "Item",
+            TypeName: "List",
             RuntimeManaged: true,
-        }).ShouldBeTrue();
+        }).ShouldBeFalse(
+            "The final accumulator transfers to the caller; the builder must not drop its graph before returning it.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }

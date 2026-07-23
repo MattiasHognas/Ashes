@@ -6048,9 +6048,16 @@ public sealed partial class Lowering
 
         tco.InTailPosition = savedTail;
 
-        // Return a dummy value — this code path won't execute at runtime
+        return LowerCallTcoBackEdgeDummy();
+    }
+
+    private (int Temp, TypeRef Type) LowerCallTcoBackEdgeDummy()
+    {
+        // The back-edge cannot reach its expression join. Mark its synthetic value ownership-neutral
+        // so reachable arms alone decide whether the function transfers an RC result.
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
+        _runtimeManagedResultTemps.Add(dummy);
         return (dummy, NewTypeVar());
     }
 

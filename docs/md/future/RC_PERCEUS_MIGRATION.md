@@ -765,11 +765,13 @@ blind deep-copy normalization could duplicate an entire mmap-backed buffer per c
 tuples demonstrate. The complete 1BRC correctness and bounded-memory gate remains green.
 Transfer now treats nil pattern aliases as ownership-free values and skips `dup` entirely, avoiding an
 RC-header read before address zero when the final cons tail crosses a back edge. A native one-element
-reverse regression covers that boundary. The remaining general consumed-head blocker is more precise
-than the local match: a curried call such as `consume(build(...))(initial)` carries the first argument
-through the returned inner closure environment. That environment must publish or move the RC graph
-before the outer parameter is released and communicate its runtime provenance to inner-loop entry;
-generating an environment normalizer alone is insufficient on the saturated direct-call path.
+reverse regression covers that boundary. TCO back-edge dummy results are now ownership-neutral at
+control-flow joins: only reachable return arms determine whether a function transfers an RC result.
+This prevents an affine tuple/record-head list builder from recursively dropping its final graph
+immediately before returning it; a native `consume(build(...))(initial)` regression covers the
+previous corruption. General consumed-head admission remains conservative while nested-pattern
+payload transfer and curried environment provenance are audited together; generating an environment
+normalizer alone is insufficient on the saturated direct-call path.
 
 Deliverables:
 

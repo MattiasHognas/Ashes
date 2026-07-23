@@ -2797,6 +2797,9 @@ public sealed class LinuxBackendCoverageTests
         MemoryExecutionResult nilTailTransfer = await CompileRunWithLinuxLlvmPeakRssAsync(
             LowerProgram(BuildRuntimeRcNilTailPatternTransferProgram())).ConfigureAwait(false);
         nilTailTransfer.Stdout.ShouldBe("1\n");
+        MemoryExecutionResult transferredBuilderResult = await CompileRunWithLinuxLlvmPeakRssAsync(
+            LowerProgram(BuildRuntimeRcTupleHeadBuilderResultProgram())).ConfigureAwait(false);
+        transferredBuilderResult.Stdout.ShouldBe("1\n");
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
         AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
@@ -7001,6 +7004,20 @@ public sealed class LinuxBackendCoverageTests
             match reverse([])(["x"]) with
                 | [] -> Ashes.IO.print(0)
                 | head :: _ -> Ashes.IO.print(Ashes.Text.byteLength(head))
+            """;
+
+    private static string BuildRuntimeRcTupleHeadBuilderResultProgram()
+        => """
+            let recursive build : Int -> List((Str, Int)) -> List((Str, Int)) = given n -> given acc ->
+                if n <= 0 then acc
+                else build(n - 1)(("x", n) :: acc)
+
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+
+            Ashes.IO.print(consume(build(1)([]))(0))
             """;
 
     private static string BuildRuntimeRcTupleHeadListTcoMemoryProgram(int iterations)
