@@ -485,7 +485,7 @@ and may itself cross another higher-order return boundary without losing ownersh
 Concrete higher-order list results now use the same runtime ownership channel. Copy-element lists,
 `List(Str)`, and nested copy-element lists are rebuilt as complete RC graphs when an indirect callee
 returns an arena value; an already-owned result crosses unchanged. Unresolved polymorphic results,
-lists with other pointer-bearing element layouts, and closures still use their legacy behavior until
+lists with other pointer-bearing element layouts, and opaque closure graphs still use their legacy behavior until
 a runtime layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
 the established task-region boundary for now; enabling this closure-result channel there caused the
 HTTP keep-alive RSS gate to grow linearly and is therefore blocked on suspension-aware ownership.
@@ -506,6 +506,13 @@ copy-out. A directly returned interned String is normalized once at the callee b
 ownership bit and final drop remain unambiguous. Async/task programs retain the established region
 contract and do not enable this function-body promotion; the keep-alive HTTP RSS slope remains the
 regression gate for that exclusion.
+Fresh escaping closures with no owned pointer captures, or with proven owned String/Bytes/BigInt
+captures and a copy-valued result, now allocate the closure and environment as one RC-owned graph.
+This includes closures returned directly from known functions: the caller reclaims the call arena
+without shallow `CopyOutClosure`, and a synthesized environment dropper releases each moved capture
+when the last closure owner dies. A 2K/10K/50K closure-factory loop guards the path against growth.
+Closures with arena-backed, resource-bearing, aggregate, or otherwise opaque captures remain outside
+this promotion because copying only the environment words would preserve dangling child pointers.
 The legacy persistent to-space/blob allocator remains reachable only from the specialized in-place
 `Map`/`HashMap` reuse path. It is intentionally retained as a specialized region rather than an
 ordinary-value lifetime mechanism: new persistent nodes and copied keys/values live for the retained

@@ -1928,13 +1928,41 @@ public sealed partial class Lowering
         bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
         bool runtimeManagedTuple = body is Expr.TupleLit;
         bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
+        bool runtimeManagedClosure = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && IsRuntimeRcCopyClosureProducer(body);
+        runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
             && !runtimeManagedBytes && !runtimeManagedBigInt
-            && !runtimeManagedTuple && !runtimeManagedRecord)
+            && !runtimeManagedTuple && !runtimeManagedRecord && !runtimeManagedClosure)
         {
             return LowerExpr(body);
         }
 
+        return LowerEscapingRuntimeManagedResult(
+            body,
+            runtimeManagedString,
+            runtimeManagedAdt,
+            runtimeManagedList,
+            runtimeManagedBytes,
+            runtimeManagedBigInt,
+            runtimeManagedTuple,
+            runtimeManagedRecord,
+            runtimeManagedClosure);
+    }
+
+    private (int Temp, TypeRef Type) LowerEscapingRuntimeManagedResult(
+        Expr body,
+        bool runtimeManagedString,
+        bool runtimeManagedAdt,
+        bool runtimeManagedList,
+        bool runtimeManagedBytes,
+        bool runtimeManagedBigInt,
+        bool runtimeManagedTuple,
+        bool runtimeManagedRecord,
+        bool runtimeManagedClosure)
+    {
         bool savedStringRequest = _runtimeRcStringAllocationRequested;
         bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
         bool savedListRequest = _runtimeRcListAllocationRequested;
@@ -1942,6 +1970,7 @@ public sealed partial class Lowering
         bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
         bool savedTupleRequest = _runtimeRcTupleAllocationRequested;
         bool savedRecordRequest = _runtimeRcRecordAllocationRequested;
+        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
         _runtimeRcStringAllocationRequested |= runtimeManagedString;
         _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
         _runtimeRcListAllocationRequested |= runtimeManagedList;
@@ -1949,9 +1978,15 @@ public sealed partial class Lowering
         _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
         _runtimeRcTupleAllocationRequested |= runtimeManagedTuple;
         _runtimeRcRecordAllocationRequested |= runtimeManagedRecord;
+        _runtimeRcClosureAllocationRequested |= runtimeManagedClosure;
         try
         {
-            return LowerExpr(body);
+            (int Temp, TypeRef Type) lowered = LowerExpr(body);
+            if (runtimeManagedClosure)
+            {
+                _runtimeManagedResultTemps.Add(lowered.Temp);
+            }
+            return lowered;
         }
         finally
         {
@@ -1962,6 +1997,7 @@ public sealed partial class Lowering
             _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
             _runtimeRcTupleAllocationRequested = savedTupleRequest;
             _runtimeRcRecordAllocationRequested = savedRecordRequest;
+            _runtimeRcClosureAllocationRequested = savedClosureRequest;
         }
     }
 
@@ -2385,8 +2421,20 @@ public sealed partial class Lowering
 
     private bool TryLowerRuntimeRcCopyClosureLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
     {
-        if (!IsRuntimeRcCopyClosureProducer(let.Value)
-            || !UsesNameOnlyAsDirectCallee(let.Body, let.Name))
+        if (_usesAsync
+            || _inCoroutineBody
+            || CapabilityGlobalCount > 0
+            || !IsRuntimeRcCopyClosureProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool directCall = UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if ((!directCall && !directEscape)
+            || directEscape && !directCall && _lambdaDepth > 0
+                && !ClosureCapturesRuntimeManagedHeapValue(let.Value))
         {
             lowered = default;
             return false;
@@ -2415,6 +2463,31 @@ public sealed partial class Lowering
                 && IsRuntimeRcCopyClosureProducer(conditional.Else),
             _ => false,
         };
+    }
+
+    private bool ClosureCapturesRuntimeManagedHeapValue(Expr expression)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureCapturesRuntimeManagedHeapValue(conditional.Then)
+                || ClosureCapturesRuntimeManagedHeapValue(conditional.Else);
+        }
+
+        if (expression is not Expr.Lambda lambda)
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        foreach (string name in FreeVars(lambda.Body, bound))
+        {
+            if (LookupOwnedValue(name) is { RuntimeManaged: true, Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
@@ -2571,8 +2644,10 @@ public sealed partial class Lowering
 
     private bool IsImmediateRuntimeClosureCaptureUse(Expr body, string bindingName)
     {
-        return body is Expr.Let closureLet
-            && UsesNameOnlyAsDirectCallee(closureLet.Body, closureLet.Name)
+        return ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
+            || body is Expr.Let closureLet
+            && (UsesNameOnlyAsDirectCallee(closureLet.Body, closureLet.Name)
+                || IsDirectBindingResult(closureLet.Body, closureLet.Name))
             && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
     }
 

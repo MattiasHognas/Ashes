@@ -1240,13 +1240,13 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Closure_let_result_does_not_emit_CopyOutClosure()
+    public void Closure_let_result_uses_runtime_ownership_without_CopyOutClosure()
     {
-        // Closures may capture heap pointers in their env, so copy-out is
-        // unsafe until escape analysis / recursive copy-out is implemented.
+        // A fresh closure with no owned pointer captures can escape as an RC-managed value.
         var ir = LowerProgram("let s = \"hello\" in given (y) -> y + 1");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
-            "Closure result should NOT emit CopyOutClosure (env may contain heap pointers).");
+            "An RC closure should survive directly instead of using shallow closure copy-out.");
     }
 
     [Test]

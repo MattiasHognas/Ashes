@@ -949,7 +949,7 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram escaping = LowerProgram("let n = 1 in let f = if n > 0 then given (x) -> x + n else given (x) -> x + n in f");
         AllInstructions(escaping).Any(instruction =>
-            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -2165,6 +2165,27 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
         AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
         AssertMemoryPlateaus("runtime-RC higher-order nested-list result", nestedSamples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Function", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingClosureMemoryProgram,
+            outputPerIteration: 7).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping closure", samples);
     }
 
     [Test]
@@ -5490,6 +5511,21 @@ public sealed class LinuxBackendCoverageTests
                             match head with
                                 | [] -> loop(n - 1)(total)
                                 | value :: _ -> loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingClosureMemoryProgram(int iterations)
+        => $$"""
+            let make n =
+                let text = "value-" + "x"
+                in given (ignored) -> Ashes.Text.byteLength(text)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
