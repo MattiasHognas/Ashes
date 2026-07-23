@@ -586,14 +586,30 @@ public sealed partial class Lowering
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
+        bool runtimeManagedCandidate = (_runtimeRcCopyAdtAllocationRequested
+                || RuntimeReuseAllocationMatches(resultType))
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageAdt(resultType)
+                || CanRuntimeManageOwnedChildAdt(resultType)
+                || CanRuntimeManageRecursiveCopyAdt(resultType));
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        if (!stackAllocate && TryConsumeReuseToken(0, out int reuseTokenTemp))
+        if (!stackAllocate && TryConsumeReuseToken(
+                0,
+                runtimeManagedCandidate,
+                out int reuseTokenTemp,
+                out RuntimeReuseCleanup? runtimeCleanup))
         {
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
-            Emit(new IrInst.AllocReusing(ptrTemp, tag, 0, reuseTokenTemp));
+            EmitRuntimeReuseTokenChildrenDrop(reuseTokenTemp, runtimeCleanup);
+            Emit(new IrInst.AllocReusing(
+                ptrTemp,
+                tag,
+                0,
+                reuseTokenTemp,
+                runtimeCleanup is not null));
             _reuseResultTemps.Add(ptrTemp);
         }
         else if (stackAllocate)
@@ -610,7 +626,11 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0));
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManagedCandidate));
+        }
+        if (runtimeManagedCandidate)
+        {
+            _runtimeManagedResultTemps.Add(ptrTemp);
         }
         return (ptrTemp, resultType);
     }
@@ -650,34 +670,227 @@ public sealed partial class Lowering
         }
 
         var resultType = InstantiateAdtType(ctor);
+        bool runtimeReuseRequest = resultType is TypeRef.TNamedType reuseNamed
+            && RuntimeReuseAllocationMatches(reuseNamed);
+        bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
+            && IsRuntimeManagedConstructorCandidate(ctor, args, named, runtimeReuseRequest);
 
-        // Evaluate all args left-to-right, unifying each with its declared type parameter.
-        // This catches mismatches when the same type parameter appears in multiple positions
-        // (e.g., Pair(T, T) applied to arguments of different types).
-        var argTemps = new List<int>(args.Count);
-        var argTypes = new List<TypeRef>(args.Count);
-        for (int i = 0; i < args.Count; i++)
+        (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
+            ctor, args, resultType, runtimeManagedCandidate);
+        if (runtimeManagedCandidate)
         {
-            var (argTemp, argType) = LowerExpr(args[i]);
-            argTemps.Add(argTemp);
-
-            var parameterType = InstantiateConstructorParameterType(ctor, i, resultType);
-            Unify(parameterType, argType);
-            argTypes.Add(Prune(argType));
-            MarkResourceArgMoved(args[i]);
+            PrepareRuntimeManagedAdtChildArguments(args, argTemps);
         }
 
         int tag = GetConstructorTag(ctor);
 
         // Allocate a tagged heap cell: [ctorTag, field0, field1, ..., fieldN]
-        int ptrTemp = AllocateConstructorCell(ctor, tag, stackAllocate, out bool reuseNode, out int consumedTokenTemp);
+        int ptrTemp = AllocateConstructorCell(
+            ctor,
+            tag,
+            stackAllocate,
+            runtimeManagedCandidate,
+            args,
+            argTemps,
+            out bool reuseNode,
+            out int consumedTokenTemp);
         for (int i = 0; i < argTemps.Count; i++)
         {
             int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp);
             Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
         }
+        if (runtimeManagedCandidate)
+        {
+            _runtimeManagedResultTemps.Add(ptrTemp);
+        }
 
         return (ptrTemp, resultType);
+    }
+
+    private bool IsRuntimeManagedConstructorCandidate(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType,
+        bool runtimeReuseRequest)
+        => _runtimeRcRecordAllocationRequested
+                && CanRuntimeManageConstructorApplication(constructor, arguments, resultType)
+            || (_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
+                && (CanRuntimeManageCopyAdt(resultType)
+                    || CanRuntimeManageGenericCopyAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageFreshHeapChildAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageRecursiveAdtConstructorApplication(constructor, arguments, resultType)
+                    || runtimeReuseRequest
+                        && CanRuntimeReuseAdtConstructorApplication(constructor, arguments, resultType))
+            || _runtimeRcTcoAdtAllocationRequested
+                && CanRuntimeManageTcoOwnedChildAdtConstructorApplication(
+                    constructor,
+                    arguments,
+                    resultType);
+
+    private bool RuntimeReuseAllocationMatches(TypeRef.TNamedType resultType)
+        => _runtimeRcReuseAllocationTypeRequested is { } requested
+            && ReferenceEquals(requested.Symbol, resultType.Symbol);
+
+    private bool CanRuntimeReuseAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if ((!CanRuntimeManageAdt(resultType)
+                && !CanRuntimeManageOwnedChildAdt(resultType)
+                && !CanRuntimeManageRecursiveCopyAdt(resultType))
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType)
+                || (CanRuntimeManageRecursiveCopyAdt(resultType)
+                    && IsFreshConstructorTree(arguments[i], resultType.Symbol))
+                || ((CanRuntimeManageAdt(resultType)
+                        || CanRuntimeManageOwnedChildAdt(resultType))
+                    && arguments[i] is Expr.RecordLit))
+            {
+                continue;
+            }
+
+            if (arguments[i] is not Expr.Var variable
+                || !_reuseTokens.Any(token => token.FieldCount == constructor.Arity
+                    && token.RuntimeCleanup is { } cleanup
+                    && ReferenceEquals(cleanup.Type.Symbol, resultType.Symbol)
+                    && cleanup.TransferableFields.ContainsKey(variable.Name)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void PrepareRuntimeManagedAdtChildArguments(IReadOnlyList<Expr> arguments, List<int> argumentTemps)
+    {
+        if (_runtimeRcAdtChildBindings is null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i] is not Expr.Var variable
+                || !_runtimeRcAdtChildBindings.TryGetValue(variable.Name, out bool shared)
+                || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false } info)
+            {
+                continue;
+            }
+
+            if (shared)
+            {
+                int duplicatedTemp = NewTemp();
+                Emit(new IrInst.RcDup(duplicatedTemp, argumentTemps[i], RuntimeManaged: true));
+                argumentTemps[i] = duplicatedTemp;
+                info.RuntimeDeepUnique = false;
+            }
+            else
+            {
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
+    }
+
+    private (List<int> Temps, List<TypeRef> Types) LowerConstructorArguments(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType,
+        bool runtimeManagedCandidate)
+    {
+        var argumentTemps = new List<int>(arguments.Count);
+        var argumentTypes = new List<TypeRef>(arguments.Count);
+        bool savedRuntimeRequest = _runtimeRcRecordAllocationRequested;
+        bool savedCopyAdtRequest = _runtimeRcCopyAdtAllocationRequested;
+        _runtimeRcRecordAllocationRequested = runtimeManagedCandidate;
+        _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest && runtimeManagedCandidate;
+        try
+        {
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+                (int argumentTemp, TypeRef argumentType) = LowerRuntimeManagedConstructorArgument(
+                    arguments[i],
+                    fieldType,
+                    runtimeManagedCandidate);
+                argumentTemps.Add(argumentTemp);
+                TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
+                Unify(parameterType, argumentType);
+                argumentTypes.Add(Prune(argumentType));
+                MarkResourceArgMoved(arguments[i]);
+            }
+        }
+        finally
+        {
+            _runtimeRcRecordAllocationRequested = savedRuntimeRequest;
+            _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest;
+        }
+
+        return (argumentTemps, argumentTypes);
+    }
+
+    private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
+        Expr argument,
+        TypeRef fieldType,
+        bool runtimeManagedParent)
+    {
+        (bool String, bool Bytes, bool BigInt, bool List, bool Tuple) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcTupleAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || runtimeManagedParent && (fieldType is TypeRef.TStr
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                && IsRuntimeRcStringProducer(argument) && IsRuntimeRcClosureCaptureSafeStringProducer(argument);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || runtimeManagedParent && (fieldType is TypeRef.TBytes
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                && IsRuntimeRcBytesProducer(argument) && IsRuntimeRcClosureCaptureSafeBytesProducer(argument);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || runtimeManagedParent && (fieldType is TypeRef.TBigInt
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                && IsRuntimeRcBigIntProducer(argument) && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument);
+        _runtimeRcListAllocationRequested = saved.List
+            || runtimeManagedParent && (fieldType is TypeRef.TList
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                && IsFreshListConstructionExpression(argument);
+        _runtimeRcTupleAllocationRequested = saved.Tuple
+            || runtimeManagedParent && (fieldType is TypeRef.TTuple
+                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                && argument is Expr.TupleLit;
+        (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+        if (runtimeManagedParent
+            && fieldType is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && !IsRuntimeManagedResultTemp(lowered.Temp))
+        {
+            int normalizedTemp = NewTemp();
+            Emit(new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                IrInst.ListHeadCopyKind.Inline,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            _runtimeManagedResultTemps.Add(normalizedTemp);
+            lowered = (normalizedTemp, lowered.Type);
+        }
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcTupleAllocationRequested) = saved;
+        return lowered;
     }
 
     /// <summary>
@@ -686,18 +899,44 @@ public sealed partial class Lowering
     /// allocation. Returns the cell temp; <paramref name="reuseNode"/> and
     /// <paramref name="consumedTokenTemp"/> report whether (and which) reuse token was consumed.
     /// </summary>
-    private int AllocateConstructorCell(ConstructorSymbol ctor, int tag, bool stackAllocate, out bool reuseNode, out int consumedTokenTemp)
+    private int AllocateConstructorCell(
+        ConstructorSymbol ctor,
+        int tag,
+        bool stackAllocate,
+        bool runtimeManagedCandidate,
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
+        out bool reuseNode,
+        out int consumedTokenTemp)
     {
         int ptrTemp = NewTemp();
         reuseNode = false;
         consumedTokenTemp = -1;
-        if (!stackAllocate && TryConsumeReuseToken(ctor.Arity, out int reuseTokenTemp))
+        if (!stackAllocate && TryConsumeReuseToken(
+                ctor.Arity,
+                runtimeManagedCandidate,
+                out int reuseTokenTemp,
+                out RuntimeReuseCleanup? runtimeCleanup))
         {
             consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
             // deconstructed from) instead of bump-allocating. The args were already read into temps
             // by the caller, so overwriting the cell now is safe.
-            Emit(new IrInst.AllocReusing(ptrTemp, tag, ctor.Arity, reuseTokenTemp));
+            HashSet<int> transferredFields = PrepareRuntimeReuseTransferredChildren(
+                arguments,
+                argumentTemps,
+                reuseTokenTemp,
+                runtimeCleanup);
+            EmitRuntimeReuseTokenChildrenDrop(
+                reuseTokenTemp,
+                runtimeCleanup,
+                transferredFields);
+            Emit(new IrInst.AllocReusing(
+                ptrTemp,
+                tag,
+                ctor.Arity,
+                reuseTokenTemp,
+                runtimeCleanup is not null));
             _reuseResultTemps.Add(ptrTemp);
             reuseNode = true;
         }
@@ -717,10 +956,65 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate));
         }
 
         return ptrTemp;
+    }
+
+    private HashSet<int> PrepareRuntimeReuseTransferredChildren(
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
+        int tokenTemp,
+        RuntimeReuseCleanup? runtimeCleanup)
+    {
+        var transferredFields = new HashSet<int>();
+        if (runtimeCleanup is not { } cleanup)
+        {
+            return transferredFields;
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i] is not Expr.Var variable
+                || !cleanup.TransferableFields.TryGetValue(variable.Name, out int sourceField))
+            {
+                continue;
+            }
+
+            argumentTemps[i] = EmitRuntimeReuseTransferredChild(
+                argumentTemps[i],
+                tokenTemp);
+            transferredFields.Add(sourceField);
+            if (LookupOwnedValue(variable.Name) is { IsDropped: false } info)
+            {
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
+
+        return transferredFields;
+    }
+
+    private int EmitRuntimeReuseTransferredChild(int childTemp, int tokenTemp)
+    {
+        int resultSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasTokenTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
+        string duplicateLabel = NewLabel("reuse_child_duplicate");
+        string continueLabel = NewLabel("reuse_child_continue");
+        Emit(new IrInst.JumpIfFalse(hasTokenTemp, duplicateLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, childTemp));
+        Emit(new IrInst.Jump(continueLabel));
+        Emit(new IrInst.Label(duplicateLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, childTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(continueLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     /// <summary>

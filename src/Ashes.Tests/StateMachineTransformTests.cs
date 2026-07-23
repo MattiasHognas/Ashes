@@ -5,9 +5,9 @@ namespace Ashes.Tests;
 
 /// <summary>
 /// Direct unit tests for <see cref="StateMachineTransform"/> on hand-built IR — exercising a
-/// specific edge (the structured-parallelism `both` liveness extension and the fork/join/cleanup
-/// within-one-segment invariant) in isolation from a full async program. Without the liveness cases
-/// a `both` result/closure live across an `await` split would be dropped from the coroutine
+/// specific edges in isolation from a full async program: structured-parallelism liveness, the
+/// fork/join/cleanup within-one-segment invariant, and deferred TCO reset dependencies. Without
+/// these liveness cases, values needed after an <c>await</c> would be dropped from the coroutine
 /// save/restore set and miscompile on resume.
 /// </summary>
 public sealed class StateMachineTransformTests
@@ -106,5 +106,76 @@ public sealed class StateMachineTransformTests
         body.Add(new IrInst.Return(8));
 
         Should.NotThrow(() => StateMachineTransform.Transform(body, captureCount: 0));
+    }
+
+    [Test]
+    public void Lifetime_marker_temps_live_across_await_are_saved_and_restored()
+    {
+        var body = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(5, 7),
+            new IrInst.RcDup(6, 5),
+        };
+        EmitCompletedTask(body, valueTemp: 8, taskTemp: 7);
+        body.Add(new IrInst.AwaitTask(9, 7));
+        body.Add(new IrInst.RcDrop(6, "String"));
+        body.Add(new IrInst.CleanupResource(5, "Function"));
+        body.Add(new IrInst.Return(9));
+
+        var result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        var suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5);
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 6);
+        var resume = result.Instructions.OfType<IrInst.Resume>().ShouldHaveSingleItem();
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 6);
+    }
+
+    [Test]
+    public void Rc_uniqueness_source_live_across_await_is_saved_and_restored()
+    {
+        var body = new List<IrInst>
+        {
+            new IrInst.AllocAdt(5, 0, 0, RuntimeManaged: true),
+        };
+        EmitCompletedTask(body, valueTemp: 7, taskTemp: 6);
+        body.Add(new IrInst.AwaitTask(8, 6));
+        body.Add(new IrInst.RcIsUnique(9, 5));
+        body.Add(new IrInst.RcDrop(5, "UnitBox", RuntimeManaged: true));
+        body.Add(new IrInst.Return(9));
+
+        StateMachineResult result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        IrInst.Suspend suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5);
+        IrInst.Resume resume = result.Instructions.OfType<IrInst.Resume>().ShouldHaveSingleItem();
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
+    }
+
+    [Test]
+    public void Deferred_tco_reset_dependencies_live_across_await_are_saved_and_restored()
+    {
+        var body = new List<IrInst>
+        {
+            new IrInst.Label("loop"),
+            new IrInst.SaveArenaState(2, 3) { CoroutineLoop = true },
+            new IrInst.LoadConstInt(5, 42),
+        };
+        EmitCompletedTask(body, valueTemp: 7, taskTemp: 6);
+        body.Add(new IrInst.AwaitTask(8, 6));
+        body.Add(new IrInst.TcoResetPending(0, [5], [2, 3]));
+        body.Add(new IrInst.Jump("loop"));
+        body.Add(new IrInst.Return(8));
+
+        StateMachineResult result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        IrInst.Suspend suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5,
+            "Temps used by the resolved TCO reset must survive suspension.");
+        result.Instructions.OfType<IrInst.StoreLocal>().ShouldContain(store => store.Slot == 2,
+            "The loop cursor watermark must be restored on resume.");
+        result.Instructions.OfType<IrInst.StoreLocal>().ShouldContain(store => store.Slot == 3,
+            "The loop end watermark must be restored on resume.");
     }
 }

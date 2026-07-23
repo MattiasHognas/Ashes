@@ -9,11 +9,12 @@ format-checked by any gate. Format them manually:
 dotnet run --project src/Ashes.Cli -- fmt <file> -w
 ```
 
-Every defect the suite surfaced is triaged in **[BUGS.md](BUGS.md)** — 18 found, 17 fixed, one
-partial remainder. The analysis and measurements for each fix live in
-[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md), each fix ships with a
-regression test under `tests/`, and every benchmark below is written in its natural,
-workaround-free form.
+The RC Perceus memory-model migration and the challenge-regression sweep that followed it — every
+correctness, performance-scaling, and peak-RSS fix, with measurements — are recorded in
+[`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md); each fix ships with a
+regression test under `tests/`, and the remaining forward-looking benchmark gaps are tracked in that
+file's [Deferred](../docs/md/internals/changelog.md#deferred) section. Every benchmark below is
+written in its natural, workaround-free form.
 
 ## The suite
 
@@ -28,8 +29,9 @@ workaround-free form.
 
 ## Benchmarks Game results
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64, `-O2`, single-threaded. All outputs match
-the reference implementations.
+These are the last known-good pre-RC-migration results, measured on a 32-thread AMD Ryzen 9
+9950X3D, Linux x64, `-O2`, single-threaded. All outputs matched the reference implementations at
+that revision. See the linked RC Perceus sweep for the current regression status.
 
 | Challenge | Standard workload | Time | Peak RSS | Note |
 |---|---|---|---|---|
@@ -40,7 +42,7 @@ the reference implementations.
 | [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
 | [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
 | [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
-| [reverse-complement](reverse-complement/README.md) | fasta 1M input | 0.58 s | 944 MB | linear, but ~96 B/base constant — the one open BUGS.md item (cons-cell reuse) |
+| [reverse-complement](reverse-complement/README.md) | fasta 1M input | 0.58 s | 944 MB | linear, but ~96 B/base constant — tracked as a remaining representation gap (cons-cell reuse) |
 | [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 11.3 s | 123 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
 | [regex-redux](regex-redux/README.md) | fasta 5M input | 63.7 s | 1.3 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
 

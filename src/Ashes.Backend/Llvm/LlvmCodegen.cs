@@ -77,6 +77,13 @@ internal static partial class LlvmCodegen
     // variable-size blobs (interleaving corrupts the in-place reuse rebuild). Lazily initialized (both 0).
     private const ulong TcbBlobCursorOffset = 40;
     private const ulong TcbBlobEndOffset = 48;
+    // Head of this thread's released runtime-RC block list. A released block stores its next pointer
+    // in the reference-count word while retaining its allocation-size word for exact-size reuse.
+    private const ulong TcbRcFreeListOffset = 56;
+    // Persistent bump region for densely packed small RC blocks. Individual releases enter the
+    // exact-size free list; the backing chunks are reclaimed together when a worker exits.
+    private const ulong TcbRcArenaCursorOffset = 64;
+    private const ulong TcbRcArenaEndOffset = 72;
     private const int MainTcbSizeBytes = 512;
     private const long LinuxErrWouldBlock = -11;
     private const long LinuxErrAlready = -114;
@@ -491,7 +498,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64, i64]);
 
         EmitProgramModuleFlags flags = EmitProgramModuleComputeFlags(program, flavor);
         EmitProgramModuleArena arena = EmitProgramModuleArenaGlobals(target, program, flavor, i64, flags.Arm64UsesTlsArena);
@@ -654,7 +661,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
                 || ProgramUsesInstruction<IrInst.FileReadLine>(program)
                 || ProgramUsesInstruction<IrInst.FileClose>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program);
+                || ProgramUsesInstruction<IrInst.CleanupResource>(program);
     }
 
     private static bool EmitProgramModuleUsesNetworking(IrProgram program)
@@ -687,7 +694,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.AsyncSleep>(program)
                 || ProgramUsesInstruction<IrInst.AsyncAll>(program)
                 || ProgramUsesInstruction<IrInst.AsyncRace>(program)
-                || ProgramUsesInstruction<IrInst.Drop>(program);
+                || ProgramUsesInstruction<IrInst.CleanupResource>(program);
     }
 
     private static bool EmitProgramModuleUsesProcess(IrProgram program)
@@ -735,9 +742,10 @@ internal static partial class LlvmCodegen
             LlvmValueHandle blobEndGlobal = LlvmApi.AddGlobal(target.Module, i64, "__ashes_blob_end");
             LlvmApi.SetLinkage(blobEndGlobal, LlvmLinkage.Internal);
             LlvmApi.SetInitializer(blobEndGlobal, LlvmApi.ConstInt(i64, 0, 0));
+            (LlvmValueHandle rcFreeListGlobal, LlvmValueHandle rcArenaCursorGlobal, LlvmValueHandle rcArenaEndGlobal) = AddRuntimeRcGlobals(target, i64);
 
             // arm64 has no spare thread register (linux-x64 uses GS, win-x64 uses the TEB), so its
-            // per-thread arena is real ELF TLS: mark the six arena cursors thread-local and LLVM
+            // per-thread allocator state is real ELF TLS: mark its slots thread-local and LLVM
             // (static reloc → local-exec) emits the mrs tpidr_el0 + TPREL sequence the ELF linker
             // resolves. Enabled for every arm64 image — including dynamically linked (networking /
             // external) ones, whose loader reserves this image's local-exec PT_TLS in the static-TLS
@@ -745,7 +753,7 @@ internal static partial class LlvmCodegen
             // win-x64 keeps these as ordinary globals (overridden by the TEB-TCB slots).
             if (arm64UsesTlsArena)
             {
-                foreach (var g in new[] { heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal, blobCursorGlobal, blobEndGlobal })
+                foreach (LlvmValueHandle g in new[] { heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal, blobCursorGlobal, blobEndGlobal, rcFreeListGlobal, rcArenaCursorGlobal, rcArenaEndGlobal })
                 {
                     LlvmApi.SetThreadLocal(g, 1);
                 }
@@ -762,6 +770,24 @@ internal static partial class LlvmCodegen
         }
         return new EmitProgramModuleArena(heapCursorGlobal, heapEndGlobal, toSpaceCursorGlobal, toSpaceEndGlobal);
     }
+
+    private static LlvmValueHandle AddZeroInitializedI64Global(
+        LlvmTargetContext target,
+        LlvmTypeHandle i64,
+        string name)
+    {
+        LlvmValueHandle global = LlvmApi.AddGlobal(target.Module, i64, name);
+        LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+        LlvmApi.SetInitializer(global, LlvmApi.ConstInt(i64, 0, 0));
+        return global;
+    }
+
+    private static (LlvmValueHandle FreeList, LlvmValueHandle Cursor, LlvmValueHandle End) AddRuntimeRcGlobals(
+        LlvmTargetContext target,
+        LlvmTypeHandle i64)
+        => (AddZeroInitializedI64Global(target, i64, "__ashes_rc_free_list"),
+            AddZeroInitializedI64Global(target, i64, "__ashes_rc_arena_cursor"),
+            AddZeroInitializedI64Global(target, i64, "__ashes_rc_arena_end"));
 
     private static void EmitProgramModuleImportsStdio(
         LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
@@ -1437,6 +1463,9 @@ internal static partial class LlvmCodegen
             // at the per-thread TCB just below, so the (null) lookup result here is overwritten.
             BlobCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_cursor"),
             BlobEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_blob_end"),
+            RcFreeListSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_free_list"),
+            RcArenaCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_arena_cursor"),
+            RcArenaEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_arena_end"),
             UseRunQueueScheduler = useRunQueueScheduler,
         };
 
@@ -1568,6 +1597,8 @@ internal static partial class LlvmCodegen
         (LlvmValueHandle cursorSlot, LlvmValueHandle endSlot) = BuildLinuxArenaSlots(state, tcbBase);
         (LlvmValueHandle toCursorSlot, LlvmValueHandle toEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbToSpaceCursorOffset, TcbToSpaceEndOffset);
         (LlvmValueHandle blobCursorSlot, LlvmValueHandle blobEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbBlobCursorOffset, TcbBlobEndOffset);
+        LlvmValueHandle rcFreeListSlot = BuildLinuxTcbSlot(state, tcbBase, TcbRcFreeListOffset, "rc_free_list");
+        (LlvmValueHandle rcArenaCursorSlot, LlvmValueHandle rcArenaEndSlot) = BuildLinuxTcbSlots(state, tcbBase, TcbRcArenaCursorOffset, TcbRcArenaEndOffset);
         return state with
         {
             HeapCursorSlot = cursorSlot,
@@ -1576,6 +1607,9 @@ internal static partial class LlvmCodegen
             ToSpaceEndSlot = toEndSlot,
             BlobCursorSlot = blobCursorSlot,
             BlobEndSlot = blobEndSlot,
+            RcFreeListSlot = rcFreeListSlot,
+            RcArenaCursorSlot = rcArenaCursorSlot,
+            RcArenaEndSlot = rcArenaEndSlot,
         };
     }
 
@@ -1675,22 +1709,70 @@ internal static partial class LlvmCodegen
             IrInst.FileClose fileClose => StoreTemp(state, fileClose.Target, EmitFileClose(state, LoadTemp(state, fileClose.HandleTemp))),
             IrInst.FileWriteText fileWriteText => StoreTemp(state, fileWriteText.Target, EmitFileWriteText(state, LoadTemp(state, fileWriteText.PathTemp), LoadTemp(state, fileWriteText.TextTemp))),
             IrInst.FileExists fileExists => StoreTemp(state, fileExists.Target, EmitFileExists(state, LoadTemp(state, fileExists.PathTemp))),
-            IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp))),
-            IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp))),
-            IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp))),
-            IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(state, LoadTemp(state, textFromInt.ValueTemp), "text_from_int")),
-            IrInst.TextFromFloat textFromFloat => StoreTemp(state, textFromFloat.Target, EmitFloatToString(state, LoadTempAsFloat(state, textFromFloat.ValueTemp), "text_from_float")),
-            IrInst.TextFormatFloat textFormatFloat => StoreTemp(state, textFormatFloat.Target, EmitFloatToFixedString(state, LoadTempAsFloat(state, textFormatFloat.ValueTemp), LoadTemp(state, textFormatFloat.DecimalsTemp), "text_format_float")),
-            IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(state, LoadTemp(state, textToHex.ValueTemp), "text_to_hex")),
-            IrInst.TextAsciiCase asciiCase => StoreTemp(state, asciiCase.Target, EmitAsciiCaseString(state, LoadTemp(state, asciiCase.SourceTemp), asciiCase.Upper, "text_ascii_case")),
-            IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(state, LoadTemp(state, bigIntFromInt.ValueTemp))),
-            IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(state, LoadTemp(state, bigIntToString.ValueTemp))),
-            IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp))),
-            IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp))),
-            IrInst.BigIntBinary bigIntBinary => StoreTemp(state, bigIntBinary.Target, EmitBigIntBinary(state, LoadTemp(state, bigIntBinary.Left), LoadTemp(state, bigIntBinary.Right), bigIntBinary.Op)),
+            IrInst.TextUncons textUncons => StoreTemp(state, textUncons.Target, EmitTextUncons(state, LoadTemp(state, textUncons.TextTemp), textUncons.RuntimeManaged)),
+            IrInst.TextParseInt textParseInt => StoreTemp(state, textParseInt.Target, EmitTextParseInt(state, LoadTemp(state, textParseInt.TextTemp), textParseInt.RuntimeManaged)),
+            IrInst.TextParseFloat textParseFloat => StoreTemp(state, textParseFloat.Target, EmitTextParseFloat(state, LoadTemp(state, textParseFloat.TextTemp), textParseFloat.RuntimeManaged)),
+            IrInst.TextFromInt textFromInt => StoreTemp(state, textFromInt.Target, EmitSignedIntToString(
+                state,
+                LoadTemp(state, textFromInt.ValueTemp),
+                "text_from_int",
+                textFromInt.RuntimeManaged)),
+            IrInst.TextFromFloat textFromFloat => EmitTextFromFloatInstruction(state, textFromFloat),
+            IrInst.TextFormatFloat textFormatFloat => EmitTextFormatFloatInstruction(state, textFormatFloat),
+            IrInst.TextToHex textToHex => StoreTemp(state, textToHex.Target, EmitIntToHexString(
+                state,
+                LoadTemp(state, textToHex.ValueTemp),
+                "text_to_hex",
+                textToHex.RuntimeManaged)),
+            IrInst.TextAsciiCase asciiCase => StoreTemp(state, asciiCase.Target, EmitAsciiCaseString(
+                state,
+                LoadTemp(state, asciiCase.SourceTemp),
+                asciiCase.Upper,
+                "text_ascii_case",
+                asciiCase.RuntimeManaged)),
+            IrInst.BigIntFromInt bigIntFromInt => StoreTemp(state, bigIntFromInt.Target, EmitBigIntFromInt(
+                state,
+                LoadTemp(state, bigIntFromInt.ValueTemp),
+                bigIntFromInt.RuntimeManaged)),
+            IrInst.BigIntToString bigIntToString => StoreTemp(state, bigIntToString.Target, EmitBigIntToString(
+                state,
+                LoadTemp(state, bigIntToString.ValueTemp),
+                bigIntToString.RuntimeManaged)),
+            IrInst.BigIntToInt bigIntToInt => StoreTemp(state, bigIntToInt.Target, EmitBigIntToInt(state, LoadTemp(state, bigIntToInt.ValueTemp), bigIntToInt.RuntimeManaged)),
+            IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp), bigIntFromString.RuntimeManaged)),
+            IrInst.BigIntBinary bigIntBinary => EmitBigIntBinaryInstruction(state, bigIntBinary),
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
             _ => (bool?)null,
         };
+    }
+
+    private static bool EmitTextFromFloatInstruction(LlvmCodegenState state, IrInst.TextFromFloat instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitFloatToString(
+            state,
+            LoadTempAsFloat(state, instruction.ValueTemp),
+            "text_from_float",
+            instruction.RuntimeManaged));
+    }
+
+    private static bool EmitBigIntBinaryInstruction(LlvmCodegenState state, IrInst.BigIntBinary instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitBigIntBinary(
+            state,
+            LoadTemp(state, instruction.Left),
+            LoadTemp(state, instruction.Right),
+            instruction.Op,
+            instruction.RuntimeManaged));
+    }
+
+    private static bool EmitTextFormatFloatInstruction(LlvmCodegenState state, IrInst.TextFormatFloat instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitFloatToFixedString(
+            state,
+            LoadTempAsFloat(state, instruction.ValueTemp),
+            LoadTemp(state, instruction.DecimalsTemp),
+            "text_format_float",
+            instruction.RuntimeManaged));
     }
 
     private static bool? EmitInstructionGroup2(LlvmCodegenState state, IrInst instruction)
@@ -1705,22 +1787,36 @@ internal static partial class LlvmCodegen
             IrInst.NetTcpClose tcpClose => StoreTemp(state, tcpClose.Target, EmitTcpCloseAbiCall(state, LoadTemp(state, tcpClose.SocketTemp))),
             IrInst.NetTcpListen tcpListen => StoreTemp(state, tcpListen.Target, EmitTcpListenAbiCall(state, LoadTemp(state, tcpListen.PortTemp))),
             IrInst.NetTcpAccept tcpAccept => StoreTemp(state, tcpAccept.Target, EmitTcpAcceptAbiCall(state, LoadTemp(state, tcpAccept.SocketTemp))),
-            IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state)),
-            IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(state, LoadTemp(state, bytesSingleton.ByteTemp))),
+            IrInst.BytesEmpty bytesEmpty => StoreTemp(state, bytesEmpty.Target, EmitBytesEmpty(state, bytesEmpty.RuntimeManaged)),
+            IrInst.BytesSingleton bytesSingleton => StoreTemp(state, bytesSingleton.Target, EmitBytesSingleton(
+                state,
+                LoadTemp(state, bytesSingleton.ByteTemp),
+                bytesSingleton.RuntimeManaged)),
             IrInst.BytesLength bytesLength => StoreTemp(state, bytesLength.Target, EmitBytesLength(state, LoadTemp(state, bytesLength.BytesTemp))),
             IrInst.BytesGet bytesGet => StoreTemp(state, bytesGet.Target, EmitBytesGet(state, LoadTemp(state, bytesGet.BytesTemp), LoadTemp(state, bytesGet.IndexTemp))),
             IrInst.BytesIndexOf bytesIndexOf => StoreTemp(state, bytesIndexOf.Target, EmitBytesIndexOf(state, LoadTemp(state, bytesIndexOf.BytesTemp), LoadTemp(state, bytesIndexOf.NeedleTemp), LoadTemp(state, bytesIndexOf.FromTemp))),
             IrInst.BytesCompare bytesCompare => StoreTemp(state, bytesCompare.Target, EmitBytesCompare(state, LoadTemp(state, bytesCompare.LeftTemp), LoadTemp(state, bytesCompare.RightTemp))),
             IrInst.BytesScanHash bytesScanHash => StoreTemp(state, bytesScanHash.Target, EmitBytesScanHash(state, LoadTemp(state, bytesScanHash.BytesTemp), LoadTemp(state, bytesScanHash.NeedleTemp), LoadTemp(state, bytesScanHash.FromTemp))),
-            IrInst.BytesSubText bytesSubText => StoreTemp(state, bytesSubText.Target, EmitBytesSubText(state, LoadTemp(state, bytesSubText.BytesTemp), LoadTemp(state, bytesSubText.StartTemp), LoadTemp(state, bytesSubText.LenTemp))),
+            IrInst.BytesSubText bytesSubText => EmitBytesSubTextInstruction(state, bytesSubText),
             IrInst.BytesSubView bytesSubView => StoreTemp(state, bytesSubView.Target, EmitBytesSubView(state, LoadTemp(state, bytesSubView.BytesTemp), LoadTemp(state, bytesSubView.StartTemp), LoadTemp(state, bytesSubView.LenTemp))),
-            IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(state, LoadTemp(state, bytesAppend.LeftTemp), LoadTemp(state, bytesAppend.RightTemp))),
-            IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(state, LoadTemp(state, bytesAppendByte.BytesTemp), LoadTemp(state, bytesAppendByte.ByteTemp))),
-            IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(state, LoadTemp(state, bytesFromList.ListTemp))),
+            IrInst.BytesAppend bytesAppend => StoreTemp(state, bytesAppend.Target, EmitBytesAppend(
+                state,
+                LoadTemp(state, bytesAppend.LeftTemp),
+                LoadTemp(state, bytesAppend.RightTemp),
+                bytesAppend.RuntimeManaged)),
+            IrInst.BytesAppendByte bytesAppendByte => StoreTemp(state, bytesAppendByte.Target, EmitBytesAppendByte(
+                state,
+                LoadTemp(state, bytesAppendByte.BytesTemp),
+                LoadTemp(state, bytesAppendByte.ByteTemp),
+                bytesAppendByte.RuntimeManaged)),
+            IrInst.BytesFromList bytesFromList => StoreTemp(state, bytesFromList.Target, EmitBytesFromList(
+                state,
+                LoadTemp(state, bytesFromList.ListTemp),
+                bytesFromList.RuntimeManaged)),
             IrInst.BytesHash bytesHash => StoreTemp(state, bytesHash.Target, EmitBytesHash(state, LoadTemp(state, bytesHash.BytesTemp))),
-            IrInst.BytesU16Le bytesU16Le => StoreTemp(state, bytesU16Le.Target, EmitBytesU16Le(state, LoadTemp(state, bytesU16Le.ValueTemp))),
-            IrInst.BytesU32Le bytesU32Le => StoreTemp(state, bytesU32Le.Target, EmitBytesU32Le(state, LoadTemp(state, bytesU32Le.ValueTemp))),
-            IrInst.BytesU64Le bytesU64Le => StoreTemp(state, bytesU64Le.Target, EmitBytesU64Le(state, LoadTemp(state, bytesU64Le.ValueTemp))),
+            IrInst.BytesU16Le bytesU16Le => StoreTemp(state, bytesU16Le.Target, EmitBytesU16Le(state, LoadTemp(state, bytesU16Le.ValueTemp), bytesU16Le.RuntimeManaged)),
+            IrInst.BytesU32Le bytesU32Le => StoreTemp(state, bytesU32Le.Target, EmitBytesU32Le(state, LoadTemp(state, bytesU32Le.ValueTemp), bytesU32Le.RuntimeManaged)),
+            IrInst.BytesU64Le bytesU64Le => StoreTemp(state, bytesU64Le.Target, EmitBytesU64Le(state, LoadTemp(state, bytesU64Le.ValueTemp), bytesU64Le.RuntimeManaged)),
             IrInst.BytesGetU16Le bytesGetU16Le => StoreTemp(state, bytesGetU16Le.Target, EmitBytesGetU16Le(state, LoadTemp(state, bytesGetU16Le.BytesTemp), LoadTemp(state, bytesGetU16Le.OffsetTemp))),
             IrInst.BytesGetU32Le bytesGetU32Le => StoreTemp(state, bytesGetU32Le.Target, EmitBytesGetU32Le(state, LoadTemp(state, bytesGetU32Le.BytesTemp), LoadTemp(state, bytesGetU32Le.OffsetTemp))),
             IrInst.BytesGetU64Le bytesGetU64Le => StoreTemp(state, bytesGetU64Le.Target, EmitBytesGetU64Le(state, LoadTemp(state, bytesGetU64Le.BytesTemp), LoadTemp(state, bytesGetU64Le.OffsetTemp))),
@@ -1733,9 +1829,29 @@ internal static partial class LlvmCodegen
             IrInst.ProcessReadStderrLine procReadStderr => StoreTemp(state, procReadStderr.Target, EmitProcessReadLine(state, LoadTemp(state, procReadStderr.ProcessTemp), stdoutFd: false)),
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
-            IrInst.Drop drop => EmitDrop(state, LoadTemp(state, drop.SourceTemp), drop.TypeName),
+            IrInst.CleanupResource cleanup => EmitResourceCleanup(state, LoadTemp(state, cleanup.SourceTemp), cleanup.TypeName),
+            IrInst.RcDrop { RuntimeManaged: true } drop => EmitRuntimeManagedDropInstruction(state, drop),
+            IrInst.RcDrop => false,
             _ => (bool?)null,
         };
+    }
+
+    private static bool EmitBytesSubTextInstruction(LlvmCodegenState state, IrInst.BytesSubText instruction)
+    {
+        return StoreTemp(state, instruction.Target, EmitBytesSubText(
+            state,
+            LoadTemp(state, instruction.BytesTemp),
+            LoadTemp(state, instruction.StartTemp),
+            LoadTemp(state, instruction.LenTemp),
+            instruction.RuntimeManaged));
+    }
+
+    private static bool EmitRuntimeManagedDropInstruction(LlvmCodegenState state, IrInst.RcDrop instruction)
+    {
+        LlvmValueHandle value = LoadTemp(state, instruction.SourceTemp);
+        return string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
+            ? EmitRuntimeRcClosureDrop(state, value)
+            : EmitRuntimeRcDrop(state, value);
     }
 
     private static bool? EmitInstructionGroup3(LlvmCodegenState state, IrInst instruction)
@@ -1746,6 +1862,16 @@ internal static partial class LlvmCodegen
             // Borrow: non-owning reference — simple value pass-through (pointer copy).
             // No ownership transfer, no drop responsibility. The owning scope still drops.
             IrInst.Borrow borrow => StoreTemp(state, borrow.Target, LoadTemp(state, borrow.SourceTemp)),
+            IrInst.DropReuse token => StoreTemp(state, token.Target,
+                token.RuntimeManaged
+                    ? EmitRuntimeDropReuse(state, LoadTemp(state, token.SourceTemp))
+                    : LoadTemp(state, token.SourceTemp)),
+            IrInst.RcDup { RuntimeManaged: true } dup => StoreTemp(state, dup.Target,
+                EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
+            // Erased Perceus marker: identity-preserving for arena-managed values.
+            IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
+            IrInst.RcIsUnique unique => StoreTemp(state, unique.Target,
+                EmitRuntimeRcIsUnique(state, LoadTemp(state, unique.SourceTemp))),
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
@@ -1859,7 +1985,9 @@ internal static partial class LlvmCodegen
             IrInst.LoadLocal loadLocal => StoreTemp(state, loadLocal.Target, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[loadLocal.Slot], $"load_local_{loadLocal.Slot}")),
             IrInst.StoreLocal storeLocal => StoreLocal(state, storeLocal.Slot, LoadTemp(state, storeLocal.Source)),
             IrInst.LoadEnv loadEnv => StoreTemp(state, loadEnv.Target, LlvmApi.BuildLoad2(builder, state.I64, GetMemoryPointer(state, LlvmApi.BuildLoad2(builder, state.I64, state.LocalSlots[0], "env_ptr"), loadEnv.Index * 8, $"load_env_{loadEnv.Index}_ptr"), $"load_env_{loadEnv.Index}")),
-            IrInst.Alloc alloc => StoreTemp(state, alloc.Target, EmitAlloc(state, alloc.SizeBytes)),
+            IrInst.Alloc alloc => StoreTemp(state, alloc.Target, alloc.RuntimeManaged
+                ? EmitRuntimeRcAlloc(state, alloc.SizeBytes, "rc_alloc")
+                : EmitAlloc(state, alloc.SizeBytes)),
             IrInst.AllocStack allocStack => StoreTemp(state, allocStack.Target, EmitStackAlloc(state, allocStack.SizeBytes, $"stack_alloc_{allocStack.Target}")),
             IrInst.AddInt addInt => StoreTemp(state, addInt.Target, LlvmApi.BuildAdd(builder, LoadTemp(state, addInt.Left), LoadTemp(state, addInt.Right), $"add_{addInt.Target}")),
             IrInst.AddFloat addFloat => StoreTemp(state, addFloat.Target, LlvmApi.BuildFAdd(builder, LoadTempAsFloat(state, addFloat.Left), LoadTempAsFloat(state, addFloat.Right), $"fadd_{addFloat.Target}")),
@@ -1915,20 +2043,46 @@ internal static partial class LlvmCodegen
             IrInst.WriteStr writeStr => EmitPrintStringFromTemp(state, LoadTemp(state, writeStr.Source), appendNewline: false),
             IrInst.PrintBool printBool => EmitPrintBool(state, LoadTemp(state, printBool.Source)),
             IrInst.PanicStr panicStr => EmitPanic(state, LoadTemp(state, panicStr.Source)),
-            IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(state, LoadTemp(state, concatStr.Left), LoadTemp(state, concatStr.Right))),
-            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot)),
-            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(state, makeClosure.FuncLabel, LoadTemp(state, makeClosure.EnvPtrTemp), makeClosure.EnvSizeBytes)),
+            IrInst.ConcatStr concatStr => StoreTemp(state, concatStr.Target, EmitStringConcat(
+                state,
+                LoadTemp(state, concatStr.Left),
+                LoadTemp(state, concatStr.Right),
+                concatStr.RuntimeManaged)),
+            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot, concatStrTip.RuntimeManaged)),
+            IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(
+                state,
+                makeClosure.FuncLabel,
+                LoadTemp(state, makeClosure.EnvPtrTemp),
+                makeClosure.EnvSizeBytes,
+                makeClosure.RuntimeManaged,
+                makeClosure.ReturnsRuntimeManaged,
+                makeClosure.AcceptsRuntimeManagedArgument)),
             IrInst.LoadFuncAddr loadFuncAddr => StoreTemp(state, loadFuncAddr.Target,
                 LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[loadFuncAddr.FuncLabel], state.I64, $"func_addr_{loadFuncAddr.FuncLabel}")),
-            IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target, EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp), makeClosureStack.EnvSizeBytes)),
+            IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target,
+                EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp),
+                    makeClosureStack.EnvSizeBytes, makeClosureStack.ReturnsRuntimeManaged, makeClosureStack.AcceptsRuntimeManagedArgument)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
+                LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
+                LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
+            IrInst.LoadArgumentOwnership loadOwnership => StoreTemp(
+                state,
+                loadOwnership.Target,
+                LlvmApi.GetParam(state.Function, 2)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
             _ => (bool?)null,
         };
     }
+
+    private static LlvmValueHandle LoadRuntimeManagedArgumentFlag(
+        LlvmCodegenState state,
+        int flagTemp)
+        => flagTemp < 0
+            ? LlvmApi.ConstInt(state.I64, 0, 0)
+            : LoadTemp(state, flagTemp);
 
     private static bool? EmitInstructionGroup7(LlvmCodegenState state, IrInst instruction, int index)
     {
@@ -1937,15 +2091,19 @@ internal static partial class LlvmCodegen
             IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),
-            IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target, EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount)),
+            IrInst.AllocAdt allocAdt => StoreTemp(state, allocAdt.Target,
+                EmitAllocAdt(state, allocAdt.Tag, allocAdt.FieldCount, allocAdt.RuntimeManaged)),
             IrInst.AllocAdtToSpace allocToSpace => StoreTemp(state, allocToSpace.Target, EmitAllocAdtToSpace(state, allocToSpace.Tag, allocToSpace.FieldCount)),
-            IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target, EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp), allocReusing.Tag)),
+            IrInst.AllocReusing allocReusing => StoreTemp(state, allocReusing.Target,
+                EmitAllocReusing(state, LoadTemp(state, allocReusing.TokenTemp),
+                    allocReusing.Tag, allocReusing.FieldCount, allocReusing.RuntimeManaged,
+                    allocReusing.ListCell)),
             IrInst.AllocAdtStack allocAdtStack => StoreTemp(state, allocAdtStack.Target, EmitStackAllocAdt(state, allocAdtStack.Tag, allocAdtStack.FieldCount)),
-            IrInst.SetAdtField setAdtField => StoreMemory(state, LoadTemp(state, setAdtField.Ptr), 8 + (setAdtField.FieldIndex * 8), LoadTemp(state, setAdtField.Source), $"set_adt_field_{setAdtField.FieldIndex}"),
+            IrInst.SetAdtField setAdtField => StoreAdtField(state, LoadTemp(state, setAdtField.Ptr), setAdtField.FieldIndex, LoadTemp(state, setAdtField.Source), $"set_adt_field_{setAdtField.FieldIndex}"),
             IrInst.SaveStackPointer saveSp => EmitSaveStackPointer(state, saveSp.Slot),
             IrInst.RestoreStackPointer restoreSp => EmitRestoreStackPointer(state, restoreSp.Slot),
-            IrInst.GetAdtTag getAdtTag => StoreTemp(state, getAdtTag.Target, LoadMemory(state, LoadTemp(state, getAdtTag.Ptr), 0, $"get_adt_tag_{getAdtTag.Target}")),
-            IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadMemory(state, LoadTemp(state, getAdtField.Ptr), 8 + (getAdtField.FieldIndex * 8), $"get_adt_field_{getAdtField.Target}")),
+            IrInst.GetAdtTag getAdtTag => StoreTemp(state, getAdtTag.Target, LoadAdtTag(state, LoadTemp(state, getAdtTag.Ptr), $"get_adt_tag_{getAdtTag.Target}")),
+            IrInst.GetAdtField getAdtField => StoreTemp(state, getAdtField.Target, LoadAdtField(state, LoadTemp(state, getAdtField.Ptr), getAdtField.FieldIndex, $"get_adt_field_{getAdtField.Target}")),
             IrInst.Jump jump => EmitJump(state, jump.Target),
             IrInst.JumpIfFalse jumpIfFalse => EmitJumpIfFalse(state, LoadTemp(state, jumpIfFalse.CondTemp), jumpIfFalse.Target, index),
             IrInst.SwitchTag switchTag => EmitSwitchTag(state, LoadTemp(state, switchTag.TagTemp), switchTag.Cases, switchTag.DefaultLabel),
@@ -1954,13 +2112,14 @@ internal static partial class LlvmCodegen
             IrInst.SaveArenaState save => EmitSaveArenaState(state, save.CursorLocalSlot, save.EndLocalSlot, save.CoroutineLoop),
             IrInst.RestoreArenaState restore => EmitRestoreArenaState(state, restore.CursorLocalSlot, restore.EndLocalSlot, restore.PreRestoreEndSlot, restore.CoroutineLoop),
             IrInst.ReclaimArenaChunks reclaim => EmitReclaimArenaChunks(state, reclaim.SavedEndSlot, reclaim.PreRestoreEndSlot, reclaim.CoroutineLoop),
-            IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes)),
+            IrInst.CopyOutArena copyOut => StoreTemp(state, copyOut.DestTemp, EmitCopyOutArena(state, copyOut.SrcTemp, copyOut.StaticSizeBytes, copyOut.RuntimeManaged)),
             IrInst.CopyOutArenaToSpace copyOutTs => StoreTemp(state, copyOutTs.DestTemp, EmitCopyOutArenaToSpace(state, copyOutTs.SrcTemp, copyOutTs.StaticSizeBytes)),
             IrInst.CopyFixedInto copyInto => EmitCopyFixedInto(state, copyInto.DestTemp, copyInto.SrcTemp, copyInto.SizeBytes),
             IrInst.CopyStringIntoOrFresh copyStr => StoreTemp(state, copyStr.DestTemp, EmitCopyStringIntoOrFresh(state, copyStr.OldBlobTemp, copyStr.SrcTemp)),
             IrInst.CopyFixedIntoOrFresh copyFixed => StoreTemp(state, copyFixed.DestTemp, EmitCopyFixedIntoOrFresh(state, copyFixed.OldBlobTemp, copyFixed.SrcTemp, copyFixed.SizeBytes)),
-            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy)),
-            IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp, EmitCopyOutClosure(state, copyOutClosure.SrcTemp)),
+            IrInst.CopyOutList copyOutList => StoreTemp(state, copyOutList.DestTemp, EmitCopyOutList(state, copyOutList.SrcTemp, copyOutList.HeadCopy, copyOutList.RuntimeManaged)),
+            IrInst.CopyOutClosure copyOutClosure => StoreTemp(state, copyOutClosure.DestTemp,
+                EmitCopyOutClosure(state, copyOutClosure.SrcTemp, copyOutClosure.RuntimeManaged)),
             IrInst.CopyOutTcoListCell tcoCell => StoreTemp(state, tcoCell.DestTemp, EmitCopyOutTcoListCell(state, tcoCell.SrcTemp, tcoCell.HeadCopy)),
             _ => (bool?)null,
         };
@@ -2093,6 +2252,9 @@ internal static partial class LlvmCodegen
         public LlvmValueHandle ToSpaceEndSlot { get; init; }
         public LlvmValueHandle BlobCursorSlot { get; init; }
         public LlvmValueHandle BlobEndSlot { get; init; }
+        public LlvmValueHandle RcFreeListSlot { get; init; }
+        public LlvmValueHandle RcArenaCursorSlot { get; init; }
+        public LlvmValueHandle RcArenaEndSlot { get; init; }
 
         // When true, RunTask drives the top-level task through the run-queue scheduler
         // (ashes_scheduler_run) instead of the legacy recursive driver. Set for every async program

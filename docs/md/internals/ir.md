@@ -64,8 +64,8 @@ Maps a label to a string constant:
 | `Label` | `string` | Reference name (e.g., `str_0`) |
 | `Value` | `string` | The string content |
 
-Referenced by `LoadConstStr`. The backend allocates these on the heap
-as `[length:i64][bytes...]`.
+Referenced by `LoadConstStr`. The backend emits these as read-only globals
+using the ordinary String payload layout with the view bit set.
 
 ---
 
@@ -110,7 +110,26 @@ Each instruction that consumes values reads from `Source`, `Left`,
 | `LoadEnv` | `Target`, `Index` | Load captured value from closure environment |
 | `StoreMemOffset` | `BasePtr`, `OffsetBytes`, `Source` | Store value at `[base + offset]` |
 | `LoadMemOffset` | `Target`, `BasePtr`, `OffsetBytes` | Load value from `[base + offset]` |
-| `Alloc` | `Target`, `SizeBytes` | Heap-allocate `SizeBytes`; return pointer |
+| `Alloc` | `Target`, `SizeBytes`, `RuntimeManaged` | Allocate a raw payload in the scoped arena or, when runtime-managed, behind an RC header |
+| `SaveArenaState` | cursor/end slots | Record a scoped-region watermark |
+| `RestoreArenaState` | cursor/end/pre-restore slots | Reset to a saved watermark |
+| `ReclaimArenaChunks` | saved/pre-restore end slots | Return abandoned region chunks |
+
+### Ownership and Lifetime
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `Borrow` | `Target`, `SourceTemp` | Create a non-owning compiler-tracked alias |
+| `RcDup` | `Target`, `SourceTemp`, `RuntimeManaged` | Split ownership; increments the count for an RC value |
+| `RcDrop` | `SourceTemp`, `TypeName`, `OwnerSlot`, `RuntimeManaged` | End one ordinary ownership path; runtime-managed forms perform type-directed RC release |
+| `RcIsUnique` | `Target`, `SourceTemp` | Test whether an RC value has count 1 |
+| `CleanupResource` | `SourceTemp`, `TypeName` | Deterministically close/reap a language resource; distinct from ordinary RC |
+
+`PerceusLifetimePlacement` consumes the `OwnerSlot` provenance on lexical
+anchors and places drops after last use or at dead branch entry. Constructor,
+match, closure, and TCO lowering emit additional shape-aware ownership
+operations. `RuntimeManaged: false` marks a compiler fact used by a scoped or
+specialized region; it is not an instruction to read an RC header.
 
 ### Integer Arithmetic
 
@@ -159,25 +178,37 @@ Each instruction that consumes values reads from `Source`, `Left`,
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
-| `ConcatStr` | `Target`, `Left`, `Right` | `Target = Left ++ Right` (string concatenation) |
+| `ConcatStr` | `Target`, `Left`, `Right`, `RuntimeManaged` | `Target = Left ++ Right`; the flag selects arena or RC allocation |
+| `ConcatStrTip` | `Target`, `Left`, `Right`, reservation slots, `RuntimeManaged` | Affine string append with geometric headroom; the RC form consumes `Left` |
 
 ### Closures
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
-| `MakeClosure` | `Target`, `FuncLabel`, `EnvPtrTemp` | Allocate 16-byte closure: `[code_ptr, env_ptr]` |
-| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp` | Call closure: `Target = code(env, arg)` |
+| `MakeClosure` | `Target`, `FuncLabel`, `EnvPtrTemp`, `EnvSizeBytes`, ownership flags | Allocate a closure payload, optionally behind an RC header |
+| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp`, `RuntimeManagedArgumentFlagTemp` | Call closure with an optional retained-RC argument ownership flag |
 
-A closure is a 16-byte heap cell containing a function pointer and an
-environment pointer. `MakeClosure` stores the function address (resolved
-from `FuncLabel`) and the environment pointer. `CallClosure` loads both
-pointers, then calls the function with the environment and argument.
+A closure payload is 32 bytes:
+`[code, env, packed_env_size_and_ownership, dropper]`. The packed word uses bit 63
+for runtime-managed result ownership, bit 62 for RC-argument adoption, and the
+low 62 bits for the environment size.
+The dropper releases moved resources or RC captures. Supported captured
+ordinary graphs also have code-label metadata for normalizing the complete
+environment when a closure crosses into RC ownership. `CallClosure` loads the
+code and environment pointers and calls `code(env, arg, owns_arg)`. A normalizing
+direct-parameter entry adopts a transferred RC root when `owns_arg` is set and
+otherwise performs the defensive arena-to-RC graph copy. The caller retains a
+non-fresh root before transfer; fresh owned results can transfer their existing
+reference. Curried parameters captured in closure environments cannot consume
+this direct-argument flag.
 
 ### Algebraic Data Types (ADTs)
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
-| `AllocAdt` | `Target`, `Tag`, `FieldCount` | Allocate ADT: `[tag:i64, field0..fieldN:i64]` |
+| `AllocAdt` | `Target`, `Tag`, `FieldCount`, `RuntimeManaged` | Allocate ADT payload `[tag, fields...]`, optionally behind an RC header |
+| `DropReuse` | `Target`, `SourceTemp`, `FieldCount`, `RuntimeManaged` | Consume a dead cell into a compatible reuse token, or return null after decrementing a shared RC cell |
+| `AllocReusing` | `Target`, `Tag`, `FieldCount`, `TokenTemp`, `RuntimeManaged`, `ListCell` | Overwrite a compatible tagged ADT or untagged list-cell token; runtime null falls back to fresh RC allocation of the same layout |
 | `SetAdtField` | `Ptr`, `FieldIndex`, `Source` | `*(Ptr + 8 + Index*8) = Source` |
 | `GetAdtTag` | `Target`, `Ptr` | `Target = *(Ptr + 0)` |
 | `GetAdtField` | `Target`, `Ptr`, `FieldIndex` | `Target = *(Ptr + 8 + Index*8)` |
@@ -185,6 +216,23 @@ pointers, then calls the function with the environment and argument.
 ADT values are heap-allocated cells. The first 8 bytes hold an integer
 tag identifying the variant. Each field occupies 8 bytes. Total size is
 `(1 + FieldCount) * 8` bytes.
+
+### Graph Normalization and Region Copies
+
+`CopyOutArena`, `CopyOutList`, `CopyOutClosure`, and
+`CopyOutTcoListCell` all carry a required `CopyOutPurpose`:
+
+| Purpose | Contract |
+|---|---|
+| `RcNormalization` | Construct an independently owned RC graph |
+| `ArenaScopeBoundary` | Preserve scheduler/capability state across a scope reset |
+| `ArenaCallBoundary` | Preserve scheduler/capability state across a call reset |
+| `ArenaTcoCompaction` | Preserve live state at a region-managed TCO edge |
+| `IndependentClone` | Explicit deep copy, worker publication, or reuse defense |
+
+`AllocAdtToSpace` and `CopyOutArenaToSpace` are separate instructions for
+the persistent `Map`/`HashMap` specialization and do not represent general
+ordinary-value lifetime.
 
 ### Console I/O
 
@@ -286,14 +334,13 @@ live temps and locals across the await point.
 
 | Offset | Field | Description |
 |--------|-------|-------------|
-| 0 | `StateIndex` | Current state number (-1 = completed, -2 = sleeping) |
-| 8 | `CoroutineFn` | Pointer to coroutine function |
-| 16 | `ResultSlot` | Result value / awaited task result |
-| 24 | `AwaitedTask` | Pointer to sub-task being awaited |
-| 32 | `NextTask` | Queue linked list pointer (Phase C event loop) |
-| 40 | `SleepDurationMs` | Sleep duration in milliseconds (Phase C) |
-| 48+ | Captures | Captured environment variables |
-| 48+N*8+ | Live vars | Live variable slots across await points |
+| 0-40 | core | State, coroutine, result, awaited task, task link, sleep duration |
+| 48-88 | leaf wait | Two I/O arguments, wait kind/handle, and two wait scratch slots |
+| 96 | `FrameSizeBytes` | Full frame size including captures and live slots |
+| 104-112 | private arena | Detached root cursor and end |
+| 120-136 | scheduler links | Ready-next, waiter, and arena owner |
+| 144 | `LoopResetOk` | Whether an async TCO restart may reset its region |
+| 152+ | captures/live vars | Captures followed by variables live across suspension |
 
 ---
 
@@ -337,12 +384,26 @@ The LLVM backend (`LlvmCodegen`) processes each `IrFunction`:
 
 ## Memory Layout Summary
 
-| Structure | Layout | Size |
-|-----------|--------|------|
-| String | `[length:i64][bytes...]` | 8 + length |
-| Closure | `[code_ptr:i64][env_ptr:i64]` | 16 |
-| ADT | `[tag:i64][field0:i64]...[fieldN:i64]` | (1 + N) × 8 |
-| Environment | `[capture0:i64][capture1:i64]...` | N × 8 |
+| Structure | Payload addressed by value pointer |
+|-----------|--------------------------------------|
+| String / Bytes | `[length_and_view_flag:i64][bytes...]` |
+| BigInt | `[sign_and_limb_count:i64][limbs...]` |
+| List cons | `[head:i64][tail:i64]`; nil is zero |
+| Closure | `[code:i64][env:i64][packed_env_size_and_ownership:i64][dropper:i64]` |
+| ADT / record | `[tag:i64][field0:i64]...[fieldN:i64]` |
+| Tuple / environment | `[word0:i64][word1:i64]...` |
 
-All heap allocations come from a 4 MB static arena with a bump-pointer
-allocator. There is no garbage collection or deallocation.
+Runtime-managed values have
+`[reference_count:i64][allocation_size:i64]` immediately before the
+payload. Small RC cells use a dense per-thread region plus exact-size free-list
+reuse; large cells use direct OS allocation. Scoped arena instructions remain
+for proven scratch and explicit scheduler/specialized regions. See the
+[architecture memory model](architecture.md#memory-model) for ownership and
+boundary invariants.
+
+A TCO back edge may reuse an older runtime-owned `List(record)` graph as the
+normalization destination when the replacement is fresh and every record field
+is copied inline. It first checks equal spine length and uniqueness of every old
+cons cell and record head; only a complete successful preflight permits field
+overwrite. Otherwise the ordinary graph normalization and recursive drop path
+remains in effect.

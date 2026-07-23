@@ -301,3 +301,40 @@ When a test fails, the runner reports:
 - stderr, when present and relevant to the failure
 
 This keeps failures deterministic and suitable for CI output.
+
+## Compiler Memory Regressions
+
+The `.ash` directive runner checks output and exit status; it does not measure
+resident memory. Compiler/runtime memory regressions live in
+`src/Ashes.Tests/LinuxBackendCoverageTests.cs`, where the test compiles a native
+program and measures child `ru_maxrss` through Python's `resource.getrusage`.
+
+Memory-management changes must test growth, not only one peak:
+
+1. Run the same workload at three increasing scales (normally 2,000, 10,000,
+   and 50,000 iterations).
+2. Verify program output at every scale so bounded memory cannot hide
+   corruption or premature release.
+3. Bound both total growth (first to last) and late growth (middle to last).
+   A fixed allocator high-water mark may raise the first sample; proportional
+   late growth indicates retained objects.
+4. Cover unique and shared ownership where relevant. For graph changes also
+   exercise transfer, duplicate, recursive drop, null reuse fallback, and
+   unreturned branch/loop owners.
+
+The permanent matrix includes lists/ADTs/records/tuples, Strings, Bytes,
+BigInts, closures, TCO accumulators, task/capability regions, HTTP keep-alive,
+parallel workers, persistent Map/HashMap updates, and the shipped 1BRC program.
+An executable arena or RC leak is a release blocker even when a different
+allocation path passes.
+
+Use TUnit filters while iterating:
+
+```sh
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/LinuxBackendCoverageTests/<test-name>"
+```
+
+Run the full compiler suite at phase boundaries. RSS tests are Linux-native;
+cross-target correctness still runs through qemu/Wine or structural target
+checks as described in the development guide.

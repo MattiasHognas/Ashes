@@ -299,6 +299,31 @@ public sealed class IrOptimizerTests
             "Dead LoadConstInt instructions should be eliminated after folding.");
     }
 
+    [Test]
+    public void Dead_code_preserves_stores_read_implicitly_by_arena_reset()
+    {
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 100),
+            new IrInst.LoadConstInt(1, 200),
+            new IrInst.StoreLocal(2, 0),
+            new IrInst.StoreLocal(3, 1),
+            new IrInst.RestoreArenaState(2, 3, 4),
+            new IrInst.ReclaimArenaChunks(3, 4),
+            new IrInst.RcDrop(0, "Int"),
+            new IrInst.Return(0),
+        ];
+        IrFunction function = new("entry", instructions, 5, 2, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.StoreLocal { Slot: 2 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.StoreLocal { Slot: 3 }).ShouldBeTrue();
+    }
+
     // Observable behavior preservation tests
 
     [Test]
@@ -360,10 +385,252 @@ public sealed class IrOptimizerTests
         optimized.UsesClosures.ShouldBe(unoptimized.UsesClosures);
     }
 
-    // Drop elision tests
+    // Erased RC marker and resource-cleanup tests
 
     [Test]
-    public void Drop_elision_removes_non_resource_string_drop()
+    public void Rc_dup_and_drop_markers_are_erased_by_the_optimizer()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstStr(0, "lbl_hello"),
+            new IrInst.RcDup(1, 0),
+            new IrInst.PrintStr(1),
+            new IrInst.RcDrop(1, "String"),
+            new IrInst.Return(1),
+        };
+        var fn = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(fn, [], [new IrStringLiteral("lbl_hello", "hello")], false, false, false, false, false, false);
+
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup or IrInst.RcDrop).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.PrintStr { Source: 0 }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Runtime_rc_dup_and_drop_separated_by_uniqueness_check_are_preserved()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 0),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(3),
+        };
+        var function = new IrFunction("entry", instructions, 0, 4, false);
+        var program = new IrProgram(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcIsUnique).ShouldBe(1);
+    }
+
+    [Test]
+    public void Adjacent_runtime_dup_and_drop_of_duplicate_are_fused()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Adjacent_runtime_dup_and_drop_of_source_transfer_duplicate_ownership()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.RcIsUnique(2, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique { SourceTemp: 0 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 0, RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Paper_map_shape_sinks_runtime_dup_out_of_nil_branch()
+    {
+        // The paper's map shape duplicates the input list for its Cons branch, while the Nil branch
+        // immediately drops that ownership. Model the match diamond directly: the duplicate belongs
+        // after the tag branch, and the Nil-side drop becomes unnecessary.
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int branchIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.JumpIfFalse);
+        int dupIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.RcDup);
+        dupIndex.ShouldBeGreaterThan(branchIndex);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Runtime_dup_is_sunk_into_consuming_else_branch()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, false),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int elseIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.Label { Name: "else" });
+        optimized.EntryFunction.Instructions[elseIndex + 1].ShouldBeOfType<IrInst.RcDup>();
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Runtime_dup_is_not_sunk_when_unused_branch_observes_source()
+    {
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 5, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        int branchIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.JumpIfFalse);
+        int dupIndex = optimized.EntryFunction.Instructions.FindIndex(inst => inst is IrInst.RcDup);
+        dupIndex.ShouldBeLessThan(branchIndex);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(2);
+    }
+
+    [Test]
+    public void Unique_list_drop_uses_one_runtime_rc_operation()
+    {
+        IrProgram lowered = Lower("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountRuntimeRcOperations(optimized).ShouldBe(1);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Unique_tree_root_drop_elides_uniqueness_operation()
+    {
+        IrProgram lowered = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountRuntimeRcOperations(optimized).ShouldBe(3);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Stdlib_list_map_shape_erases_markers_but_preserves_runtime_list_ownership()
+    {
+        IrProgram lowered = LowerProgram("""
+            let map : (Int -> Int) -> List(Int) -> List(Int) =
+                given (f) ->
+                    (let recursive mapGo : List(Int) -> List(Int) =
+                        given (xs) ->
+                            match xs with
+                                | [] -> []
+                                | head :: tail -> f(head) :: mapGo(tail)
+                    in mapGo)
+
+            let mapped = map(given (x) -> x + 1)([1, 2, 3])
+            in match mapped with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(head)
+            """);
+
+        IrProgram optimized = IrOptimizer.Optimize(lowered);
+
+        CountErasedRcOperations(lowered).ShouldBeGreaterThan(0);
+        CountErasedRcOperations(optimized).ShouldBe(0);
+        CountRuntimeRcOperations(optimized).ShouldBe(3,
+            "The optimizer must retain the runtime-managed result list's lifetime operations.");
+    }
+
+    [Test]
+    public void Resource_cleanup_is_never_erased_by_the_optimizer()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.CleanupResource(0, "Socket"),
+            new IrInst.Return(0),
+        };
+        var fn = new IrFunction("entry", instructions, 0, 1, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(inst => inst is IrInst.CleanupResource { TypeName: "Socket" }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Rc_drop_elision_removes_string_marker()
     {
         // String drops are no-ops in codegen (arena handles deallocation).
         // The optimizer should elide them.
@@ -372,24 +639,24 @@ public sealed class IrOptimizerTests
             """;
         var unoptimized = Lower(source);
         unoptimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .Any(i => i is IrInst.RcDrop { TypeName: "String" })
             .ShouldBeTrue("Unoptimized IR should have a String Drop.");
 
         var optimized = IrOptimizer.Optimize(unoptimized);
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "String" })
+            .Any(i => i is IrInst.RcDrop { TypeName: "String" })
             .ShouldBeFalse("String Drop should be elided by the optimizer.");
     }
 
     [Test]
-    public void Drop_elision_removes_non_resource_list_drop()
+    public void Rc_drop_elision_removes_list_marker()
     {
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 0),   // dummy list ptr
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "List"),
+            new IrInst.RcDrop(1, "List"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -399,12 +666,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("List Drop should be elided — not a resource type.");
     }
 
     [Test]
-    public void Drop_elision_removes_plain_non_resource_drop()
+    public void Rc_drop_elision_removes_plain_marker()
     {
         // String/List/Tuple/ADT drops are arena-reclaimed no-ops and are still elided.
         var instructions = new List<IrInst>
@@ -412,7 +679,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -422,12 +689,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("String Drop should be elided — not a resource type, no cleanup behavior.");
     }
 
     [Test]
-    public void Drop_elision_preserves_function_drop()
+    public void Cleanup_elision_preserves_function_cleanup()
     {
         // Closure (Function) drops must NOT be elided: a closure may carry a resource dropper at
         // closure+24 (set when it captured-and-escaped a resource).
@@ -436,7 +703,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),   // dummy closure ptr
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "Function"),
+            new IrInst.CleanupResource(1, "Function"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -446,12 +713,12 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "Function" })
+            .Any(i => i is IrInst.CleanupResource { TypeName: "Function" })
             .ShouldBeTrue("Function Drop must be preserved — a closure may carry a resource dropper.");
     }
 
     [Test]
-    public void Drop_elision_preserves_resource_type_drop()
+    public void Cleanup_elision_preserves_resource_cleanup()
     {
         // Socket drops must NEVER be elided — they route to TCP close.
         var instructions = new List<IrInst>
@@ -459,7 +726,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),   // dummy socket handle
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "Socket"),
+            new IrInst.CleanupResource(1, "Socket"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -469,7 +736,7 @@ public sealed class IrOptimizerTests
         var optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop { TypeName: "Socket" })
+            .Any(i => i is IrInst.CleanupResource { TypeName: "Socket" })
             .ShouldBeTrue("Socket Drop must be preserved — resource types need cleanup.");
     }
 
@@ -483,7 +750,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(0, 0),
             new IrInst.StoreLocal(0, 0),
             new IrInst.LoadLocal(1, 0),    // only used by the Drop below
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 0),
             new IrInst.Return(2),
         };
@@ -508,7 +775,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstStr(0, "lbl_hello"),
             new IrInst.StoreLocal(0, 0),    // only load of slot 0 is the Drop below
             new IrInst.LoadLocal(1, 0),
-            new IrInst.Drop(1, "String"),
+            new IrInst.RcDrop(1, "String"),
             new IrInst.LoadConstInt(2, 42),
             new IrInst.Return(2),
         };
@@ -534,7 +801,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadLocal(1, 0),      // used by PrintStr
             new IrInst.PrintStr(1),
             new IrInst.LoadLocal(2, 0),      // used only by the Drop
-            new IrInst.Drop(2, "String"),
+            new IrInst.RcDrop(2, "String"),
             new IrInst.LoadConstInt(3, 0),
             new IrInst.Return(3),
         };
@@ -545,7 +812,7 @@ public sealed class IrOptimizerTests
 
         // Drop and its LoadLocal(2,0) should be removed.
         optimized.EntryFunction.Instructions
-            .Any(i => i is IrInst.Drop)
+            .Any(i => i is IrInst.RcDrop)
             .ShouldBeFalse("String Drop should be elided.");
 
         // But StoreLocal and the other LoadLocal must remain.
@@ -916,6 +1183,37 @@ public sealed class IrOptimizerTests
         var ir = new Lowering(diag).Lower(ast);
         diag.ThrowIfAny();
         return ir;
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        Diagnostics diagnostics = new();
+        Program program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        IrProgram ir = new Lowering(diagnostics).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static int CountRuntimeRcOperations(IrProgram program)
+    {
+        return Count(program.EntryFunction)
+            + program.Functions.Sum(Count);
+
+        static int Count(IrFunction function)
+            => function.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }
+                or IrInst.RcDup { RuntimeManaged: true }
+                or IrInst.RcIsUnique);
+    }
+
+    private static int CountErasedRcOperations(IrProgram program)
+    {
+        return Count(program.EntryFunction)
+            + program.Functions.Sum(Count);
+
+        static int Count(IrFunction function)
+            => function.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: false }
+                or IrInst.RcDup { RuntimeManaged: false });
     }
 
     [Test]

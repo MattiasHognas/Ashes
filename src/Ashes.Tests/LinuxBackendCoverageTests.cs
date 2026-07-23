@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -17,6 +18,1170 @@ namespace Ashes.Tests;
 
 public sealed class LinuxBackendCoverageTests
 {
+    [Test]
+    public void Linux_backend_accepts_unoptimized_erased_rc_markers()
+    {
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.RcDup(1, 0),
+            new IrInst.RcDrop(1, "String"),
+            new IrInst.Return(1),
+        };
+        var function = new IrFunction("entry", instructions, 0, 2, false);
+        var program = new IrProgram(function, [], [], false, false, false, false, false, false);
+
+        var bytes = new LinuxX64LlvmBackend().Compile(program);
+
+        bytes.Length.ShouldBeGreaterThan(256);
+        bytes[0].ShouldBe((byte)0x7F);
+        bytes[1].ShouldBe((byte)'E');
+        bytes[2].ShouldBe((byte)'L');
+        bytes[3].ShouldBe((byte)'F');
+    }
+
+    [Test]
+    public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.RcDup(2, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(2, "Box", RuntimeManaged: true),
+            new IrInst.GetAdtField(3, 0, 0),
+            new IrInst.PrintInt(3),
+            new IrInst.RcDrop(0, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(4, 0),
+            new IrInst.Return(4),
+        };
+        var function = new IrFunction("entry", instructions, 0, 5, false);
+        var program = new IrProgram(function, [], [], true, false, false, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_reports_runtime_rc_uniqueness_transitions()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(1, 0),
+            new IrInst.PrintBool(1),
+            new IrInst.RcDup(2, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 0),
+            new IrInst.PrintBool(3),
+            new IrInst.RcDrop(2, "UnitBox", RuntimeManaged: true),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.PrintBool(4),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.LoadConstInt(5, 0),
+            new IrInst.Return(5),
+        };
+        var function = new IrFunction("entry", instructions, 0, 6, false);
+        var program = new IrProgram(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\nfalse\ntrue\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_drop_reuse_reuses_unique_cell()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.DropReuse(2, 0, 1, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 1, 1, 2, RuntimeManaged: true),
+            new IrInst.LoadConstInt(4, 43),
+            new IrInst.SetAdtField(3, 0, 4),
+            new IrInst.GetAdtField(5, 3, 0),
+            new IrInst.PrintInt(5),
+            new IrInst.RcIsUnique(6, 3),
+            new IrInst.PrintBool(6),
+            new IrInst.RcDrop(3, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(7, 0),
+            new IrInst.Return(7),
+        };
+        IrFunction function = new("entry", instructions, 0, 8, false);
+        IrProgram program = new(function, [], [], true, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\ntrue\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_drop_reuse_falls_back_when_cell_is_shared()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.DropReuse(2, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 1, 0, 2, RuntimeManaged: true),
+            new IrInst.CmpIntNe(4, 1, 3),
+            new IrInst.PrintBool(4),
+            new IrInst.RcIsUnique(5, 1),
+            new IrInst.PrintBool(5),
+            new IrInst.RcIsUnique(6, 3),
+            new IrInst.PrintBool(6),
+            new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
+            new IrInst.RcDrop(3, "Box", RuntimeManaged: true),
+            new IrInst.LoadConstInt(7, 0),
+            new IrInst.Return(7),
+        };
+        IrFunction function = new("entry", instructions, 0, 8, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\ntrue\ntrue\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_list_reuse_preserves_untagged_layout_and_shared_fallback()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.Alloc(0, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true),
+            new IrInst.LoadConstInt(1, 42),
+            new IrInst.StoreMemOffset(0, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 1),
+            new IrInst.DropReuse(2, 0, 2, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 0, 2, 2, RuntimeManaged: true, ListCell: true),
+            new IrInst.CmpIntEq(4, 0, 3),
+            new IrInst.PrintBool(4),
+            new IrInst.LoadConstInt(5, 43),
+            new IrInst.StoreMemOffset(3, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 5),
+            new IrInst.LoadMemOffset(6, 3, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)),
+            new IrInst.PrintInt(6),
+            new IrInst.RcDrop(3, "List", RuntimeManaged: true),
+
+            new IrInst.Alloc(7, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true),
+            new IrInst.LoadConstInt(8, 44),
+            new IrInst.StoreMemOffset(7, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), 8),
+            new IrInst.RcDup(9, 7, RuntimeManaged: true),
+            new IrInst.DropReuse(10, 7, 2, RuntimeManaged: true),
+            new IrInst.AllocReusing(11, 0, 2, 10, RuntimeManaged: true, ListCell: true),
+            new IrInst.CmpIntNe(12, 9, 11),
+            new IrInst.PrintBool(12),
+            new IrInst.LoadMemOffset(13, 9, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)),
+            new IrInst.PrintInt(13),
+            new IrInst.RcDrop(9, "List", RuntimeManaged: true),
+            new IrInst.RcDrop(11, "List", RuntimeManaged: true),
+            new IrInst.LoadConstInt(14, 0),
+            new IrInst.Return(14),
+        };
+        IrFunction function = new("entry", instructions, 0, 15, false);
+        IrProgram program = new(function, [], [], true, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n43\ntrue\n44\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_reuse_child_transfer_dups_for_null_token()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
+            new IrInst.SetAdtField(1, 0, 0),
+            new IrInst.RcDup(2, 1, RuntimeManaged: true),
+            new IrInst.GetAdtField(3, 1, 0),
+            new IrInst.DropReuse(4, 1, 1, RuntimeManaged: true),
+            new IrInst.LoadConstInt(5, 0),
+            new IrInst.CmpIntNe(6, 4, 5),
+            new IrInst.JumpIfFalse(6, "transfer_dup"),
+            new IrInst.StoreLocal(0, 3),
+            new IrInst.Jump("transfer_continue"),
+            new IrInst.Label("transfer_dup"),
+            new IrInst.RcDup(7, 3, RuntimeManaged: true),
+            new IrInst.StoreLocal(0, 7),
+            new IrInst.Label("transfer_continue"),
+            new IrInst.LoadLocal(8, 0),
+            new IrInst.AllocReusing(9, 1, 1, 4, RuntimeManaged: true),
+            new IrInst.SetAdtField(9, 0, 8),
+            new IrInst.RcIsUnique(10, 3),
+            new IrInst.PrintBool(10),
+            new IrInst.RcDrop(3, "Child", RuntimeManaged: true),
+            new IrInst.RcDrop(2, "Parent", RuntimeManaged: true),
+            new IrInst.RcIsUnique(11, 8),
+            new IrInst.PrintBool(11),
+            new IrInst.RcDrop(8, "Child", RuntimeManaged: true),
+            new IrInst.RcDrop(9, "Parent", RuntimeManaged: true),
+            new IrInst.LoadConstInt(12, 0),
+            new IrInst.Return(12),
+        };
+        IrFunction function = new("entry", instructions, 1, 13, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("false\ntrue\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_lowers_copy_adt_rebuild_to_runtime_reuse()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Right(value + 1)
+                | Right(value) -> Left(value - 1)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_releases_incompatible_runtime_reuse_token()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Empty
+                | One(Int)
+
+            let choice = One(1)
+            match choice with
+                | Empty -> Empty
+                | One(_) -> Empty
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_recursive_adt_after_releasing_old_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(_, value, _) -> Node(Leaf)(value + 1)(Leaf)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_recursive_adt_with_transferred_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) -> Node(left)(value + 1)(Leaf)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe(string.Empty);
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_nested_record_with_transferred_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let rebuilt =
+                let node = Node(child = Leaf(value = 40), bonus = 2) in
+                match node with
+                    | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
+            match rebuilt with
+                | Node(Leaf(value), bonus) -> Ashes.IO.print(value + bonus)
+            """);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_reuses_pointer_variant_with_record_child()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let rebuilt =
+                let choice = Full(Leaf(value = 40))(2) in
+                match choice with
+                    | Empty -> Empty
+                    | Full(child, bonus) -> Full(child)(bonus + 1)
+            match rebuilt with
+                | Empty -> Ashes.IO.print(0)
+                | Full(Leaf(value), bonus) -> Ashes.IO.print(value + bonus)
+            """);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("43\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_shares_existing_runtime_record_child_with_parent()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let leaf = Leaf(value = 40)
+            let node = Node(child = leaf, bonus = 2)
+            Ashes.IO.print(node.bonus + leaf.value)
+            """);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(1);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_string_concat()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let text = \"ab\" + \"cd\" in Ashes.IO.print(text)");
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("abcd\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_transfers_directly_escaping_runtime_string_without_copy_out()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcEscapingStringProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("4\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_transfers_direct_known_function_runtime_string_result_without_copy_out()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcKnownFunctionStringProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        program.EntryFunction.Instructions.Any(instruction => instruction is IrInst.CallClosure).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        program.Functions.Any(function =>
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true })
+            && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("4\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_transfers_direct_known_function_runtime_bytes_and_bigint_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        program.Functions.Any(function =>
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true })
+            && function.Instructions.Any(instruction =>
+                instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true })
+            && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("133\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_transfers_directly_escaping_runtime_bytes_without_copy_out()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcEscapingBytesProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("19\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_bytes_append()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let measure unit = let bytes = Ashes.Byte.append(Ashes.Byte.fromText(\"ab\"))(Ashes.Byte.fromText(\"cd\")) in Ashes.Byte.length(bytes)\nAshes.IO.print(measure(0))");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("4\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_append_byte()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let measure unit = let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText(\"ab\"))(33u8) in Ashes.Byte.length(bytes)\nAshes.IO.print(measure(0))");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("3\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_bytes_from_list()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let measure unit = let bytes = Ashes.Byte.fromList([7u8, 8u8, 9u8]) in Ashes.Byte.length(bytes)\nAshes.IO.print(measure(0))");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("3\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_byte_singleton()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let measure unit = let bytes = Ashes.Byte.singleton(7u8) in Ashes.Byte.length(bytes)\nAshes.IO.print(measure(0))");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_empty_bytes()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let measure unit = let bytes = Ashes.Byte.empty(Unit) in Ashes.Byte.length(bytes)\nAshes.IO.print(measure(0))");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesEmpty { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_fixed_width_bytes()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcFixedWidthBytesProgram(iterations: 1));
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("14\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_byte_subtext()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let emit unit = let text = Ashes.Byte.subText(Ashes.Byte.fromText(\"abcdef\"))(1)(3) in Ashes.IO.print(text)\nemit(0)");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram nestedArenaProducer = LowerProgram(BuildRuntimeRcOwnedHeapClosureScratchProgram());
+        AllInstructions(nestedArenaProducer).Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(nestedArenaProducer).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("bcd\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_text_from_int()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let emit unit = let text = Ashes.Text.fromInt(-42) in Ashes.IO.print(text)\nemit(0)");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromInt(-42) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(escaping).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("-42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_matched_text_parse_int_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcTextParseIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseInt(\"123\") in parsed");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("123\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_matched_text_parse_float_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcTextParseFloatProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseFloat(\"1.5\") in parsed");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_matched_bigint_to_int_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntToIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let converted = Ashes.Number.BigInt.toInt(123N) in converted");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("123\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_compared_bigint_parse_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntParseResultProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Result", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let parsed = Ashes.Text.parseBigInt(\"123\") in parsed");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_escaping_text_uncons_results()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcTextUnconsProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Maybe", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+
+        IrProgram escaping = LowerProgram("let split = Ashes.Text.uncons(\"abc\") in split");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("6\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_text_to_hex()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram("let emit unit = let text = Ashes.Text.toHex(48879) in Ashes.IO.print(text)\nemit(0)");
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.toHex(48879) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("0xbeef\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_ascii_case_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcAsciiCaseTextProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBe(2);
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2);
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.asciiUpper(\"hello\") in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("HELLO\nhello\n1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_consumed_float_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcFloatTextProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFormatFloat { RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromFloat(12.25) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("12.25\n12.250\n1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_compared_bigint_from_int()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntFromIntProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let escaped = (let value = Ashes.Number.BigInt.fromInt(42) in value) in Ashes.Number.BigInt.compare(escaped)(escaped)");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(escaping).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_compared_bigint_arithmetic()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntArithmeticProgram(iterations: 1));
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBe(5);
+        AllInstructions(program).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(5);
+
+        IrProgram escaping = LowerProgram("let value = Ashes.Number.BigInt.add(40N)(2N) in value");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_measured_bigint_text()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcBigIntTextProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let text = Ashes.Text.fromBigInt(42N) in text");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("30\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_copy_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcCopyClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Function", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram escaping = LowerProgram("let n = 1 in let f = if n > 0 then given (x) -> x + n else given (x) -> x + n in f");
+        AllInstructions(escaping).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("2\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_owned_heap_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcOwnedHeapClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeFalse();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("8\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_owned_bytes_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcOwnedBytesClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram nestedProducer = LowerProgram(BuildRejectedRcOwnedBytesClosureScratchProgram());
+        AllInstructions(nestedProducer).Any(instruction =>
+            instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runtime_manages_immediately_called_owned_bigint_capture_closures()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildRuntimeRcOwnedBigIntClosureProgram(iterations: 1));
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true }).ShouldBeTrue();
+
+        IrProgram arithmeticProducer = LowerProgram(BuildRuntimeRcOwnedBigIntClosureScratchProgram());
+        AllInstructions(arithmeticProducer).Any(instruction =>
+            instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(arithmeticProducer).Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runs_optimized_runtime_rc_ownership_transfer()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.RcIsUnique(2, 1),
+            new IrInst.PrintBool(2),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.LoadConstInt(3, 0),
+            new IrInst.Return(3),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDup).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(optimized).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_runs_optimized_branch_sunk_runtime_rc_dup()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcDup(1, 0, RuntimeManaged: true),
+            new IrInst.JumpIfFalse(2, "else"),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.PrintBool(3),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.Jump("end"),
+            new IrInst.Label("else"),
+            new IrInst.RcDrop(1, "UnitBox", RuntimeManaged: true),
+            new IrInst.Label("end"),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1 }).ShouldBe(1);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(optimized).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("false\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_keeps_runtime_rc_child_while_parent_is_shared()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var instructions = new List<IrInst>
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
+            new IrInst.SetAdtField(1, 0, 0),
+            new IrInst.RcDup(2, 1, RuntimeManaged: true),
+            new IrInst.RcIsUnique(3, 1),
+            new IrInst.JumpIfFalse(3, "first_parent_shared"),
+            new IrInst.RcDrop(0, "Leaf", RuntimeManaged: true),
+            new IrInst.Label("first_parent_shared"),
+            new IrInst.RcDrop(1, "Node", RuntimeManaged: true),
+            new IrInst.RcIsUnique(4, 0),
+            new IrInst.PrintBool(4),
+            new IrInst.RcIsUnique(5, 2),
+            new IrInst.JumpIfFalse(5, "second_parent_shared"),
+            new IrInst.RcDrop(0, "Leaf", RuntimeManaged: true),
+            new IrInst.Label("second_parent_shared"),
+            new IrInst.RcDrop(2, "Node", RuntimeManaged: true),
+            new IrInst.LoadConstInt(6, 0),
+            new IrInst.Return(6),
+        };
+        var function = new IrFunction("entry", instructions, 0, 7, false);
+        var program = new IrProgram(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n");
+    }
+
     [Test]
     public void Linux_backend_compile_should_emit_elf_header_for_int_program()
     {
@@ -805,6 +1970,1491 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_run_runtime_rc_copy_adt_match()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Ashes.IO.print(value)
+                | Right(value) -> Ashes.IO.print(value + 1)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_runtime_rc_copy_adts()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let choice = Left(1) in
+                    match choice with
+                        | Left(value) -> loop(n - 1)(total + value)
+                        | Right(value) -> loop(n - 1)(total + value + 1)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("20000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_allocator_reuses_mixed_size_blocks()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Small =
+                | Small(Int)
+
+            type Large =
+                | Large(Int, Int, Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let small = Small(1) in
+                    match small with
+                        | Small(a) ->
+                            let large = Large(1)(1)(1) in
+                            match large with
+                                | Large(b, c, d) -> loop(n - 1)(total + a + b + c + d)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("80000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_recursive_runtime_rc_adts()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Node(Leaf)(20)(Leaf))(42)(Node(Leaf)(22)(Leaf))
+            match tree with
+                | Leaf -> Ashes.IO.print(0)
+                | Node(_, value, _) -> Ashes.IO.print(value)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_share_recursive_runtime_rc_adt_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let child = Node(Leaf)(20)(Leaf)
+            let tree = Node(child)(42)(Leaf)
+            match tree with
+                | Leaf -> Ashes.IO.print(0)
+                | Node(_, value, _) ->
+                    match child with
+                        | Leaf -> Ashes.IO.print(value)
+                        | Node(_, childValue, _) -> Ashes.IO.print(value + childValue)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("62\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_share_recursive_runtime_rc_adt_children()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let child = Node(Leaf)(20)(Leaf) in
+                    let tree = Node(child)(42)(Leaf) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) ->
+                            match child with
+                                | Leaf -> loop(n - 1)(total + value)
+                                | Node(_, childValue, _) -> loop(n - 1)(total + value + childValue)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("1240000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_hot_loop_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> list = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcListMemoryProgram,
+            outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> escapingList = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingListMemoryProgram,
+            outputPerIteration: 41).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedElementList = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedElementListMemoryProgram,
+            outputPerIteration: 3).ConfigureAwait(false);
+        List<MemoryExecutionResult> tuple = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleMemoryProgram,
+            outputPerIteration: 129).ConfigureAwait(false);
+        List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcAdtMemoryProgram,
+            outputPerIteration: 196).ConfigureAwait(false);
+        List<MemoryExecutionResult> recordOwnedChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcRecordOwnedChildMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+        List<MemoryExecutionResult> variantOwnedChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcVariantOwnedChildMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+        List<MemoryExecutionResult> genericOwnedChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcGenericOwnedChildMemoryProgram,
+            outputPerIteration: 84).ConfigureAwait(false);
+        List<MemoryExecutionResult> higherOrderResult = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderResultMemoryProgram,
+            outputPerIteration: 8).ConfigureAwait(false);
+        List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcAdtReuseMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedRecordReuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNestedRecordReuseMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
+        List<MemoryExecutionResult> pointerVariantReuse = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcPointerVariantReuseMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
+        List<MemoryExecutionResult> sharedRecordChild = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcSharedRecordChildMemoryProgram,
+            outputPerIteration: 42).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC list", list);
+        AssertMemoryPlateaus("runtime-RC escaping list", escapingList);
+        AssertMemoryPlateaus("runtime-RC owned-element list", ownedElementList);
+        AssertMemoryPlateaus("runtime-RC tuple", tuple);
+        AssertMemoryPlateaus("runtime-RC ADT", adt);
+        AssertMemoryPlateaus("runtime-RC record owned child", recordOwnedChild);
+        AssertMemoryPlateaus("runtime-RC variant owned child", variantOwnedChild);
+        AssertMemoryPlateaus("runtime-RC generic owned child", genericOwnedChild);
+        AssertMemoryPlateaus("runtime-RC higher-order result", higherOrderResult);
+        AssertMemoryPlateaus("runtime-RC ADT reuse", reuse);
+        AssertMemoryPlateaus("runtime-RC nested-record reuse", nestedRecordReuse);
+        AssertMemoryPlateaus("runtime-RC pointer-variant reuse", pointerVariantReuse);
+        AssertMemoryPlateaus("runtime-RC shared record child", sharedRecordChild);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_higher_order_list_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram aggregateProbe = LowerProgram(BuildRuntimeRcNormalizedListAdtResultMemoryProgram(1));
+        AllInstructions(aggregateProbe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true }).ShouldBeTrue(
+                "An anonymous RC aggregate call result must be dropped after its scalar match result is formed.");
+        IrProgram knownArenaCallProbe = LowerProgram(BuildRuntimeRcKnownArenaListCallMemoryProgram(1));
+        AllInstructions(knownArenaCallProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue(
+                "A statically known arena list result should normalize to RC at the call boundary.");
+        IrProgram scopeProbe = LowerProgram(BuildRuntimeRcBorrowedListScopeMemoryProgram(1));
+        scopeProbe.Functions.Any(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
+                "A borrowed list result should normalize to RC at its lexical scope boundary.");
+        IrProgram transferredPayloadProbe = LowerProgram(BuildRuntimeRcTransferredListPayloadMemoryProgram(1));
+        AllInstructions(transferredPayloadProbe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> copySamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderListResultMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderStringListResultMemoryProgram,
+            outputPerIteration: 5).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcHigherOrderNestedListResultMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> aggregateSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNormalizedListAdtResultMemoryProgram,
+            outputPerIteration: 10).ConfigureAwait(false);
+        List<MemoryExecutionResult> knownArenaCallSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcKnownArenaListCallMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> scopeSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcBorrowedListScopeMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> transferredPayloadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTransferredListPayloadMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
+        AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
+        AssertMemoryPlateaus("runtime-RC higher-order nested-list result", nestedSamples);
+        AssertMemoryPlateaus("runtime-RC normalized list ADT result", aggregateSamples);
+        AssertMemoryPlateaus("runtime-RC known arena list call result", knownArenaCallSamples);
+        AssertMemoryPlateaus("runtime-RC borrowed list scope result", scopeSamples);
+        AssertMemoryPlateaus("runtime-RC transferred list payload", transferredPayloadSamples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Function", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingClosureMemoryProgram,
+            outputPerIteration: 7).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_list_capture_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingListCaptureClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingListCaptureClosureMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping List capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_aggregate_capture_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC escaping aggregate capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_string_concat_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcStringConcatMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC string concat", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_string_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEscapingStringMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC directly escaping string", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_known_function_string_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcKnownFunctionStringMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC known-function String result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_known_function_bytes_and_bigint_results_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcKnownFunctionBytesAndBigIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC known-function Bytes and BigInt results", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_bytes_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEscapingBytesMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC directly escaping Bytes", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bytes_append_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBytesAppendMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC bytes append", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_append_byte_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcAppendByteMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC append byte", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bytes_from_list_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBytesFromListMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC bytes from list", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_byte_singleton_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcByteSingletonMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC byte singleton", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_empty_bytes_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEmptyBytesMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC empty bytes", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_fixed_width_bytes_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcFixedWidthBytesMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC fixed-width bytes", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_byte_subtext_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcByteSubTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC byte subText", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_from_int_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextFromIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.fromInt", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_to_hex_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextToHexMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.toHex", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_ascii_case_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcAsciiCaseTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC ASCII case text", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_float_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcFloatTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC float text", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_from_int_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntFromIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt.fromInt", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_escaping_bigint_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcEscapingBigIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC directly escaping BigInt", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_parse_int_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextParseIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.parseInt Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_parse_float_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextParseFloatMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.parseFloat Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_to_int_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntToIntMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt.toInt Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_parse_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntParseResultMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt parse Result", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_text_uncons_result_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcTextUnconsMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC Text.uncons Maybe", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_arithmetic_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt arithmetic", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_bigint_text_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcBigIntTextMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC BigInt text", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_copy_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcCopyClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC copy-capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_heap_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcOwnedHeapClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC owned-heap-capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_bytes_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcOwnedBytesClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC owned-Bytes-capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_bigint_capture_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRuntimeRcOwnedBigIntClosureMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC owned-BigInt-capture closure", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_region_managed_task_frames_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureRegionManagedTaskFrameMemoryGrowthAsync()
+            .ConfigureAwait(false);
+
+        AssertMemoryPlateaus("region-managed task frames", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_list_performance_stays_within_arena_baseline_budget()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const int iterations = 500_000;
+        IrProgram lowered = LowerProgram(BuildRuntimeRcListMemoryProgram(iterations));
+        IrProgram runtimeRc = IrOptimizer.Optimize(lowered);
+        IrProgram arenaBaseline = IrOptimizer.Optimize(ConvertRuntimeRcToArenaBaseline(lowered));
+
+        AllInstructions(runtimeRc).Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.Alloc { RuntimeManaged: false }).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.RestoreArenaState).ShouldBeTrue();
+        AllInstructions(arenaBaseline).Any(inst => inst is IrInst.RcDrop { RuntimeManaged: true }
+            or IrInst.RcDup { RuntimeManaged: true }
+            or IrInst.RcIsUnique).ShouldBeFalse();
+
+        string expectedOutput = $"{iterations * 41L}\n";
+        double runtimeRcMedianMs = await CompileAndMeasureMedianCpuTimeAsync(runtimeRc, expectedOutput).ConfigureAwait(false);
+        double arenaMedianMs = await CompileAndMeasureMedianCpuTimeAsync(arenaBaseline, expectedOutput).ConfigureAwait(false);
+        double allowedRuntimeRcMedianMs = Math.Max(arenaMedianMs * 8.0, arenaMedianMs + 100.0);
+
+        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(allowedRuntimeRcMedianMs,
+            $"runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
+                $"{arenaMedianMs:F1} ms (relative budget {allowedRuntimeRcMedianMs:F1} ms)");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_variable_size_recycling_stays_within_arena_baseline_budget()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const int iterations = 3_000;
+        IrProgram lowered = LowerProgram(BuildRuntimeRcVariableSizeRecyclingProgram(iterations));
+        IrProgram runtimeRc = IrOptimizer.Optimize(lowered);
+        IrProgram arenaBaseline = IrOptimizer.Optimize(ConvertRuntimeRcToArenaBaseline(lowered));
+
+        AllInstructions(runtimeRc).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeTrue();
+
+        string expectedOutput = $"{iterations * 2}\n";
+        double runtimeRcMedianMs = await CompileAndMeasureMedianCpuTimeAsync(runtimeRc, expectedOutput).ConfigureAwait(false);
+        double arenaMedianMs = await CompileAndMeasureMedianCpuTimeAsync(arenaBaseline, expectedOutput).ConfigureAwait(false);
+        double allowedRuntimeRcMedianMs = Math.Max(arenaMedianMs * 8.0, arenaMedianMs + 100.0);
+
+        runtimeRcMedianMs.ShouldBeLessThanOrEqualTo(allowedRuntimeRcMedianMs,
+            $"variable-size runtime RC median CPU time was {runtimeRcMedianMs:F1} ms versus arena baseline " +
+            $"{arenaMedianMs:F1} ms (relative budget {allowedRuntimeRcMedianMs:F1} ms)");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_list_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram rebuiltTcoProbe = LowerProgram(BuildRuntimeRcRebuiltListTcoMemoryProgram(1));
+        AllInstructions(rebuiltTcoProbe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated rebuilt-list TCO accumulator should normalize at loop entry and replacement.");
+        AllInstructions(rebuiltTcoProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated rebuilt-list TCO path must not relocate through an arena allocation.");
+        AllInstructions(rebuiltTcoProbe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "List",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Rebuilt-list replacement must recursively release fixed back-edge RC cells.");
+        IrProgram sharedSpineProbe = LowerProgram(BuildRuntimeRcSharedSpineListTcoMemoryProgram(1));
+        AllInstructions(sharedSpineProbe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBe(1,
+                "A cons-growing accumulator should normalize only its loop-entry spine, not clone replacements.");
+        AllInstructions(sharedSpineProbe).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+                "A cons-growing accumulator should allocate its replacement cell through runtime RC.");
+        AllInstructions(sharedSpineProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated shared-spine TCO path must not relocate through an arena allocation.");
+        AllInstructions(sharedSpineProbe).Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
+                "An affine cons replacement should move its tail ownership without duplicating it.");
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaListMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> rebuiltTcoSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcRebuiltListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> sharedSpineTcoSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcSharedSpineListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena list", samples);
+        AssertMemoryPlateaus("runtime-RC rebuilt-list TCO accumulator", rebuiltTcoSamples);
+        AssertMemoryPlateaus("runtime-RC shared-spine TCO accumulator", sharedSpineTcoSamples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_head_list_TCO_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        AssertRuntimeRcOwnedHeadListTcoProbes();
+
+        List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcStringHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNestedListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> transferSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcListPatternTransferMemoryProgram,
+            outputPerIteration: 4).ConfigureAwait(false);
+        List<MemoryExecutionResult> consumedTupleHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcConsumedTupleHeadListTcoMemoryProgram,
+            outputPerIteration: 10).ConfigureAwait(false);
+        List<MemoryExecutionResult> tupleHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> recordHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcRecordHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        MemoryExecutionResult nilTailTransfer = await CompileRunWithLinuxLlvmPeakRssAsync(
+            LowerProgram(BuildRuntimeRcNilTailPatternTransferProgram())).ConfigureAwait(false);
+        nilTailTransfer.Stdout.ShouldBe("1\n");
+        MemoryExecutionResult transferredBuilderResult = await CompileRunWithLinuxLlvmPeakRssAsync(
+            LowerProgram(BuildRuntimeRcTupleHeadBuilderResultProgram())).ConfigureAwait(false);
+        transferredBuilderResult.Stdout.ShouldBe("1\n");
+        AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
+        AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
+        AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
+        AssertMemoryPlateaus("runtime-RC consumed tuple-head list", consumedTupleHeadSamples);
+        AssertMemoryPlateaus("runtime-RC tuple-head list TCO accumulator", tupleHeadSamples);
+        AssertMemoryPlateaus("runtime-RC record-head list TCO accumulator", recordHeadSamples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_unreturned_TCO_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcUnreturnedTcoParameterMemoryProgram,
+            outputPerIteration: 64).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC unreturned TCO parameter", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        AssertRuntimeRcStringTcoProbe();
+        AssertRuntimeRcTupleTcoProbe();
+        AssertRuntimeRcOwnedTupleTcoProbe();
+        AssertRuntimeRcCopyAdtTcoProbes();
+        AssertRuntimeRcOwnedRecordTcoProbe();
+        AssertRuntimeRcOwnedVariantTcoProbe();
+
+        List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaStringMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> records = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaRecordMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> growingStrings = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaGrowingStringMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> tuples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedTuples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedTupleTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> copyAdts = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcCopyAdtTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedRecords = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedRecordTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> ownedVariants = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcOwnedVariantTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena string", strings);
+        AssertMemoryPlateaus("legacy arena pointer record", records);
+        AssertMemoryPlateaus("runtime-RC growing string accumulator", growingStrings);
+        AssertMemoryPlateaus("runtime-RC tuple TCO accumulator", tuples);
+        AssertMemoryPlateaus("runtime-RC owned-child tuple TCO accumulator", ownedTuples);
+        AssertMemoryPlateaus("runtime-RC copy-field ADT TCO accumulator", copyAdts);
+        AssertMemoryPlateaus("runtime-RC owned-child record TCO accumulator", ownedRecords);
+        AssertMemoryPlateaus("runtime-RC owned-child variant TCO accumulator", ownedVariants);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_bytes_and_bigint_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram growingBigIntProbe = LowerProgram(BuildRuntimeRcGrowingBigIntMemoryProgram(1));
+        AllInstructions(growingBigIntProbe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated TCO BigInt accumulator should normalize at loop entry and replacement.");
+        AllInstructions(growingBigIntProbe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "BigInt",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "The BigInt replacement drop must remain fixed at the back-edge.");
+        AllInstructions(growingBigIntProbe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                "The migrated BigInt TCO path must not relocate through an arena allocation.");
+
+        List<MemoryExecutionResult> bytes = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaBytesMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> bigints = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaBigIntMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> growingBigInts = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcGrowingBigIntMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena bytes", bytes);
+        AssertMemoryPlateaus("legacy arena bigint", bigints);
+        AssertMemoryPlateaus("runtime-RC growing BigInt accumulator", growingBigInts);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_legacy_arena_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildLegacyArenaClosureMemoryProgram(2_000));
+        probe.Functions.SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.MakeClosure).ShouldBeTrue(
+                "memory workload must exercise heap-backed closures");
+
+        List<MemoryExecutionResult> closures = await MeasureMemoryGrowthAsync(
+            BuildLegacyArenaClosureMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("legacy arena closure", closures);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_tco_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcTcoClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutClosure
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+
+        List<MemoryExecutionResult> closures = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTcoClosureMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        AssertMemoryPlateaus("runtime-RC TCO closure", closures);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_persistent_map_reuse_memory_should_plateau_as_updates_scale()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram mapProbe = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        AllInstructions(mapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+        AllInstructions(mapProbe).Any(instruction => instruction is IrInst.CopyStringIntoOrFresh).ShouldBeTrue();
+
+        IrProgram hashMapProbe = LowerProgramWithImports(BuildPersistentHashMapUpdateMemoryProgram(1));
+        AllInstructions(hashMapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+
+        List<MemoryExecutionResult> mapSamples = await MeasureImportedMemoryGrowthAsync(
+            BuildPersistentMapStringUpdateMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> hashMapSamples = await MeasureImportedMemoryGrowthAsync(
+            BuildPersistentHashMapUpdateMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("persistent Map String-value update", mapSamples);
+        AssertMemoryPlateaus("persistent HashMap fixed-key update", hashMapSamples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string source = File.ReadAllText(Path.Combine(GetRepositoryRoot(), "challenges", "1brc", "brc.ash"));
+        IrProgram ir = LowerProgramWithImports(source);
+        AllInstructions(ir).Any(instruction => instruction is IrInst.ParallelQueueStart).ShouldBeTrue();
+        AllInstructions(ir).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(
+            ir,
+            BackendCompileOptions.Default with { ParallelWorkerCap = 4 });
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"one_brc_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            int[] rowCounts = [75_000, 150_000, 300_000];
+            List<MemoryExecutionResult> samples = new(rowCounts.Length);
+            foreach (int rows in rowCounts)
+            {
+                string inputPath = Path.Combine(tmpDir, $"measurements_{rows}.txt");
+                File.WriteAllText(inputPath, BuildOneBrcMeasurements(rows));
+                MemoryExecutionResult sample = await MeasureOneBrcMedianPeakRssAsync(exePath, inputPath)
+                    .ConfigureAwait(false);
+                samples.Add(sample);
+            }
+
+            AssertMemoryPlateaus("1BRC bounded-row profile", samples, maxRssKb: 128_000, growthBudgetKb: 8_192);
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_parallel_worker_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildParallelWorkerMemoryProgram,
+            outputPerIteration: 3).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("parallel worker shared list", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_parallel_shared_values_stay_outside_non_atomic_runtime_rc()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(BuildParallelWorkerMemoryProgram(iterations: 1));
+        AllInstructions(program).Any(instruction => instruction is IrInst.ParallelFork).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeFalse();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("3\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_recursive_runtime_rc_adts()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tree = Node(Node(Leaf)(20)(Leaf))(42)(Node(Leaf)(22)(Leaf)) in
+                    match tree with
+                        | Leaf -> loop(n - 1)(total)
+                        | Node(_, value, _) -> loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("840000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_runtime_rc_copy_lists()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let values = [42, 2, 1]
+            match values with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(head)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_runtime_rc_copy_lists()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let values = [1, 2, 3] in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("20000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_share_runtime_rc_copy_list_tails()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let tail = [40, 2]
+            let values = 1 :: tail
+            match values with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ ->
+                    match tail with
+                        | [] -> Ashes.IO.print(0)
+                        | tailHead :: _ -> Ashes.IO.print(head + tailHead)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("41\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_share_runtime_rc_copy_list_tails()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = (let fresh = [40, 2] in fresh) in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop(20000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("820000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_run_local_runtime_rc_record()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Point =
+                | x: Int
+                | y: Int
+
+            let point = Point(x = 40, y = 2)
+            Ashes.IO.print(point.x + point.y)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_repeatedly_release_local_runtime_rc_records()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Point =
+                | x: Int
+                | y: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let point = Point(x = 40, y = 2)
+                    in loop(n - 1)(total + point.x + point.y)
+
+            Ashes.IO.print(loop(2000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("84000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_release_fresh_nested_runtime_rc_records()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            Ashes.IO.print(node.bonus)
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("2\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_release_nested_runtime_rc_records_at_tco_back_edges()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let node = Node(child = Leaf(value = 40), bonus = 2)
+                    in loop(n - 1)(total + node.bonus)
+
+            Ashes.IO.print(loop(2000)(0))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("4000\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_keep_direct_curried_list_result_alive_inside_arena_adt()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            type Step =
+                | Done
+                | Hit(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive show xs =
+                match xs with
+                    | [] -> ""
+                    | h :: t -> Ashes.Text.fromInt(h) + "," + show(t)
+
+            let build _ =
+                let updated = setAt(1)(42)([10, 20, 30])
+                in Hit(updated)
+
+            let step = build(0)
+            let rendered =
+                match step with
+                    | Done -> "done"
+                    | Hit(values) -> show(values)
+            Ashes.IO.print(rendered)
+            """;
+
+        IrProgram program = LowerProgram(source);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("10,42,30,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_transfer_runtime_managed_match_payload_before_parent_drop()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            type Box =
+                | First(List(Int))
+                | Second(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive show xs =
+                match xs with
+                    | [] -> ""
+                    | h :: t -> Ashes.Text.fromInt(h) + "," + show(t)
+
+            let box = (let inner = First(setAt(1)(42)([10, 20, 30])) in inner)
+            let values = match box with | First(items) -> items | Second(items) -> items
+            Ashes.IO.print(show(values))
+            """;
+
+        IrProgram program = LowerProgram(source);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue(
+                "A shared parent must duplicate the transferred child before decrementing the parent.");
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+        result.Stdout.ShouldBe("10,42,30,\n");
+    }
+
+    [Test]
     public void Linux_backend_llvm_support_check_should_accept_panic_programs()
     {
         AssertLinuxLlvmCompiles(LowerExpression("Ashes.IO.panic(\"boom\")"));
@@ -892,7 +3542,7 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             WriteSelfSignedServerPems(tmpDir);
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             foreach (var payload in new[] { "tls-one", "tls-two" })
             {
@@ -970,7 +3620,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             await AssertHttpRoutingResponsesAsync(port).ConfigureAwait(false);
             await AssertHttpBufferingAndPipeliningAsync(port).ConfigureAwait(false);
@@ -1056,7 +3706,7 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    public async Task Linux_backend_llvm_http_keep_alive_should_not_accumulate_memory_per_request()
+    public async Task Linux_backend_llvm_http_keep_alive_memory_should_plateau_as_requests_scale()
     {
         // Async-loop arena reset: the HTTP connection loop reclaims its per-request allocations
         // (buffered reads, parse scaffolding, the rendered response) at the loop back-edge. Serve a
@@ -1077,7 +3727,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
             warm.ShouldContain("HTTP/1.1 200 OK");
@@ -1087,15 +3737,28 @@ public sealed class LinuxBackendCoverageTests
             var stream = client.GetStream();
             var request = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-            // Warm up the connection (chunk growth, first-response scaffolding), then measure.
+            // Sample after progressively larger request counts. The late phase starts only after
+            // connection/parser/response scaffolding has settled, so retained per-request garbage
+            // shows up as a proportional slope rather than being hidden in startup noise.
             await HttpKeepAliveBurstAsync(stream, request, 50).ConfigureAwait(false);
-            long warmRssKb = ReadVmRssKb(proc.Id);
-            await HttpKeepAliveBurstAsync(stream, request, 3000).ConfigureAwait(false);
-            long endRssKb = ReadVmRssKb(proc.Id);
+            long rssAt50Kb = ReadVmRssKb(proc.Id);
+            await HttpKeepAliveBurstAsync(stream, request, 450).ConfigureAwait(false);
+            long rssAt500Kb = ReadVmRssKb(proc.Id);
+            await HttpKeepAliveBurstAsync(stream, request, 2500).ConfigureAwait(false);
+            long rssAt3000Kb = ReadVmRssKb(proc.Id);
 
             proc.HasExited.ShouldBeFalse();
-            long growthKb = endRssKb - warmRssKb;
-            growthKb.ShouldBeLessThan(24_000, $"server RSS grew {growthKb} KB over 3000 keep-alive requests (warm {warmRssKb} KB, end {endRssKb} KB) — the connection loop is not reclaiming per-request memory");
+            rssAt50Kb.ShouldBeGreaterThan(0);
+            rssAt500Kb.ShouldBeGreaterThan(0);
+            rssAt3000Kb.ShouldBeGreaterThan(0);
+            long totalGrowthKb = rssAt3000Kb - rssAt50Kb;
+            long lateGrowthKb = rssAt3000Kb - rssAt500Kb;
+            totalGrowthKb.ShouldBeLessThan(24_000,
+                $"server RSS grew {totalGrowthKb} KB from 50 to 3000 requests " +
+                $"({rssAt50Kb}, {rssAt500Kb}, {rssAt3000Kb} KB checkpoints)");
+            lateGrowthKb.ShouldBeLessThan(16_000,
+                $"server RSS grew {lateGrowthKb} KB from 500 to 3000 requests " +
+                $"({rssAt50Kb}, {rssAt500Kb}, {rssAt3000Kb} KB checkpoints)");
         }
         finally
         {
@@ -1156,6 +3819,15 @@ public sealed class LinuxBackendCoverageTests
         }
 
         return -1;
+    }
+
+    private static long ReadMinorFaults(int pid)
+    {
+        string stat = File.ReadAllText($"/proc/{pid}/stat");
+        int commandEnd = stat.LastIndexOf(')');
+        commandEnd.ShouldBeGreaterThan(0);
+        string[] fieldsFromState = stat[(commandEnd + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return long.Parse(fieldsFromState[7], CultureInfo.InvariantCulture);
     }
 
     // Sends two requests on one persistent connection, returning both responses (keep-alive).
@@ -1261,7 +3933,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Wait until it accepts, then send SIGTERM and assert a clean stop.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1324,7 +3996,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // One client connects and sends; the handler replies, then requests stop.
             var reply = await ConnectSendReceiveWithRetryAsync(port, "now").ConfigureAwait(false);
@@ -1377,7 +4049,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Open a connection and send; the handler sleeps 700 ms before replying.
             using var client = new TcpClient();
@@ -1454,7 +4126,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Wait for a worker to accept, then SIGTERM the parent only.
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1533,7 +4205,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             using var client = new TcpClient();
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -1604,7 +4276,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1664,7 +4336,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var raw = await HttpGetRawWithRetryAsync(port, "/stream").ConfigureAwait(false);
             raw.ShouldContain("Transfer-Encoding: chunked");
@@ -1721,7 +4393,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -1788,7 +4460,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             await AssertChunkedFramesDecodedAcrossManyWritesAsync(port).ConfigureAwait(false);
         }
@@ -1877,7 +4549,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             // Readiness.
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
@@ -1925,6 +4597,71 @@ public sealed class LinuxBackendCoverageTests
         """;
 
     [Test]
+    public async Task Linux_backend_llvm_string_list_copy_out_should_snapshot_all_heads_before_allocating()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            import Ashes.IO
+            import Ashes.Text
+            let parts = Ashes.Text.split("GET / HTTP/1.1")(" ")
+            in match parts with
+                | method :: path :: version :: _rest ->
+                    Ashes.IO.print(method + "|" + path + "|" + version)
+                | _other -> Ashes.IO.print("bad")
+            """;
+        IrProgram program = IrOptimizer.Optimize(LowerProgramWithImports(source));
+        AllInstructions(program).Any(instruction => instruction is IrInst.CopyOutList
+        {
+            HeadCopy: IrInst.ListHeadCopyKind.String
+        }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("GET|/|HTTP/1.1\n");
+        result.ExitCode.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_minimal_http_handler_should_serve_with_one_worker()
+    {
+        // Keep this at one worker: retries against a multi-worker server can hide a worker that
+        // corrupts its private task arena while parsing the first request.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        string source = ConcurrentHttpServerSource(port).Replace(
+            "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(3)",
+            "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(1)",
+            StringComparison.Ordinal);
+
+        IrProgram ir = IrOptimizer.Optimize(LowerProgramWithImports(source));
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_http1_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
+
+            string response = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
+            response.ShouldContain("HTTP/1.1 200 OK");
+            response.ShouldEndWith("ok");
+            proc.HasExited.ShouldBeFalse();
+        }
+        finally
+        {
+            CleanUpServerProcess(proc, exePath, tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_serve_parallel_should_serve_across_workers()
     {
         // serveParallel forks an explicit number of independent reactor processes that each bind the
@@ -1944,7 +4681,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             int served = 0;
@@ -2017,7 +4754,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
             while (true)
@@ -2097,9 +4834,11 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
-            // Wait for the listener, then open the four measured connections.
+            // Wait for the listener, establish all four measured connections, then release their
+            // payloads together. This keeps host scheduling delays while opening sockets from
+            // consuming the server-side overlap window.
             _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
 
             var clients = new List<TcpClient>();
@@ -2107,9 +4846,11 @@ public sealed class LinuxBackendCoverageTests
             {
                 for (int i = 0; i < 4; i++)
                 {
-                    clients.Add(await ConnectAndSendAsync(port, $"conc-{i}").ConfigureAwait(false));
+                    clients.Add(await ConnectAsync(port).ConfigureAwait(false));
                 }
 
+                await Task.WhenAll(clients.Select((client, index) =>
+                    SendAsync(client, $"conc-{index}"))).ConfigureAwait(false);
                 var replies = await Task.WhenAll(clients.Select(ReadWholeReplyAsync)).ConfigureAwait(false);
                 var windows = replies.Select(ParseConcurrencyReply).ToList();
 
@@ -2130,13 +4871,17 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private static async Task<TcpClient> ConnectAndSendAsync(int port, string payload)
+    private static async Task<TcpClient> ConnectAsync(int port)
     {
         var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+        return client;
+    }
+
+    private static async Task SendAsync(TcpClient client, string payload)
+    {
         var outBytes = Encoding.UTF8.GetBytes(payload);
         await client.GetStream().WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-        return client;
     }
 
     private static async Task<string> ReadWholeReplyAsync(TcpClient client)
@@ -2215,7 +4960,7 @@ public sealed class LinuxBackendCoverageTests
         Process? proc = null;
         try
         {
-            proc = StartServerProcess(exePath, tmpDir, elfBytes);
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
             foreach (var payload in new[] { "linux-one", "linux-two", "linux-three" })
             {
@@ -2229,17 +4974,81 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    [Test]
+    public async Task Linux_backend_llvm_spawned_task_server_handles_sustained_requests_without_fault_storm()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int port = GetFreeLoopbackPort();
+        string source = $$"""
+            import Ashes.IO
+            import Ashes.Net.Tcp
+            import Ashes.Net.Tcp.Server
+            import Ashes.Task
+            let onClient client =
+                async(match await Ashes.Net.Tcp.receive(client)(4096) with
+                    | Error(e) -> Error(e)
+                    | Ok(msg) ->
+                        match await Ashes.Net.Tcp.send(client)(msg) with
+                            | Error(e2) -> Error(e2)
+                            | Ok(_n) -> await Ashes.Net.Tcp.close(client))
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+                | Ok(_u) -> Ashes.IO.print("stopped")
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(
+            LowerProgramWithImports(source),
+            BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_lazy_footer_{Guid.NewGuid():N}");
+        Process? proc = null;
+        try
+        {
+            proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
+            (await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false)).ShouldBe("warmup");
+
+            long faultsBefore = ReadMinorFaults(proc.Id);
+            const int requestCount = 300;
+            for (int request = 0; request < requestCount; request++)
+            {
+                (await ConnectSendReceiveWithRetryAsync(port, "x").ConfigureAwait(false)).ShouldBe("x");
+            }
+
+            // Correctness above (every echo matched) is the primary guarantee; the fault ceiling is a
+            // deliberately generous smoke bound, not a precise regression gate. The lazy-footer
+            // optimization saves ~1 minor fault per handler, but that fault only appears when the far
+            // footer page is non-resident and re-faults — in steady state the footer stays resident, so
+            // fixed and regressed builds are indistinguishable by fault count. The extra faults surface
+            // only under memory-pressure reclaim, and this parallel harness ([NotInParallel] is banned)
+            // adds hundreds of unrelated reclaim faults that mask the signal (observed ~2.1 faults/req
+            // here vs ~0.06 unloaded), so a tight threshold flakes on loaded/high-THP/high-core hosts.
+            // The bound below only catches a gross regression (an allocator thrashing many pages/req); a
+            // precise env-independent guard would instead inspect the spawn codegen for a footer store.
+            long faultDelta = ReadMinorFaults(proc.Id) - faultsBefore;
+            faultDelta.ShouldBeLessThan(requestCount * 8L,
+                "a spawned handler must not thrash many pages per request");
+        }
+        finally
+        {
+            CleanUpServerProcess(proc, exePath, tmpDir);
+        }
+    }
+
     // Writes the compiled ELF image to exePath and starts it with redirected stdio.
-    private static Process StartServerProcess(string exePath, string tmpDir, byte[] elfBytes)
+    private static async Task<Process> StartServerProcessAsync(string exePath, string tmpDir, byte[] elfBytes)
     {
         TestProcessHelper.WriteExecutable(exePath, elfBytes);
-        return Process.Start(new ProcessStartInfo(exePath)
+        return await TestProcessHelper.StartProcessAsync(new ProcessStartInfo(exePath)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             WorkingDirectory = tmpDir,
-        })!;
+        }).ConfigureAwait(false);
     }
 
     private static void CleanUpServerProcess(Process? proc, string exePath, string tmpDir)
@@ -2423,6 +5232,2518 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    private static async Task<List<MemoryExecutionResult>> MeasureMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(sourceFactory(iterations));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureImportedMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(sourceFactory(iterations));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcStringConcatMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcStringConcatMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 5) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingStringMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEscapingStringProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 4L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcKnownFunctionStringMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcKnownFunctionStringProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+            ir.EntryFunction.Instructions.Any(instruction => instruction is IrInst.CallClosure).ShouldBeTrue();
+            ir.Functions.Any(function =>
+                function.Instructions.Any(instruction =>
+                    instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true })
+                && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 4L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcKnownFunctionBytesAndBigIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            ir.Functions.Any(function =>
+                function.Instructions.Any(instruction =>
+                    instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true })
+                && function.Instructions.Any(instruction =>
+                    instruction is IrInst.RcDrop { TypeName: "BigInt", RuntimeManaged: true })
+                && function.Instructions.All(instruction => instruction is not IrInst.CopyOutArena)).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 133L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingBytesMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEscapingBytesProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 19L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBytesAppendMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBytesAppendMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 4}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcAppendByteMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcAppendByteMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 3}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBytesFromListMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBytesFromListMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 3}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcByteSingletonMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcByteSingletonMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesSingleton { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEmptyBytesMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEmptyBytesMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesEmpty { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcFixedWidthBytesMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcFixedWidthBytesProgram(iterations));
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU32Le { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.BytesU64Le { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 14}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcByteSubTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcByteSubTextMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 4) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextFromIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextFromIntMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 4) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextToHexMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextToHexMemoryProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextToHex { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 7) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcAsciiCaseTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcAsciiCaseTextProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.TextAsciiCase { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 12) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcFloatTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcFloatTextProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFromFloat { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextFormatFloat { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.Length.ShouldBe((iterations * 13) + iterations.ToString(CultureInfo.InvariantCulture).Length + 1);
+            sample.Stdout.ShouldEndWith($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntFromIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntFromIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcEscapingBigIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcEscapingBigIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextParseIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextParseIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 123L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextParseFloatMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextParseFloatProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.TextParseFloat { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntToIntMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntToIntProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntToInt { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 123L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntParseResultMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntParseResultProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcTextUnconsMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcTextUnconsProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBe(2);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 6L}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntArithmeticMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntArithmeticProgram(iterations));
+            AllInstructions(ir).Count(instruction =>
+                instruction is IrInst.BigIntBinary { RuntimeManaged: true }).ShouldBe(5);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcBigIntTextMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcBigIntTextProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.BigIntToString { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * 30}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcCopyClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcCopyClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = ((long)iterations * (iterations + 1) / 2) + iterations;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcOwnedHeapClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcOwnedHeapClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = iterations * 8L;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcOwnedBytesClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcOwnedBytesClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRuntimeRcOwnedBigIntClosureMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRuntimeRcOwnedBigIntClosureProgram(iterations));
+            AllInstructions(ir).Any(instruction =>
+                instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static async Task<List<MemoryExecutionResult>> MeasureRegionManagedTaskFrameMemoryGrowthAsync()
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRegionManagedTaskFrameProgram(iterations));
+            AllInstructions(ir).Any(instruction => instruction is IrInst.CreateTask).ShouldBeTrue();
+            AllInstructions(ir).Any(instruction => instruction is IrInst.RestoreArenaState).ShouldBeTrue();
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = (long)iterations * (iterations + 1) / 2;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
+    private static void AssertMemoryPlateaus(
+        string workload,
+        IReadOnlyList<MemoryExecutionResult> samples,
+        long maxRssKb = 64_000,
+        long growthBudgetKb = 8_192)
+    {
+        samples.Count.ShouldBe(3);
+        string sampleSummary = string.Join(", ", samples.Select(sample => $"{sample.MaxRssKb} KB"));
+        foreach (MemoryExecutionResult sample in samples)
+        {
+            sample.MaxRssKb.ShouldBeGreaterThan(0);
+            sample.MaxRssKb.ShouldBeLessThan(maxRssKb,
+                $"{workload} peaked at {sample.MaxRssKb} KB; samples: {sampleSummary}");
+        }
+
+        long totalGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[0].MaxRssKb);
+        long lateGrowthKb = Math.Max(0, samples[2].MaxRssKb - samples[1].MaxRssKb);
+        totalGrowthKb.ShouldBeLessThan(growthBudgetKb,
+            $"{workload} RSS grew {totalGrowthKb} KB from first to last sample; samples: {sampleSummary}");
+        lateGrowthKb.ShouldBeLessThan(growthBudgetKb,
+            $"{workload} RSS grew {lateGrowthKb} KB from middle to last sample; samples: {sampleSummary}");
+    }
+
+    private static void AssertRuntimeRcTupleTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcTupleTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 16,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The annotated tuple TCO accumulator should normalize at loop entry and replacement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Tuple",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tuple replacement must release its old RC cell at the back-edge.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 16,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                "The migrated tuple TCO path must not relocate through an arena allocation.");
+    }
+
+    private static void AssertRuntimeRcOwnedHeadListTcoProbe(
+        IrProgram probe,
+        IrInst.ListHeadCopyKind headCopy,
+        string elementDescription)
+    {
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutList
+        {
+            HeadCopy: var actualHeadCopy,
+            RuntimeManaged: true,
+        } && actualHeadCopy == headCopy).ShouldBeTrue(
+            $"The {elementDescription} list graph should normalize under runtime RC.");
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                $"The migrated {elementDescription} list must not use arena relocation.");
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            $"The migrated {elementDescription} list must release its owned graph.");
+    }
+
+    private static void AssertRuntimeRcOwnedHeadListTcoProbes()
+    {
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcStringHeadListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.String,
+            "String");
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcNestedListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.InnerList,
+            "nested-list");
+        IrProgram transferProbe = LowerProgram(BuildRuntimeRcListPatternTransferMemoryProgram(1));
+        AllInstructions(transferProbe).Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AssertRuntimeRcGeneralHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcTupleHeadListTcoMemoryProgram(1)),
+            "Tuple");
+        AssertRuntimeRcGeneralHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcRecordHeadListTcoMemoryProgram(1)),
+            "Item");
+    }
+
+    private static void AssertRuntimeRcGeneralHeadListTcoProbe(IrProgram probe, string childTypeName)
+    {
+        AllInstructions(probe).Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: var typeName,
+            RuntimeManaged: true,
+        } && string.Equals(typeName, childTypeName, StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    private static void AssertRuntimeRcStringTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+                "The affine TCO String accumulator should normalize once at loop entry.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.ConcatStrTip { RuntimeManaged: true }).ShouldBeTrue(
+                "The replacement should consume the RC accumulator directly instead of copying it.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBe(1,
+                "ConcatStrTip consumes replacements internally; only function exit needs an IR drop.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", OwnerSlot: -1, RuntimeManaged: true }).ShouldBeTrue(
+                "The function-exit drop must remain fixed instead of being moved by lifetime placement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated String TCO path must not relocate through an arena allocation.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
+                "An affine TCO accumulator should move into its replacement without an extra reference.");
+    }
+
+    private static void AssertRuntimeRcCopyAdtTcoProbes()
+    {
+        AssertRuntimeRcCopyAdtTcoProbe(
+            LowerProgram(BuildRuntimeRcCopyAdtTcoMemoryProgram(1)),
+            "Pair");
+        AssertRuntimeRcCopyAdtTcoProbe(
+            LowerProgram(BuildRuntimeRcCopyRecordTcoProbe()),
+            "Point");
+    }
+
+    private static void AssertRuntimeRcOwnedTupleTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedTupleTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.Alloc
+            {
+                SizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The pointer-bearing tuple parent should normalize at entry and replacement.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The tuple's complete list child should normalize with its parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Tuple",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tuple replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing tuple TCO path must not use arena relocation.");
+    }
+
+    private static void AssertRuntimeRcOwnedRecordTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedRecordTcoMemoryProgram(1));
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                "The pointer-bearing record parent should normalize at entry and replacement.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
+                "The record's complete list child should normalize with its parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "Box",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Record replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing record TCO path must not use arena relocation.");
+    }
+
+    private static void AssertRuntimeRcOwnedVariantTcoProbe()
+    {
+        IrProgram probe = LowerProgram(BuildRuntimeRcOwnedVariantTcoMemoryProgram(1));
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 8,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tag-dispatched normalization should use the nullary variant's actual size.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Tag-dispatched normalization should use the owned-child variant's actual size.");
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(1,
+                "The selected Full variant's complete list child should normalize with its replacement parent.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: "State",
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            }).ShouldBeTrue(
+                "Variant replacement must recursively release its old owned-child graph.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: false }
+                or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                "The migrated pointer-bearing variant TCO path must not use arena staging.");
+    }
+
+    private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
+    {
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                $"The annotated {typeName} TCO accumulator should normalize at entry and replacement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: var droppedType,
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            } && string.Equals(droppedType, typeName, StringComparison.Ordinal)).ShouldBeTrue(
+                $"{typeName} replacement must release its old RC cell at the back-edge.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                $"The migrated {typeName} TCO path must not relocate through an arena allocation.");
+    }
+
+    private static string BuildRuntimeRcListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = [40, 2] in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = (let fresh = [40, 2] in fresh) in
+                    let values = 1 :: tail in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + head + tailHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTupleMemoryProgram(int iterations)
+        => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let pair =
+                        let fresh = ((40, 2), Ashes.Text.fromInt(40), Ashes.Byte.u16Le(258u16), Ashes.Number.BigInt.fromInt(42), [40, 2], Pair(40)(2)) in fresh
+                    in
+                    match pair with
+                        | ((left, right), text, bytes, big, values, Pair(pairLeft, pairRight)) ->
+                            match values with
+                                | [] -> loop(n - 1)(total)
+                                | head :: _ ->
+                                    loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + pairLeft + pairRight)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcOwnedElementListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tail = [Ashes.Text.fromInt(2)] in
+                    let escaped = Ashes.Text.fromInt(40) :: tail in
+                    match escaped with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match tail with
+                                | [] -> loop(n - 1)(total)
+                                | tailHead :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tailHead))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildParallelWorkerMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let shared = 20 :: 22 :: [] in
+                    match Ashes.Task.Parallel.both(given (_u) -> 1 :: shared)(given (_u) -> 2 :: shared) with
+                        | (left, right) ->
+                            match left with
+                                | [] -> loop(n - 1)(total)
+                                | leftHead :: _ ->
+                                    match right with
+                                        | [] -> loop(n - 1)(total)
+                                        | rightHead :: _ -> loop(n - 1)(total + leftHead + rightHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcAdtMemoryProgram(int iterations)
+        => $$"""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            type Pair =
+                | Pair(Int, Int)
+
+            type Box(a) =
+                | Box(a)
+
+            type TextBox =
+                | TextBox(Str)
+
+            type Payload =
+                | Payload(Bytes, BigInt, List(Int))
+
+            type Wrapped =
+                | Wrapped((Int, Int))
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let pair = Pair(40)(2) in pair
+                    in match escaped with
+                        | Pair(left, right) ->
+                            let textBox =
+                                let fresh = TextBox(Ashes.Text.fromInt(40)) in fresh
+                            in match textBox with
+                                | TextBox(text) ->
+                                    let payload =
+                                        let fresh = Payload(Ashes.Byte.u16Le(258u16))(Ashes.Number.BigInt.fromInt(42))([40, 2]) in fresh
+                                    in match payload with
+                                        | Payload(bytes, big, values) ->
+                                            match values with
+                                                | [] -> loop(n - 1)(total)
+                                                | head :: _ ->
+                                                    let wrapped =
+                                                        let fresh = Wrapped((40, 2)) in fresh
+                                                    in match wrapped with
+                                                        | Wrapped((wrappedLeft, wrappedRight)) ->
+                                                            let boxed =
+                                                                let fresh = Box(5) in fresh
+                                                            in match boxed with
+                                                                | Box(boxedValue) ->
+                                                                    let tree =
+                                                                        let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
+                                                                    in
+                                                                    match tree with
+                                                                        | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + wrappedLeft + wrappedRight + boxedValue)
+                                                                        | Node(child, value, _) ->
+                                                                            match child with
+                                                                                | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + wrappedLeft + wrappedRight + boxedValue + value)
+                                                                                | Node(_, childValue, _) -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + Ashes.Byte.length(bytes) + Ashes.Number.BigInt.compare(big)(big) + 1 + head + wrappedLeft + wrappedRight + boxedValue + value + childValue)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcAdtReuseMemoryProgram(int iterations)
+        => $$"""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let tree = Node(Node(Leaf)(2)(Leaf))(1)(Leaf) in
+                    match tree with
+                        | Leaf ->
+                            let rebuilt = Leaf in
+                            loop(n - 1)(total)
+                        | Node(left, value, _) ->
+                            let rebuilt = Node(left)(value + 1)(Leaf) in
+                            loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcRecordOwnedChildMemoryProgram(int iterations)
+        => $$"""
+            type TextBox =
+                | value: Str
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let box = TextBox(value = Ashes.Text.fromInt(42)) in box
+                    in loop(n - 1)(total + Ashes.Text.byteLength(escaped.value))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcVariantOwnedChildMemoryProgram(int iterations)
+        => $$"""
+            type Choice =
+                | Empty
+                | Text(Str)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let choice = Text(Ashes.Text.fromInt(42)) in choice
+                    in match escaped with
+                        | Empty -> loop(n - 1)(total)
+                        | Text(value) -> loop(n - 1)(total + Ashes.Text.byteLength(value))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcGenericOwnedChildMemoryProgram(int iterations)
+        => $$"""
+            type Box(a) =
+                | Box(a)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let textBox =
+                        let box = Box(Ashes.Text.fromInt(42)) in box
+                    in match textBox with
+                        | Box(text) ->
+                            let listBox =
+                                let box = Box([40, 2]) in box
+                            in match listBox with
+                                | Box(values) ->
+                                    match values with
+                                        | [] -> loop(n - 1)(total)
+                                        | head :: _ ->
+                                            let tupleBox =
+                                                let box = Box((40, 2)) in box
+                                            in match tupleBox with
+                                                | Box((left, right)) -> loop(n - 1)(total + Ashes.Text.byteLength(text) + head + left + right)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> Str) -> Str = given f -> f(0)
+            let make unit = let text = "ab" + "cd" in text
+            let literal unit = "wxyz"
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let first = apply(make) in
+                    let second = apply(literal) in
+                    loop(n - 1)(total + Ashes.Text.byteLength(first) + Ashes.Text.byteLength(second))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(Int)) -> List(Int) = given f -> f(0)
+            let source = [40, 2]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcNormalizedListAdtResultMemoryProgram(int iterations)
+        => $$"""
+            type Step =
+                | Done
+                | Hit(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let build unit =
+                let updated = setAt(1)(42)([10, 20, 30])
+                in Hit(updated)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match build(0) with
+                        | Done -> loop(n - 1)(total)
+                        | Hit(values) ->
+                            match values with
+                                | [] -> loop(n - 1)(total)
+                                | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcKnownArenaListCallMemoryProgram(int iterations)
+        => $$"""
+            let identity xs = xs
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = identity([40, 2])
+                    in match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBorrowedListScopeMemoryProgram(int iterations)
+        => $$"""
+            let choose : List(Int) -> List(Int) = given source ->
+                let marker = "owned" in source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = choose([40, 2])
+                    in match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTransferredListPayloadMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | First(List(Int))
+                | Second(List(Int))
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let box = (let inner = First([40, 2]) in inner) in
+                    let values = match box with | First(items) -> items | Second(items) -> items in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderStringListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(Str)) -> List(Str) = given f -> f(0)
+            let source = ["forty", "two"]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcHigherOrderNestedListResultMemoryProgram(int iterations)
+        => $$"""
+            let apply : (Int -> List(List(Int))) -> List(List(Int)) = given f -> f(0)
+            let source = [[40, 2]]
+            let borrow unit = source
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = apply(borrow) in
+                    match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match head with
+                                | [] -> loop(n - 1)(total)
+                                | value :: _ -> loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingClosureMemoryProgram(int iterations)
+        => $$"""
+            let make n =
+                let text = "value-" + "x"
+                in given (ignored) -> Ashes.Text.byteLength(text)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingListCaptureClosureMemoryProgram(int iterations)
+        => $$"""
+            let make n =
+                let values = [n, 2]
+                in given (ignored) -> match values with
+                    | [] -> 0
+                    | _ :: _ -> 2
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingAggregateCaptureClosureMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | Box(List(Int))
+
+            let make n =
+                let graph = (Box([n, 2]), n)
+                in given (ignored) -> match graph with
+                    | (Box(_), _) -> 2
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let measure = make(n)
+                    in loop(n - 1)(total + measure(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcNestedRecordReuseMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let node =
+                        let fresh = Node(child = Leaf(value = 40), bonus = 2) in fresh
+                    in
+                    match node with
+                        | Node(child, bonus) ->
+                            let rebuilt = Node(child = child, bonus = bonus + 1) in
+                            loop(n - 1)(total + bonus + 40)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcPointerVariantReuseMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let choice = Full(Leaf(value = 40))(2) in
+                    match choice with
+                        | Empty ->
+                            let rebuilt = Empty in
+                            loop(n - 1)(total)
+                        | Full(child, bonus) ->
+                            let rebuilt = Full(child)(bonus + 1) in
+                            loop(n - 1)(total + bonus + 40)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcSharedRecordChildMemoryProgram(int iterations)
+        => $$"""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let leaf = Leaf(value = 40) in
+                    let node = Node(child = leaf, bonus = 2) in
+                    loop(n - 1)(total + node.bonus + leaf.value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcStringConcatMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let text = "ab" + "cd" in
+                Ashes.IO.print(text)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcEscapingStringProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let text = "ab" + "cd" in text
+                    in let length = Ashes.Text.byteLength(escaped)
+                    in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcKnownFunctionStringProgram(int iterations)
+        => $$"""
+            let make : Str -> Str -> Str = given (left) -> given (right) ->
+                let ignored = Ashes.Text.byteLength(left) in
+                let text = "ab" + "cd" in text
+
+            let alias = make
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value = alias("left")("right") in
+                    let length = Ashes.Text.byteLength(value) in
+                    loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcKnownFunctionBytesAndBigIntProgram(int iterations)
+        => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
+            type Point =
+                | x: Int
+                | y: Int
+
+            let makeBytes unit =
+                let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes
+
+            let makeBigInt number =
+                let big = Ashes.Number.BigInt.fromInt(number) in big
+
+            let makeList unit =
+                let values = [40, 2] in values
+
+            let makePair unit =
+                let pair = Pair(40)(2) in pair
+
+            let makePoint unit =
+                let point = Point(x = 40, y = 2) in point
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let bytes = makeBytes(0) in
+                    let byteCount = Ashes.Byte.length(bytes) in
+                    let big = makeBigInt(n) in
+                    let comparison = Ashes.Number.BigInt.compare(big)(big) in
+                    let values = makeList(0) in
+                    let pair = makePair(0) in
+                    let point = makePoint(0) in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            match pair with
+                                | Pair(left, right) ->
+                                    loop(n - 1)(total + byteCount + comparison + 1 + head + left + right + point.x + point.y)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingBytesProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let one =
+                        let escaped =
+                            let bytes = Ashes.Byte.singleton(7u8) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in let eight =
+                        let escaped =
+                            let bytes = Ashes.Byte.u64Le(72623859790382856u64) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in let four =
+                        let escaped =
+                            let bytes = Ashes.Byte.append(Ashes.Byte.fromText("ab"))(Ashes.Byte.fromText("cd")) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in let three =
+                        let escaped =
+                            let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText("ab"))(33u8) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in let threeFromList =
+                        let escaped =
+                            let bytes = Ashes.Byte.fromList([7u8, 8u8, 9u8]) in bytes
+                        in Ashes.Byte.length(escaped)
+                    in loop(n - 1)(total + one + eight + four + three + threeFromList)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBytesAppendMemoryProgram(int iterations)
+        => $$"""
+            let measure unit =
+                let bytes = Ashes.Byte.append(Ashes.Byte.fromText("ab"))(Ashes.Byte.fromText("cd")) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let size = measure(0) in
+                    loop(n - 1)(total + size)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcAppendByteMemoryProgram(int iterations)
+        => $$"""
+            let measure unit =
+                let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromText("ab"))(33u8) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let size = measure(0) in
+                    loop(n - 1)(total + size)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBytesFromListMemoryProgram(int iterations)
+        => $$"""
+            let measure unit =
+                let bytes = Ashes.Byte.fromList([7u8, 8u8, 9u8]) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let size = measure(0) in
+                    loop(n - 1)(total + size)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcByteSingletonMemoryProgram(int iterations)
+        => $$"""
+            let measure unit =
+                let bytes = Ashes.Byte.singleton(7u8) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let size = measure(0) in
+                    loop(n - 1)(total + size)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEmptyBytesMemoryProgram(int iterations)
+        => $$"""
+            let measure unit =
+                let bytes = Ashes.Byte.empty(Unit) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let size = measure(0) in
+                    loop(n - 1)(total + size + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcFixedWidthBytesProgram(int iterations)
+        => $$"""
+            let measure16 unit =
+                let bytes = Ashes.Byte.u16Le(258u16) in
+                Ashes.Byte.length(bytes)
+
+            let measure32 unit =
+                let bytes = Ashes.Byte.u32Le(16909060u32) in
+                Ashes.Byte.length(bytes)
+
+            let measure64 unit =
+                let bytes = Ashes.Byte.u64Le(72623859790382856u64) in
+                Ashes.Byte.length(bytes)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + measure16(0) + measure32(0) + measure64(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcByteSubTextMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let escaped =
+                    let text = Ashes.Byte.subText(Ashes.Byte.fromText("abcdef"))(1)(3) in text
+                in Ashes.IO.print(escaped)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcTextFromIntMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let escaped =
+                    let text = Ashes.Text.fromInt(-42) in text
+                in Ashes.IO.print(escaped)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcTextToHexMemoryProgram(int iterations)
+        => $$"""
+            let emit unit =
+                let escaped =
+                    let text = Ashes.Text.toHex(48879) in text
+                in Ashes.IO.print(escaped)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignored = emit(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcAsciiCaseTextProgram(int iterations)
+        => $$"""
+            let emitUpper unit =
+                let escaped =
+                    let text = Ashes.Text.asciiUpper("hello") in text
+                in Ashes.IO.print(escaped)
+
+            let emitLower unit =
+                let escaped =
+                    let text = Ashes.Text.asciiLower("HELLO") in text
+                in Ashes.IO.print(escaped)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignoredUpper = emitUpper(0) in
+                    let ignoredLower = emitLower(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcFloatTextProgram(int iterations)
+        => $$"""
+            let emitFloat unit =
+                let escaped =
+                    let text = Ashes.Text.fromFloat(12.25) in text
+                in Ashes.IO.print(escaped)
+
+            let emitFixed unit =
+                let escaped =
+                    let text = Ashes.Text.formatFloat(12.25)(3) in text
+                in Ashes.IO.print(escaped)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let ignoredFloat = emitFloat(0) in
+                    let ignoredFixed = emitFixed(0) in
+                    loop(n - 1)
+
+            let ignored = loop({{iterations}})
+            Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildRuntimeRcBigIntFromIntProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let comparison =
+                        let value = Ashes.Number.BigInt.fromInt(n) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in loop(n - 1)(total + comparison)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcEscapingBigIntProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let escaped =
+                        let value = Ashes.Number.BigInt.fromInt(n) in value
+                    in let comparison = Ashes.Number.BigInt.compare(escaped)(escaped)
+                    in loop(n - 1)(total + comparison + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntArithmeticProgram(int iterations)
+        => $$"""
+            let left = 123456789012345678901234567890N
+            let right = 987654321N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let addComparison =
+                        let escaped =
+                            let value = Ashes.Number.BigInt.add(left)(right) in value
+                        in Ashes.Number.BigInt.compare(escaped)(escaped)
+                    in let subComparison =
+                        let value = Ashes.Number.BigInt.sub(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let mulComparison =
+                        let value = Ashes.Number.BigInt.mul(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let divComparison =
+                        let value = Ashes.Number.BigInt.div(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in let modComparison =
+                        let value = Ashes.Number.BigInt.mod(left)(right) in
+                        Ashes.Number.BigInt.compare(value)(value)
+                    in loop(n - 1)(total + addComparison + subComparison + mulComparison + divComparison + modComparison)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntTextProgram(int iterations)
+        => $$"""
+            let value = 123456789012345678901234567890N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let length =
+                        let escaped =
+                            let text = Ashes.Text.fromBigInt(value) in text
+                        in Ashes.Text.byteLength(escaped)
+                    in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTextParseIntProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value =
+                        let escaped =
+                            let parsed = Ashes.Text.parseInt("123") in parsed
+                        in match escaped with
+                            | Ok(number) -> number
+                            | Error(_message) -> 0
+                    in loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTextParseFloatProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value =
+                        let escaped =
+                            let parsed = Ashes.Text.parseFloat("1.5") in parsed
+                        in match escaped with
+                            | Ok(number) -> if number == 1.5 then 1 else 0
+                            | Error(_message) -> 0
+                    in loop(n - 1)(total + value)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntToIntProgram(int iterations)
+        => $$"""
+            let value = 123N
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let converted =
+                        let escaped =
+                            let result = Ashes.Number.BigInt.toInt(value) in result
+                        in match escaped with
+                            | Ok(number) -> number
+                            | Error(_message) -> 0
+                    in loop(n - 1)(total + converted)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcBigIntParseResultProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let valid =
+                        let escaped =
+                            let result = Ashes.Text.parseBigInt("123") in result
+                        in match escaped with
+                            | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
+                            | Error(_message) -> 1
+                    in let invalid =
+                        let escaped =
+                            let result = Ashes.Text.parseBigInt("bad") in result
+                        in match escaped with
+                            | Ok(value) -> Ashes.Number.BigInt.compare(value)(value)
+                            | Error(_message) -> 1
+                    in loop(n - 1)(total + valid + invalid)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTextUnconsProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let nonEmpty =
+                        let split = (let escaped = Ashes.Text.uncons("abcdef") in escaped) in
+                        match split with
+                            | None -> 0
+                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                    in let empty =
+                        let split = (let escaped = Ashes.Text.uncons("") in escaped) in
+                        match split with
+                            | None -> 0
+                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                    in loop(n - 1)(total + nonEmpty + empty)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcCopyClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result =
+                        let f =
+                            if n > 0
+                            then given (x) -> x + n
+                            else given (x) -> x + n
+                        in f(1)
+                    in loop(n - 1)(total + result)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcOwnedHeapClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let length =
+                        let text = "value-" + Ashes.Text.fromInt(42) in
+                        let f =
+                            if n > 0
+                            then given (unit) -> Ashes.Text.byteLength(text)
+                            else given (unit) -> Ashes.Text.byteLength(text)
+                        in f(0)
+                    in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcOwnedHeapClosureScratchProgram()
+        => """
+            let n = 1 in
+            let text = "value-" + Ashes.Text.fromInt(n) in
+            let f =
+                if n > 0
+                then given (unit) -> Ashes.Text.byteLength(text)
+                else given (unit) -> Ashes.Text.byteLength(text)
+            in f(0)
+            """;
+
+    private static string BuildRuntimeRcOwnedBytesClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let length =
+                        let bytes = Ashes.Byte.singleton(7u8) in
+                        let f =
+                            if n > 0
+                            then given (unit) -> Ashes.Byte.length(bytes)
+                            else given (unit) -> Ashes.Byte.length(bytes)
+                        in f(0)
+                    in loop(n - 1)(total + length)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRejectedRcOwnedBytesClosureScratchProgram()
+        => """
+            let bytes = Ashes.Byte.append(Ashes.Byte.singleton(1u8))(Ashes.Byte.singleton(2u8)) in
+            let f =
+                if Ashes.Byte.length(bytes) > 0
+                then given (unit) -> Ashes.Byte.length(bytes)
+                else given (unit) -> Ashes.Byte.length(bytes)
+            in f(0)
+            """;
+
+    private static string BuildRuntimeRcOwnedBigIntClosureProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let comparison =
+                        let value = Ashes.Number.BigInt.fromInt(n) in
+                        let f =
+                            if n > 0
+                            then given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                            else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                        in f(0)
+                    in loop(n - 1)(total + comparison + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcOwnedBigIntClosureScratchProgram()
+        => """
+            let value = Ashes.Number.BigInt.add(1N)(2N) in
+            let f =
+                if Ashes.Number.BigInt.compare(value)(value) == 0
+                then given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+                else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
+            in f(0)
+            """;
+
+    private static string BuildRegionManagedTaskFrameProgram(int iterations)
+        => $$"""
+            let runOne n =
+                match Ashes.Task.run(async(match await async n with
+                    | Ok(value) -> value
+                    | Error(_) -> 0)) with
+                    | Ok(value) -> value
+                    | Error(_) -> 0
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + runOne(n))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaListMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let values = ["a", "b", "c"] in
+                    match values with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ ->
+                            if head == "a"
+                            then loop(n - 1)(total + 1)
+                            else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcRebuiltListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Int) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)([n, n + 1])
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcSharedSpineListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Int) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)(n :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcStringHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Str) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)("value" :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcNestedListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(List(Int)) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)([n] :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcListPatternTransferMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Str) -> Str -> Int = given n -> given total -> given values -> given current ->
+                if n <= 0 then total
+                else
+                    match values with
+                        | [] -> loop(n - 1)(total + 4)(["next"])(current)
+                        | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))(["next"])(head)
+
+            Ashes.IO.print(loop({{iterations}})(0)(["seed"])("initial"))
+            """;
+
+    private static string BuildRuntimeRcNilTailPatternTransferProgram()
+        => """
+            let recursive reverse : List(Str) -> List(Str) -> List(Str) = given acc -> given rest ->
+                match rest with
+                    | [] -> acc
+                    | head :: tail -> reverse(head :: acc)(tail)
+
+            match reverse([])(["x"]) with
+                | [] -> Ashes.IO.print(0)
+                | head :: _ -> Ashes.IO.print(Ashes.Text.byteLength(head))
+            """;
+
+    private static string BuildRuntimeRcTupleHeadBuilderResultProgram()
+        => """
+            let recursive build : Int -> List((Str, Int)) -> List((Str, Int)) = given n -> given acc ->
+                if n <= 0 then acc
+                else build(n - 1)(("x", n) :: acc)
+
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+
+            Ashes.IO.print(consume(build(1)([]))(0))
+            """;
+
+    private static string BuildRuntimeRcConsumedTupleHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive build : Int -> List((Str, Int)) -> List((Str, Int)) = given n -> given values ->
+                if n <= 0 then values
+                else build(n - 1)(("x", n) :: values)
+
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+
+            let recursive reverse : List((Str, Int)) -> List((Str, Int)) -> List((Str, Int)) = given values -> given reversed ->
+                match values with
+                    | [] -> reversed
+                    | head :: tail -> reverse(tail)(head :: reversed)
+
+            let recursive loop : Int -> Int -> Int = given n -> given total ->
+                if n <= 0 then total
+                else loop(n - 1)(total + consume(reverse(build(4)([]))([]))(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTupleHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List((Int, Str)) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)((n, "value") :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcUnreturnedTcoParameterMemoryProgram(int iterations)
+        => $$"""
+            let recursive build : Int -> List(Int) -> List(Int) -> List(Int) =
+                given n -> given returned -> given discarded ->
+                    if n <= 0 then returned
+                    else build(n - 1)(n :: returned)(n :: discarded)
+
+            let recursive consume : List(Int) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | value :: tail -> consume(tail)(total + 1)
+
+            let recursive loop : Int -> Int -> Int = given n -> given total ->
+                if n <= 0 then total
+                else loop(n - 1)(total + consume(build(64)([])([]))(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcRecordHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive loop : Int -> Int -> List(Item) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)(Item(text = "value", value = n) :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildLegacyArenaStringMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n) in
+                    if Ashes.Text.byteLength(text) > 0
+                    then loop(n - 1)(total + 1)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaRecordMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | text: String
+                | value: Int
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let box = Box(text = "value-" + Ashes.Text.fromInt(n), value = 1) in
+                    if Ashes.Text.byteLength(box.text) > 0
+                    then loop(n - 1)(total + box.value)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaGrowingStringMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Str -> Int = given n -> given text ->
+                if n <= 0 then Ashes.Text.byteLength(text)
+                else loop(n - 1)(text + "x")
+
+            Ashes.IO.print(loop({{iterations}})(""))
+            """;
+
+    private static string BuildRuntimeRcVariableSizeRecyclingProgram(int iterations)
+        => $$"""
+            let recursive grow : Int -> Str -> Int = given n -> given text ->
+                if n <= 0 then Ashes.Text.byteLength(text)
+                else grow(n - 1)(text + "x")
+
+            let first = grow({{iterations}})("") in
+            let second = grow({{iterations}})("") in
+            Ashes.IO.print(first + second)
+            """;
+
+    private static string BuildRuntimeRcTupleTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Int, Int) -> Int = given n -> given limit -> given pair ->
+                if n <= 0 then
+                    match pair with
+                        | (_, _) -> limit
+                else loop(n - 1)(limit)((n, n + 1))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})((0, 0)))
+            """;
+
+    private static string BuildRuntimeRcCopyAdtTcoMemoryProgram(int iterations)
+        => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
+            let recursive loop : Int -> Int -> Pair -> Int = given n -> given limit -> given pair ->
+                if n <= 0 then
+                    match pair with
+                        | Pair(_, _) -> limit
+                else loop(n - 1)(limit)(Pair(n)(n + 1))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Pair(0)(0)))
+            """;
+
+    private static string BuildRuntimeRcOwnedTupleTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Str, BigInt, List(Int)) -> Int = given n -> given limit -> given value ->
+                if n <= 0 then
+                    match value with
+                        | (_, _, _) -> limit
+                else
+                    loop(n - 1)(limit)(("value-" + Ashes.Text.fromInt(n), Ashes.Number.BigInt.fromInt(n), [n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(("", 0N, [])))
+            """;
+
+    private static string BuildRuntimeRcOwnedRecordTcoMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | text: Str
+                | values: List(Int)
+
+            let recursive loop : Int -> Int -> Box -> Int = given n -> given limit -> given box ->
+                if n <= 0 then
+                    if Ashes.Text.byteLength(box.text) >= 0 then limit else limit
+                else
+                    loop(n - 1)(limit)(Box(text = "value-" + Ashes.Text.fromInt(n), values = [n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Box(text = "", values = [])))
+            """;
+
+    private static string BuildRuntimeRcOwnedVariantTcoMemoryProgram(int iterations)
+        => $$"""
+            type State =
+                | Empty
+                | Full(Str, List(Int))
+
+            let recursive loop : Int -> Int -> State -> Int = given n -> given limit -> given state ->
+                if n <= 0 then
+                    match state with
+                        | Empty -> limit
+                        | Full(_, _) -> limit
+                else
+                    loop(n - 1)(limit)(Full("value-" + Ashes.Text.fromInt(n))([n, n + 1]))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Empty))
+            """;
+
+    private static string BuildRuntimeRcCopyRecordTcoProbe()
+        => """
+            type Point =
+                | x: Int
+                | y: Int
+
+            let recursive loop : Int -> Point -> Int = given n -> given point ->
+                if n <= 0 then point.x + point.y
+                else loop(n - 1)(Point(x = n, y = n + 1))
+
+            Ashes.IO.print(loop(1)(Point(x = 0, y = 0)))
+            """;
+
+    private static string BuildLegacyArenaBytesMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let left = Ashes.Byte.fromText("value-") in
+                    let right = Ashes.Byte.fromText(Ashes.Text.fromInt(n)) in
+                    let bytes = Ashes.Byte.appendByte(Ashes.Byte.append(left)(right))(33u8) in
+                    if Ashes.Byte.length(bytes) > 0
+                    then loop(n - 1)(total + 1)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildLegacyArenaBigIntMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let value = 123456789012345678901234567890N * Ashes.Number.BigInt.fromInt(n) in
+                    if value > 0N
+                    then loop(n - 1)(total + 1)
+                    else loop(n - 1)(total)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcGrowingBigIntMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> BigInt -> Int = given n -> given limit -> given value ->
+                if n <= 0 then limit
+                else loop(n - 1)(limit)(value * 2N + 1N)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(1N))
+            """;
+
+    private static string BuildLegacyArenaClosureMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n) in
+                    let f =
+                        if n > 0
+                        then given (x) -> if Ashes.Text.byteLength(text) > 0 then x + 1 else x
+                        else given (x) -> x
+                    in loop(n - 1)(total + f(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTcoClosureMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Int -> Int) -> Int = given n -> given total -> given f ->
+                if n <= 0 then total
+                else loop(n - 1)(total + f(0))(given x -> if n > 0 then x + 1 else x + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0)(given x -> x + 1))
+            """;
+
+    private static string BuildPersistentMapStringUpdateMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.Map
+
+            let compareInt left right =
+                if left == right then 0
+                else if left < right then -1
+                else 1
+
+            let recursive loop i limit map =
+                if i > limit then map
+                else loop(i + 1)(limit)(Ashes.Collection.Map.set(compareInt)(0)(Ashes.Text.fromInt(i))(map))
+
+            let seeded = Ashes.Collection.Map.set(compareInt)(0)("seed")(Ashes.Collection.Map.empty)
+            let final = loop(1)({{iterations}})(seeded)
+            in match Ashes.Collection.Map.get(compareInt)(0)(final) with
+                | None -> Ashes.IO.print(0)
+                | Some(value) -> Ashes.IO.print(value)
+            """;
+
+    private static string BuildPersistentHashMapUpdateMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.HashMap
+
+            let recursive loop i limit map =
+                if i > limit then map
+                else loop(i + 1)(limit)(Ashes.Collection.HashMap.set("fixed")(i)(map))
+
+            let final = loop(1)({{iterations}})(Ashes.Collection.HashMap.empty)
+            in match Ashes.Collection.HashMap.get("fixed")(final) with
+                | None -> Ashes.IO.print(0)
+                | Some(value) -> Ashes.IO.print(value)
+            """;
+
+    private static string BuildOneBrcMeasurements(int rows)
+    {
+        StringBuilder source = new(rows * 11);
+        for (int row = 0; row < rows; row += 3)
+        {
+            source.Append("Alpha;1.0\nBeta;-2.0\nGamma;3.5\n");
+        }
+
+        return source.ToString();
+    }
+
+    private static async Task<MemoryExecutionResult> MeasureOneBrcMedianPeakRssAsync(
+        string exePath,
+        string inputPath)
+    {
+        List<MemoryExecutionResult> repetitions = new(3);
+        for (int repetition = 0; repetition < 3; repetition++)
+        {
+            MemoryExecutionResult sample = await RunLinuxExecutablePeakRssAsync(exePath, [inputPath])
+                .ConfigureAwait(false);
+            sample.Stdout.ShouldContain("Alpha=1.0/1.0/1.0");
+            sample.Stdout.ShouldContain("Beta=-2.0/-2.0/-2.0");
+            sample.Stdout.ShouldContain("Gamma=3.5/3.5/3.5");
+            repetitions.Add(sample);
+        }
+
+        return repetitions.OrderBy(sample => sample.MaxRssKb).ElementAt(1);
+    }
+
+    private static string GetRepositoryRoot([CallerFilePath] string callerFile = "")
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(callerFile)!, "..", ".."));
+
+    private static async Task<MemoryExecutionResult> CompileRunWithLinuxLlvmPeakRssAsync(IrProgram ir)
+    {
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_rss_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            return await RunLinuxExecutablePeakRssAsync(exePath).ConfigureAwait(false);
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<MemoryExecutionResult> RunLinuxExecutablePeakRssAsync(
+        string exePath,
+        IReadOnlyList<string>? arguments = null)
+    {
+        ProcessStartInfo startInfo = new(exePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        if (arguments is not null)
+        {
+            foreach (string argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+        }
+
+        LinuxMeasuredExecution result = await RunLinuxMeasuredProcessAsync(startInfo).ConfigureAwait(false);
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.MaxRssKb.ShouldBeGreaterThan(0, "Linux resource wrapper did not report peak RSS");
+        return new MemoryExecutionResult(result.Stdout, result.MaxRssKb);
+    }
+
+    private static async Task<LinuxMeasuredExecution> RunLinuxMeasuredProcessAsync(ProcessStartInfo startInfo)
+    {
+        const string usageMarker = "__ASHES_LINUX_USAGE__=";
+        const string measureScript = """
+            import errno, resource, subprocess, sys, time
+            for attempt in range(3):
+                try:
+                    completed = subprocess.run(sys.argv[1:])
+                    break
+                except OSError as error:
+                    if error.errno != errno.ETXTBSY or attempt == 2:
+                        raise
+                    time.sleep(0.025)
+            usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+            print(f"__ASHES_LINUX_USAGE__={usage.ru_maxrss}|{usage.ru_utime + usage.ru_stime}", file=sys.stderr)
+            sys.exit(completed.returncode)
+            """;
+        ProcessStartInfo measuredStartInfo = new("python3")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        measuredStartInfo.ArgumentList.Add("-c");
+        measuredStartInfo.ArgumentList.Add(measureScript);
+        measuredStartInfo.ArgumentList.Add(startInfo.FileName);
+        foreach (string argument in startInfo.ArgumentList)
+        {
+            measuredStartInfo.ArgumentList.Add(argument);
+        }
+
+        using Process process = await TestProcessHelper.StartProcessAsync(measuredStartInfo).ConfigureAwait(false);
+        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        foreach (string line in stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith(usageMarker, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string[] fields = line[usageMarker.Length..].Split('|');
+            fields.Length.ShouldBe(2);
+            long maxRssKb = long.Parse(fields[0], CultureInfo.InvariantCulture);
+            double cpuMilliseconds = double.Parse(fields[1], CultureInfo.InvariantCulture) * 1_000.0;
+            return new LinuxMeasuredExecution(stdout, stderr, process.ExitCode, maxRssKb, cpuMilliseconds);
+        }
+
+        throw new InvalidOperationException($"Python resource wrapper did not report child usage. stderr: {stderr}");
+    }
+
+    private static IrProgram ConvertRuntimeRcToArenaBaseline(IrProgram program)
+    {
+        return program with
+        {
+            EntryFunction = ConvertFunction(program.EntryFunction),
+            Functions = program.Functions.Select(ConvertFunction).ToList()
+        };
+
+        static IrFunction ConvertFunction(IrFunction function)
+        {
+            List<IrInst> instructions = function.Instructions.Select(ConvertInstruction).ToList();
+            return function with { Instructions = instructions };
+        }
+
+        static IrInst ConvertInstruction(IrInst instruction)
+            => instruction switch
+            {
+                IrInst.Alloc allocation when allocation.RuntimeManaged => allocation with { RuntimeManaged = false },
+                IrInst.AllocAdt allocation when allocation.RuntimeManaged => allocation with { RuntimeManaged = false },
+                IrInst.RcDup duplicate when duplicate.RuntimeManaged => duplicate with { RuntimeManaged = false },
+                IrInst.RcDrop drop when drop.RuntimeManaged => drop with { RuntimeManaged = false },
+                IrInst.RcIsUnique unique => new IrInst.LoadConstBool(unique.Target, true) { Location = unique.Location },
+                _ => instruction
+            };
+    }
+
+    private static IEnumerable<IrInst> AllInstructions(IrProgram program)
+        => program.Functions.Prepend(program.EntryFunction).SelectMany(function => function.Instructions);
+
+    private static async Task<double> CompileAndMeasureMedianCpuTimeAsync(IrProgram program, string expectedOutput)
+    {
+        byte[] elfBytes = new LinuxX64LlvmBackend().Compile(program);
+        string tmpDir = CreateTempDirectory();
+        string exePath = Path.Combine(tmpDir, $"llvm_perf_{Guid.NewGuid():N}");
+        try
+        {
+            TestProcessHelper.WriteExecutable(exePath, elfBytes);
+            _ = await RunAndMeasureCpuTimeAsync(exePath, expectedOutput).ConfigureAwait(false);
+
+            const int sampleCount = 3;
+            double[] samples = new double[sampleCount];
+            for (int i = 0; i < samples.Length; i++)
+            {
+                samples[i] = await RunAndMeasureCpuTimeAsync(exePath, expectedOutput).ConfigureAwait(false);
+            }
+
+            Array.Sort(samples);
+            return samples[samples.Length / 2];
+        }
+        finally
+        {
+            DeleteFileIfExists(exePath);
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    private static async Task<double> RunAndMeasureCpuTimeAsync(string exePath, string expectedOutput)
+    {
+        ProcessStartInfo startInfo = new(exePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        LinuxMeasuredExecution result = await RunLinuxMeasuredProcessAsync(startInfo).ConfigureAwait(false);
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.Stdout.ShouldBe(expectedOutput);
+        return result.CpuMilliseconds;
+    }
+
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -2595,4 +7916,11 @@ public sealed class LinuxBackendCoverageTests
     }
 
     private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    private readonly record struct LinuxMeasuredExecution(
+        string Stdout,
+        string Stderr,
+        int ExitCode,
+        long MaxRssKb,
+        double CpuMilliseconds);
+    private readonly record struct MemoryExecutionResult(string Stdout, long MaxRssKb);
 }

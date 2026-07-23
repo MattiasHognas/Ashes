@@ -143,17 +143,17 @@ public abstract record IrInst
     // Ashes.Number.BigInt operations, backed by emitted LLVM-IR runtime helpers.
     // BigInt values are heap pointers (i64). The codegen pre-sizes result buffers from operand limb
     // counts and calls the allocation-free C helpers.
-    public sealed record BigIntFromInt(int Target, int ValueTemp) : IrInst;      // Int -> BigInt
-    public sealed record BigIntToString(int Target, int ValueTemp) : IrInst;     // BigInt -> Str
-    public sealed record BigIntToInt(int Target, int ValueTemp) : IrInst;        // BigInt -> Result(Str, Int)
-    public sealed record BigIntFromString(int Target, int ValueTemp) : IrInst;   // Str -> Result(Str, BigInt)
+    public sealed record BigIntFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // Int -> BigInt
+    public sealed record BigIntToString(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // BigInt -> Str
+    public sealed record BigIntToInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // BigInt -> Result(Str, Int)
+    public sealed record BigIntFromString(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // Str -> Result(Str, BigInt)
     // Op ∈ { "add", "sub", "mul", "div", "mod" }: BigInt -> BigInt -> BigInt.
-    public sealed record BigIntBinary(int Target, int Left, int Right, string Op) : IrInst;
+    public sealed record BigIntBinary(int Target, int Left, int Right, string Op, bool RuntimeManaged = false) : IrInst;
     public sealed record BigIntCompare(int Target, int Left, int Right) : IrInst; // BigInt -> BigInt -> Int
 
     public sealed record CmpStrEq(int Target, int Left, int Right) : IrInst;
     public sealed record CmpStrNe(int Target, int Left, int Right) : IrInst;
-    public sealed record ConcatStr(int Target, int Left, int Right) : IrInst;
+    public sealed record ConcatStr(int Target, int Left, int Right, bool RuntimeManaged = false) : IrInst;
     // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
     // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
     // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot
@@ -161,12 +161,18 @@ public abstract record IrInst
     // only the length header grows — the cursor is untouched, so per-iteration scratch allocated
     // above the reservation is irrelevant. Otherwise the fallback concatenates into a NEW
     // allocation with doubling headroom (capacity = 2x the result) and records it in the slots —
-    // fallbacks are geometric, so total copy work is linear in appended bytes. The identity check
-    // makes mutation safe: only a string this loop itself reserved can match ResvStart (a
-    // caller-passed seed never does), and the static affine analysis guarantees the loop holds no
-    // other reference to it. The compaction/reset paths zero the slots (the reservation's memory
-    // is reclaimed there).
-    public sealed record ConcatStrTip(int Target, int Left, int Right, int ResvStartSlot, int ResvEndSlot) : IrInst;
+    // fallbacks are geometric, so total copy work is linear in appended bytes. A runtime-managed
+    // form CONSUMES Left: the extend path transfers that reference unchanged, while the fallback
+    // copies into a fresh RC allocation and releases Left. The identity check makes mutation safe:
+    // only a string this loop itself reserved can match ResvStart (a caller-passed seed never does),
+    // and the static affine analysis guarantees the loop holds no other reference to it.
+    public sealed record ConcatStrTip(
+        int Target,
+        int Left,
+        int Right,
+        int ResvStartSlot,
+        int ResvEndSlot,
+        bool RuntimeManaged = false) : IrInst;
 
     // Ashes.Text.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
@@ -181,25 +187,59 @@ public abstract record IrInst
     public sealed record RegexCaptures(int Target, int Code, int Subject, int Start) : IrInst;  // -> Option(List(Option(Str)))
     public sealed record RegexSubstitute(int Target, int Code, int Subject, int Replacement) : IrInst; // -> Str
 
-    public sealed record MakeClosure(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // alloc 32 bytes: {code, env, env_size, dropper}
-    public sealed record MakeClosureStack(int Target, string FuncLabel, int EnvPtrTemp, int EnvSizeBytes) : IrInst; // stack alloc 32 bytes: {code, env, env_size, dropper}
+    public sealed record MakeClosure(
+        int Target,
+        string FuncLabel,
+        int EnvPtrTemp,
+        int EnvSizeBytes,
+        bool RuntimeManaged = false,
+        bool ReturnsRuntimeManaged = false,
+        bool AcceptsRuntimeManagedArgument = false
+    ) : IrInst; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
+    public sealed record MakeClosureStack(
+        int Target,
+        string FuncLabel,
+        int EnvPtrTemp,
+        int EnvSizeBytes,
+        bool ReturnsRuntimeManaged = false,
+        bool AcceptsRuntimeManagedArgument = false
+    ) : IrInst; // stack alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
     /// into an escaping closure's dropper slot, so a resource a closure captured is closed
     /// deterministically when the closure is dropped.</summary>
     public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
-    public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
+    public sealed record CallClosure(
+        int Target,
+        int ClosureTemp,
+        int ArgTemp,
+        int RuntimeManagedArgumentFlagTemp = -1
+    ) : IrInst;
     // Devirtualized closure call: the callee label is statically known (the closure temp was
     // produced by a MakeClosure with this label), so codegen emits a direct call the LLVM
     // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
-    public sealed record CallKnown(int Target, string FuncLabel, int EnvTemp, int ArgTemp) : IrInst;
+    public sealed record CallKnown(
+        int Target,
+        string FuncLabel,
+        int EnvTemp,
+        int ArgTemp,
+        int RuntimeManagedArgumentFlagTemp = -1
+    ) : IrInst;
+    /// <summary>
+    /// Loads the hidden closure-call ownership flag. A true value means the caller transferred an
+    /// already runtime-managed argument, so an RC-normalizing function entry may adopt it instead
+    /// of deep-copying it. Unknown and arena-managed calls pass false.
+    /// </summary>
+    public sealed record LoadArgumentOwnership(int Target) : IrInst;
 
-    public sealed record Alloc(int Target, int SizeBytes) : IrInst;
+    // Generic fixed-size allocation. RuntimeManaged is used for selected list cells and closure
+    // environments; tuples and other runtime buffers remain arena-managed.
+    public sealed record Alloc(int Target, int SizeBytes, bool RuntimeManaged = false) : IrInst;
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
-    // ADT heap cell: layout is [tag:i64, field0:u64, field1:u64, ..., fieldN:u64]
-    // AllocAdt allocates (1 + FieldCount) * 8 bytes and stores Tag at offset 0.
-    public sealed record AllocAdt(int Target, int Tag, int FieldCount) : IrInst;
+    // ADT heap cell: layout is described by HeapLayouts.Adt. Runtime-managed cells carry an
+    // RcHeader immediately before the returned value pointer.
+    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false) : IrInst;
     public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
@@ -214,23 +254,45 @@ public abstract record IrInst
     public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
 
     /// <summary>
-    /// In-place reuse: writes <c>Tag</c> into the cell at <c>TokenTemp</c>'s address and yields that
-    /// address as <c>Target</c>, instead of bump-allocating. Emitted only when the token is a
-    /// provably-dead, uniquely-owned ADT cell of the same size (1 + FieldCount words) — e.g. the node
-    /// a linear TCO accumulator was just deconstructed from. The fields are written afterwards exactly
-    /// like <see cref="AllocAdt"/>.
+    /// Converts a dead ADT cell into an explicit reuse token. <c>FieldCount</c> describes the
+    /// compatible allocation layout. The arena-backed path is statically unique, so this is an
+    /// identity operation in codegen. For runtime-managed values, codegen consumes the source
+    /// ownership: a unique cell becomes the token, while a shared cell is decremented and produces
+    /// a null token.
     /// </summary>
-    public sealed record AllocReusing(int Target, int Tag, int FieldCount, int TokenTemp) : IrInst;
-    // SetAdtField: *(Ptr + 8 + FieldIndex*8) = Source
+    public sealed record DropReuse(
+        int Target,
+        int SourceTemp,
+        int FieldCount,
+        bool RuntimeManaged = false
+    ) : IrInst;
+
+    /// <summary>
+    /// In-place reuse: yields the cell at <c>TokenTemp</c>'s address as <c>Target</c>, instead of
+    /// allocating. ADT reuse writes <c>Tag</c> and uses a (1 + FieldCount)-word payload. List-cell
+    /// reuse leaves the untagged two-word payload for the following stores and ignores
+    /// <c>Tag</c>/<c>FieldCount</c>. Arena-backed tokens are emitted only for provably-dead,
+    /// uniquely-owned cells of the compatible layout. A null runtime-managed token instead
+    /// allocates a fresh RC cell of that layout.
+    /// </summary>
+    public sealed record AllocReusing(
+        int Target,
+        int Tag,
+        int FieldCount,
+        int TokenTemp,
+        bool RuntimeManaged = false,
+        bool ListCell = false
+    ) : IrInst;
+    // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
     // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to
     // it at each back-edge so dynamic stack allocations in the loop body (e.g. per-iteration string/syscall
     // scratch buffers) are freed every iteration instead of accumulating until the stack overflows.
     public sealed record SaveStackPointer(int Slot) : IrInst;
     public sealed record RestoreStackPointer(int Slot) : IrInst;
-    // GetAdtTag: Target = *(Ptr + 0)
+    // GetAdtTag uses the descriptor's tag offset.
     public sealed record GetAdtTag(int Target, int Ptr) : IrInst;
-    // GetAdtField: Target = *(Ptr + 8 + FieldIndex*8)
+    // GetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     public sealed record GetAdtField(int Target, int Ptr, int FieldIndex) : IrInst;
 
     public sealed record PrintInt(int Source) : IrInst;
@@ -255,15 +317,15 @@ public abstract record IrInst
     public sealed record FileReadChunk(int Target, int HandleTemp, int CountTemp) : IrInst;
     public sealed record FileReadLine(int Target, int HandleTemp) : IrInst;
     public sealed record FileClose(int Target, int HandleTemp) : IrInst;
-    public sealed record TextUncons(int Target, int TextTemp) : IrInst;
-    public sealed record TextParseInt(int Target, int TextTemp) : IrInst;
-    public sealed record TextParseFloat(int Target, int TextTemp) : IrInst;
-    public sealed record TextFromInt(int Target, int ValueTemp) : IrInst;
-    public sealed record TextFromFloat(int Target, int ValueTemp) : IrInst;
-    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp) : IrInst;
-    public sealed record TextToHex(int Target, int ValueTemp) : IrInst;
+    public sealed record TextUncons(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextParseInt(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextParseFloat(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFromFloat(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextToHex(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
     // ASCII-only case map (a-z <-> A-Z by flipping bit 0x20); multibyte UTF-8 (>= 0x80) untouched.
-    public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper) : IrInst;
+    public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper, bool RuntimeManaged = false) : IrInst;
     public sealed record HttpGet(int Target, int UrlTemp) : IrInst;
     public sealed record HttpPost(int Target, int UrlTemp, int BodyTemp) : IrInst;
     public sealed record NetTcpConnect(int Target, int HostTemp, int PortTemp) : IrInst;
@@ -274,22 +336,22 @@ public abstract record IrInst
     public sealed record NetTcpAccept(int Target, int SocketTemp) : IrInst;
 
     // Ashes.Byte operations.  TBytes layout: {length:i64, data:u8[length]} — identical to TStr.
-    public sealed record BytesEmpty(int Target) : IrInst;
-    public sealed record BytesSingleton(int Target, int ByteTemp) : IrInst;
+    public sealed record BytesEmpty(int Target, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesSingleton(int Target, int ByteTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesLength(int Target, int BytesTemp) : IrInst;
     public sealed record BytesGet(int Target, int BytesTemp, int IndexTemp) : IrInst;
     public sealed record BytesIndexOf(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
     public sealed record BytesCompare(int Target, int LeftTemp, int RightTemp) : IrInst;
     public sealed record BytesScanHash(int Target, int BytesTemp, int NeedleTemp, int FromTemp) : IrInst;
-    public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
+    public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesSubView(int Target, int BytesTemp, int StartTemp, int LenTemp) : IrInst;
-    public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp) : IrInst;
-    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp) : IrInst;
-    public sealed record BytesFromList(int Target, int ListTemp) : IrInst;
+    public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesHash(int Target, int BytesTemp) : IrInst;
-    public sealed record BytesU16Le(int Target, int ValueTemp) : IrInst;
-    public sealed record BytesU32Le(int Target, int ValueTemp) : IrInst;
-    public sealed record BytesU64Le(int Target, int ValueTemp) : IrInst;
+    public sealed record BytesU16Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU32Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU64Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
     public sealed record BytesGetU16Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record BytesGetU32Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
     public sealed record BytesGetU64Le(int Target, int BytesTemp, int OffsetTemp) : IrInst;
@@ -304,15 +366,36 @@ public abstract record IrInst
     public sealed record ProcessKill(int Target, int ProcessTemp) : IrInst;
 
     /// <summary>
-    /// Drop instruction for deterministic cleanup of owned values.
-    /// Emitted by the compiler at scope exit for owned bindings.
-    /// SourceTemp is the temp holding the owned value to clean up.
-    /// For resource types (Socket), routes to platform-specific cleanup.
-    /// For other owned types (String, List, ADTs, Closures), a no-op in
-    /// the current bump allocator — actual deallocation is handled by
-    /// RestoreArenaState which resets the heap cursor for copy-type scopes.
+    /// Deterministic cleanup of a resource value. Unlike ordinary heap lifetime markers, this has
+    /// observable runtime behavior: files, sockets, processes, and resource-owning closures must be
+    /// released even while ordinary heap values remain arena-managed.
     /// </summary>
-    public sealed record Drop(int SourceTemp, string TypeName) : IrInst;
+    public sealed record CleanupResource(int SourceTemp, string TypeName) : IrInst;
+
+    /// <summary>
+    /// Perceus lifetime marker for an ordinary owned heap value whose ownership dies here. During
+    /// the erased-marker migration stage this is a backend no-op and is removed by the optimizer;
+    /// arena restoration remains responsible for actual memory reclamation.
+    /// </summary>
+    public sealed record RcDrop(
+        int SourceTemp,
+        string TypeName,
+        int OwnerSlot = -1, // Lowering provenance used by precise placement; -1 for already-placed markers.
+        bool RuntimeManaged = false
+    ) : IrInst;
+
+    /// <summary>
+    /// Perceus lifetime marker for splitting ownership of an ordinary heap value. The target is an
+    /// identity-preserving alias of <paramref name="SourceTemp"/> until runtime reference counting is
+    /// enabled; the optimizer erases the marker and remaps uses to the source.
+    /// </summary>
+    public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false) : IrInst;
+
+    /// <summary>
+    /// Tests whether a runtime-managed value has exactly one owning reference. This operation is
+    /// valid only for values whose allocation carries <see cref="HeapLayouts.RcHeader"/>.
+    /// </summary>
+    public sealed record RcIsUnique(int Target, int SourceTemp) : IrInst;
 
     /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.
@@ -340,8 +423,10 @@ public abstract record IrInst
     // emission time because an argument's type was still an unresolved inference variable (e.g. an
     // accumulator only constrained by a deferred '+' or by the caller). Replaced in place — with the
     // real reset/copy-out block, or with nothing when the resolved types do not qualify — by
-    // ResolveDeferredTcoResets at the end of lowering. Carries no temps; never reaches the backend.
-    public sealed record TcoResetPending(int Id) : IrInst;
+    // ResolveDeferredTcoResets at the end of lowering. The conservative temp/local use summaries
+    // let coroutine state-machine liveness preserve everything the resolved block may read across
+    // an await; the placeholder itself never reaches the backend.
+    public sealed record TcoResetPending(int Id, int[] UsedTemps, int[] ReadLocalSlots) : IrInst;
 
     public sealed record SaveArenaState(int CursorLocalSlot, int EndLocalSlot) : IrInst
     {
@@ -415,7 +500,34 @@ public abstract record IrInst
     /// ensuring the tail pointer to a pre-watermark cell is preserved.
     /// </para>
     /// </summary>
-    public sealed record CopyOutArena(int DestTemp, int SrcTemp, int StaticSizeBytes) : IrInst
+    /// <summary>
+    /// Classifies every remaining copy-out so RC graph normalization cannot be confused with an
+    /// arena lifetime fallback. The arena cases are deliberately limited to scoped scheduler or
+    /// capability regions, TCO compaction inside those regions, and explicit independent cloning.
+    /// </summary>
+    public enum CopyOutPurpose
+    {
+        RcNormalization,
+        ArenaScopeBoundary,
+        ArenaCallBoundary,
+        ArenaTcoCompaction,
+        IndependentClone,
+    }
+
+    public sealed record CopyOutArena(
+        int DestTemp,
+        int SrcTemp,
+        int StaticSizeBytes,
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose,
+        /// <summary>When set, this copy-out was emitted provisionally for a tuple field whose element
+        /// type was still an unresolved type variable (a string accumulator's var is only unified with
+        /// Str by a later <c>+</c>). A post-lowering pass (<c>ResolveDeferredTupleMaterializations</c>)
+        /// prunes this type once inference is complete: if it is <c>TStr</c> the copy-out stays; if it
+        /// resolved to a scalar (Int/Float/Bool), the field never dangles and the copy-out is rewritten
+        /// to a plain <see cref="Borrow"/> alias so no bytes are mis-copied as a string.</summary>
+        TypeRef? DeferredElementType = null
+    ) : IrInst
     {
         /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from
         /// the header limb count). Distinct from -1 (string, size from the length word).</summary>
@@ -492,16 +604,22 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutList(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy = ListHeadCopyKind.Inline) : IrInst;
+    public sealed record CopyOutList(
+        int DestTemp,
+        int SrcTemp,
+        ListHeadCopyKind HeadCopy,
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose
+    ) : IrInst;
 
     /// <summary>
-    /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its
+    /// Copies a closure ({code, env, packed env size, dropper}) and its
     /// environment out of the arena to a fresh allocation. Reads the env_size field
     /// from the source closure at offset 16, allocates env_size bytes for the env
-    /// copy, then allocates 24 bytes for the closure copy. Relinks the env pointer
+    /// copy, then allocates the closure payload. Relinks the env pointer
     /// in the new closure to point to the new env copy.
     /// <para>
-    /// If the env pointer is 0 (no captures), only the 24-byte closure struct is
+    /// If the env pointer is 0 (no captures), only the closure struct is
     /// copied (no env allocation needed).
     /// </para>
     /// <para>
@@ -509,7 +627,12 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutClosure(int DestTemp, int SrcTemp) : IrInst;
+    public sealed record CopyOutClosure(
+        int DestTemp,
+        int SrcTemp,
+        bool RuntimeManaged,
+        CopyOutPurpose Purpose
+    ) : IrInst;
 
     /// <summary>
     /// TCO-specific: copies a single cons cell (16 bytes) out of the arena and also
@@ -535,7 +658,12 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutTcoListCell(int DestTemp, int SrcTemp, ListHeadCopyKind HeadCopy) : IrInst;
+    public sealed record CopyOutTcoListCell(
+        int DestTemp,
+        int SrcTemp,
+        ListHeadCopyKind HeadCopy,
+        CopyOutPurpose Purpose
+    ) : IrInst;
 
     public sealed record ToCString(int Target, int StrTemp) : IrInst;
     public sealed record CallExternal(int Target, string SymbolName, string? LibraryName, IReadOnlyList<int> ArgTemps, IReadOnlyList<FfiType> ParameterTypes, FfiType ReturnType) : IrInst;

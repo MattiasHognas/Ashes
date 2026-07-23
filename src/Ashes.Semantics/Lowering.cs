@@ -16,6 +16,7 @@ public sealed partial class Lowering
 
     private readonly List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
+    private readonly HashSet<IrInst.CallClosure> _borrowedArgumentCalls = new(ReferenceEqualityComparer.Instance);
 
     // '+' overload resolution. '+' is Int+Int / Float+Float / Str+Str, but the IR op (AddInt vs
     // ConcatStr) must be chosen at lowering time. When both operands are still type variables we
@@ -24,6 +25,7 @@ public sealed partial class Lowering
     // (ResolveDeferredAdds). The shared operand var is added to _addConstrainedTvars so it stays
     // monomorphic (not generalized) — that is what lets a later use resolve it.
     private bool _hasDeferredAdds;
+    private bool _hasDeferredTupleMaterializations;
     private readonly List<TypeRef.TVar> _addConstrainedVars = new();
 
     // Current representative ids of the '+'-constrained type vars (a var may have been unified since
@@ -150,6 +152,16 @@ public sealed partial class Lowering
     // This prevents double-Drop and propagates diagnostics through aliases.
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
+    private sealed record RuntimeManagedTcoPatternAlias(
+        string ParentName,
+        int ParentSlot,
+        int ParentActiveSlot,
+        TypeRef ParentType,
+        int AliasSlot,
+        TypeRef AliasType);
+    private readonly Dictionary<string, RuntimeManagedTcoPatternAlias> _runtimeManagedTcoPatternAliases =
+        new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeRuntimeManagedTcoPatternAliases = new(StringComparer.Ordinal);
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
@@ -161,10 +173,11 @@ public sealed partial class Lowering
     // once at loop entry) and are therefore safe to reuse in place.
     private readonly HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
 
-    // Available reuse tokens (dead ADT cells from matching a linear value), innermost last. Each is
-    // the cell's address temp + its field count; a same-arity constructor in the arm consumes one,
-    // emitting AllocReusing instead of bump-allocating. See LowerConstructorApplication / LowerMatch.
-    private readonly List<(int Temp, int FieldCount)> _reuseTokens = new();
+    // Available reuse tokens (dead ADT cells converted by DropReuse), innermost last. Each is the
+    // token temp, field count, and allocation regime; a same-arity constructor in the arm consumes
+    // one through the matching arena/runtime AllocReusing path. See LowerConstructorApplication /
+    // LowerMatch.
+    private readonly List<ReuseToken> _reuseTokens = new();
 
     // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
     private readonly Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> _reuseTokenFieldBindings = new();
@@ -271,7 +284,6 @@ public sealed partial class Lowering
         }
     }
 
-
     // Non-recursive top-level functions, by name → (param names, body). When such a function is
     // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
     // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
@@ -309,7 +321,13 @@ public sealed partial class Lowering
     // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
     // whose recursive parameter (LinearParam) is a linear reuse root, so its match-then-rebuild
     // reuses the node in place and the recursion stays within the reuse-enabled body.
+    // Recursive lambda chains whose final parameter can be consumed as a unique accumulator.
+    // ArgCount includes any earlier configuration parameters that are forwarded unchanged.
     private readonly Dictionary<string, (Expr.Lambda Lambda, string LinearParam, int ArgCount)> _specializableFunctions = new(StringComparer.Ordinal);
+    // Direct recursive functions with configuration parameters are currently specialized only for
+    // a fresh call-result composition. Keep them out of loop-entry accumulator specialization,
+    // whose established multi-argument support is the nested-recursive-return shape.
+    private readonly HashSet<string> _freshCompositionOnlySpecializable = new(StringComparer.Ordinal);
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
@@ -377,6 +395,11 @@ public sealed partial class Lowering
     // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
     private bool _inSpecialization;
 
+    // True only while evaluating a tail self-call's successor arguments. A fresh-result,
+    // non-recursive helper can be inlined here so its arena graph stays inside the loop window
+    // instead of crossing an intermediate call boundary before the back-edge copy/reset.
+    private bool _loweringTcoBackEdgeArguments;
+
     // Nesting depth of LowerLambdaCore (0 = lowering a top-level declaration's value). Used to snapshot
     // the top-level scope so a lazily-generated reuse specialization can resolve the stdlib helper
     // functions it references (Ashes_Map_makeNode, ...) as globals, even though it is generated deep
@@ -391,6 +414,23 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
+    // Function labels whose return value is proven to be runtime-managed. A statically traced,
+    // saturated call rooted at an empty-environment top-level function may restore its arena window
+    // without copying the result out: the returned RC allocation is independent of the reclaimed arena.
+    // This is intentionally label-based and does not infer ownership through higher-order calls.
+    private readonly HashSet<string> _runtimeManagedFunctionResultLabels = new(StringComparer.Ordinal);
+    // Curried application labels whose argument is normalized into an independent RC graph at the
+    // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
+    private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, string> _pendingRuntimeArgumentFlags = [];
+    // Curried functions return the next lambda as a closure. Preserve that statically known label chain
+    // so a saturated direct call can reach the innermost function's result provenance without treating
+    // an arbitrary closure value as known.
+    private readonly Dictionary<string, string> _functionReturnedClosureLabels = new(StringComparer.Ordinal);
+    // Local slots that are exact aliases of a statically known function closure. Slot identity keeps
+    // shadowing precise while allowing a direct let alias to retain call-result ownership provenance.
+    private readonly Dictionary<int, string> _knownFunctionLabelsBySlot = new();
+    private readonly Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -420,6 +460,35 @@ public sealed partial class Lowering
     // helper's parameter is also linear, so a match-then-rebuild on it (e.g. balance's
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
     private readonly HashSet<int> _reuseResultTemps = new();
+
+    // Set only while lowering a direct local record literal whose uses are copy-field reads. This
+    // narrow boundary cannot escape through calls, returns, matches, updates, or captured variables.
+    private bool _runtimeRcRecordAllocationRequested;
+
+    // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
+    private bool _runtimeRcCopyAdtAllocationRequested;
+    private bool _runtimeRcTcoAdtAllocationRequested;
+    // Set while lowering a match arm with a runtime reuse token. Unlike the general copy-ADT
+    // request, this is restricted to the scrutinee's type so unrelated constructors remain arena
+    // managed and cannot consume the token merely because their layouts happen to match.
+    private TypeRef.TNamedType? _runtimeRcReuseAllocationTypeRequested;
+    private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
+    private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
+    private readonly HashSet<int> _runtimeManagedResultTemps = [];
+    private bool _runtimeRcStringAllocationRequested;
+    private bool _runtimeRcBytesAllocationRequested;
+    private bool _runtimeRcBigIntAllocationRequested;
+    private bool _runtimeRcClosureAllocationRequested;
+    private bool _runtimeRcScalarResultAllocationRequested;
+    private bool _runtimeRcBigIntParseResultAllocationRequested;
+    private bool _runtimeRcTextUnconsResultAllocationRequested;
+    private bool _runtimeRcTupleAllocationRequested;
+
+    // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
+    private bool _runtimeRcListAllocationRequested;
+    private string? _runtimeRcListTailBinding;
+    private bool _runtimeRcListTailShared;
+    private string? _runtimeRcTcoListTailBinding;
 
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
@@ -681,6 +750,11 @@ public sealed partial class Lowering
 
     public IrProgram Lower(Expr expr)
     {
+        // Async syntax may occur after a pure helper in source order. Establish the program-wide
+        // boundary before lowering that helper so it cannot be admitted to synchronous-only RC.
+        _usesAsync |= ExprContainsAwait(expr)
+            || ContainsAsyncSpawn(expr)
+            || FreeVars(expr, []).Contains("async");
         // Entry function lowering (no env/arg params)
         var (resultTemp, resultType) = LowerExpr(expr);
         Emit(new IrInst.Return(resultTemp));
@@ -691,6 +765,7 @@ public sealed partial class Lowering
         // After the operator resolutions: argument types the back-edge copy-out decision was
         // waiting on are now as concrete as they will ever be.
         ResolveDeferredTcoResets();
+        ResolveDeferredTupleMaterializations();
 
         // Any concrete capability left in the entry expression's row after inference has no handler
         // discharging it — a compile-time error, not a runtime failure.
@@ -710,7 +785,7 @@ public sealed partial class Lowering
             LocalTypes: SnapshotLocalTypes()
         );
 
-        return new IrProgram(
+        var loweredProgram = new IrProgram(
             EntryFunction: entry,
             Functions: _funcs,
             StringLiterals: _strings,
@@ -727,10 +802,13 @@ public sealed partial class Lowering
             // Per-capability evidence slots plus the pending-post register and the live-posts counter.
             CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
         };
+
+        return PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
     }
 
     /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
-    /// block can be generated later (after inference resolves the argument types) at the exact
+    /// block can be generated later (after inference resolves the argument types and all sibling
+    /// branches establish the final runtime-managed parameter set) at the exact
     /// point marked by an <see cref="IrInst.TcoResetPending"/> placeholder. The
     /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
     /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
@@ -754,12 +832,20 @@ public sealed partial class Lowering
         };
 
     private sealed record PendingTcoReset(
+        TcoContext Tco,
         int[] ArgTemps,
         TypeRef[] ArgTypes,
+        bool[] RuntimeManagedArgResults,
+        bool[] RuntimeManagedPredecessorAliases,
         bool[] PassThrough,
         bool[] SingleFreshCons,
         bool[] FreshListRebuild,
+        bool[] ConsumedListTail,
         bool[] StableAccArg,
+        int[] OldRuntimeParamTemps,
+        bool[] RuntimeManagedParams,
+        int[] RuntimeManagedParamActiveSlots,
+        int[] RuntimeManagedClosureActiveSlots,
         int[] ParamSlots,
         int FixedCursorSlot,
         int FixedEndSlot,
@@ -786,15 +872,20 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Emits the TCO back-edge arena block — the plain per-iteration reset, or the two-pass
-    /// copy-out with the fixed/advancing watermark choice — from the captured facts. Called inline
-    /// at the back edge when every argument type is already resolved, or from
-    /// <see cref="ResolveDeferredTcoResets"/> (with <c>_inst</c> pointed at the splice list) when
-    /// the decision had to wait for inference.
+    /// copy-out with the fixed/advancing watermark choice — from the captured facts. Called from
+    /// <see cref="ResolveDeferredTcoResets"/> with <c>_inst</c> pointed at the splice list after
+    /// inference and runtime-managed parameter discovery are complete.
     /// </summary>
     private void EmitTcoBackEdgeArenaBlock(PendingTcoReset info)
     {
+        info = TcoBackEdgeRefreshRuntimeManagedParams(info);
         var argTypes = info.ArgTypes;
         int tcoPreRestoreEndSlot = NewLocal();
+
+        if (TcoBackEdgeTryEmitRuntimeManagedReset(info, tcoPreRestoreEndSlot))
+        {
+            return;
+        }
 
         if (TcoBackEdgeTryEmitPlainReset(info, tcoPreRestoreEndSlot))
         {
@@ -841,6 +932,779 @@ public sealed partial class Lowering
         EndLivePostsGuard(tcoCopySkipLabel);
     }
 
+    private PendingTcoReset TcoBackEdgeRefreshRuntimeManagedParams(PendingTcoReset info)
+        => info with
+        {
+            RuntimeManagedArgResults = info.RuntimeManagedArgResults
+                .Select((runtimeManaged, index) =>
+                    runtimeManaged || IsRuntimeManagedConcatStrTipResult(info.ArgTemps[index]))
+                .ToArray(),
+            RuntimeManagedParams = info.ParamSlots
+                .Select(info.Tco.RuntimeManagedParamSlots.Contains)
+                .ToArray(),
+            RuntimeManagedParamActiveSlots = info.ParamSlots
+                .Select(slot => info.Tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1))
+                .ToArray(),
+            RuntimeManagedClosureActiveSlots = info.ParamSlots
+                .Select(slot => info.Tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1))
+                .ToArray()
+        };
+
+    private bool TcoBackEdgeTryEmitRuntimeManagedReset(
+        PendingTcoReset info,
+        int tcoPreRestoreEndSlot)
+    {
+        if (info.CoroutineLoop
+            || !info.RuntimeManagedParams.Any(runtimeManaged => runtimeManaged)
+            || Enumerable.Range(0, info.ArgTypes.Length).Any(i =>
+                !CanArenaReset(info.ArgTypes[i])
+                && !IsResourceHandleType(info.ArgTypes[i])
+                && !info.PassThrough[i]
+                && !TcoBackEdgeConsumedInlineListTailCanReset(info, i)
+                && !TcoBackEdgeRuntimeManagedArgCanReset(info, i)))
+        {
+            return false;
+        }
+
+        int[] normalizedTemps = TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(info);
+
+        int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
+        int resetEndSlot = info.FixedEndSlot >= 0 ? info.FixedEndSlot : info.ArenaEndSlot;
+        TcoBackEdgeEmitResetAndZeroReservations(
+            info,
+            resetCursorSlot,
+            resetEndSlot,
+            tcoPreRestoreEndSlot);
+        for (int i = 0; i < normalizedTemps.Length; i++)
+        {
+            if (normalizedTemps[i] >= 0)
+            {
+                Emit(new IrInst.StoreLocal(info.ParamSlots[i], normalizedTemps[i]));
+                if (info.RuntimeManagedParamActiveSlots[i] >= 0)
+                {
+                    int activeTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(activeTemp, 1));
+                    Emit(new IrInst.StoreLocal(info.RuntimeManagedParamActiveSlots[i], activeTemp));
+                }
+                if (info.RuntimeManagedClosureActiveSlots[i] >= 0)
+                {
+                    int activeTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(activeTemp, 1));
+                    Emit(new IrInst.StoreLocal(info.RuntimeManagedClosureActiveSlots[i], activeTemp));
+                }
+            }
+        }
+        Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot));
+        return true;
+    }
+
+    private int[] TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(PendingTcoReset info)
+    {
+        int[] normalizedTemps = Enumerable.Repeat(-1, info.ArgTypes.Length).ToArray();
+        var dropPredecessor = new bool[info.ArgTypes.Length];
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (!info.RuntimeManagedParams[i] || info.PassThrough[i])
+            {
+                continue;
+            }
+
+            TypeRef argType = Prune(info.ArgTypes[i]);
+            if (!info.RuntimeManagedArgResults[i]
+                && info.FreshListRebuild[i]
+                && argType is TypeRef.TList { Element: TypeRef.TNamedType elementType }
+                && info.RuntimeManagedParamActiveSlots[i] >= 0
+                && TryGetCopyOnlyRecordConstructor(elementType, out ConstructorSymbol recordConstructor))
+            {
+                normalizedTemps[i] = EmitRuntimeManagedRecordListOverwriteOrNormalize(
+                    info.ArgTemps[i],
+                    info.OldRuntimeParamTemps[i],
+                    info.RuntimeManagedParamActiveSlots[i],
+                    elementType,
+                    recordConstructor);
+            }
+            else
+            {
+                normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
+                    info.ArgTemps[i],
+                    argType,
+                    info.RuntimeManagedArgResults[i],
+                    info.RuntimeManagedPredecessorAliases[i],
+                    info.ConsumedListTail[i]);
+            }
+            bool movedListTail = argType is TypeRef.TList
+                && info.SingleFreshCons[i]
+                && info.RuntimeManagedArgResults[i];
+            bool consumedStringPredecessor = info.RuntimeManagedArgResults[i]
+                && IsRuntimeManagedConcatStrTipResult(info.ArgTemps[i]);
+            dropPredecessor[i] = !movedListTail && !consumedStringPredecessor;
+        }
+
+        // A tail call is a parallel assignment. Successor arguments may alias more than one
+        // predecessor parameter, so releasing a predecessor while later successors are still
+        // being normalized lets the exact-size free list reuse and overwrite storage that those
+        // later normalizations still need. Establish ownership for every successor first.
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (dropPredecessor[i])
+            {
+                TcoBackEdgeDropRuntimeManagedArg(info, i, Prune(info.ArgTypes[i]));
+            }
+        }
+
+        return normalizedTemps;
+    }
+
+    /// <summary>
+    /// True when the tail-consumed list parameter at <paramref name="paramIndex"/> is only inspected
+    /// by the recursive body (nothing derived from it escapes — see
+    /// <see cref="TcoContext.BorrowableConsumedListParams"/>) AND its element is an all-inline-copy
+    /// record. Under both conditions the traversal reads only scalar fields and never retains a cell
+    /// or head, so the caller's graph can be borrowed instead of RC-normalized into a private copy.
+    /// </summary>
+    private bool IsBorrowableInspectOnlyList(TcoContext tco, int paramIndex, TypeRef.TList list)
+        => paramIndex >= 0
+            && tco.BorrowableConsumedListParams.Contains(tco.ParamNames[paramIndex])
+            && Prune(list.Element) is TypeRef.TNamedType element
+            && TryGetCopyOnlyRecordConstructor(element, out _);
+
+    private bool IsBorrowableInspectOnlyList(TcoContext tco, string name, TypeRef.TList list)
+    {
+        int paramIndex = tco.ParamNames is { } names ? IndexOfOrdinal(names, name) : -1;
+        return IsBorrowableInspectOnlyList(tco, paramIndex, list);
+    }
+
+    private static int IndexOfOrdinal(IReadOnlyList<string> names, string name)
+    {
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (string.Equals(names[i], name, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private bool TryGetCopyOnlyRecordConstructor(
+        TypeRef.TNamedType named,
+        out ConstructorSymbol constructor)
+    {
+        ConstructorSymbol? candidate = named.Symbol.Constructors.Count == 1
+            ? named.Symbol.Constructors[0]
+            : null;
+        if (candidate is null
+            || candidate.DeclaringSyntax.FieldNames.Count == 0)
+        {
+            constructor = null!;
+            return false;
+        }
+
+        for (int i = 0; i < candidate.Arity; i++)
+        {
+            if (!CanArenaReset(Prune(InstantiateConstructorParameterType(candidate, i, named))))
+            {
+                constructor = null!;
+                return false;
+            }
+        }
+
+        constructor = candidate;
+        return true;
+    }
+
+    private int EmitRuntimeManagedRecordListOverwriteOrNormalize(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        TypeRef.TNamedType elementType,
+        ConstructorSymbol constructor)
+    {
+        int resultSlot = NewLocal();
+        int sourceCursorSlot = NewLocal();
+        int predecessorCursorSlot = NewLocal();
+        string overwriteLabel = NewLabel("rc_list_overwrite");
+        string fallbackLabel = NewLabel("rc_list_overwrite_fallback");
+        string doneLabel = NewLabel("rc_list_overwrite_result");
+        int zeroTemp = EmitRuntimeManagedRecordListOverwritePreflight(
+            sourceTemp,
+            predecessorTemp,
+            predecessorActiveSlot,
+            sourceCursorSlot,
+            predecessorCursorSlot,
+            overwriteLabel,
+            fallbackLabel);
+        EmitRuntimeManagedRecordListOverwrite(
+            sourceTemp,
+            predecessorTemp,
+            predecessorActiveSlot,
+            sourceCursorSlot,
+            predecessorCursorSlot,
+            zeroTemp,
+            constructor,
+            resultSlot,
+            overwriteLabel,
+            doneLabel);
+
+        Emit(new IrInst.Label(fallbackLabel));
+        int normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, elementType);
+        Emit(new IrInst.StoreLocal(resultSlot, normalizedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedRecordListOverwritePreflight(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        int sourceCursorSlot,
+        int predecessorCursorSlot,
+        string overwriteLabel,
+        string fallbackLabel)
+    {
+        string preflightLabel = NewLabel("rc_list_overwrite_preflight");
+        string sourceEmptyLabel = NewLabel("rc_list_overwrite_source_empty");
+        int predecessorActiveTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(predecessorActiveTemp, predecessorActiveSlot));
+        Emit(new IrInst.JumpIfFalse(predecessorActiveTemp, fallbackLabel));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, predecessorTemp));
+
+        // Check the complete shape and every destination node before mutating anything. A late
+        // mismatch or shared node therefore falls back without exposing a partially overwritten
+        // predecessor graph.
+        Emit(new IrInst.Label(preflightLabel));
+        int preflightSourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(preflightSourceTemp, sourceCursorSlot));
+        int preflightPredecessorTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(preflightPredecessorTemp, predecessorCursorSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int sourceNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(sourceNonEmptyTemp, preflightSourceTemp, zeroTemp));
+        int predecessorNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(predecessorNonEmptyTemp, preflightPredecessorTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(sourceNonEmptyTemp, sourceEmptyLabel));
+        Emit(new IrInst.JumpIfFalse(predecessorNonEmptyTemp, fallbackLabel));
+
+        int predecessorUniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(predecessorUniqueTemp, preflightPredecessorTemp));
+        Emit(new IrInst.JumpIfFalse(predecessorUniqueTemp, fallbackLabel));
+        int predecessorHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            predecessorHeadTemp,
+            preflightPredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int predecessorHeadUniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(predecessorHeadUniqueTemp, predecessorHeadTemp));
+        Emit(new IrInst.JumpIfFalse(predecessorHeadUniqueTemp, fallbackLabel));
+
+        int preflightSourceTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            preflightSourceTailTemp,
+            preflightSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int preflightPredecessorTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            preflightPredecessorTailTemp,
+            preflightPredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, preflightSourceTailTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, preflightPredecessorTailTemp));
+        Emit(new IrInst.Jump(preflightLabel));
+
+        Emit(new IrInst.Label(sourceEmptyLabel));
+        Emit(new IrInst.JumpIfFalse(predecessorNonEmptyTemp, overwriteLabel));
+        Emit(new IrInst.Jump(fallbackLabel));
+        return zeroTemp;
+    }
+
+    private void EmitRuntimeManagedRecordListOverwrite(
+        int sourceTemp,
+        int predecessorTemp,
+        int predecessorActiveSlot,
+        int sourceCursorSlot,
+        int predecessorCursorSlot,
+        int zeroTemp,
+        ConstructorSymbol constructor,
+        int resultSlot,
+        string overwriteLabel,
+        string doneLabel)
+    {
+        string overwriteDoneLabel = NewLabel("rc_list_overwrite_done");
+        Emit(new IrInst.Label(overwriteLabel));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, predecessorTemp));
+        string overwriteLoopLabel = NewLabel("rc_list_overwrite_loop");
+        Emit(new IrInst.Label(overwriteLoopLabel));
+        int overwriteSourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(overwriteSourceTemp, sourceCursorSlot));
+        int overwriteSourceNonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(overwriteSourceNonEmptyTemp, overwriteSourceTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(overwriteSourceNonEmptyTemp, overwriteDoneLabel));
+        int overwritePredecessorTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(overwritePredecessorTemp, predecessorCursorSlot));
+        int sourceHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            sourceHeadTemp,
+            overwriteSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int destinationHeadTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            destinationHeadTemp,
+            overwritePredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        for (int field = 0; field < constructor.Arity; field++)
+        {
+            int fieldTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(fieldTemp, sourceHeadTemp, field));
+            Emit(new IrInst.SetAdtField(destinationHeadTemp, field, fieldTemp));
+        }
+
+        int overwriteSourceTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            overwriteSourceTailTemp,
+            overwriteSourceTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int overwritePredecessorTailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            overwritePredecessorTailTemp,
+            overwritePredecessorTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.StoreLocal(sourceCursorSlot, overwriteSourceTailTemp));
+        Emit(new IrInst.StoreLocal(predecessorCursorSlot, overwritePredecessorTailTemp));
+        Emit(new IrInst.Jump(overwriteLoopLabel));
+
+        Emit(new IrInst.Label(overwriteDoneLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, predecessorTemp));
+        int inactiveTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+        Emit(new IrInst.StoreLocal(predecessorActiveSlot, inactiveTemp));
+        Emit(new IrInst.Jump(doneLabel));
+    }
+
+    private bool IsRuntimeManagedConcatStrTipResult(int temp)
+        => _inst.Any(instruction =>
+            instruction is IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true }
+            && target == temp);
+
+    private int TcoBackEdgeNormalizeRuntimeManagedArg(
+        int sourceTemp,
+        TypeRef argType,
+        bool alreadyRuntimeManaged,
+        bool aliasesPredecessor,
+        bool consumedListTail)
+    {
+        if (alreadyRuntimeManaged)
+        {
+            return TcoBackEdgeRetainRuntimeManagedArg(sourceTemp, argType, aliasesPredecessor);
+        }
+
+        if (consumedListTail && argType is TypeRef.TList)
+        {
+            return EmitRuntimeManagedNullableDup(sourceTemp);
+        }
+
+        int normalizedTemp = NewTemp();
+        if (argType is TypeRef.TList list)
+        {
+            if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+            {
+                Emit(new IrInst.CopyOutList(
+                    normalizedTemp,
+                    sourceTemp,
+                    headCopy,
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+            }
+            else
+            {
+                return EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+            }
+        }
+        else if (argType is TypeRef.TFun)
+        {
+            Emit(new IrInst.CopyOutClosure(
+                normalizedTemp,
+                sourceTemp,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        else if (argType is TypeRef.TTuple tuple
+            && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
+        {
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+        }
+        else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
+        {
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+        }
+        else
+        {
+            Emit(new IrInst.CopyOutArena(
+                normalizedTemp,
+                sourceTemp,
+                TcoRuntimeManagedCopySize(argType),
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+
+        _runtimeManagedResultTemps.Add(normalizedTemp);
+        return normalizedTemp;
+    }
+
+    private int TcoBackEdgeRetainRuntimeManagedArg(
+        int sourceTemp,
+        TypeRef argType,
+        bool aliasesPredecessor)
+    {
+        if (!aliasesPredecessor)
+        {
+            return sourceTemp;
+        }
+
+        if (argType is TypeRef.TList)
+        {
+            return EmitRuntimeManagedNullableDup(sourceTemp);
+        }
+
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
+        _runtimeManagedResultTemps.Add(duplicatedTemp);
+        return duplicatedTemp;
+    }
+
+    private int EmitRuntimeManagedNullableDup(int sourceTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonNullTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonNullTemp, sourceTemp, zeroTemp));
+        string duplicatedLabel = NewLabel("rc_nullable_duplicated");
+        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(duplicatedLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private void TcoBackEdgeDropRuntimeManagedArg(PendingTcoReset info, int index, TypeRef argType)
+    {
+        int activeSlot = info.RuntimeManagedParamActiveSlots[index];
+        if (activeSlot < 0)
+        {
+            TcoBackEdgeDropRuntimeManagedArgCore(info, index, argType);
+            return;
+        }
+
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_tco_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        TcoBackEdgeDropRuntimeManagedArgCore(info, index, argType);
+        Emit(new IrInst.Label(skipLabel));
+    }
+
+    private void TcoBackEdgeDropRuntimeManagedArgCore(PendingTcoReset info, int index, TypeRef argType)
+    {
+        int sourceTemp = info.OldRuntimeParamTemps[index];
+        if (argType is TypeRef.TFun)
+        {
+            EmitRuntimeManagedClosureDropIfActive(
+                sourceTemp,
+                info.RuntimeManagedClosureActiveSlots[index]);
+            return;
+        }
+
+        if (argType is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+            return;
+        }
+
+        if (argType is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+            return;
+        }
+
+        if (argType is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+            return;
+        }
+
+        Emit(new IrInst.RcDrop(
+            sourceTemp,
+            TcoRuntimeManagedTypeName(argType),
+            OwnerSlot: -1,
+            RuntimeManaged: true));
+    }
+
+    private bool TcoBackEdgeRuntimeManagedArgCanReset(PendingTcoReset info, int index)
+    {
+        if (!info.RuntimeManagedParams[index])
+        {
+            return false;
+        }
+
+        return Prune(info.ArgTypes[index]) switch
+        {
+            TypeRef.TStr or TypeRef.TBigInt => true,
+            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
+                || CanRuntimeManageTcoAdt(named),
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
+                && (info.PassThrough[index]
+                    || info.FreshListRebuild[index]
+                    || info.ConsumedListTail[index]
+                    || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
+            TypeRef.TFun => info.RuntimeManagedArgResults[index],
+            _ => false,
+        };
+    }
+
+    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type)
+    {
+        TypeRef valueType = Prune(type);
+        if (CanArenaReset(valueType))
+        {
+            return sourceTemp;
+        }
+
+        int resultTemp = NewTemp();
+        switch (valueType)
+        {
+            case TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt:
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    TcoRuntimeManagedCopySize(valueType),
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+                break;
+            case TypeRef.TList list:
+                if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+                {
+                    Emit(new IrInst.CopyOutList(
+                        resultTemp,
+                        sourceTemp,
+                        headCopy,
+                        RuntimeManaged: true,
+                        IrInst.CopyOutPurpose.RcNormalization));
+                }
+                else
+                {
+                    return EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+                }
+                break;
+            case TypeRef.TTuple tuple:
+                Emit(new IrInst.Alloc(resultTemp, tuple.Elements.Count * 8, RuntimeManaged: true));
+                for (int i = 0; i < tuple.Elements.Count; i++)
+                {
+                    int childTemp = NewTemp();
+                    Emit(new IrInst.LoadMemOffset(childTemp, sourceTemp, i * 8));
+                    int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, tuple.Elements[i]);
+                    Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
+                }
+                break;
+            case TypeRef.TNamedType named when CanCopyOutAdt(named, out int sizeBytes):
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    sizeBytes,
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+                break;
+            case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
+                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
+            default:
+                throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
+        }
+
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private bool CanRuntimeManageTcoAdt(TypeRef.TNamedType named)
+        => CanRuntimeManageAdt(named)
+            || CanRuntimeManageOwnedChildAdt(named)
+            || CanRuntimeManageTcoOwnedChildAdt(named);
+
+    private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
+    {
+        int currentSlot = NewLocal();
+        int firstSlot = NewLocal();
+        int lastSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(currentSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(firstSlot, zeroTemp));
+        Emit(new IrInst.StoreLocal(lastSlot, zeroTemp));
+
+        string loopLabel = NewLabel("rc_normalize_list");
+        string endLabel = NewLabel("rc_normalize_list_end");
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            headTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int copiedHead = EmitRuntimeManagedTcoDeepCopy(headTemp, elementType);
+        int cellTemp = NewTemp();
+        Emit(new IrInst.Alloc(cellTemp, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true));
+        Emit(new IrInst.StoreMemOffset(
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex),
+            copiedHead));
+        Emit(new IrInst.StoreMemOffset(
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            zeroTemp));
+
+        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, cellTemp);
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(endLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, firstSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private void EmitRuntimeManagedTcoListAppendCell(
+        int firstSlot,
+        int lastSlot,
+        int zeroTemp,
+        int cellTemp)
+    {
+        string firstCellLabel = NewLabel("rc_normalize_list_first");
+        string linkedLabel = NewLabel("rc_normalize_list_linked");
+        int firstTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(firstTemp, firstSlot));
+        int hasFirstTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasFirstTemp, firstTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(hasFirstTemp, firstCellLabel));
+        int lastTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(lastTemp, lastSlot));
+        Emit(new IrInst.StoreMemOffset(
+            lastTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            cellTemp));
+        Emit(new IrInst.Jump(linkedLabel));
+        Emit(new IrInst.Label(firstCellLabel));
+        Emit(new IrInst.StoreLocal(firstSlot, cellTemp));
+        Emit(new IrInst.Label(linkedLabel));
+        Emit(new IrInst.StoreLocal(lastSlot, cellTemp));
+    }
+
+    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named)
+    {
+        if (named.Symbol.Constructors.Count == 1)
+        {
+            return EmitRuntimeManagedTcoConstructorDeepCopy(
+                sourceTemp,
+                named,
+                named.Symbol.Constructors[0]);
+        }
+
+        int resultSlot = NewLocal();
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, sourceTemp));
+        List<(long Tag, string Label)> cases = named.Symbol.Constructors
+            .Select(constructor => ((long)GetConstructorTag(constructor), NewLabel("rc_normalize_adt")))
+            .ToList();
+        string endLabel = NewLabel("rc_normalize_adt_end");
+        Emit(new IrInst.SwitchTag(tagTemp, cases, cases[0].Label));
+        for (int i = 0; i < named.Symbol.Constructors.Count; i++)
+        {
+            Emit(new IrInst.Label(cases[i].Label));
+            int branchTemp = EmitRuntimeManagedTcoConstructorDeepCopy(
+                sourceTemp,
+                named,
+                named.Symbol.Constructors[i]);
+            Emit(new IrInst.StoreLocal(resultSlot, branchTemp));
+            Emit(new IrInst.Jump(endLabel));
+        }
+
+        Emit(new IrInst.Label(endLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoConstructorDeepCopy(
+        int sourceTemp,
+        TypeRef.TNamedType named,
+        ConstructorSymbol constructor)
+    {
+        int resultTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            resultTemp,
+            sourceTemp,
+            HeapLayouts.Adt.AllocationSizeBytes(constructor.Arity),
+            RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization));
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, i));
+            int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, fieldType);
+            Emit(new IrInst.SetAdtField(resultTemp, i, copiedChild));
+        }
+
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private int TcoRuntimeManagedCopySize(TypeRef type)
+        => type switch
+        {
+            TypeRef.TBigInt => IrInst.CopyOutArena.BigIntSize,
+            TypeRef.TTuple tuple => tuple.Elements.Count * 8,
+            TypeRef.TNamedType named when CanCopyOutAdt(named, out int sizeBytes) => sizeBytes,
+            _ => -1,
+        };
+
+    private static string TcoRuntimeManagedTypeName(TypeRef type)
+        => type switch
+        {
+            TypeRef.TBigInt => "BigInt",
+            TypeRef.TTuple => "Tuple",
+            TypeRef.TNamedType named => named.Symbol.Name,
+            TypeRef.TFun => "Function",
+            _ => "String",
+        };
+
     /// <summary>
     /// Emits the plain per-iteration reset when every argument is reset-safe; returns false (and
     /// emits nothing) when some argument needs a copy-out instead.
@@ -872,6 +1736,11 @@ public sealed partial class Lowering
         EndLivePostsGuard(tcoResetSkipLabel);
         return true;
     }
+
+    private bool TcoBackEdgeConsumedInlineListTailCanReset(PendingTcoReset info, int index)
+        => info.ConsumedListTail[index]
+            && Prune(info.ArgTypes[index]) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element));
 
     // The whole-list DeepAdt clone is licensed per ARG, not per type: it costs O(length)
     // at every back-edge, affordable only when the body already paid O(length) rebuilding the
@@ -1010,7 +1879,7 @@ public sealed partial class Lowering
     {
         for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
         {
-            if (info.ArgResvStartSlots[r] < 0)
+            if (info.ArgResvStartSlots[r] < 0 || info.RuntimeManagedArgResults[r])
             {
                 continue;
             }
@@ -1088,7 +1957,7 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(resvZeroTemp, 0));
             for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
             {
-                if (info.ArgResvStartSlots[r] >= 0)
+                if (info.ArgResvStartSlots[r] >= 0 && !info.RuntimeManagedArgResults[r])
                 {
                     Emit(new IrInst.StoreLocal(info.ArgResvStartSlots[r], resvZeroTemp));
                     Emit(new IrInst.StoreLocal(info.ArgResvEndSlots[r], resvZeroTemp));
@@ -1188,9 +2057,8 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder — a back-edge whose copy-out
-    /// decision was deferred because an argument type was still an unresolved inference variable —
-    /// with the real arena block (or with nothing, when the now-resolved types do not qualify).
+    /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder with the real arena block (or
+    /// with nothing, when the resolved types do not qualify).
     /// Runs at the end of lowering, after the deferred operator resolutions, so the pruned types
     /// are as concrete as they will ever be. Splices in place per function, temporarily pointing
     /// <c>_inst</c> and the temp/local counters at the target function.
@@ -1279,6 +2147,7 @@ public sealed partial class Lowering
         }
     }
 
+
     // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
     // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
     // Int. Then each provisional add becomes ConcatStr (Str), AddFloat (Float), or stays AddInt.
@@ -1313,7 +2182,14 @@ public sealed partial class Lowering
 
             instructions[i] = Prune(operandType) switch
             {
-                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineResvStartSlot, add.AffineResvEndSlot) { Location = add.Location }),
+                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(
+                    add.Target,
+                    add.Left,
+                    add.Right,
+                    add.AffineResvStartSlot,
+                    add.AffineResvEndSlot,
+                    IsRuntimeManagedResultTemp(add.Left))
+                { Location = add.Location }),
                 TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
@@ -1325,6 +2201,47 @@ public sealed partial class Lowering
     {
         _usesConcatStr = true;
         return inst;
+    }
+
+    // Patches the provisional string copy-outs emitted by MaterializeEscapingStringTupleElement for
+    // tuple fields whose element type was an unresolved var at lowering time. Now that inference is
+    // complete: a field that resolved to Str really is a runtime-managed string that would dangle
+    // into the reused arena, so its copy-out stays. A field that resolved to a scalar (Int/Float/Bool)
+    // never dangles — rewrite its copy-out to a plain Borrow alias (dest = src, no RC change, no
+    // byte copy) so the scalar value is stored verbatim instead of being mis-read as a length-prefixed
+    // string.
+    private void ResolveDeferredTupleMaterializations()
+    {
+        if (!_hasDeferredTupleMaterializations)
+        {
+            return;
+        }
+
+        ResolveDeferredTupleMaterializationsIn(_inst);
+        foreach (var func in _funcs)
+        {
+            ResolveDeferredTupleMaterializationsIn(func.Instructions);
+        }
+    }
+
+    private void ResolveDeferredTupleMaterializationsIn(List<IrInst> instructions)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.CopyOutArena { DeferredElementType: { } elementType } copy)
+            {
+                continue;
+            }
+
+            if (Prune(elementType) is TypeRef.TStr)
+            {
+                instructions[i] = copy with { DeferredElementType = null };
+            }
+            else
+            {
+                instructions[i] = new IrInst.Borrow(copy.DestTemp, copy.SrcTemp) { Location = copy.Location };
+            }
+        }
     }
 
     // Patches the provisional MulInts emitted for '*' with two unconstrained operands, now that
@@ -1555,12 +2472,25 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
+        bool transfersRuntimeReference = _activeRuntimeManagedTcoPatternAliases.Contains(v.Name);
+        bool runtimeManagedResult = transfersRuntimeReference
+            || ownerInfo is { RuntimeManaged: true }
+            || b is Binding.Local runtimeLocal
+                && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true;
+        if (runtimeManagedResult)
+        {
+            _runtimeManagedResultTemps.Add(result.Temp);
+        }
         if (ownerInfo is not null && !ownerInfo.IsDropped)
         {
             int borrowTemp = NewTemp();
             Emit(new IrInst.Borrow(borrowTemp, result.Temp));
             ownerInfo.ActiveBorrows++;
             result = (borrowTemp, result.Type);
+            if (transfersRuntimeReference)
+            {
+                _runtimeManagedResultTemps.Add(borrowTemp);
+            }
         }
 
         return result;
@@ -1582,7 +2512,13 @@ public sealed partial class Lowering
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
-            Emit(new IrInst.MakeClosure(closTemp, topRef.Label, envTemp, 0));
+            Emit(new IrInst.MakeClosure(
+                closTemp,
+                topRef.Label,
+                envTemp,
+                0,
+                ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                    && _runtimeManagedFunctionResultLabels.Contains(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
@@ -1644,7 +2580,9 @@ public sealed partial class Lowering
             case Binding.Self self:
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
-                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes));
+                Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
+                    ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                        && _runtimeManagedFunctionResultLabels.Contains(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
 
@@ -1821,11 +2759,23 @@ public sealed partial class Lowering
         if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1 && _lastLoweredLambdaEmptyEnv)
         {
             _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+        }
+        else if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1)
+        {
+            // A capturing top-level let is not callable as a global label because it still needs its
+            // environment, but the closure in this exact local slot has a statically known code label.
+            // Preserve that provenance so a later closure capture can retain its result-ownership fact.
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+        }
+        else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
+        {
+            _knownFunctionLabelsBySlot[slot] = aliasedFunctionLabel;
         }
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
-        TrackLetOwnership(let, slot, valueType);
+        TrackLetOwnership(let, slot, valueTemp, valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
@@ -1837,10 +2787,195 @@ public sealed partial class Lowering
             // so match the defining let by the value object identity recorded at registration.
             || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
-        var (bodyTemp, bodyType) = LowerExpr(let.Body);
+        var (bodyTemp, bodyType) = LowerEscapingResult(let.Body);
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
+    }
+
+    private (int Temp, TypeRef Type) LowerEscapingResult(Expr body, bool normalizeStaticString = false)
+    {
+        if (normalizeStaticString && body is Expr.StrLit literal)
+        {
+            var (sourceTemp, sourceType) = LowerStr(literal);
+            int resultTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                resultTemp,
+                sourceTemp,
+                -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            _runtimeManagedResultTemps.Add(resultTemp);
+            return (resultTemp, sourceType);
+        }
+
+        if (TryLowerRuntimeManagedBuiltinResultBody(body, out (int Temp, TypeRef Type) builtinResult))
+        {
+            return builtinResult;
+        }
+
+        bool runtimeManagedString = IsRuntimeRcStringProducer(body);
+        bool runtimeManagedAdt = ProducesFreshRuntimeManageableAdt(body);
+        bool runtimeManagedList = IsFreshListConstructionExpression(body);
+        bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
+            && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
+        bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
+        bool runtimeManagedTuple = ProducesFreshTuple(body);
+        bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
+        bool runtimeManagedClosure = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && IsRuntimeRcCopyClosureProducer(body);
+        runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
+        if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
+            && !runtimeManagedBytes && !runtimeManagedBigInt
+            && !runtimeManagedTuple && !runtimeManagedRecord && !runtimeManagedClosure)
+        {
+            return LowerExpr(body);
+        }
+
+        return LowerEscapingRuntimeManagedResult(
+            body,
+            runtimeManagedString,
+            runtimeManagedAdt,
+            runtimeManagedList,
+            runtimeManagedBytes,
+            runtimeManagedBigInt,
+            runtimeManagedTuple,
+            runtimeManagedRecord,
+            runtimeManagedClosure);
+    }
+
+    // True when the escaping result IS a tuple (directly, or through the arms of a match/if or the
+    // body of a let). A tuple built in a match arm otherwise stays arena-managed, so a function like
+    // `readWord acc text = ... -> (acc, rest)` returns a tuple whose runtime-managed string field
+    // lives in the callee's arena; the next call reuses that arena and overwrites it. Marking the
+    // result a fresh tuple sets _runtimeRcTupleAllocationRequested, so LowerTupleLit allocates the
+    // tuple in the RC heap (only when its elements are themselves runtime-manageable — a scalar tuple
+    // stays arena), keeping it alive across calls.
+    private bool ProducesFreshTuple(Expr body)
+        => body switch
+        {
+            Expr.TupleLit => true,
+            Expr.If iff => ProducesFreshTuple(iff.Then) || ProducesFreshTuple(iff.Else),
+            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshTuple(matchCase.Body)),
+            Expr.Let let => ProducesFreshTuple(let.Body),
+            Expr.LetResult letResult => ProducesFreshTuple(letResult.Body),
+            Expr.LetRecursive letRecursive => ProducesFreshTuple(letRecursive.Body),
+            // A tuple wrapped in an ADT constructor (e.g. `Ok((acc, tail))` from a JSON parser) carries
+            // the same dangling-string hazard: its string fields live in the callee's arena. Recurse
+            // into the constructor's arguments so the flag is set and LowerTupleLit materializes them.
+            // Only real constructor applications, not ordinary function calls (whose tuple argument is
+            // consumed, not returned).
+            _ when TryDescribeConstructorExpression(body, out _, out var ctorArgs, out _) && ctorArgs is not null
+                => ctorArgs.Any(ProducesFreshTuple),
+            _ => false,
+        };
+
+    // Like IsFreshRuntimeManageableAdtExpression but recurses through the arms of a match/if and the
+    // body of a let (mirroring ProducesFreshTuple). A tail-recursive parser like `parseStringBody acc
+    // text = match uncons(text) with ... | Some((h,t)) -> if h == "\"" then Ok((acc, tail)) else
+    // parseStringBody(acc + head)(tail)` returns its fresh `Ok((acc, tail))` from a nested match/if
+    // arm, not as the whole body. Detecting it here marks the result an escaping runtime-managed ADT,
+    // so the Ok survives the arena reset AND (via LowerEscapingRuntimeManagedResult's tuple broadening)
+    // the tuple's string fields are materialized out of the reused arena.
+    private bool ProducesFreshRuntimeManageableAdt(Expr body)
+        => body switch
+        {
+            Expr.If iff => ProducesFreshRuntimeManageableAdt(iff.Then) || ProducesFreshRuntimeManageableAdt(iff.Else),
+            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshRuntimeManageableAdt(matchCase.Body)),
+            Expr.Let let => ProducesFreshRuntimeManageableAdt(let.Body),
+            Expr.LetResult letResult => ProducesFreshRuntimeManageableAdt(letResult.Body),
+            Expr.LetRecursive letRecursive => ProducesFreshRuntimeManageableAdt(letRecursive.Body),
+            _ => IsFreshRuntimeManageableAdtExpression(body),
+        };
+
+    private (int Temp, TypeRef Type) LowerEscapingRuntimeManagedResult(
+        Expr body,
+        bool runtimeManagedString,
+        bool runtimeManagedAdt,
+        bool runtimeManagedList,
+        bool runtimeManagedBytes,
+        bool runtimeManagedBigInt,
+        bool runtimeManagedTuple,
+        bool runtimeManagedRecord,
+        bool runtimeManagedClosure)
+    {
+        bool savedStringRequest = _runtimeRcStringAllocationRequested;
+        bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
+        bool savedListRequest = _runtimeRcListAllocationRequested;
+        bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
+        bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
+        bool savedTupleRequest = _runtimeRcTupleAllocationRequested;
+        bool savedRecordRequest = _runtimeRcRecordAllocationRequested;
+        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
+        _runtimeRcStringAllocationRequested |= runtimeManagedString;
+        _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
+        _runtimeRcListAllocationRequested |= runtimeManagedList;
+        _runtimeRcBytesAllocationRequested |= runtimeManagedBytes;
+        _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
+        // A tuple nested inside an escaping ADT/list/record (e.g. `Ok((acc, tail))` from a JSON
+        // parser) carries the same dangling-string hazard as a directly-returned tuple: its string
+        // fields live in the callee's arena and the next call overwrites them. The enclosing composite
+        // is RC-allocated and escapes, so mark tuples runtime-managed too, letting LowerTupleLit
+        // materialize (copy out) their string fields. Restricted to string-field materialization —
+        // a scalar tuple still stays arena (see IsRuntimeManageableTupleElement).
+        _runtimeRcTupleAllocationRequested |=
+            runtimeManagedTuple || runtimeManagedAdt || runtimeManagedList || runtimeManagedRecord;
+        _runtimeRcRecordAllocationRequested |= runtimeManagedRecord;
+        _runtimeRcClosureAllocationRequested |= runtimeManagedClosure;
+        try
+        {
+            (int Temp, TypeRef Type) lowered = LowerExpr(body);
+            if (runtimeManagedClosure)
+            {
+                _runtimeManagedResultTemps.Add(lowered.Temp);
+            }
+            return lowered;
+        }
+        finally
+        {
+            _runtimeRcStringAllocationRequested = savedStringRequest;
+            _runtimeRcCopyAdtAllocationRequested = savedAdtRequest;
+            _runtimeRcListAllocationRequested = savedListRequest;
+            _runtimeRcBytesAllocationRequested = savedBytesRequest;
+            _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
+            _runtimeRcTupleAllocationRequested = savedTupleRequest;
+            _runtimeRcRecordAllocationRequested = savedRecordRequest;
+            _runtimeRcClosureAllocationRequested = savedClosureRequest;
+        }
+    }
+
+    private bool TryLowerRuntimeManagedBuiltinResultBody(
+        Expr body,
+        out (int Temp, TypeRef Type) lowered)
+    {
+        bool scalarResult = IsRuntimeRcScalarResultProducer(body);
+        bool bigIntParseResult = IsRuntimeRcBigIntParseResultProducer(body);
+        bool textUnconsResult = IsRuntimeRcTextUnconsResultProducer(body);
+        if (!scalarResult && !bigIntParseResult && !textUnconsResult)
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedScalarRequest = _runtimeRcScalarResultAllocationRequested;
+        bool savedBigIntRequest = _runtimeRcBigIntParseResultAllocationRequested;
+        bool savedUnconsRequest = _runtimeRcTextUnconsResultAllocationRequested;
+        _runtimeRcScalarResultAllocationRequested |= scalarResult;
+        _runtimeRcBigIntParseResultAllocationRequested |= bigIntParseResult;
+        _runtimeRcTextUnconsResultAllocationRequested |= textUnconsResult;
+        try
+        {
+            lowered = LowerExpr(body);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcScalarResultAllocationRequested = savedScalarRequest;
+            _runtimeRcBigIntParseResultAllocationRequested = savedBigIntRequest;
+            _runtimeRcTextUnconsResultAllocationRequested = savedUnconsRequest;
+        }
     }
 
     // Seed parameter types from the annotation (if any) before lowering the value, so operators on
@@ -1885,7 +3020,1416 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        return LowerExpr(let.Value);
+        if (TryLowerRuntimeRcStringLet(let, out (int Temp, TypeRef Type) loweredString))
+        {
+            return loweredString;
+        }
+
+        if (TryLowerRuntimeRcBuiltinResultLet(let, out (int Temp, TypeRef Type) loweredBuiltinResult))
+        {
+            return loweredBuiltinResult;
+        }
+
+        if (TryLowerRuntimeRcBytesLet(let, out (int Temp, TypeRef Type) loweredBytes))
+        {
+            return loweredBytes;
+        }
+
+        if (TryLowerRuntimeRcRecordLet(let, out (int Temp, TypeRef Type) loweredRecord))
+        {
+            return loweredRecord;
+        }
+
+        if (TryLowerRuntimeRcTupleLet(let, out (int Temp, TypeRef Type) loweredTuple))
+        {
+            return loweredTuple;
+        }
+
+        if (TryLowerRuntimeRcListLet(let, out (int Temp, TypeRef Type) loweredList))
+        {
+            return loweredList;
+        }
+
+        if (TryLowerRuntimeRcAdtLet(let, out (int Temp, TypeRef Type) loweredAdtValue))
+        {
+            return loweredAdtValue;
+        }
+
+        return LowerRemainingLetValue(let);
+    }
+
+    private bool TryLowerRuntimeRcStringLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if (!IsRuntimeRcStringProducer(let.Value)
+            || (!IsImmediateRuntimeStringUse(let.Body, let.Name) && !directEscape))
+        {
+            lowered = default;
+            return false;
+        }
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
+            && !IsRuntimeRcClosureCaptureSafeStringProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcStringAllocationRequested;
+        _runtimeRcStringAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcStringAllocationRequested = savedRequest;
+        }
+    }
+
+    private static bool IsDirectBindingResult(Expr body, string bindingName)
+    {
+        return body is Expr.Var variable
+            && string.Equals(variable.Name, bindingName, StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcBytesLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if (!IsRuntimeRcBytesProducer(let.Value)
+            || (!IsImmediateRuntimeBytesUse(let.Body, let.Name) && !directEscape))
+        {
+            lowered = default;
+            return false;
+        }
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
+            && !IsRuntimeRcClosureCaptureSafeBytesProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBytesAllocationRequested;
+        _runtimeRcBytesAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBytesAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool TryLowerRuntimeRcBuiltinResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        return TryLowerRuntimeRcScalarResultLet(let, out lowered)
+            || TryLowerRuntimeRcBigIntParseResultLet(let, out lowered)
+            || TryLowerRuntimeRcTextUnconsResultLet(let, out lowered);
+    }
+
+    private bool TryLowerRuntimeRcScalarResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcScalarResultProducer(let.Value)
+            || (!IsImmediateAdtMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcScalarResultAllocationRequested;
+        _runtimeRcScalarResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcScalarResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcScalarResultProducer(Expr expression)
+    {
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, _))
+        {
+            return false;
+        }
+
+        string module = ResolveModuleAlias(qualified.Module);
+        return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                && (string.Equals(qualified.Name, "parseInt", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "parseFloat", StringComparison.Ordinal))
+            || string.Equals(module, "Ashes.Number.BigInt", StringComparison.Ordinal)
+                && string.Equals(qualified.Name, "toInt", StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcBigIntParseResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcBigIntParseResultProducer(let.Value)
+            || (!IsImmediateRuntimeBigIntParseMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBigIntParseResultAllocationRequested;
+        _runtimeRcBigIntParseResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBigIntParseResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcBigIntParseResultProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "parseBigInt", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBigIntParseMatchUse(string bindingName, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(bindingName, body)
+            || body is not Expr.Match(_, IReadOnlyList<MatchCase> cases, _))
+        {
+            return false;
+        }
+
+        bool sawOk = false;
+        bool sawError = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null
+                || matchCase.Pattern is not Pattern.Constructor constructor
+                || constructor.Patterns.Count != 1)
+            {
+                return false;
+            }
+
+            if (string.Equals(constructor.Name, "Ok", StringComparison.Ordinal)
+                && constructor.Patterns[0] is Pattern.Var okBinding)
+            {
+                sawOk = IsDirectBigIntCompareUse(matchCase.Body, okBinding.Name);
+                if (!sawOk)
+                {
+                    return false;
+                }
+            }
+            else if (string.Equals(constructor.Name, "Error", StringComparison.Ordinal))
+            {
+                sawError = matchCase.Body is Expr.IntLit;
+                if (!sawError)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        return sawOk && sawError;
+    }
+
+    private bool IsDirectBigIntCompareUse(Expr expression, string bindingName)
+    {
+        if (expression is not Expr.Call(
+                Expr.Call(Expr.QualifiedVar qualified, Expr left),
+                Expr right)
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            || !string.Equals(qualified.Name, "compare", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return left is Expr.Var leftVariable
+                && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
+            || right is Expr.Var rightVariable
+                && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcTextUnconsResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (!IsRuntimeRcTextUnconsResultProducer(let.Value)
+            || (!IsImmediateRuntimeTextUnconsMatchUse(let.Name, let.Body)
+                && !IsDirectBindingResult(let.Body, let.Name)))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcTextUnconsResultAllocationRequested;
+        _runtimeRcTextUnconsResultAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcTextUnconsResultAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcTextUnconsResultProducer(Expr expression)
+    {
+        return expression is Expr.Call(Expr.QualifiedVar qualified, _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "uncons", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeTextUnconsMatchUse(string bindingName, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(bindingName, body)
+            || body is not Expr.Match(_, var cases, _))
+        {
+            return false;
+        }
+
+        bool sawNone = false;
+        bool sawSome = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null)
+            {
+                return false;
+            }
+
+            if (matchCase.Pattern is Pattern.Var none
+                && string.Equals(none.Name, "None", StringComparison.Ordinal))
+            {
+                sawNone = matchCase.Body is Expr.IntLit;
+                if (!sawNone)
+                {
+                    return false;
+                }
+            }
+            else if (matchCase.Pattern is Pattern.Constructor constructor
+                && string.Equals(constructor.Name, "Some", StringComparison.Ordinal)
+                && constructor.Patterns is [Pattern.Tuple { Elements: [Pattern.Var head, Pattern.Var tail] }]
+                && matchCase.Body is Expr.Add add
+                && TryGetDirectTextLengthBinding(add.Left, out string? leftBinding)
+                && TryGetDirectTextLengthBinding(add.Right, out string? rightBinding))
+            {
+                sawSome = string.Equals(leftBinding, head.Name, StringComparison.Ordinal)
+                        && string.Equals(rightBinding, tail.Name, StringComparison.Ordinal)
+                    || string.Equals(leftBinding, tail.Name, StringComparison.Ordinal)
+                        && string.Equals(rightBinding, head.Name, StringComparison.Ordinal);
+                if (!sawSome)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        return sawNone && sawSome;
+    }
+
+    private bool TryGetDirectTextLengthBinding(Expr expression, out string? bindingName)
+    {
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, Expr.Var variable)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Text", StringComparison.Ordinal)
+            && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
+        {
+            bindingName = variable.Name;
+            return true;
+        }
+
+        bindingName = null;
+        return false;
+    }
+
+    private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
+    {
+        return TryLowerRuntimeRcCopyClosureLet(let, out (int Temp, TypeRef Type) loweredClosure)
+            ? loweredClosure
+            : TryLowerRuntimeRcBigIntLet(let, out (int Temp, TypeRef Type) loweredBigInt)
+                ? loweredBigInt
+                : LowerExpr(let.Value);
+    }
+
+    private bool TryLowerRuntimeRcCopyClosureLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (_usesAsync
+            || _inCoroutineBody
+            || CapabilityGlobalCount > 0
+            || !IsRuntimeRcCopyClosureProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool directCall = UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if ((!directCall && !directEscape)
+            || directEscape && !directCall && _lambdaDepth > 0
+                && !ClosureCapturesRuntimeManagedHeapValue(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcClosureAllocationRequested;
+        _runtimeRcClosureAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            _runtimeManagedResultTemps.Add(lowered.Temp);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcClosureAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsRuntimeRcCopyClosureProducer(Expr expression)
+    {
+        return expression switch
+        {
+            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda),
+            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then)
+                && IsRuntimeRcCopyClosureProducer(conditional.Else),
+            _ => false,
+        };
+    }
+
+    private bool ClosureCapturesRuntimeManagedHeapValue(Expr expression)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureCapturesRuntimeManagedHeapValue(conditional.Then)
+                || ClosureCapturesRuntimeManagedHeapValue(conditional.Else);
+        }
+
+        if (expression is not Expr.Lambda lambda)
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        foreach (string name in FreeVars(lambda.Body, bound))
+        {
+            if (LookupOwnedValue(name) is
+                {
+                    RuntimeManaged: true,
+                    Type: TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt or TypeRef.TList
+                        or TypeRef.TTuple or TypeRef.TNamedType,
+                })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ClosureCapturesOnlyRuntimeManagedOrCopyValues(Expr expression)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureCapturesOnlyRuntimeManagedOrCopyValues(conditional.Then)
+                && ClosureCapturesOnlyRuntimeManagedOrCopyValues(conditional.Else);
+        }
+
+        if (expression is not Expr.Lambda lambda)
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        foreach (string name in FreeVars(lambda.Body, bound))
+        {
+            OwnershipInfo? owned = LookupOwnedValue(name);
+            if (owned is null)
+            {
+                continue;
+            }
+
+            if (owned.IsResource || owned.IsResourceBearing
+                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal)
+                || !owned.RuntimeManaged && owned.Type is not null && !CanArenaReset(owned.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
+    {
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        HashSet<string> free = FreeVars(lambda.Body, bound);
+        bool capturesOwnedValue = false;
+        foreach (string name in free)
+        {
+            OwnershipInfo? owned = LookupOwnedValue(name);
+            if (owned is null)
+            {
+                continue;
+            }
+
+            if (owned.IsResource
+                || owned.IsResourceBearing
+                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            if (owned.RuntimeManaged
+                && owned.Type is not TypeRef.TStr
+                && owned.Type is not TypeRef.TBytes
+                && owned.Type is not TypeRef.TBigInt
+                && owned.Type is not TypeRef.TList
+                && owned.Type is not TypeRef.TTuple
+                && owned.Type is not TypeRef.TNamedType)
+            {
+                return false;
+            }
+            capturesOwnedValue = true;
+        }
+
+        return !capturesOwnedValue || IsKnownCopyClosureResult(lambda.Body);
+    }
+
+    private bool IsKnownCopyClosureResult(Expr expression)
+    {
+        if (expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit)
+        {
+            return true;
+        }
+
+        if (expression is Expr.Match match)
+        {
+            return match.Cases.All(matchCase => IsKnownCopyClosureResult(matchCase.Body));
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, _))
+        {
+            string module = ResolveModuleAlias(qualified.Module);
+            return string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                    && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                        || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal))
+                || string.Equals(module, "Ashes.Byte", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                || string.Equals(module, "Ashes.Collection.List", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "length", StringComparison.Ordinal);
+        }
+
+        return expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar bigInt, _),
+                _)
+            && string.Equals(ResolveModuleAlias(bigInt.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(bigInt.Name, "compare", StringComparison.Ordinal);
+    }
+
+    private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool directEscape = IsDirectBindingResult(let.Body, let.Name);
+        if (!IsRuntimeRcBigIntProducer(let.Value)
+            || (!IsImmediateRuntimeBigIntUse(let.Body, let.Name) && !directEscape))
+        {
+            lowered = default;
+            return false;
+        }
+        if ((IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name) || directEscape)
+            && !IsRuntimeRcClosureCaptureSafeBigIntProducer(let.Value))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcBigIntAllocationRequested;
+        _runtimeRcBigIntAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcBigIntAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool TryLowerRuntimeRcRecordLet(
+        Expr.Let let,
+        out (int Temp, TypeRef Type) lowered)
+    {
+        bool directFreshEscape = IsDirectBindingResult(let.Body, let.Name)
+            && IsFreshRuntimeManageableRecordTree(let.Value);
+        bool capturedFreshRecord = IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && IsFreshRuntimeManageableRecordTree(let.Value);
+        if (let.Value is not Expr.RecordLit
+            || (!IsImmediateCopyUseOfRecord(let.Body, let.Name)
+                && !IsImmediateRuntimeRecordMatchUse(let.Body, let.Name)
+                && !IsRuntimeManagedRecordChildConsumedByImmediateParent(let.Name, let.Body)
+                && !directFreshEscape
+                && !capturedFreshRecord))
+        {
+            lowered = default;
+            return false;
+        }
+
+        TryCollectRuntimeRcRecordChildBindings(let.Value, let.Body, out Dictionary<string, bool>? childBindings);
+        bool savedRequest = _runtimeRcRecordAllocationRequested;
+        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
+        _runtimeRcRecordAllocationRequested = true;
+        _runtimeRcAdtChildBindings = childBindings;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcRecordAllocationRequested = savedRequest;
+            _runtimeRcAdtChildBindings = savedChildBindings;
+        }
+    }
+
+    private bool TryLowerRuntimeRcTupleLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        if (let.Value is not Expr.TupleLit
+            || (!IsDirectBindingResult(let.Body, let.Name)
+                && !IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)))
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcTupleAllocationRequested;
+        _runtimeRcTupleAllocationRequested = true;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcTupleAllocationRequested = savedRequest;
+        }
+    }
+
+    private bool IsImmediateRuntimeStringUse(Expr body, string bindingName)
+    {
+        if (body is Expr.Call(
+                Expr.QualifiedVar qualified,
+                Expr.Var argument)
+            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal))
+        {
+            string module = ResolveModuleAlias(qualified.Module);
+            return (string.Equals(module, "Ashes.Text", StringComparison.Ordinal)
+                    && (string.Equals(qualified.Name, "length", StringComparison.Ordinal)
+                        || string.Equals(qualified.Name, "byteLength", StringComparison.Ordinal)))
+                || (string.Equals(module, "Ashes.IO", StringComparison.Ordinal)
+                    && string.Equals(qualified.Name, "print", StringComparison.Ordinal));
+        }
+
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
+    }
+
+    private bool IsImmediateRuntimeClosureCaptureUse(Expr body, string bindingName)
+    {
+        return ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
+            || body is Expr.Let closureLet
+            && (UsesNameOnlyAsDirectCalleeForClosureCapture(closureLet.Body, closureLet.Name)
+                || IsDirectBindingResult(closureLet.Body, closureLet.Name))
+            && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
+    }
+
+    private bool UsesNameOnlyAsDirectCalleeForClosureCapture(Expr expression, string name)
+    {
+        try
+        {
+            return UsesNameOnlyAsDirectCallee(expression, name);
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
+    {
+        if (expression is Expr.Add)
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar qualified, Expr argument)
+            && string.Equals(qualified.Module, "Ashes.Text", StringComparison.Ordinal))
+        {
+            return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "fromFloat", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "toHex", StringComparison.Ordinal)
+                || string.Equals(qualified.Name, "fromBigInt", StringComparison.Ordinal)
+                || (string.Equals(qualified.Name, "asciiUpper", StringComparison.Ordinal)
+                    || string.Equals(qualified.Name, "asciiLower", StringComparison.Ordinal))
+                    && IsArenaAllocationFreeStringOperand(argument);
+        }
+
+        if (expression is Expr.Call(Expr.Call(Expr.QualifiedVar format, _), _)
+            && string.Equals(format.Module, "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(format.Name, "formatFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return expression is Expr.Call(
+                Expr.Call(
+                    Expr.Call(Expr.QualifiedVar subText, Expr bytes),
+                    _),
+                _)
+            && string.Equals(subText.Module, "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(subText.Name, "subText", StringComparison.Ordinal)
+            && IsArenaAllocationFreeBytesOperand(bytes);
+    }
+
+    private static bool IsArenaAllocationFreeStringOperand(Expr expression)
+    {
+        return expression switch
+        {
+            Expr.StrLit or Expr.Var or Expr.QualifiedVar => true,
+            Expr.If conditional => IsArenaAllocationFreeStringOperand(conditional.Then)
+                && IsArenaAllocationFreeStringOperand(conditional.Else),
+            _ => false,
+        };
+    }
+
+    private bool ClosureBranchesCaptureForKnownCopyResult(Expr expression, string bindingName)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureBranchesCaptureForKnownCopyResult(conditional.Then, bindingName)
+                && ClosureBranchesCaptureForKnownCopyResult(conditional.Else, bindingName);
+        }
+
+        if (expression is not Expr.Lambda lambda || !IsKnownCopyClosureResult(lambda.Body))
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        return FreeVars(lambda.Body, bound).Contains(bindingName);
+    }
+
+    private bool IsRuntimeRcStringProducer(Expr expression)
+    {
+        if (expression is Expr.Add)
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar textProducer, _)
+            && string.Equals(ResolveModuleAlias(textProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && (string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal)
+                || string.Equals(textProducer.Name, "toHex", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar floatProducer, _)
+            && string.Equals(ResolveModuleAlias(floatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(floatProducer.Name, "fromFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar formatProducer, _),
+                _)
+            && string.Equals(ResolveModuleAlias(formatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(formatProducer.Name, "formatFloat", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar caseProducer, _)
+            && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
+                || string.Equals(caseProducer.Name, "asciiLower", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (expression is Expr.Call(Expr.QualifiedVar bigIntProducer, _)
+            && string.Equals(ResolveModuleAlias(bigIntProducer.Module), "Ashes.Text", StringComparison.Ordinal)
+            && string.Equals(bigIntProducer.Name, "fromBigInt", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return expression is Expr.Call(
+                Expr.Call(
+                    Expr.Call(Expr.QualifiedVar qualified, _),
+                    _),
+                _)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "subText", StringComparison.Ordinal);
+    }
+
+    private bool IsRuntimeRcBytesProducer(Expr expression)
+    {
+        Expr.QualifiedVar? qualified = expression switch
+        {
+            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
+            Expr.Call(Expr.QualifiedVar unary, _) => unary,
+            _ => null,
+        };
+        if (qualified is null
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(qualified.Name, "append", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+    }
+
+    private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
+    {
+        if (expression is Expr.Call(
+                Expr.Call(Expr.QualifiedVar binary, Expr left),
+                Expr right)
+            && string.Equals(ResolveModuleAlias(binary.Module), "Ashes.Byte", StringComparison.Ordinal))
+        {
+            if (string.Equals(binary.Name, "append", StringComparison.Ordinal))
+            {
+                return IsArenaAllocationFreeBytesOperand(left)
+                    && IsArenaAllocationFreeBytesOperand(right);
+            }
+
+            if (string.Equals(binary.Name, "appendByte", StringComparison.Ordinal))
+            {
+                return IsArenaAllocationFreeBytesOperand(left)
+                    && right is Expr.UIntLit or Expr.Var or Expr.QualifiedVar;
+            }
+        }
+
+        if (expression is not Expr.Call(Expr.QualifiedVar qualified, Expr argument)
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
+                && IsFreshListConstructionExpression(argument)
+            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+    }
+
+    private bool IsArenaAllocationFreeBytesOperand(Expr expression)
+    {
+        return expression is Expr.Var or Expr.QualifiedVar
+            || expression is Expr.Call(Expr.QualifiedVar fromText, Expr text)
+                && string.Equals(ResolveModuleAlias(fromText.Module), "Ashes.Byte", StringComparison.Ordinal)
+                && string.Equals(fromText.Name, "fromText", StringComparison.Ordinal)
+                && IsArenaAllocationFreeStringOperand(text);
+    }
+
+    private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
+    {
+        if (body is Expr.Call(
+                Expr.QualifiedVar qualified,
+                Expr.Var argument)
+            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "length", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
+    }
+
+    private bool IsRuntimeRcBigIntProducer(Expr expression)
+    {
+        Expr.QualifiedVar? qualified = expression switch
+        {
+            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
+            Expr.Call(Expr.QualifiedVar unary, _) => unary,
+            _ => null,
+        };
+        if (qualified is null
+            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "add", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "sub", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "mul", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "div", StringComparison.Ordinal)
+            || string.Equals(qualified.Name, "mod", StringComparison.Ordinal);
+    }
+
+    private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
+    {
+        if (body is Expr.Call(
+                Expr.Call(Expr.QualifiedVar qualified, Expr left),
+                Expr right)
+            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal)
+            && string.Equals(qualified.Name, "compare", StringComparison.Ordinal)
+            && (left is Expr.Var leftVariable
+                    && string.Equals(leftVariable.Name, bindingName, StringComparison.Ordinal)
+                || right is Expr.Var rightVariable
+                    && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        return IsImmediateRuntimeClosureCaptureUse(body, bindingName);
+    }
+
+    private bool IsRuntimeRcClosureCaptureSafeBigIntProducer(Expr expression)
+    {
+        return IsRuntimeRcBigIntProducer(expression);
+    }
+
+    private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool immediateMatch = IsConstructorExpression(let.Value)
+            && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body);
+        bool consumedByParent = IsConstructorExpression(let.Value)
+            && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
+        bool directOwnedEscape = IsDirectBindingResult(let.Body, let.Name)
+            && IsFreshRuntimeManageableAdtExpression(let.Value);
+        bool capturedOwnedAdt = IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name)
+            && IsFreshRuntimeManageableAdtExpression(let.Value);
+        if (!immediateMatch && !consumedByParent && !directOwnedEscape && !capturedOwnedAdt)
+        {
+            lowered = default;
+            return false;
+        }
+
+        Dictionary<string, bool>? childBindings = null;
+        if (immediateMatch)
+        {
+            if (!TryCollectRuntimeRcAdtChildBindings(let.Name, let.Value, let.Body, out childBindings))
+            {
+                TryCollectRuntimeRcRecordChildBindings(let.Value, let.Body, out childBindings);
+            }
+        }
+
+        bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
+        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
+        _runtimeRcCopyAdtAllocationRequested = true;
+        _runtimeRcAdtChildBindings = childBindings;
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcCopyAdtAllocationRequested = savedRequest;
+            _runtimeRcAdtChildBindings = savedChildBindings;
+        }
+    }
+
+    private bool IsFreshRuntimeManageableAdtExpression(Expr expression)
+    {
+        return TryDescribeConstructorExpression(expression, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
+            && directConstructor is not null
+            && directArguments is not null
+            && resultType is not null
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageFreshHeapChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || CanRuntimeManageOwnedChildAdtConstructorApplication(directConstructor, directArguments, resultType)
+                || (CanRuntimeManageRecursiveCopyAdt(resultType)
+                    && IsFreshConstructorTree(expression, resultType.Symbol)));
+    }
+
+    private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    {
+        bool freshConstruction = IsFreshListConstructionExpression(let.Value);
+        bool freshRuntimeList = freshConstruction
+            && (IsImmediateCopyListMatchUse(let.Name, let.Body)
+                || IsTailConsumedByImmediateListMatch(let.Name, let.Body)
+                || IsDirectBindingResult(let.Body, let.Name)
+                || IsImmediateRuntimeClosureCaptureUse(let.Body, let.Name));
+        bool extendsRuntimeList = TryGetRuntimeRcListTailExtension(let.Name, let.Value, let.Body, out string? tailBinding);
+        if (!freshRuntimeList && !extendsRuntimeList)
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedRequest = _runtimeRcListAllocationRequested;
+        string? savedTailBinding = _runtimeRcListTailBinding;
+        bool savedTailShared = _runtimeRcListTailShared;
+        _runtimeRcListAllocationRequested = true;
+        _runtimeRcListTailBinding = extendsRuntimeList ? tailBinding : null;
+        _runtimeRcListTailShared = tailBinding is not null
+            && ExprReferencesName(let.Body, tailBinding, shadowed: false);
+        try
+        {
+            lowered = LowerExpr(let.Value);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcListAllocationRequested = savedRequest;
+            _runtimeRcListTailBinding = savedTailBinding;
+            _runtimeRcListTailShared = savedTailShared;
+        }
+    }
+
+    private static bool IsFreshListConstructionExpression(Expr expression)
+        => expression switch
+        {
+            Expr.ListLit => true,
+            Expr.Cons cons => IsFreshListConstructionExpression(cons.Tail),
+            _ => false,
+        };
+
+    private static bool IsTailConsumedByImmediateListMatch(string name, Expr body)
+        => body is Expr.Let child
+            && child.Value is Expr.Cons { Tail: Expr.Var tail }
+            && string.Equals(tail.Name, name, StringComparison.Ordinal)
+            && IsImmediateCopyListMatchUse(child.Name, child.Body);
+
+    private bool TryGetRuntimeRcListTailExtension(string name, Expr value, Expr body, out string? tailBinding)
+    {
+        tailBinding = null;
+        if (value is not Expr.Cons { Tail: Expr.Var tail }
+            || !IsImmediateCopyListMatchUse(name, body))
+        {
+            return false;
+        }
+
+        OwnershipInfo? info = LookupOwnedValue(tail.Name);
+        if (info is not { RuntimeManaged: true, IsDropped: false, Type: TypeRef.TList })
+        {
+            return false;
+        }
+
+        tailBinding = tail.Name;
+        return true;
+    }
+
+    private static bool IsImmediateCopyListMatchUse(string name, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(name, body) || body is not Expr.Match(_, var cases, _))
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in cases)
+        {
+            if (MatchCaseReferencesAnyBinding(matchCase, ListTailBindings(matchCase.Pattern)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IEnumerable<string> ListTailBindings(Pattern pattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.Var variable:
+                yield return variable.Name;
+                break;
+            case Pattern.Cons cons:
+                foreach (string name in ListTailBindings(cons.Tail))
+                {
+                    yield return name;
+                }
+                break;
+        }
+    }
+
+    private bool IsImmediateSafeAdtMatchUse(string name, Expr value, Expr body)
+    {
+        if (!IsImmediateAdtMatchUse(name, body)
+            || body is not Expr.Match(_, var cases, _)
+            || !TryGetConstructorExpressionType(value, out TypeSymbol? type)
+            || type is null)
+        {
+            return false;
+        }
+
+        bool recursiveType = type.Constructors.Any(constructor => constructor.ParameterTypes.Any(fieldType =>
+            fieldType is TypeRef.TNamedType child
+            && string.Equals(child.Symbol.Name, type.Name, StringComparison.Ordinal)));
+        if (!recursiveType)
+        {
+            return true;
+        }
+
+        return TryDescribeConstructorExpression(
+                value,
+                out _,
+                out _,
+                out TypeRef.TNamedType? resultType)
+            && resultType is not null
+            && RuntimeReusePointerFieldsAreSafe(cases, resultType);
+    }
+
+    private static bool MatchCaseReferencesAnyBinding(MatchCase matchCase, IEnumerable<string> bindings)
+    {
+        foreach (string binding in bindings)
+        {
+            if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, binding, shadowed: false))
+                || ExprReferencesName(matchCase.Body, binding, shadowed: false))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryGetConstructorExpressionType(Expr expression, out TypeSymbol? type)
+    {
+        if (TryDescribeConstructorExpression(
+            expression,
+            out ConstructorSymbol? constructor,
+            out _,
+            out _)
+            && constructor is not null
+            && _typeSymbols.TryGetValue(constructor.ParentType, out type))
+        {
+            return true;
+        }
+
+        type = null;
+        return false;
+    }
+
+    private bool IsRecursiveAdtChildConsumedByImmediateMatch(string name, Expr body)
+    {
+        if (body is not Expr.Let parent
+            || !IsImmediateSafeAdtMatchUse(parent.Name, parent.Value, parent.Body)
+            || !TryDescribeConstructorExpression(parent.Value, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? parentType)
+            || constructor is null
+            || arguments is null
+            || parentType is null
+            || !CanRuntimeManageRecursiveCopyAdt(parentType))
+        {
+            return false;
+        }
+
+        bool consumed = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, parentType));
+            if (fieldType is not TypeRef.TNamedType child
+                || !string.Equals(child.Symbol.Name, parentType.Symbol.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (arguments[i] is Expr.Var variable && string.Equals(variable.Name, name, StringComparison.Ordinal))
+            {
+                consumed = true;
+            }
+            else if (!IsFreshConstructorTree(arguments[i], parentType.Symbol))
+            {
+                return false;
+            }
+        }
+
+        return consumed;
+    }
+
+    private bool IsRuntimeManagedRecordChildConsumedByImmediateParent(string name, Expr body)
+    {
+        if (body is not Expr.Let parent
+            || !TryDescribeConstructorExpression(
+                parent.Value,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? parentType)
+            || constructor is null
+            || arguments is null
+            || parentType is null
+            || (!CanRuntimeManageAdt(parentType)
+                && !CanRuntimeManageOwnedChildAdt(parentType))
+            || !IsImmediateRuntimeManagedParentUse(parent))
+        {
+            return false;
+        }
+
+        bool consumed = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, parentType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (arguments[i] is Expr.Var variable
+                && string.Equals(variable.Name, name, StringComparison.Ordinal))
+            {
+                consumed = true;
+            }
+            else if (arguments[i] is not Expr.RecordLit)
+            {
+                return false;
+            }
+        }
+
+        return consumed;
+    }
+
+    private bool IsImmediateRuntimeManagedParentUse(Expr.Let parent)
+    {
+        return parent.Value is Expr.RecordLit
+            ? IsImmediateCopyUseOfRecord(parent.Body, parent.Name)
+                || IsImmediateRuntimeRecordMatchUse(parent.Body, parent.Name)
+            : IsImmediateSafeAdtMatchUse(parent.Name, parent.Value, parent.Body);
+    }
+
+    private bool TryCollectRuntimeRcAdtChildBindings(
+        string name,
+        Expr value,
+        Expr body,
+        out Dictionary<string, bool>? bindings)
+    {
+        bindings = null;
+        if (!IsImmediateSafeAdtMatchUse(name, value, body)
+            || !TryDescribeConstructorExpression(value, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? resultType)
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || !CanRuntimeManageRecursiveCopyAdt(resultType))
+        {
+            return false;
+        }
+
+        var collected = new Dictionary<string, bool>(StringComparer.Ordinal);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (fieldType is not TypeRef.TNamedType child
+                || !string.Equals(child.Symbol.Name, resultType.Symbol.Name, StringComparison.Ordinal)
+                || IsFreshConstructorTree(arguments[i], resultType.Symbol))
+            {
+                continue;
+            }
+
+            if (arguments[i] is not Expr.Var variable
+                || collected.ContainsKey(variable.Name)
+                || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false })
+            {
+                return false;
+            }
+
+            collected[variable.Name] = ExprReferencesName(body, variable.Name, shadowed: false);
+        }
+
+        bindings = collected.Count == 0 ? null : collected;
+        return collected.Count > 0;
+    }
+
+    private bool TryCollectRuntimeRcRecordChildBindings(
+        Expr value,
+        Expr body,
+        out Dictionary<string, bool>? bindings)
+    {
+        bindings = null;
+        if (!TryDescribeConstructorExpression(
+                value,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? resultType)
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || (!CanRuntimeManageAdt(resultType)
+                && !CanRuntimeManageOwnedChildAdt(resultType)))
+        {
+            return false;
+        }
+
+        Dictionary<string, bool> collected = new(StringComparer.Ordinal);
+        HashSet<string> referencedNames = FreeVars(body, []);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType) || arguments[i] is Expr.RecordLit)
+            {
+                continue;
+            }
+
+            if (fieldType is not TypeRef.TNamedType child
+                || arguments[i] is not Expr.Var variable
+                || collected.ContainsKey(variable.Name)
+                || LookupOwnedValue(variable.Name) is not
+                {
+                    RuntimeManaged: true,
+                    IsDropped: false,
+                    Type: TypeRef.TNamedType ownedChild,
+                }
+                || !ReferenceEquals(ownedChild.Symbol, child.Symbol))
+            {
+                return false;
+            }
+
+            collected[variable.Name] = referencedNames.Contains(variable.Name);
+        }
+
+        bindings = collected.Count == 0 ? null : collected;
+        return collected.Count > 0;
+    }
+
+    private bool TryDescribeConstructorExpression(
+        Expr expression,
+        out ConstructorSymbol? constructor,
+        out List<Expr>? arguments,
+        out TypeRef.TNamedType? resultType)
+    {
+        if (expression is Expr.RecordLit record
+            && _constructorSymbols.TryGetValue(record.TypeName, out constructor)
+            && constructor is not null
+            && constructor.DeclaringSyntax.FieldNames.Count == constructor.Arity)
+        {
+            Dictionary<string, Expr> providedFields = new(StringComparer.Ordinal);
+            foreach ((string name, Expr value) in record.Fields)
+            {
+                if (!providedFields.TryAdd(name, value))
+                {
+                    arguments = null;
+                    resultType = null;
+                    return false;
+                }
+            }
+
+            arguments = [];
+            foreach (string fieldName in constructor.DeclaringSyntax.FieldNames)
+            {
+                if (!providedFields.TryGetValue(fieldName, out Expr? value))
+                {
+                    arguments = null;
+                    resultType = null;
+                    return false;
+                }
+
+                arguments.Add(value);
+            }
+
+            resultType = InstantiateAdtType(constructor);
+            return arguments.Count == record.Fields.Count;
+        }
+
+        arguments = [];
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is Expr.Var variable
+            && _constructorSymbols.TryGetValue(variable.Name, out constructor)
+            && constructor is not null)
+        {
+            resultType = InstantiateAdtType(constructor);
+            return arguments.Count == constructor.Arity;
+        }
+
+        constructor = null;
+        arguments = null;
+        resultType = null;
+        return false;
+    }
+
+    private static bool IsImmediateAdtMatchUse(string name, Expr body)
+    {
+        if (body is not Expr.Match(Expr.Var value, var cases, _)
+            || !string.Equals(value.Name, name, StringComparison.Ordinal)
+            || cases.Count < 2)
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in cases)
+        {
+            bool shadowed = PatternBindings(matchCase.Pattern)
+                .Any(boundName => string.Equals(boundName, name, StringComparison.Ordinal));
+            if ((matchCase.Guard is not null && ExprReferencesName(matchCase.Guard, name, shadowed))
+                || ExprReferencesName(matchCase.Body, name, shadowed))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsImmediateRuntimeRecordMatchUse(Expr body, string recordName)
+    {
+        return body is Expr.Match(Expr.Var value, [MatchCase matchCase], _)
+            && string.Equals(value.Name, recordName, StringComparison.Ordinal)
+            && matchCase.Pattern is Pattern.Constructor
+            && matchCase.Guard is null
+            && !ExprReferencesName(matchCase.Body, recordName, shadowed: false);
+    }
+
+    /// <summary>
+    /// Proves the deliberately small source boundary for the first RC-managed records. The record
+    /// itself may only appear as a qualified field receiver in an immediate scalar expression.
+    /// Binder, aggregate, control-flow, async, and handler forms stay on the arena path until RC
+    /// ownership is represented across those boundaries.
+    /// </summary>
+    private static bool IsImmediateCopyUseOfRecord(Expr expr, string recordName)
+    {
+        return expr switch
+        {
+            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit => true,
+            Expr.Var value => !string.Equals(value.Name, recordName, StringComparison.Ordinal),
+            Expr.QualifiedVar => true,
+            Expr.Add value => Both(value.Left, value.Right),
+            Expr.Subtract value => Both(value.Left, value.Right),
+            Expr.Multiply value => Both(value.Left, value.Right),
+            Expr.Divide value => Both(value.Left, value.Right),
+            Expr.Modulo value => Both(value.Left, value.Right),
+            Expr.BitwiseAnd value => Both(value.Left, value.Right),
+            Expr.BitwiseOr value => Both(value.Left, value.Right),
+            Expr.BitwiseXor value => Both(value.Left, value.Right),
+            Expr.ShiftLeft value => Both(value.Left, value.Right),
+            Expr.ShiftRight value => Both(value.Left, value.Right),
+            Expr.BitwiseNot value => IsImmediateCopyUseOfRecord(value.Operand, recordName),
+            Expr.GreaterThan value => Both(value.Left, value.Right),
+            Expr.GreaterOrEqual value => Both(value.Left, value.Right),
+            Expr.LessThan value => Both(value.Left, value.Right),
+            Expr.LessOrEqual value => Both(value.Left, value.Right),
+            Expr.Equal value => Both(value.Left, value.Right),
+            Expr.NotEqual value => Both(value.Left, value.Right),
+            Expr.Call value => Both(value.Func, value.Arg),
+            _ => false,
+        };
+
+        bool Both(Expr left, Expr right)
+            => IsImmediateCopyUseOfRecord(left, recordName)
+                && IsImmediateCopyUseOfRecord(right, recordName);
     }
 
     private void PushLetScope(Expr.Let let, int slot, TypeScheme scheme)
@@ -1897,7 +4441,7 @@ public sealed partial class Lowering
         });
     }
 
-    private void TrackLetOwnership(Expr.Let let, int slot, TypeRef valueType)
+    private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         var prunedValueType = Prune(valueType);
         var ownedTypeName = GetOwnedTypeName(prunedValueType);
@@ -1917,9 +4461,75 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                TrackOwnedValue(let.Name, slot, ownedTypeName, isResource, AstSpans.GetLetNameOrDefault(let), prunedValueType);
+                bool runtimeManaged = IsRuntimeManagedResultTemp(valueTemp);
+                ConstructorSymbol? runtimeConstructor = null;
+                if (runtimeManaged
+                    && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))
+                {
+                    runtimeConstructor = constructor;
+                }
+
+                bool runtimeDeepUnique = runtimeManaged && prunedValueType switch
+                {
+                    TypeRef.TList => IsFreshListConstructionExpression(let.Value),
+                    TypeRef.TNamedType named when CanRuntimeManageRecursiveCopyAdt(named)
+                        => IsFreshConstructorTree(let.Value, named.Symbol),
+                    _ => false,
+                };
+
+                TrackOwnedValue(
+                    let.Name,
+                    slot,
+                    ownedTypeName,
+                    isResource,
+                    AstSpans.GetLetNameOrDefault(let),
+                    prunedValueType,
+                    runtimeManaged,
+                    runtimeConstructor,
+                    runtimeDeepUnique);
+                if (runtimeManaged && IsDirectBindingResult(let.Body, let.Name))
+                {
+                    LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
+                }
             }
         }
+    }
+
+    private bool IsRuntimeManagedResultTemp(int valueTemp)
+    {
+        return _runtimeManagedResultTemps.Contains(valueTemp)
+            || _inst.Any(instruction => instruction switch
+            {
+                IrInst.AllocAdt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.AllocReusing { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntToInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntFromString { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.TextUncons { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BigIntBinary { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesSingleton { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesEmpty { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU16Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU32Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.BytesU64Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                _ => false,
+            });
     }
 
     private (int Temp, TypeRef Type) PopLetScope(int bodyTemp, TypeRef bodyType)
@@ -1938,8 +4548,13 @@ public sealed partial class Lowering
                 return (finalTemp, bodyType);
             }
 
+            bool runtimeManagedResult = IsRuntimeManagedResultTemp(bodyTemp);
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+            if (runtimeManagedResult)
+            {
+                _runtimeManagedResultTemps.Add(resultTemp);
+            }
             return (resultTemp, bodyType);
         }
 
@@ -2153,14 +4768,24 @@ public sealed partial class Lowering
         if (hasTailSelfCalls)
         {
             var tcoParamNames = CollectLambdaParams(lam2);
+            var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext
             {
                 SelfName = letRecursive.Name,
                 ParamCount = paramCount,
                 ParamNames = tcoParamNames,
                 InTailPosition = false,
-                LoopInvariantParams = CollectLoopInvariantParams(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name),
-                AffineStrParams = CollectAffineAccumulators(GetInnermostBody(lam2), tcoParamNames, letRecursive.Name)
+                LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
+                FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                ConsumedListTailParams = consumedListTailParams,
+                BorrowableConsumedListParams = CollectBorrowableConsumedListParams(
+                    innermostBody,
+                    tcoParamNames,
+                    letRecursive.Name,
+                    consumedListTailParams),
+                FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
+                AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
             };
         }
         else
@@ -2315,7 +4940,7 @@ public sealed partial class Lowering
         // In-place reuse: only one branch runs at a time, so a live reuse token is available to each
         // independently. Snapshot before Then, restore before Else, so both branches may reuse the
         // same dead cell (at runtime only one does).
-        var reuseTokensAtIf = new List<(int, int)>(_reuseTokens);
+        var reuseTokensAtIf = new List<ReuseToken>(_reuseTokens);
 
         int slot = NewLocal();
         var thenCredits = BeginExclusiveBranch([iff.Else]);
@@ -2351,7 +4976,16 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
         var resultType = thenType is TypeRef.TNever ? elseType : thenType;
+        MarkUniformRuntimeManagedResult(target, tTemp, eTemp);
         return (target, Prune(resultType));
+    }
+
+    private void MarkUniformRuntimeManagedResult(int resultTemp, int leftTemp, int rightTemp)
+    {
+        if (IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp))
+        {
+            _runtimeManagedResultTemps.Add(resultTemp);
+        }
     }
 
     private (int, TypeRef) LowerLambda(Expr.Lambda lam, bool stackAllocateClosure = false)
@@ -2379,16 +5013,16 @@ public sealed partial class Lowering
         LowerLambdaCoreSeedParamType(lam, paramTy);
 
         // Compute free variables for capture, then allocate and fill the env at the creation site.
-        var (free, captures, envPtrTemp) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
+        var (free, captures, envPtrTemp, knownCaptureLabels) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
 
-        // Create lambda function label
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        RecordTcoParamLabel(lam.ParamName, label);
 
         // Build function body IR in isolation
         var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
         int argSlot = LowerLambdaCoreResetFrame();
         RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
-        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
 
         // TCO: for the innermost lambda in a recursive chain, create local copies of captured params
         // and emit a loop start label so tail self-calls can jump back (see the loop-entry helper).
@@ -2409,14 +5043,15 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
-        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, reuseInsertIndex);
-
-        LowerLambdaCoreRecordAccStableFold(lam, savedTcoCtx, specElidedAccs);
+        LowerLambdaCoreFinalizeTcoOwnership(
+            lam, reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
 
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
 
         Unify(bodyType, retTy);
+        RecordFunctionResultProvenance(label, bodyTemp);
+        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
         LowerLambdaCoreFinishFunction(label);
@@ -2424,6 +5059,261 @@ public sealed partial class Lowering
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
         return (closureTemp, funTy);
+    }
+
+    private void LowerLambdaCoreFinalizeTcoOwnership(
+        Expr.Lambda lam,
+        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
+        HashSet<int> directReuseSlots,
+        TcoContext? tco,
+        int reuseInsertIndex,
+        HashSet<string> specElidedAccs,
+        int bodyTemp)
+    {
+        LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
+        ResolvePendingRuntimeArgumentFlags(tco);
+        LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, tco, reuseInsertIndex);
+        LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
+        LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
+    }
+
+    private void LowerLambdaCoreRefreshRuntimeManagedTcoParams(TcoContext? tco)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        // The first scan runs before the body has constrained every parameter type. A list whose
+        // head comes from another inferred function can therefore still be a TVar at loop entry
+        // and miss RC eligibility. Re-run the scan after lowering the complete body, when the
+        // self-call has resolved those types, so entry normalization and deferred back-edge
+        // lowering see the final ownership shape.
+        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
+            _scopes.Peek(),
+            tco,
+            includeFreshClosures: false);
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            if (tco.RuntimeManagedParamTypes[slot] is not TypeRef.TFun
+                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
+        }
+    }
+
+    private void ResolvePendingRuntimeArgumentFlags(TcoContext? tco)
+    {
+        foreach ((int flagTemp, string parameterName) in _pendingRuntimeArgumentFlags)
+        {
+            int parameterIndex = tco?.ParamNames.IndexOf(parameterName) ?? -1;
+            bool runtimeManaged = parameterIndex >= 0
+                && parameterIndex < tco!.ParamSlots.Count
+                && tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]);
+            if (runtimeManaged)
+            {
+                continue;
+            }
+
+            int definitionIndex = _inst.FindIndex(instruction =>
+                instruction is IrInst.AndInt { Target: var target } && target == flagTemp);
+            if (definitionIndex >= 0)
+            {
+                _inst[definitionIndex] = new IrInst.LoadConstInt(flagTemp, 0)
+                {
+                    Location = _inst[definitionIndex].Location,
+                };
+            }
+        }
+    }
+
+    private void LowerLambdaCoreRefreshRuntimeManagedTcoResult(TcoContext? tco, int bodyTemp)
+    {
+        if (tco is null || tco.RuntimeManagedParamSlots.Count == 0)
+        {
+            return;
+        }
+
+        bool[] reachableInstructions = FindReachableInstructions(_inst);
+        var managedTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var managedLocals = new HashSet<int>();
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int instructionIndex = 0; instructionIndex < _inst.Count; instructionIndex++)
+            {
+                if (!reachableInstructions[instructionIndex])
+                {
+                    continue;
+                }
+
+                IrInst instruction = _inst[instructionIndex];
+                changed |= instruction switch
+                {
+                    IrInst.LoadLocal load
+                        when tco.RuntimeManagedParamSlots.Contains(load.Slot)
+                            || managedLocals.Contains(load.Slot)
+                        => managedTemps.Add(load.Target),
+                    IrInst.Borrow borrow when managedTemps.Contains(borrow.SourceTemp)
+                        => managedTemps.Add(borrow.Target),
+                    IrInst.RcDup duplicate when managedTemps.Contains(duplicate.SourceTemp)
+                        => managedTemps.Add(duplicate.Target),
+                    IrInst.ConcatStr concat when managedTemps.Contains(concat.Left)
+                        || managedTemps.Contains(concat.Right)
+                        => managedTemps.Add(concat.Target),
+                    IrInst.ConcatStrTip concat when managedTemps.Contains(concat.Left)
+                        => managedTemps.Add(concat.Target),
+                    _ => false,
+                };
+            }
+
+            foreach (IGrouping<int, IrInst.StoreLocal> stores in _inst
+                         .Where((_, instructionIndex) => reachableInstructions[instructionIndex])
+                         .OfType<IrInst.StoreLocal>()
+                         .GroupBy(store => store.Slot))
+            {
+                if (stores.All(store => managedTemps.Contains(store.Source)))
+                {
+                    changed |= managedLocals.Add(stores.Key);
+                }
+            }
+        }
+        while (changed);
+
+        PromoteRuntimeManagedStringConcats(managedTemps);
+
+        if (managedTemps.Contains(bodyTemp))
+        {
+            _runtimeManagedResultTemps.Add(bodyTemp);
+        }
+    }
+
+    private void PromoteRuntimeManagedStringConcats(IReadOnlySet<int> managedTemps)
+    {
+        for (int index = 0; index < _inst.Count; index++)
+        {
+            if (_inst[index] is IrInst.ConcatStr { RuntimeManaged: false } concat
+                && managedTemps.Contains(concat.Target))
+            {
+                _inst[index] = concat with { RuntimeManaged = true };
+            }
+            else if (_inst[index] is IrInst.ConcatStrTip { RuntimeManaged: false } concatTip
+                && managedTemps.Contains(concatTip.Target))
+            {
+                _inst[index] = concatTip with { RuntimeManaged = true };
+            }
+        }
+    }
+
+    private static bool[] FindReachableInstructions(IReadOnlyList<IrInst> instructions)
+    {
+        var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            if (instructions[index] is IrInst.Label label)
+            {
+                labels[label.Name] = index;
+            }
+        }
+
+        var reachable = new bool[instructions.Count];
+        var pending = new Queue<int>();
+        if (instructions.Count > 0)
+        {
+            pending.Enqueue(0);
+        }
+
+        void Enqueue(int index)
+        {
+            if (index >= 0 && index < instructions.Count && !reachable[index])
+            {
+                pending.Enqueue(index);
+            }
+        }
+
+        while (pending.Count > 0)
+        {
+            int index = pending.Dequeue();
+            if (reachable[index])
+            {
+                continue;
+            }
+
+            reachable[index] = true;
+            switch (instructions[index])
+            {
+                case IrInst.Jump jump:
+                    Enqueue(labels[jump.Target]);
+                    break;
+                case IrInst.JumpIfFalse jumpIfFalse:
+                    Enqueue(index + 1);
+                    Enqueue(labels[jumpIfFalse.Target]);
+                    break;
+                case IrInst.SwitchTag switchTag:
+                    foreach ((long _, string label) in switchTag.Cases)
+                    {
+                        Enqueue(labels[label]);
+                    }
+                    Enqueue(labels[switchTag.DefaultLabel]);
+                    break;
+                case IrInst.Return:
+                    break;
+                default:
+                    Enqueue(index + 1);
+                    break;
+            }
+        }
+
+        return reachable;
+    }
+
+    private void RecordTcoParamLabel(string paramName, string label)
+    {
+        if (_tcoCtx is { DescendingChain: true } tco
+            && tco.ParamNames.Contains(paramName, StringComparer.Ordinal))
+        {
+            tco.ParamLabels[paramName] = label;
+        }
+    }
+
+    private void LowerLambdaCoreSpliceTcoEntryOwnership(
+        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
+        HashSet<int> directReuseSlots,
+        TcoContext? tco,
+        int insertIndex)
+    {
+        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, insertIndex);
+        LowerLambdaCoreSpliceRuntimeManagedTcoParams(tco, insertIndex);
+    }
+
+    private void RecordFunctionResultProvenance(string label, int bodyTemp)
+    {
+        RecordReturnedClosureLabel(label, bodyTemp);
+        if (IsRuntimeManagedResultTemp(bodyTemp))
+        {
+            _runtimeManagedFunctionResultLabels.Add(label);
+        }
+    }
+
+    private void RecordReturnedClosureLabel(string label, int bodyTemp)
+    {
+        string? returnedLabel = _inst.LastOrDefault(instruction => instruction switch
+        {
+            IrInst.MakeClosure { Target: var target } => target == bodyTemp,
+            IrInst.MakeClosureStack { Target: var target } => target == bodyTemp,
+            _ => false,
+        }) switch
+        {
+            IrInst.MakeClosure closure => closure.FuncLabel,
+            IrInst.MakeClosureStack closure => closure.FuncLabel,
+            _ => null,
+        };
+        if (returnedLabel is not null)
+        {
+            _functionReturnedClosureLabels[label] = returnedLabel;
+        }
     }
 
     // Monomorphize a reuse specialization: bind this curried parameter to the concrete type from
@@ -2455,15 +5345,9 @@ public sealed partial class Lowering
         }
     }
 
-    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
+    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
     {
-        var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
-        if (selfName is not null)
-        {
-            bound.Add(selfName);
-        }
-
-        var free = FreeVars(lam.Body, bound);
+        HashSet<string> free = LowerLambdaCoreCollectFreeVariables(lam, selfName);
 
         // For a mutual-recursion group member, every member shares one identical environment so a
         // sibling's closure can be reconstructed (via Binding.Self) using the current member's env.
@@ -2472,8 +5356,37 @@ public sealed partial class Lowering
         var captures = recursiveGroup is not null
             ? recursiveGroup.SharedCaptures
             : free.Where(n => Lookup(n) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Self or Binding.Scheme).Distinct(StringComparer.Ordinal).ToList();
+        var knownCaptureLabels = new Dictionary<int, string>();
+        for (int i = 0; i < captures.Count; i++)
+        {
+            if (TryResolveKnownFunctionLabel(captures[i], out string knownLabel))
+            {
+                knownCaptureLabels[i] = knownLabel;
+            }
+        }
 
-        // At lambda creation site: allocate env if needed
+        int envPtrTemp = LowerLambdaCoreBuildEnvAllocation(captures, recursiveGroup, stackAllocateClosure);
+        return (free, captures, envPtrTemp, knownCaptureLabels);
+    }
+
+    private HashSet<string> LowerLambdaCoreCollectFreeVariables(Expr.Lambda lam, string? selfName)
+    {
+        var bound = new HashSet<string>(StringComparer.Ordinal) { lam.ParamName };
+        if (selfName is not null)
+        {
+            bound.Add(selfName);
+        }
+
+        var free = FreeVars(lam.Body, bound);
+        ExpandFreshInlinableCaptures(free, bound);
+        return free;
+    }
+
+    private int LowerLambdaCoreBuildEnvAllocation(
+        IReadOnlyList<string> captures,
+        RecursiveGroupContext? recursiveGroup,
+        bool stackAllocateClosure)
+    {
         int envPtrTemp;
         if (recursiveGroup is not null)
         {
@@ -2495,7 +5408,7 @@ public sealed partial class Lowering
             }
             else
             {
-                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8));
+                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8, _runtimeRcClosureAllocationRequested));
             }
 
             for (int i = 0; i < captures.Count; i++)
@@ -2507,7 +5420,28 @@ public sealed partial class Lowering
             }
         }
 
-        return (free, captures, envPtrTemp);
+        return envPtrTemp;
+    }
+
+    private void ExpandFreshInlinableCaptures(HashSet<string> free, IReadOnlySet<string> outerBound)
+    {
+        foreach (string helperName in free.ToArray())
+        {
+            if (!_inlinableFunctions.TryGetValue(helperName, out var helper)
+                || GetOwnershipSummary(helperName) is not { ResultFresh: true })
+            {
+                continue;
+            }
+
+            var helperBound = new HashSet<string>(helper.Params, StringComparer.Ordinal);
+            foreach (string helperFree in FreeVars(helper.Body, helperBound))
+            {
+                if (!outerBound.Contains(helperFree))
+                {
+                    free.Add(helperFree);
+                }
+            }
+        }
     }
 
     // The enclosing function's lowering state snapshotted around a lambda body (restored by
@@ -2521,10 +5455,16 @@ public sealed partial class Lowering
         Dictionary<int, string> LocalNames,
         Dictionary<int, TypeRef> LocalTypes,
         HashSet<string> LinearReuseNames,
-        List<(int, int)> ReuseTokens,
+        List<ReuseToken> ReuseTokens,
         HashSet<string> SpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
+        HashSet<int> RuntimeManagedResultTemps,
+        Dictionary<int, string> PendingRuntimeArgumentFlags,
+        Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
+        HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
+        Dictionary<int, string> KnownFunctionLabelsBySlot,
+        Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
         Dictionary<int, Expr> LetBindingValues);
 
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
@@ -2561,22 +5501,55 @@ public sealed partial class Lowering
         // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
         // tokens (frame-local temps) or linear accumulators, and vice versa.
         var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
-        var savedReuseTokens = new List<(int, int)>(_reuseTokens);
+        var savedReuseTokens = new List<ReuseToken>(_reuseTokens);
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
+        var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var savedPendingRuntimeArgumentFlags = new Dictionary<int, string>(_pendingRuntimeArgumentFlags);
+        var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
+            SaveAndClearRuntimeManagedTcoPatternAliases();
+        var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
+        var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
+        ClearLambdaFrameState();
+
+        return new LowerLambdaCoreFrame(
+            savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
+            savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
+            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
+            savedRuntimeManagedResultTemps, savedPendingRuntimeArgumentFlags,
+            savedRuntimeManagedTcoPatternAliases,
+            savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
+            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
+    }
+
+    private void ClearLambdaFrameState()
+    {
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
+        _runtimeManagedResultTemps.Clear();
+        _pendingRuntimeArgumentFlags.Clear();
+        _knownFunctionLabelsBySlot.Clear();
+        _knownFunctionLabelsByEnvIndex.Clear();
         _letBindingValues.Clear();
+    }
 
-        return new LowerLambdaCoreFrame(
-            savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
-            savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
-            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps, savedLetBindingValues);
+    private (Dictionary<string, RuntimeManagedTcoPatternAlias> Aliases, HashSet<string> ActiveAliases)
+        SaveAndClearRuntimeManagedTcoPatternAliases()
+    {
+        var aliases = new Dictionary<string, RuntimeManagedTcoPatternAlias>(
+            _runtimeManagedTcoPatternAliases,
+            StringComparer.Ordinal);
+        var activeAliases = new HashSet<string>(
+            _activeRuntimeManagedTcoPatternAliases,
+            StringComparer.Ordinal);
+        _runtimeManagedTcoPatternAliases.Clear();
+        _activeRuntimeManagedTcoPatternAliases.Clear();
+        return (aliases, activeAliases);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -2620,7 +5593,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
+    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, IReadOnlyDictionary<int, string> knownCaptureLabels, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
     {
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
@@ -2642,6 +5615,11 @@ public sealed partial class Lowering
             else
             {
                 scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
+            }
+
+            if (knownCaptureLabels.TryGetValue(i, out string? knownLabel))
+            {
+                _knownFunctionLabelsByEnvIndex[i] = knownLabel;
             }
         }
         if (recursiveGroup is not null)
@@ -2745,6 +5723,7 @@ public sealed partial class Lowering
         tco.ParamSlots.Clear();
 
         LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
+        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(scope, tco);
 
         var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
         int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
@@ -2753,6 +5732,109 @@ public sealed partial class Lowering
 
         tco.InTailPosition = true;
         return reuseInsertIndex;
+    }
+
+    private void LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
+        IReadOnlyDictionary<string, Binding> scope,
+        TcoContext tco,
+        bool includeFreshClosures = true,
+        IReadOnlySet<int>? excludedSlots = null)
+    {
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        foreach (int slot in tco.ParamSlots)
+        {
+            if (excludedSlots?.Contains(slot) == true)
+            {
+                continue;
+            }
+
+            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
+                .FirstOrDefault(local => local.Slot == slot);
+            if (parameter is null)
+            {
+                continue;
+            }
+
+            TypeRef parameterType = Prune(parameter.T);
+            int paramIndex = tco.ParamSlots.IndexOf(slot);
+            bool freshRebuiltList = paramIndex >= 0
+                && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
+            bool affineConsList = paramIndex >= 0
+                && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
+            bool consumedListTail = paramIndex >= 0
+                && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
+            bool freshClosure = paramIndex >= 0
+                && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
+            if (parameterType is TypeRef.TStr or TypeRef.TBigInt
+                || parameterType is TypeRef.TTuple tuple
+                    && CanRuntimeManageOwnedTupleType(tuple)
+                || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
+                || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
+                || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageTcoAdt(ownedAdt)
+                || parameterType is TypeRef.TList list
+                    && CanRuntimeManageTcoListElement(list.Element)
+                    && (freshRebuiltList
+                        || affineConsList
+                        || consumedListTail && !CanArenaReset(Prune(list.Element))
+                            && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
+                || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
+            {
+                tco.RuntimeManagedParamSlots.Add(slot);
+                tco.RuntimeManagedParamTypes[slot] = parameterType;
+                if (parameterType is TypeRef.TList)
+                {
+                    tco.RuntimeManagedListParamSlots.Add(slot);
+                }
+                else if (parameterType is TypeRef.TFun)
+                {
+                    tco.RuntimeManagedClosureParamSlots.Add(slot);
+                }
+            }
+        }
+
+        LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(scope, tco);
+    }
+
+    private void LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(
+        IReadOnlyDictionary<string, Binding> scope,
+        TcoContext tco)
+    {
+        foreach (int slot in tco.ParamSlots)
+        {
+            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
+                .FirstOrDefault(local => local.Slot == slot);
+            int index = tco.ParamSlots.IndexOf(slot);
+            if (parameter is null
+                || index < 0
+                || CanArenaReset(Prune(parameter.T))
+                || IsResourceHandleType(Prune(parameter.T))
+                || tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                || Prune(parameter.T) is TypeRef.TList list
+                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && (CanArenaReset(Prune(list.Element))
+                        || IsBorrowableInspectOnlyList(tco, index, list))
+                || tco.RuntimeManagedParamSlots.Contains(slot))
+            {
+                continue;
+            }
+
+            ClearRuntimeManagedTcoParams(tco);
+            return;
+        }
+    }
+
+    private static void ClearRuntimeManagedTcoParams(TcoContext tco)
+    {
+        tco.RuntimeManagedParamSlots.Clear();
+        tco.RuntimeManagedListParamSlots.Clear();
+        tco.RuntimeManagedClosureParamSlots.Clear();
+        tco.RuntimeManagedParamActiveSlots.Clear();
+        tco.RuntimeManagedClosureActiveSlots.Clear();
+        tco.RuntimeManagedParamTypes.Clear();
     }
 
     private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
@@ -2830,6 +5912,7 @@ public sealed partial class Lowering
         {
             if (_scopes.Peek().TryGetValue(accName, out var accBinding)
                 && accBinding is Binding.Local accLocal
+                && !tco.RuntimeManagedParamSlots.Contains(accLocal.Slot)
                 && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
                 && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
                 && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
@@ -2888,13 +5971,11 @@ public sealed partial class Lowering
 
             if (_scopes.Peek().TryGetValue(accName, out var accB)
                 && accB is Binding.Local accL
+                && !tco.RuntimeManagedParamSlots.Contains(accL.Slot)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
-                && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is TypeRef.TNamedType paramNamed
-                && !BuiltinRegistry.IsResourceTypeName(paramNamed.Symbol.Name)
-                && !IsResourceBearing(paramNamed)
-                && !CanCopyOutAdt(paramNamed, out _)
-                && TrySynthesizeAdtCopier(paramNamed) is not null)
+                && IsReusableSpecializationAccumulatorType(
+                    NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1)))
             {
                 _linearSpecializationAccumulators.Add(accName);
 
@@ -2917,6 +5998,20 @@ public sealed partial class Lowering
                 }
             }
         }
+    }
+
+    private bool IsReusableSpecializationAccumulatorType(TypeRef? type)
+    {
+        TypeRef? accumulator = type is null ? null : Prune(type);
+        return accumulator switch
+        {
+            TypeRef.TList list => IsDeepCopyOutSafeType(Prune(list.Element)),
+            TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && !IsResourceBearing(named)
+                && !CanCopyOutAdt(named, out _)
+                && TrySynthesizeAdtCopier(named) is not null,
+            _ => false,
+        };
     }
 
     private void LowerLambdaCoreEmitTcoLoopEntry(string label, TcoContext tco)
@@ -2945,6 +6040,21 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(resvStart, compactionZero));
             Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
             tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
+        }
+
+        foreach (int closureSlot in tco.RuntimeManagedClosureParamSlots)
+        {
+            int activeSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(activeSlot, compactionZero));
+            tco.RuntimeManagedClosureActiveSlots[closureSlot] = activeSlot;
+        }
+
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            if (!tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
         }
 
         // Emit loop start label
@@ -2994,7 +6104,9 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = LowerExpr(lam.Body);
+        var (bodyTemp, bodyType) = !_usesAsync && CapabilityGlobalCount == 0
+            ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
+            : LowerExpr(lam.Body);
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitOpParamScope(opParamScope);
@@ -3067,6 +6179,222 @@ public sealed partial class Lowering
         _inst.InsertRange(reuseInsertIndex, generated);
     }
 
+    private void LowerLambdaCoreSpliceRuntimeManagedTcoParams(TcoContext? tco, int insertIndex)
+    {
+        if (tco is null || insertIndex < 0 || tco.RuntimeManagedParamSlots.Count == 0)
+        {
+            return;
+        }
+
+        int generatedStart = _inst.Count;
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            RecordRuntimeNormalizedTcoParamLabel(tco, slot);
+            if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            {
+                continue;
+            }
+            int sourceTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(sourceTemp, slot));
+            int normalizedTemp = slot == 1
+                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.RuntimeManagedParamTypes[slot])
+                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.RuntimeManagedParamTypes[slot]);
+            _runtimeManagedResultTemps.Add(normalizedTemp);
+            Emit(new IrInst.StoreLocal(slot, normalizedTemp));
+            int activeTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(activeTemp, 1));
+            Emit(new IrInst.StoreLocal(tco.RuntimeManagedParamActiveSlots[slot], activeTemp));
+        }
+
+        int generatedCount = _inst.Count - generatedStart;
+        List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
+        _inst.RemoveRange(generatedStart, generatedCount);
+        _inst.InsertRange(insertIndex, generated);
+    }
+
+    private int EmitRuntimeManagedTcoArgumentNormalization(int sourceTemp, TypeRef type)
+    {
+        int resultSlot = NewLocal();
+        int ownershipTemp = NewTemp();
+        Emit(new IrInst.LoadArgumentOwnership(ownershipTemp));
+        string copyLabel = NewLabel("rc_arg_normalize_copy");
+        string doneLabel = NewLabel("rc_arg_normalize_done");
+        Emit(new IrInst.JumpIfFalse(ownershipTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedTcoParamCopy(sourceTemp, type);
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoParamCopy(int sourceTemp, TypeRef type)
+    {
+        int normalizedTemp = NewTemp();
+        if (type is TypeRef.TList list)
+        {
+            if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+            {
+                Emit(new IrInst.CopyOutList(
+                    normalizedTemp, sourceTemp, headCopy, RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+            }
+            else
+            {
+                normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+            }
+        }
+        else if (type is TypeRef.TTuple tuple
+            && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named
+            && !CanCopyOutAdt(named, out _))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+        }
+        else
+        {
+            int copySize = TcoRuntimeManagedCopySize(type);
+            Emit(new IrInst.CopyOutArena(
+                normalizedTemp, sourceTemp, copySize, RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        return normalizedTemp;
+    }
+
+    private void RecordRuntimeNormalizedTcoParamLabel(TcoContext tco, int slot)
+    {
+        // Only the lifted lambda's direct argument (local slot 1) can observe the hidden
+        // ownership flag. Earlier arguments in a curried chain have already been captured in an
+        // environment by the time the innermost TCO body normalizes them.
+        if (slot != 1)
+        {
+            return;
+        }
+
+        int paramIndex = tco.ParamSlots.IndexOf(slot);
+        if (paramIndex >= 0
+            && tco.ParamLabels.TryGetValue(tco.ParamNames[paramIndex], out string? paramLabel))
+        {
+            _runtimeNormalizedFunctionArgumentLabels.Add(paramLabel);
+        }
+    }
+
+    private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(TcoContext? tco, int bodyTemp)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        int transferSelectedSlot = -1;
+        int zeroTemp = -1;
+        if (IsRuntimeManagedResultTemp(bodyTemp))
+        {
+            transferSelectedSlot = NewLocal();
+            zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(transferSelectedSlot, zeroTemp));
+        }
+
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            int sourceTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(sourceTemp, slot));
+            if (transferSelectedSlot < 0)
+            {
+                EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+                continue;
+            }
+
+            int activeSlot = tco.RuntimeManagedClosureParamSlots.Contains(slot)
+                ? tco.RuntimeManagedClosureActiveSlots[slot]
+                : tco.RuntimeManagedParamActiveSlots[slot];
+            int activeTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+            int matchesResultTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(matchesResultTemp, sourceTemp, bodyTemp));
+            int transferSelectedTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(transferSelectedTemp, transferSelectedSlot));
+            int transferAvailableTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(transferAvailableTemp, transferSelectedTemp, zeroTemp));
+            int activeMatchTemp = NewTemp();
+            Emit(new IrInst.AndInt(activeMatchTemp, activeTemp, matchesResultTemp));
+            int canTransferTemp = NewTemp();
+            Emit(new IrInst.AndInt(canTransferTemp, activeMatchTemp, transferAvailableTemp));
+            string dropLabel = NewLabel("rc_tco_exit_transfer_not_selected");
+            string doneLabel = NewLabel("rc_tco_exit_transfer_done");
+            Emit(new IrInst.JumpIfFalse(canTransferTemp, dropLabel));
+            int oneTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(oneTemp, 1));
+            Emit(new IrInst.StoreLocal(transferSelectedSlot, oneTemp));
+            Emit(new IrInst.Jump(doneLabel));
+            Emit(new IrInst.Label(dropLabel));
+            EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+            Emit(new IrInst.Label(doneLabel));
+        }
+    }
+
+    private void EmitRuntimeManagedTcoExitParamDrop(TcoContext tco, int slot, int sourceTemp)
+    {
+        if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+        {
+            EmitRuntimeManagedClosureDropIfActive(
+                sourceTemp,
+                tco.RuntimeManagedClosureActiveSlots[slot]);
+        }
+        else
+        {
+            EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp);
+        }
+    }
+
+    private void EmitRuntimeManagedTcoParamDropIfActive(TcoContext tco, int slot, int sourceTemp)
+    {
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_tco_exit_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, tco.RuntimeManagedParamActiveSlots[slot]));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        TypeRef type = tco.RuntimeManagedParamTypes[slot];
+        if (tco.RuntimeManagedListParamSlots.Contains(slot) && type is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+        }
+        else if (type is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(
+                sourceTemp,
+                TcoRuntimeManagedTypeName(type),
+                OwnerSlot: -1,
+                RuntimeManaged: true));
+        }
+        Emit(new IrInst.Label(skipLabel));
+    }
+
+    private void EmitRuntimeManagedClosureDropIfActive(int closureTemp, int activeSlot)
+    {
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_closure_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        Emit(new IrInst.CleanupResource(closureTemp, "Function"));
+        Emit(new IrInst.RcDrop(closureTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
+    }
+
     // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
     // decide whether calling this fold returns its accumulator at a stable address, so a caller
     // threading it across a loop back-edge can keep the plain arena reset. The accumulator is the
@@ -3134,30 +6462,71 @@ public sealed partial class Lowering
         foreach (var n in frame.ResetSafe) _resetSafeAccumulators.Add(n);
         _reuseResultTemps.Clear();
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
+        _runtimeManagedResultTemps.Clear();
+        foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
+        RestoreRuntimeManagedFrameState(frame);
+        RestoreRuntimeManagedTcoPatternAliases(frame);
+        RestoreKnownFunctionLabels(frame);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
         foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
     }
 
+    private void RestoreRuntimeManagedFrameState(LowerLambdaCoreFrame frame)
+    {
+        _pendingRuntimeArgumentFlags.Clear();
+        foreach ((int temp, string parameter) in frame.PendingRuntimeArgumentFlags)
+        {
+            _pendingRuntimeArgumentFlags[temp] = parameter;
+        }
+    }
+
+    private void RestoreRuntimeManagedTcoPatternAliases(LowerLambdaCoreFrame frame)
+    {
+        _runtimeManagedTcoPatternAliases.Clear();
+        foreach (var pair in frame.RuntimeManagedTcoPatternAliases)
+        {
+            _runtimeManagedTcoPatternAliases[pair.Key] = pair.Value;
+        }
+
+        _activeRuntimeManagedTcoPatternAliases.Clear();
+        foreach (string alias in frame.ActiveRuntimeManagedTcoPatternAliases)
+        {
+            _activeRuntimeManagedTcoPatternAliases.Add(alias);
+        }
+    }
+
+    private void RestoreKnownFunctionLabels(LowerLambdaCoreFrame frame)
+    {
+        _knownFunctionLabelsBySlot.Clear();
+        foreach (var kv in frame.KnownFunctionLabelsBySlot) _knownFunctionLabelsBySlot[kv.Key] = kv.Value;
+        _knownFunctionLabelsByEnvIndex.Clear();
+        foreach (var kv in frame.KnownFunctionLabelsByEnvIndex) _knownFunctionLabelsByEnvIndex[kv.Key] = kv.Value;
+    }
+
     private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
     {
-        // Produce closure object: alloc 24 bytes and store (code_ptr, env_ptr, env_size)
+        // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        if (stackAllocateClosure)
-        {
-            Emit(new IrInst.MakeClosureStack(closureTemp, label, envPtrTemp, envSizeBytes));
-        }
-        else
-        {
-            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes));
-        }
+        bool returnsRuntimeManaged = !_usesAsync && CapabilityGlobalCount == 0
+            && _runtimeManagedFunctionResultLabels.Contains(label);
+        bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
+        EmitLambdaClosureObject(
+            closureTemp,
+            label,
+            envPtrTemp,
+            envSizeBytes,
+            stackAllocateClosure,
+            returnsRuntimeManaged,
+            acceptsRuntimeManagedArgument);
 
         // Record any resource captured by this closure, with its env offset (capture i lives at
         // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
         // names still resolve to their owning bindings here.
         var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
+        var runtimeManagedCaptures = new List<(int EnvOffset, TypeRef Type)>();
         for (int ci = 0; ci < captures.Count; ci++)
         {
             var owned = LookupOwnedValue(captures[ci]);
@@ -3173,14 +6542,58 @@ public sealed partial class Lowering
                     resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
                 }
             }
+            else if (_runtimeRcClosureAllocationRequested
+                && owned is { RuntimeManaged: true, Type: not null })
+            {
+                owned.CapturedByClosure = true;
+                owned.ReleaseKind = ResourceReleaseKind.Moved;
+                runtimeManagedCaptures.Add((ci * 8, owned.Type));
+            }
         }
 
         if (resourceCaptures.Count > 0)
         {
             _closureResourceCaptures[closureTemp] = resourceCaptures;
         }
+        if (runtimeManagedCaptures.Count > 0)
+        {
+            string dropperLabel = SynthesizeRuntimeManagedClosureDropper(runtimeManagedCaptures);
+            int dropperTemp = NewTemp();
+            Emit(new IrInst.LoadFuncAddr(dropperTemp, dropperLabel));
+            Emit(new IrInst.StoreMemOffset(closureTemp, 24, dropperTemp));
+        }
+
+        AttachRuntimeManagedClosureNormalizer(label, captures);
 
         return closureTemp;
+    }
+
+    private void EmitLambdaClosureObject(
+        int closureTemp,
+        string label,
+        int envPtrTemp,
+        int envSizeBytes,
+        bool stackAllocateClosure,
+        bool returnsRuntimeManaged,
+        bool acceptsRuntimeManagedArgument)
+    {
+        if (stackAllocateClosure)
+        {
+            Emit(new IrInst.MakeClosureStack(
+                closureTemp,
+                label,
+                envPtrTemp,
+                envSizeBytes,
+                returnsRuntimeManaged,
+                acceptsRuntimeManagedArgument));
+        }
+        else
+        {
+            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes,
+                _runtimeRcClosureAllocationRequested,
+                returnsRuntimeManaged,
+                acceptsRuntimeManagedArgument));
+        }
     }
 
     // Collect the names a pattern binds (Var subpatterns), recursively.
@@ -3412,6 +6825,50 @@ public sealed partial class Lowering
             return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs, call);
         }
 
+        return LowerCallTryFreshRuntimeReuse(call, rootExpr, collectedArgs);
+    }
+
+    private (int, TypeRef)? LowerCallTryFreshRuntimeReuse(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs)
+    {
+        // A fresh aggregate call result is a deep-unique arena graph within the enclosing call
+        // window. Route its immediate recursive rewriter through the reuse specialization before
+        // that window escapes. The final enclosing boundary still performs the ordinary RC
+        // normalization; this only removes the redundant intermediate rebuild.
+        if (ResolveSpecializableCalleeName(rootExpr) is { } freshSpecName
+            && _specializableFunctions.TryGetValue(freshSpecName, out var freshSpecInfo)
+            && collectedArgs.Count == freshSpecInfo.ArgCount
+            && collectedArgs[^1] is Expr.Call freshArgument
+            && IsFreshOwnershipResultCall(freshArgument)
+            && Lookup(freshSpecName) is { } freshSpecBinding
+            && NthCurriedArgType(
+                Prune(freshSpecBinding.Type),
+                freshSpecInfo.ArgCount - 1) is TypeRef.TList
+            && SpecializationRebuildsAccumulator(
+                Prune(freshSpecBinding.Type),
+                collectedArgs.Count))
+        {
+            return LowerReuseSpecializedCall(
+                freshSpecName,
+                Prune(freshSpecBinding.Type),
+                collectedArgs,
+                call);
+        }
+
+        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
+            && ResolveSpecializableCalleeName(rootExpr) is { } candidateName
+            && _specializableFunctions.TryGetValue(candidateName, out var candidateInfo)
+            && collectedArgs.Count == candidateInfo.ArgCount
+            && collectedArgs[^1] is Expr.Call candidateArgument)
+        {
+            Console.Error.WriteLine(
+                $"[reuse] fresh candidate {candidateName}: "
+                + $"fresh={IsFreshOwnershipResultCall(candidateArgument)} "
+                + $"bound={Lookup(candidateName) is not null}");
+        }
+
         return null;
     }
 
@@ -3468,7 +6925,11 @@ public sealed partial class Lowering
     // isolated scope where only inline/by-label resolution works.
     private (int, TypeRef)? LowerCallTryReuseInlineForm(Expr rootExpr, List<Expr> collectedArgs)
     {
-        if ((_reuseTokens.Count > 0 || _inSpecialization)
+        if ((_reuseTokens.Count > 0
+                || _inSpecialization
+                || _loweringTcoBackEdgeArguments
+                    && ResolveSpecializableCalleeName(rootExpr) is { } freshInlineName
+                    && GetOwnershipSummary(freshInlineName) is { ResultFresh: true })
             && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
             && !_inliningInProgress.Contains(inlineName)
@@ -3487,7 +6948,14 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
-        var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+        List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(collectedArgs);
+        (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
+        foreach (string alias in transferredPatternAliases)
+        {
+            _activeRuntimeManagedTcoPatternAliases.Remove(alias);
+        }
+        LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
+        int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
         // Store new values into TCO param slots
         for (int i = 0; i < tco.ParamSlots.Count; i++)
@@ -3495,12 +6963,8 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
         }
 
-        LowerCallTcoMarkMovedArgs(collectedArgs);
-
-        // Close iteration-local resources (open files/sockets/processes bound this iteration)
-        // before the arena reset and back-edge jump. Without this the per-arm Drop is emitted
-        // after the jump as dead code and the resource leaks every iteration.
-        EmitTcoBackEdgeResourceDrops(tco);
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot =
+            LowerCallTcoPrepareOwnedDrops(tco, collectedArgs);
 
         // Arena reset: restore heap state to loop-iteration watermark before
         // jumping back.
@@ -3516,7 +6980,7 @@ public sealed partial class Lowering
         if (tco.ArenaCursorSlot >= 0)
         {
             var facts = LowerCallTcoGatherResetFacts(tco, collectedArgs, newArgTypes);
-            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, facts);
+            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, oldRuntimeParamTemps, facts);
         }
 
         // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
@@ -3531,18 +6995,228 @@ public sealed partial class Lowering
         // Jump back to loop start
         Emit(new IrInst.Jump(tco.BodyLabel));
 
+        RestoreOwnershipReleaseKinds(releaseSnapshot);
+
         tco.InTailPosition = savedTail;
 
-        // Return a dummy value — this code path won't execute at runtime
+        return LowerCallTcoBackEdgeDummy();
+    }
+
+    private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalBackEdgeArgs(
+        TcoContext tco,
+        List<Expr> collectedArgs)
+    {
+        bool savedBackEdgeArguments = _loweringTcoBackEdgeArguments;
+        _loweringTcoBackEdgeArguments = true;
+        try
+        {
+            return LowerCallTcoEvalArgs(tco, collectedArgs);
+        }
+        finally
+        {
+            _loweringTcoBackEdgeArguments = savedBackEdgeArguments;
+        }
+    }
+
+    private (int Temp, TypeRef Type) LowerCallTcoBackEdgeDummy()
+    {
+        // The back-edge cannot reach its expression join. Mark its synthetic value ownership-neutral
+        // so reachable arms alone decide whether the function transfers an RC result.
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
+        _runtimeManagedResultTemps.Add(dummy);
         return (dummy, NewTypeVar());
+    }
+
+    private List<string> LowerCallTcoTransferPatternAliases(IReadOnlyList<Expr> collectedArgs)
+    {
+        List<(string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> transfers = [];
+        foreach ((string name, RuntimeManagedTcoPatternAlias alias) in _runtimeManagedTcoPatternAliases)
+        {
+            int uses = collectedArgs.Sum(argument => CountNameOccurrences(argument, name));
+            if (uses > 0)
+            {
+                transfers.Add((name, alias, uses));
+            }
+        }
+
+        foreach (IGrouping<int, (string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> group in
+            transfers.GroupBy(transfer => transfer.Alias.ParentSlot))
+        {
+            foreach ((string name, RuntimeManagedTcoPatternAlias alias, int uses) in group)
+            {
+                LowerCallTcoDuplicatePatternAlias(name, alias, uses);
+            }
+
+            RuntimeManagedTcoPatternAlias parent = group.First().Alias;
+            bool parentMovesToNextIteration = collectedArgs.Any(argument =>
+                CountNameOccurrences(argument, parent.ParentName) > 0);
+            if (!parentMovesToNextIteration)
+            {
+                LowerCallTcoConsumePatternParent(parent);
+            }
+        }
+
+        return transfers.Select(transfer => transfer.Name).ToList();
+    }
+
+    private void LowerCallTcoDuplicatePatternAlias(
+        string name,
+        RuntimeManagedTcoPatternAlias alias,
+        int uses)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, alias.AliasSlot));
+        int nonNullTemp = NewTemp();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
+        string duplicatedLabel = NewLabel("rc_tco_alias_duplicated");
+        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
+        int duplicatedTemp = valueTemp;
+        for (int use = 0; use < uses; use++)
+        {
+            duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
+        }
+
+        Emit(new IrInst.StoreLocal(alias.AliasSlot, duplicatedTemp));
+        Emit(new IrInst.Label(duplicatedLabel));
+        _activeRuntimeManagedTcoPatternAliases.Add(name);
+    }
+
+    private void LowerCallTcoConsumePatternParent(RuntimeManagedTcoPatternAlias parent)
+    {
+        int parentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(parentTemp, parent.ParentSlot));
+        if (parent.ParentType is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(parentTemp, list.Element);
+        }
+        else
+        {
+            throw new InvalidOperationException("Unsupported runtime-managed TCO pattern parent.");
+        }
+
+        int inactiveTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+        Emit(new IrInst.StoreLocal(parent.ParentActiveSlot, inactiveTemp));
+    }
+
+    private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)
+    {
+        var oldRuntimeParamTemps = new int[tco.ParamSlots.Count];
+        for (int i = 0; i < tco.ParamSlots.Count; i++)
+        {
+            oldRuntimeParamTemps[i] = NewTemp();
+            Emit(new IrInst.LoadLocal(oldRuntimeParamTemps[i], tco.ParamSlots[i]));
+        }
+
+        return oldRuntimeParamTemps;
+    }
+
+    private void LowerCallTcoPromoteResolvedRuntimeParams(TcoContext tco, TypeRef[] argTypes)
+    {
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
+        {
+            int slot = tco.ParamSlots[index];
+            string name = tco.ParamNames[index];
+            TypeRef type = Prune(argTypes[index]);
+            bool supported = type is TypeRef.TStr or TypeRef.TBigInt
+                || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
+                || type is TypeRef.TNamedType named && (CanCopyOutAdt(named, out _)
+                    || CanRuntimeManageTcoAdt(named))
+                || type is TypeRef.TList list
+                    && CanRuntimeManageTcoListElement(list.Element)
+                    && (tco.FreshRebuiltListParams.Contains(name)
+                        || tco.AffineConsListParams.Contains(name)
+                        || tco.ConsumedListTailParams.Contains(name)
+                            && !CanArenaReset(Prune(list.Element))
+                            && !IsBorrowableInspectOnlyList(tco, name, list));
+            if (!supported
+                || _linearReuseNames.Contains(name)
+                || _linearSpecializationAccumulators.Contains(name)
+                || _resetSafeAccumulators.Contains(name))
+            {
+                continue;
+            }
+
+            tco.RuntimeManagedParamSlots.Add(slot);
+            tco.RuntimeManagedParamTypes[slot] = type;
+            if (type is not TypeRef.TFun
+                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
+            if (type is TypeRef.TList)
+            {
+                tco.RuntimeManagedListParamSlots.Add(slot);
+            }
+        }
+
+        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
+        {
+            TypeRef type = Prune(argTypes[index]);
+            if (!CanArenaReset(type)
+                && !IsResourceHandleType(type)
+                && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                && !(type is TypeRef.TList list
+                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && (CanArenaReset(Prune(list.Element))
+                        || IsBorrowableInspectOnlyList(tco, index, list)))
+                && !tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[index]))
+            {
+                ClearRuntimeManagedTcoParams(tco);
+                return;
+            }
+        }
+    }
+
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
+        TcoContext tco,
+        List<Expr> collectedArgs)
+    {
+        // Back-edge release state belongs only to this control-flow path. Match/if siblings are
+        // lowered afterwards using the same OwnershipInfo objects, so restore it after the jump.
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot =
+            SnapshotOwnershipReleaseKinds();
+        LowerCallTcoMarkMovedArgs(collectedArgs);
+        EmitTcoBackEdgeOwnedDrops(tco);
+        return snapshot;
+    }
+
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> SnapshotOwnershipReleaseKinds()
+    {
+        var snapshot = new List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>();
+        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
+        {
+            foreach (OwnershipInfo info in scope.Values)
+            {
+                snapshot.Add((info, info.ReleaseKind));
+            }
+        }
+
+        return snapshot;
+    }
+
+    private static void RestoreOwnershipReleaseKinds(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot)
+    {
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in snapshot)
+        {
+            info.ReleaseKind = releaseKind;
+        }
     }
 
     // An owned value passed by name as a self-call argument moves to the next iteration —
     // it must not be dropped at this back-edge (a resource would be closed, a closure with a
     // dropper would close its captured resource). Mark it consumed so
-    // EmitTcoBackEdgeResourceDrops (and the dead-code arm Drops after the jump) skip it.
+    // EmitTcoBackEdgeOwnedDrops (and the dead-code arm Drops after the jump) skip it.
     private void LowerCallTcoMarkMovedArgs(List<Expr> collectedArgs)
     {
         foreach (var arg in collectedArgs)
@@ -3563,32 +7237,7 @@ public sealed partial class Lowering
         var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
-            // An affine accumulator's own-position `acc + r1 + ... + rk` argument (a left-nested
-            // concat chain with the accumulator as its leftmost leaf) appends in place at every
-            // chain step (ConcatStrTip) — arm the LowerAdd hook for this argument's lowering.
-            var savedAffineCtx = _affineAppendCtx;
-            if (i < tco.ParamNames.Count
-                && tco.FixedCursorSlot >= 0
-                && tco.AffineStrParams.Contains(tco.ParamNames[i])
-                && i < tco.ParamSlots.Count
-                && collectedArgs[i] is Expr.Add)
-            {
-                var chainLeaf = collectedArgs[i];
-                while (chainLeaf is Expr.Add chainAdd)
-                {
-                    chainLeaf = chainAdd.Left;
-                }
-
-                if (chainLeaf is Expr.Var affineVar
-                    && string.Equals(affineVar.Name, tco.ParamNames[i], StringComparison.Ordinal)
-                    && tco.AffineResvSlots.TryGetValue(tco.ParamNames[i], out var resvSlots))
-                {
-                    _affineAppendCtx = (tco.ParamNames[i], tco.ParamSlots[i], resvSlots.Start, resvSlots.End);
-                }
-            }
-
-            var (argTemp, argType) = LowerExpr(collectedArgs[i]);
-            _affineAppendCtx = savedAffineCtx;
+            var (argTemp, argType) = LowerCallTcoEvalArg(tco, collectedArgs[i], i);
             newArgTemps[i] = argTemp;
             newArgTypes[i] = argType;
             if (curType is TypeRef.TFun funType)
@@ -3599,6 +7248,106 @@ public sealed partial class Lowering
         }
 
         return (newArgTemps, newArgTypes);
+    }
+
+    private (int Temp, TypeRef Type) LowerCallTcoEvalArg(TcoContext tco, Expr argument, int index)
+    {
+        (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
+        bool savedListRequest = _runtimeRcListAllocationRequested;
+        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
+        bool savedTcoAdtRequest = _runtimeRcTcoAdtAllocationRequested;
+        Dictionary<string, bool>? savedAdtChildBindings = _runtimeRcAdtChildBindings;
+        string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
+        bool affineConsList = index < tco.ParamNames.Count
+            && index < tco.ParamSlots.Count
+            && tco.AffineConsListParams.Contains(tco.ParamNames[index])
+            && argument is Expr.Cons { Tail: Expr.Var tail }
+            && string.Equals(tail.Name, tco.ParamNames[index], StringComparison.Ordinal);
+        bool freshClosure = index < tco.ParamNames.Count
+            && tco.FreshClosureParams.Contains(tco.ParamNames[index])
+            && IsRuntimeRcCopyClosureProducer(argument)
+            && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
+        bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);
+        LowerCallTcoArmAffineStringArg(tco, argument, index);
+        if (affineConsList)
+        {
+            _runtimeRcListAllocationRequested = true;
+            _runtimeRcTcoListTailBinding = tco.ParamNames[index];
+        }
+        if (freshClosure)
+        {
+            _runtimeRcClosureAllocationRequested = true;
+        }
+        if (freshAdt)
+        {
+            _runtimeRcTcoAdtAllocationRequested = true;
+            _runtimeRcAdtChildBindings = LowerCallTcoAdtChildBindings(constructorArguments!);
+        }
+
+        try
+        {
+            (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+            if (freshClosure)
+            {
+                _runtimeManagedResultTemps.Add(lowered.Temp);
+            }
+            return lowered;
+        }
+        finally
+        {
+            _affineAppendCtx = savedAffineCtx;
+            _runtimeRcListAllocationRequested = savedListRequest;
+            _runtimeRcClosureAllocationRequested = savedClosureRequest;
+            _runtimeRcTcoAdtAllocationRequested = savedTcoAdtRequest;
+            _runtimeRcAdtChildBindings = savedAdtChildBindings;
+            _runtimeRcTcoListTailBinding = savedTcoTailBinding;
+        }
+    }
+
+    private Dictionary<string, bool> LowerCallTcoAdtChildBindings(IReadOnlyList<Expr> arguments)
+    {
+        return arguments
+            .OfType<Expr.Var>()
+            .Where(variable => LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+            .GroupBy(variable => variable.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Count() > 1,
+                StringComparer.Ordinal);
+    }
+
+    private bool LowerCallTcoTryGetAdtArguments(Expr argument, out List<Expr>? constructorArguments)
+    {
+        constructorArguments = null;
+        return !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
+    }
+
+    private void LowerCallTcoArmAffineStringArg(TcoContext tco, Expr argument, int index)
+    {
+        if (index >= tco.ParamNames.Count
+            || tco.FixedCursorSlot < 0
+            || !tco.AffineStrParams.Contains(tco.ParamNames[index])
+            || index >= tco.ParamSlots.Count
+            || argument is not Expr.Add)
+        {
+            return;
+        }
+
+        Expr chainLeaf = argument;
+        while (chainLeaf is Expr.Add chainAdd)
+        {
+            chainLeaf = chainAdd.Left;
+        }
+
+        if (chainLeaf is Expr.Var affineVar
+            && string.Equals(affineVar.Name, tco.ParamNames[index], StringComparison.Ordinal)
+            && tco.AffineResvSlots.TryGetValue(tco.ParamNames[index], out var resvSlots))
+        {
+            _affineAppendCtx = (tco.ParamNames[index], tco.ParamSlots[index], resvSlots.Start, resvSlots.End);
+        }
     }
 
     // Gather the AST/scope-dependent facts about each argument NOW (they need the
@@ -3656,15 +7405,24 @@ public sealed partial class Lowering
         return (passThrough, singleFreshCons, freshListRebuild, stableAccArg);
     }
 
-    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
+    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, int[] oldRuntimeParamTemps, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
         var resetInfo = new PendingTcoReset(
+            tco,
             newArgTemps,
             newArgTypes,
+            newArgTemps.Select(IsRuntimeManagedResultTemp).ToArray(),
+            collectedArgs.Select(argument => argument is Expr.Var variable
+                && tco.ParamNames.Contains(variable.Name)).ToArray(),
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
+            tco.ParamNames.Select(tco.ConsumedListTailParams.Contains).ToArray(),
             facts.StableAccArg,
+            oldRuntimeParamTemps,
+            tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
+            tco.ParamSlots.Select(slot => tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
+            tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.ToArray(),
             tco.FixedCursorSlot,
             tco.FixedEndSlot,
@@ -3677,21 +7435,41 @@ public sealed partial class Lowering
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
                 k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
 
-        // The copy-out decision dispatches on the ARG TYPES — but an accumulator's type can
-        // still be an unresolved inference variable here (e.g. constrained only by a deferred
-        // `+`, or by the caller, lowered later). Deciding on a TVar would silently decline the
-        // reset and leak every iteration. Emit a placeholder instead and let
-        // ResolveDeferredTcoResets re-run the decision at the end of lowering, when the types
-        // are as resolved as they will ever be.
-        if (newArgTypes.Any(t => Prune(t) is TypeRef.TVar or TypeRef.TTypeParam))
+        // Every reset is resolved after the complete lambda body has been lowered. A later sibling
+        // branch can promote additional parameters to runtime RC; emitting an earlier branch here
+        // would freeze an incomplete ownership set and let arena pointers escape across its reset.
+        int pendingId = _nextTcoResetId++;
+        _pendingTcoResets[pendingId] = resetInfo;
+        Emit(new IrInst.TcoResetPending(
+            pendingId,
+            PendingTcoResetUsedTemps(resetInfo),
+            PendingTcoResetReadLocalSlots(resetInfo)));
+    }
+
+    private static int[] PendingTcoResetUsedTemps(PendingTcoReset info)
+        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps];
+
+    private static int[] PendingTcoResetReadLocalSlots(PendingTcoReset info)
+    {
+        var slots = new HashSet<int>();
+        AddPendingTcoResetSlots(slots, info.ParamSlots);
+        AddPendingTcoResetSlots(slots, info.RuntimeManagedParamActiveSlots);
+        AddPendingTcoResetSlots(slots, info.RuntimeManagedClosureActiveSlots);
+        AddPendingTcoResetSlots(slots, info.ArgResvStartSlots);
+        AddPendingTcoResetSlots(slots, info.ArgResvEndSlots);
+        AddPendingTcoResetSlots(slots,
+            [info.FixedCursorSlot, info.FixedEndSlot, info.ArenaCursorSlot, info.ArenaEndSlot, info.CompactionSizeSlot]);
+        return [.. slots];
+    }
+
+    private static void AddPendingTcoResetSlots(HashSet<int> destination, IEnumerable<int> slots)
+    {
+        foreach (int slot in slots)
         {
-            int pendingId = _nextTcoResetId++;
-            _pendingTcoResets[pendingId] = resetInfo;
-            Emit(new IrInst.TcoResetPending(pendingId));
-        }
-        else
-        {
-            EmitTcoBackEdgeArenaBlock(resetInfo);
+            if (slot >= 0)
+            {
+                destination.Add(slot);
+            }
         }
     }
 
@@ -4016,12 +7794,7 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerCallGeneral(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
     {
-        // Per-call arena watermark — save the heap cursor/end before
-        // evaluating the callee and arguments so that intermediate allocations
-        // (closures from partial application, temporary data structures inside
-        // the callee, argument construction) can be reclaimed after the call
-        // chain completes.  The watermark is managed independently of the
-        // _arenaWatermarks / _ownershipScopes stacks to avoid unbalancing them.
+        // Keep call-chain intermediates in an independent reclaimable arena window.
         int callWmCursorSlot = NewLocal();
         int callWmEndSlot = NewLocal();
         Emit(new IrInst.SaveArenaState(callWmCursorSlot, callWmEndSlot));
@@ -4050,22 +7823,145 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArgs, collectedArgs.Count);
         }
 
-        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType) is { } earlyResult)
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments = [];
+        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
+                consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
         {
             return earlyResult;
         }
 
         var callResultType = Prune(currentType);
-        currentTemp = LowerCallRestoreArena(callWmCursorSlot, callWmEndSlot, currentTemp, callResultType);
+        LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
+        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
+        TrackStableReuseCallResult(currentTemp, stableReuseResult);
+        CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
+        bool normalizesRuntimeManagedResult = !runtimeManagedResult
+            && runtimeManagedResultFlagTemp >= 0
+            && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
+        currentTemp = LowerCallRestoreArena(
+            callWmCursorSlot,
+            callWmEndSlot,
+            currentTemp,
+            callResultType,
+            runtimeManagedResult || stableReuseResult,
+            runtimeManagedResultFlagTemp);
+        if (runtimeManagedResult || normalizesRuntimeManagedResult)
+        {
+            _runtimeManagedResultTemps.Add(currentTemp);
+        }
 
         return (currentTemp, currentType);
+    }
+
+    private bool IsSpecializationSelfReuseCall(Expr rootExpr)
+        => _inSpecialization
+            && _specializingReuseLabel is not null
+            && rootExpr is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Self self
+            && string.Equals(self.FuncLabel, _specializingReuseLabel, StringComparison.Ordinal);
+
+    private void TrackStableReuseCallResult(int resultTemp, bool stableReuseResult)
+    {
+        if (stableReuseResult)
+        {
+            _reuseResultTemps.Add(resultTemp);
+        }
+    }
+
+    private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
+    {
+        return TryResolveKnownFunctionResultOwnership(
+                rootExpr,
+                argumentCount,
+                out bool runtimeManaged)
+            && runtimeManaged;
+    }
+
+    private bool TryResolveKnownFunctionResultOwnership(
+        Expr rootExpr,
+        int argumentCount,
+        out bool runtimeManaged)
+    {
+        runtimeManaged = false;
+        if (argumentCount == 0
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel))
+        {
+            return false;
+        }
+
+        for (int i = 1; i < argumentCount; i++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
+            {
+                return false;
+            }
+
+            resultLabel = nextLabel;
+        }
+
+        runtimeManaged = _runtimeManagedFunctionResultLabels.Contains(resultLabel);
+        return true;
+    }
+
+    private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
+    {
+        if (expression is not Expr.Var variable)
+        {
+            label = "";
+            return false;
+        }
+
+        return TryResolveKnownFunctionLabel(variable.Name, out label);
+    }
+
+    private bool TryResolveKnownFunctionLabel(string variableName, out string label)
+    {
+        label = "";
+
+        if (_topLevelFunctionRefs.TryGetValue(variableName, out var topLevelFunction))
+        {
+            label = topLevelFunction.Label;
+            return true;
+        }
+
+        Binding? binding = Lookup(variableName);
+        int? slot = binding switch
+        {
+            Binding.Local local => local.Slot,
+            Binding.Scheme scheme => scheme.Slot,
+            _ => null,
+        };
+        if (slot is not null && _knownFunctionLabelsBySlot.TryGetValue(slot.Value, out string? slotLabel))
+        {
+            label = slotLabel;
+            return true;
+        }
+
+        int? envIndex = binding switch
+        {
+            Binding.Env env => env.Index,
+            Binding.EnvScheme envScheme => envScheme.Index,
+            _ => null,
+        };
+        if (envIndex is not null && _knownFunctionLabelsByEnvIndex.TryGetValue(envIndex.Value, out string? envLabel))
+        {
+            label = envLabel;
+            return true;
+        }
+
+        return false;
     }
 
     // Applies the collected arguments one closure call at a time, unifying each parameter and
     // recording the applied arrow's capabilities. Returns a diagnostic result to propagate on an
     // early error, or null when the whole chain applied cleanly.
-    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, ref int currentTemp, ref TypeRef currentType)
+    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
+        ref int currentTemp, ref TypeRef currentType,
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        out int runtimeManagedResultFlagTemp)
     {
+        runtimeManagedResultFlagTemp = -1;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(collectedArgs[i]);
@@ -4106,23 +8002,246 @@ public sealed partial class Lowering
                 SubsumeCalleeRow(funType.Row, GetSpan(call));
             }
 
-            // A resource passed to an opaque function normally moves into the callee (no borrowing: the
-            // caller must not use or drop it afterwards, or it double-closes). Borrow inference skips the
-            // move when the callee provably only READS this parameter — never closing, storing,
-            // returning, or capturing it — so the caller keeps ownership and drops it once. Conservative:
-            // only proven borrows are skipped; everything else still moves.
-            if (!CalleeParamBorrowsOnly(rootExpr, i))
-            {
-                MarkResourceArgMoved(collectedArgs[i]);
-            }
-
-            int target = NewTemp();
-            Emit(new IrInst.CallClosure(target, currentTemp, argTemp));
-            currentTemp = target;
+            currentTemp = LowerAppliedClosureCall(
+                rootExpr, collectedArgs[i], i,
+                !_usesAsync
+                    && !_inCoroutineBody
+                    && CapabilityGlobalCount == 0
+                    && i == collectedArgs.Count - 1
+                    && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, out _)
+                    && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
+                currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
 
         return null;
+    }
+
+    private int LowerAppliedClosureCall(
+        Expr rootExpr,
+        Expr argument,
+        int argumentIndex,
+        bool needsResultOwnership,
+        int closureTemp,
+        int argumentTemp,
+        TypeRef argumentType,
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        ref int runtimeManagedResultFlagTemp)
+    {
+        // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
+        int originalArgumentTemp = argumentTemp;
+        bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);
+        bool transfersFreshRuntimeArgument = !borrowsOnly
+            && argument is not Expr.Var
+            && IsRuntimeManagedResultTemp(originalArgumentTemp)
+            && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
+        int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
+            argument,
+            argumentType,
+            closureTemp,
+            borrowsOnly,
+            transfersFreshRuntimeArgument,
+            ref argumentTemp);
+        if (!borrowsOnly)
+        {
+            MarkResourceArgMoved(argument);
+            if (argument is not Expr.Var
+                && IsRuntimeManagedResultTemp(originalArgumentTemp)
+                && !transfersFreshRuntimeArgument)
+            {
+                consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType)));
+            }
+        }
+
+        if (needsResultOwnership)
+        {
+            int packedEnvironmentSizeTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+            int ownershipShiftTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
+            runtimeManagedResultFlagTemp = NewTemp();
+            Emit(new IrInst.ShrInt(
+                runtimeManagedResultFlagTemp,
+                packedEnvironmentSizeTemp,
+                ownershipShiftTemp));
+        }
+
+        int target = NewTemp();
+        EmitClosureCall(
+            target,
+            closureTemp,
+            argumentTemp,
+            borrowsOnly,
+            runtimeManagedArgumentFlagTemp);
+        return target;
+    }
+
+    private int PrepareRuntimeManagedCallArgument(
+        Expr argument,
+        TypeRef argumentType,
+        int closureTemp,
+        bool borrowsOnly,
+        bool transfersFreshRuntimeArgument,
+        ref int argumentTemp)
+    {
+        if (borrowsOnly
+            || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out string? pendingParameter))
+        {
+            return -1;
+        }
+
+        int packedEnvironmentSizeTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+        int ownershipShiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 62));
+        int shiftedFlagTemp = NewTemp();
+        Emit(new IrInst.ShrInt(shiftedFlagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+        int ownershipMaskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
+        int flagTemp = NewTemp();
+        Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
+        if (pendingParameter is not null)
+        {
+            _pendingRuntimeArgumentFlags[flagTemp] = pendingParameter;
+        }
+        if (!transfersFreshRuntimeArgument)
+        {
+            argumentTemp = EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
+        }
+        return flagTemp;
+    }
+
+    private int EmitConditionallyRetainedRuntimeArgument(
+        int argumentTemp,
+        TypeRef argumentType,
+        int ownershipFlagTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, argumentTemp));
+        string doneLabel = NewLabel("rc_call_argument_not_retained");
+        Emit(new IrInst.JumpIfFalse(ownershipFlagTemp, doneLabel));
+        int retainedTemp;
+        if (Prune(argumentType) is TypeRef.TList)
+        {
+            retainedTemp = EmitRuntimeManagedNullableDup(argumentTemp);
+        }
+        else
+        {
+            retainedTemp = NewTemp();
+            Emit(new IrInst.RcDup(retainedTemp, argumentTemp, RuntimeManaged: true));
+            _runtimeManagedResultTemps.Add(retainedTemp);
+        }
+        Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private bool TryGetRuntimeManagedCallArgument(
+        Expr argument,
+        int argumentTemp,
+        out string? pendingParameter)
+    {
+        pendingParameter = null;
+        if (IsRuntimeManagedResultTemp(argumentTemp)
+            || argument is Expr.Var variable
+                && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+        {
+            return true;
+        }
+
+        if (argument is not Expr.Var localVariable || _tcoCtx is not { } tco)
+        {
+            return false;
+        }
+
+        int parameterIndex = tco.ParamNames.IndexOf(localVariable.Name);
+        if (parameterIndex < 0 || parameterIndex >= tco.ParamSlots.Count)
+        {
+            return false;
+        }
+
+        if (tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]))
+        {
+            return true;
+        }
+
+        // Eligibility can resolve only after this call's surrounding tail self-call constrains the
+        // parameter types. Emit the ownership flag now and replace it with zero during finalization
+        // if the completed TCO frame does not admit this parameter to runtime RC.
+        pendingParameter = localVariable.Name;
+        return true;
+    }
+
+    private void LowerCallDropConsumedRuntimeArguments(
+        TypeRef resultType,
+        IReadOnlyList<(int Temp, TypeRef Type)> consumedRuntimeArguments)
+    {
+        if (Prune(resultType) is TypeRef.TFun)
+        {
+            return;
+        }
+
+        HashSet<int> dropped = [];
+        foreach ((int temp, TypeRef type) in consumedRuntimeArguments)
+        {
+            TypeRef valueType = Prune(type);
+            if (CanArenaReset(valueType) || !dropped.Add(temp))
+            {
+                continue;
+            }
+
+            if (valueType is TypeRef.TFun)
+            {
+                Emit(new IrInst.CleanupResource(temp, "Function"));
+                Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
+            }
+            else
+            {
+                EmitRuntimeManagedChildDrop(temp, valueType);
+            }
+        }
+    }
+
+    private bool IsKnownRuntimeNormalizedFunctionArgument(Expr rootExpr, int argumentIndex)
+    {
+        if (!TryResolveKnownFunctionLabel(rootExpr, out string label))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < argumentIndex; i++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
+            {
+                return false;
+            }
+
+            label = nextLabel;
+        }
+
+        return _runtimeNormalizedFunctionArgumentLabels.Contains(label);
+    }
+
+    private void EmitClosureCall(
+        int target,
+        int closureTemp,
+        int argumentTemp,
+        bool borrowsArgument,
+        int runtimeManagedArgumentFlagTemp = -1)
+    {
+        var callInstruction = new IrInst.CallClosure(
+            target,
+            closureTemp,
+            argumentTemp,
+            runtimeManagedArgumentFlagTemp);
+        Emit(callInstruction);
+        if (borrowsArgument)
+        {
+            _borrowedArgumentCalls.Add(callInstruction);
+        }
     }
 
     // Restore arena after the call chain completes.
@@ -4131,10 +8250,16 @@ public sealed partial class Lowering
     // - Self-contained heap result (String, List with safe element, Closure,
     //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
     //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
-    private int LowerCallRestoreArena(int callWmCursorSlot, int callWmEndSlot, int currentTemp, TypeRef callResultType)
+    private int LowerCallRestoreArena(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        bool runtimeManagedResult,
+        int runtimeManagedResultFlagTemp)
     {
         int callPreRestoreEndSlot = NewLocal();
-        if (CanArenaReset(callResultType))
+        if (runtimeManagedResult || CanArenaReset(callResultType))
         {
             // A pending one-shot post (and everything it captures) lives in this window's
             // allocations; skip the reclaim while any is outstanding.
@@ -4145,16 +8270,93 @@ public sealed partial class Lowering
             return currentTemp;
         }
 
-        var callCopyOutKind = GetCopyOutKind(callResultType, out int callCopySize);
+        var callCopyOutKind = GetCallCopyOutKind(
+            callResultType,
+            out int callCopySize,
+            out IrInst.ListHeadCopyKind listHeadCopy);
         if (callCopyOutKind == CopyOutKind.None)
         {
             return currentTemp;
         }
 
-        return LowerCallCopyOutResult(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot, currentTemp, callCopyOutKind, callCopySize);
+        if (runtimeManagedResultFlagTemp >= 0)
+        {
+            return LowerCallConditionalCopyOutResult(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                runtimeManagedResultFlagTemp,
+                callCopyOutKind,
+                listHeadCopy,
+                callCopySize);
+        }
+
+        return LowerCallCopyOutResult(
+            callWmCursorSlot,
+            callWmEndSlot,
+            callPreRestoreEndSlot,
+            currentTemp,
+            callCopyOutKind,
+            listHeadCopy,
+            callCopySize);
     }
 
-    private int LowerCallCopyOutResult(int callWmCursorSlot, int callWmEndSlot, int callPreRestoreEndSlot, int currentTemp, CopyOutKind callCopyOutKind, int callCopySize)
+    private int LowerCallConditionalCopyOutResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        int runtimeManagedResultFlagTemp,
+        CopyOutKind callCopyOutKind,
+        IrInst.ListHeadCopyKind listHeadCopy,
+        int callCopySize)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+
+        string copyLabel = NewLabel("call_copy_arena_result");
+        string reclaimLabel = NewLabel("call_reclaim_owned_result");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(reclaimLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = NewTemp();
+        if (callCopyOutKind == CopyOutKind.List)
+        {
+            Emit(new IrInst.CopyOutList(
+                copiedTemp,
+                currentTemp,
+                listHeadCopy,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        else
+        {
+            Emit(new IrInst.CopyOutArena(
+                copiedTemp,
+                currentTemp,
+                callCopySize,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(reclaimLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    private int LowerCallCopyOutResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        CopyOutKind callCopyOutKind,
+        IrInst.ListHeadCopyKind listHeadCopy,
+        int callCopySize)
     {
         // With capabilities in the program the copy-out is conditional on no post being
         // pending, so the result is routed through a local slot that the skipped path
@@ -4170,17 +8372,36 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         int copyDest = NewTemp();
+        bool normalizeToRuntimeOwnership = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         switch (callCopyOutKind)
         {
             case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+                Emit(new IrInst.CopyOutArena(
+                    copyDest,
+                    currentTemp,
+                    callCopySize,
+                    RuntimeManaged: normalizeToRuntimeOwnership,
+                    normalizeToRuntimeOwnership
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaCallBoundary));
                 break;
             case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(copyDest, currentTemp));
+                Emit(new IrInst.CopyOutList(
+                    copyDest,
+                    currentTemp,
+                    listHeadCopy,
+                    RuntimeManaged: normalizeToRuntimeOwnership,
+                    normalizeToRuntimeOwnership
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaCallBoundary));
                 break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
-                break;
+        }
+        if (normalizeToRuntimeOwnership)
+        {
+            _runtimeManagedResultTemps.Add(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         if (callGuardResultSlot >= 0)
@@ -4455,7 +8676,7 @@ public sealed partial class Lowering
 
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
-            var (headTemp, headType) = LowerExpr(list.Elements[i]);
+            var (headTemp, headType) = LowerRuntimeManagedListElement(list.Elements[i]);
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
                 Unify(headType, elemType);
@@ -4468,6 +8689,76 @@ public sealed partial class Lowering
         return (tailTemp, Prune(tailType));
     }
 
+    private (int Temp, TypeRef Type) LowerRuntimeManagedListElement(Expr element)
+    {
+        (bool String, bool Bytes, bool BigInt, bool Tuple) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcTupleAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || _runtimeRcListAllocationRequested && IsRuntimeRcStringProducer(element)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || _runtimeRcListAllocationRequested && IsRuntimeRcBytesProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || _runtimeRcListAllocationRequested && IsRuntimeRcBigIntProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
+        _runtimeRcTupleAllocationRequested = saved.Tuple
+            || _runtimeRcListAllocationRequested && element is Expr.TupleLit;
+        (int Temp, TypeRef Type) lowered = LowerExpr(element);
+        lowered = NormalizeRuntimeManagedListElement(lowered);
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcTupleAllocationRequested) = saved;
+        return lowered;
+    }
+
+    private (int Temp, TypeRef Type) NormalizeRuntimeManagedListElement((int Temp, TypeRef Type) lowered)
+    {
+        if (!_runtimeRcListAllocationRequested
+            || _runtimeRcTcoListTailBinding is null
+            || IsRuntimeManagedResultTemp(lowered.Temp))
+        {
+            return lowered;
+        }
+
+        TypeRef elementType = Prune(lowered.Type);
+        int normalizedTemp = NewTemp();
+        if (elementType is TypeRef.TStr)
+        {
+            Emit(new IrInst.CopyOutArena(
+                normalizedTemp,
+                lowered.Temp,
+                -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        else if (elementType is TypeRef.TList inner
+            && TryGetRuntimeManagedListHeadCopy(inner.Element, out IrInst.ListHeadCopyKind headCopy))
+        {
+            Emit(new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                headCopy,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        else if (CanRuntimeManageTcoListElement(elementType))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(lowered.Temp, elementType);
+        }
+        else
+        {
+            return lowered;
+        }
+
+        _runtimeManagedResultTemps.Add(normalizedTemp);
+        return (normalizedTemp, lowered.Type);
+    }
+
     private (int, TypeRef) LowerTupleLit(Expr.TupleLit tuple)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -4477,14 +8768,20 @@ public sealed partial class Lowering
         var elementTemps = new List<int>(tuple.Elements.Count);
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
-            var (temp, type) = LowerExpr(tuple.Elements[i]);
-            elementTemps.Add(temp);
+            Expr element = tuple.Elements[i];
+            (int temp, TypeRef type) = LowerTupleElement(element);
+            elementTemps.Add(MaterializeEscapingStringTupleElement(element, temp, type));
             elementTypes.Add(type);
             MarkResourceArgMoved(tuple.Elements[i]);
         }
 
         int tupleTemp = NewTemp();
-        Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8));
+        bool runtimeManaged = _runtimeRcTupleAllocationRequested;
+        for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
+        {
+            runtimeManaged = IsRuntimeManageableTupleElement(elementTypes[i], elementTemps[i]);
+        }
+        Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elementTemps.Count; i++)
         {
             Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elementTemps[i]));
@@ -4495,20 +8792,142 @@ public sealed partial class Lowering
         return (tupleTemp, new TypeRef.TTuple(elementTypes));
     }
 
+    // A bare string variable placed into a tuple that ESCAPES the function (the tuple is the
+    // runtime-managed result — _runtimeRcTupleAllocationRequested is set) points at a value in the
+    // callee's arena (a loop accumulator, a match-bound suffix). The next call reuses that arena and
+    // overwrites it, so the returned tuple reads back a later value. A directly-returned string is
+    // copied out at the call boundary; a string nested in a tuple field is not. Copy it out here so
+    // the escaping tuple owns an independent RC string. Gated on the escape flag, so non-escaping
+    // internal tuples (e.g. inside a fully-reusing specialization, where CopyOut is forbidden) are
+    // untouched. Producers (`a + b`, `fromInt`) already allocate fresh and are left alone.
+    private int MaterializeEscapingStringTupleElement(Expr element, int temp, TypeRef type)
+    {
+        // A bare string variable placed into an escaping tuple only dangles when it lives in an arena
+        // that is reused in place — the accumulator / match-bound suffix (`acc`, `tail`) of a TCO loop,
+        // whose arena is reset on every back-edge and overwritten by the next call. Outside a TCO loop
+        // the value either has no reuse hazard at all (a top-level `let text = fromInt(42) in (text, 2)`,
+        // which the test suite pins to stay arena-managed) or is already deep-copied at the callee's
+        // return boundary, so materializing would wrongly promote an otherwise arena tuple to an owning
+        // RC graph. Gate on being inside a TCO loop, and never copy a value that already owns a
+        // runtime-managed RC value (the ownership system keeps it alive independently of the arena).
+        //
+        // The element type may still be an unresolved type variable here (inference is interleaved
+        // with lowering, so a string accumulator's var is only unified with Str by a later `+`, and is
+        // indistinguishable from an Int accumulator's). For an unresolved var we emit the copy-out
+        // PROVISIONALLY with DeferredElementType and let ResolveDeferredTupleMaterializations undo it
+        // (rewrite to a plain Borrow) once the type resolves to a scalar. Concrete non-string heap
+        // accumulators (List/Adt/BigInt) resolve to their own type node and take their own copy paths.
+        var pruned = Prune(type);
+        if (!_runtimeRcTupleAllocationRequested
+            || _tcoCtx is null
+            || element is not Expr.Var varElement
+            || pruned is not (TypeRef.TStr or TypeRef.TVar)
+            || LookupOwnedValue(varElement.Name) is { RuntimeManaged: true })
+        {
+            return temp;
+        }
+
+        int materialized = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            materialized, temp, StaticSizeBytes: -1, RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization,
+            DeferredElementType: pruned is TypeRef.TVar ? type : null));
+        _runtimeManagedResultTemps.Add(materialized);
+        _hasDeferredTupleMaterializations |= pruned is TypeRef.TVar;
+        return materialized;
+    }
+
+    private (int Temp, TypeRef Type) LowerTupleElement(Expr element)
+    {
+        (bool String, bool Bytes, bool BigInt, bool List, bool Adt, bool Record) saved = (
+            _runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcCopyAdtAllocationRequested,
+            _runtimeRcRecordAllocationRequested);
+        _runtimeRcStringAllocationRequested = saved.String
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcStringProducer(element)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
+        _runtimeRcBytesAllocationRequested = saved.Bytes
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBytesProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
+        _runtimeRcBigIntAllocationRequested = saved.BigInt
+            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBigIntProducer(element)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
+        _runtimeRcListAllocationRequested = saved.List
+            || _runtimeRcTupleAllocationRequested && IsFreshListConstructionExpression(element);
+        _runtimeRcCopyAdtAllocationRequested = saved.Adt
+            || _runtimeRcTupleAllocationRequested && IsConstructorExpression(element);
+        _runtimeRcRecordAllocationRequested = saved.Record
+            || _runtimeRcTupleAllocationRequested && element is Expr.RecordLit;
+        (int Temp, TypeRef Type) lowered = LowerExpr(element);
+        (_runtimeRcStringAllocationRequested,
+            _runtimeRcBytesAllocationRequested,
+            _runtimeRcBigIntAllocationRequested,
+            _runtimeRcListAllocationRequested,
+            _runtimeRcCopyAdtAllocationRequested,
+            _runtimeRcRecordAllocationRequested) = saved;
+        return lowered;
+    }
+
+    private bool IsRuntimeManageableTupleElement(TypeRef type, int temp)
+    {
+        TypeRef pruned = Prune(type);
+        return CanArenaReset(pruned)
+            || IsRuntimeManagedResultTemp(temp)
+                && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                    || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element))
+                    || pruned is TypeRef.TNamedType);
+    }
+
     private (int, TypeRef) LowerCons(Expr.Cons cons)
     {
         using var diagnosticSpan = PushDiagnosticSpan(cons);
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (headTemp, headType) = LowerExpr(cons.Head);
+        var (headTemp, headType) = LowerRuntimeManagedListElement(cons.Head);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        if (_runtimeRcListAllocationRequested && IsRuntimeManageableListElement(headType, headTemp))
+        {
+            tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp);
+        }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return LowerConsCell(headTemp, tailTemp, headType, tailType);
+    }
+
+    private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
+    {
+        if (tailExpression is Expr.Var tcoTail
+            && _runtimeRcTcoListTailBinding is not null
+            && string.Equals(tcoTail.Name, _runtimeRcTcoListTailBinding, StringComparison.Ordinal))
+        {
+            return tailTemp;
+        }
+
+        if (tailExpression is not Expr.Var tail
+            || _runtimeRcListTailBinding is null
+            || !string.Equals(tail.Name, _runtimeRcListTailBinding, StringComparison.Ordinal)
+            || LookupOwnedValue(tail.Name) is not { RuntimeManaged: true, IsDropped: false } info)
+        {
+            return tailTemp;
+        }
+
+        if (_runtimeRcListTailShared)
+        {
+            int duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, tailTemp, RuntimeManaged: true));
+            info.RuntimeDeepUnique = false;
+            return duplicatedTemp;
+        }
+
+        info.ReleaseKind = ResourceReleaseKind.Moved;
+        return tailTemp;
     }
 
 
@@ -4900,6 +9319,9 @@ public sealed partial class Lowering
                 FreeVarsVisit(l.Value, boundWithRecursiveVar, res);
                 FreeVarsVisit(l.Body, boundWithRecursiveVar, res);
                 return;
+            case RecursiveGroupExpr group:
+                FreeVarsVisitRecursiveGroup(group, bnd, res);
+                return;
             case Expr.Lambda lam:
                 var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
                 FreeVarsVisit(lam.Body, boundWithParam, res);
@@ -4935,6 +9357,18 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(ex.GetType().Name);
         }
+    }
+
+    private void FreeVarsVisitRecursiveGroup(RecursiveGroupExpr group, HashSet<string> bnd, HashSet<string> res)
+    {
+        var boundWithRecursiveGroup = new HashSet<string>(bnd, StringComparer.Ordinal);
+        boundWithRecursiveGroup.UnionWith(group.Bindings.Select(binding => binding.Name));
+        foreach ((_, Expr value) in group.Bindings)
+        {
+            FreeVarsVisit(value, boundWithRecursiveGroup, res);
+        }
+
+        FreeVarsVisit(group.Body, boundWithRecursiveGroup, res);
     }
 
     private void FreeVarsVisitHandle(Expr.Handle handleExpr, HashSet<string> bnd, HashSet<string> res)
@@ -5302,6 +9736,7 @@ public sealed partial class Lowering
                             result[v.Name] = ctorPattern.Name;
                             break;
                         }
+
                     }
                 }
 

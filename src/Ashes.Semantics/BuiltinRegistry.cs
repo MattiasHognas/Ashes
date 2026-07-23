@@ -6,7 +6,8 @@ public static class BuiltinRegistry
 {
     private static readonly HashSet<string> PrimitiveTypeNames = new(StringComparer.Ordinal)
     {
-        "Float"
+        "Float",
+        "Bytes"
     };
 
     public enum BuiltinValueKind
@@ -529,7 +530,14 @@ public static class BuiltinRegistry
 
     public static bool TryGetModule(string moduleName, out BuiltinModule module)
     {
-        return ModulesByName.TryGetValue(moduleName, out module!);
+        if (ModulesByName.TryGetValue(moduleName, out BuiltinModule? resolved))
+        {
+            module = resolved;
+            return true;
+        }
+
+        module = null!;
+        return false;
     }
 
     /// <summary>
@@ -562,7 +570,14 @@ public static class BuiltinRegistry
 
     public static bool TryGetType(string typeName, out BuiltinType type)
     {
-        return TypesByName.TryGetValue(typeName, out type!);
+        if (TypesByName.TryGetValue(typeName, out BuiltinType? resolved))
+        {
+            type = resolved;
+            return true;
+        }
+
+        type = null!;
+        return false;
     }
 
     public static bool IsBuiltinModule(string moduleName)
@@ -588,6 +603,12 @@ public static class BuiltinRegistry
         if (string.Equals(typeName, "Float", StringComparison.Ordinal))
         {
             type = new TypeRef.TFloat();
+            return true;
+        }
+
+        if (string.Equals(typeName, "Bytes", StringComparison.Ordinal))
+        {
+            type = new TypeRef.TBytes();
             return true;
         }
 

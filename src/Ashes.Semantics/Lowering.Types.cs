@@ -36,7 +36,14 @@ public sealed partial class Lowering
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; } = [];
+        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
         public List<int> ParamSlots { get; init; } = [];
+        public HashSet<int> RuntimeManagedParamSlots { get; } = [];
+        public HashSet<int> RuntimeManagedListParamSlots { get; } = [];
+        public HashSet<int> RuntimeManagedClosureParamSlots { get; } = [];
+        public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
+        public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
+        public Dictionary<int, TypeRef> RuntimeManagedParamTypes { get; } = [];
         public bool InTailPosition { get; set; }
 
         // Params passed as their own unchanged Var at EVERY tail self-call — loop-invariant, so they
@@ -44,6 +51,24 @@ public sealed partial class Lowering
         // plain per-iteration reset therefore leaves them valid, even when they are heap types (e.g. a
         // Bytes threaded unchanged through a fold). Empty when not computed (conservative).
         public HashSet<string> LoopInvariantParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Params whose argument is a self-contained fresh list at every tail self-call. These may
+        // use whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
+        // separate ownership-transfer path instead.
+        public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
+        public HashSet<string> AffineConsListParams { get; init; } = new(System.StringComparer.Ordinal);
+        public HashSet<string> ConsumedListTailParams { get; init; } = new(System.StringComparer.Ordinal);
+
+        // Subset of ConsumedListTailParams that the recursive body only INSPECTS: every head and
+        // tail bound from the param is used solely as a match scrutinee (heads destructured into
+        // inline-copy scalar fields) or re-passed in the same tail position of the self-call, never
+        // returned, stored into a constructed value, or handed to another function in an owning
+        // position. Such a list can be BORROWED from the caller's graph — no per-entry RC
+        // normalization/dup/drop — because nothing derived from it escapes the traversal (the
+        // pointer-bearing analogue of the inline-element borrowed cursor). Gated additionally on an
+        // all-inline-copy-field record element type at the runtime-managed decision site.
+        public HashSet<string> BorrowableConsumedListParams { get; init; } = new(System.StringComparer.Ordinal);
+        public HashSet<string> FreshClosureParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain
         // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a
@@ -298,7 +323,16 @@ public sealed partial class Lowering
     // Key: binding name, Value: ownership info (slot, type name, whether dropped, active borrows).
     // Copy types (Int, Float, Bool) are never tracked.
     // Owned types (String, List, ADTs, Closures, resource types) are tracked.
-    private sealed class OwnershipInfo(int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null, bool isResourceBearing = false)
+    private sealed class OwnershipInfo(
+        int slot,
+        string typeName,
+        bool isResource,
+        TextSpan? definitionSpan,
+        TypeRef? type = null,
+        bool isResourceBearing = false,
+        bool runtimeManaged = false,
+        ConstructorSymbol? runtimeConstructor = null,
+        bool runtimeDeepUnique = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -313,6 +347,20 @@ public sealed partial class Lowering
         /// Such an aggregate, if still owned at scope exit, is dropped by walking it for nested resources.
         /// </summary>
         public bool IsResourceBearing { get; } = isResourceBearing;
+
+        public bool RuntimeManaged { get; } = runtimeManaged;
+
+        /// <summary>
+        /// Statically known constructor for a directly-bound runtime-managed ADT value. Allows its
+        /// root drop to bypass generic tag dispatch; null means the constructor is not proven.
+        /// </summary>
+        public ConstructorSymbol? RuntimeConstructor { get; } = runtimeConstructor;
+
+        /// <summary>
+        /// True while this binding owns a fully fresh runtime-managed tree or list spine. Explicit
+        /// sharing clears the fact before drop generation.
+        /// </summary>
+        public bool RuntimeDeepUnique { get; set; } = runtimeDeepUnique;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The
@@ -352,6 +400,20 @@ public sealed partial class Lowering
         public int ActiveBorrows { get; set; }
     }
 
+    private sealed record RuntimeReuseCleanup(
+        TypeRef.TNamedType Type,
+        ConstructorSymbol Constructor,
+        IReadOnlyDictionary<string, int> TransferableFields);
+
+    private sealed record ReuseToken(
+        int Temp,
+        int FieldCount,
+        RuntimeReuseCleanup? RuntimeCleanup,
+        bool ListCell = false)
+    {
+        public bool RuntimeManaged => RuntimeCleanup is not null;
+    }
+
     /// <summary>
     /// Describes the kind of arena copy-out to emit for a given result type.
     /// </summary>
@@ -363,8 +425,6 @@ public sealed partial class Lowering
         Shallow,
         /// <summary>Deep cons-chain walk for lists.</summary>
         List,
-        /// <summary>Closure struct + env copy.</summary>
-        Closure,
         /// <summary>TCO-specific: copy one cons cell + copy/deep-copy its head value.</summary>
         TcoListCell,
         /// <summary>Recursive deep copy of a pointer-bearing ADT (fields deep-copied) via a synthesized

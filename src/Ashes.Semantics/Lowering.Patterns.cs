@@ -41,18 +41,18 @@ public sealed partial class Lowering
         // In-place reuse (#2): if we're matching a linear (uniquely-owned, deep-copied-at-entry)
         // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
         // arms that don't reference the accumulator again (so its cell is dead).
-        string? reuseScrutineeName = match.Value is Expr.Var rv && _linearReuseNames.Contains(rv.Name)
-            ? rv.Name
-            : null;
+        (string? reuseScrutineeName, TypeRef.TNamedType? runtimeReuseType) =
+            GetMatchReuseScrutinee(match, valueType, savedTailPos);
+        bool normalizeStaticStringArms = ShouldNormalizeStaticStringMatchArms(match.Cases);
 
-        if (TryPlanTagSwitch(match.Cases, out var switchPlan))
-        {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
-        }
-        else
-        {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName);
-        }
+        List<bool>? runtimeManagedResultArms = LowerMatchArms(
+            match, valueTemp, valueType, resultType, resultSlot,
+            endLabel,
+            noMatchLabel,
+            savedTailPos,
+            reuseScrutineeName,
+            runtimeReuseType,
+            normalizeStaticStringArms);
 
         Emit(new IrInst.Label(noMatchLabel));
         EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
@@ -64,7 +64,387 @@ public sealed partial class Lowering
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        MarkRuntimeManagedMatchResult(resultTemp, runtimeManagedResultArms, match.Cases);
         return (resultTemp, Prune(resultType));
+    }
+
+    private void MarkRuntimeManagedMatchResult(
+        int resultTemp,
+        IReadOnlyList<bool>? runtimeManagedResultArms,
+        IReadOnlyList<MatchCase> cases)
+    {
+        if (runtimeManagedResultArms is not null
+            && runtimeManagedResultArms.Count == cases.Count
+            && runtimeManagedResultArms.Select((runtimeManaged, index) =>
+                runtimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body)).All(value => value))
+        {
+            _runtimeManagedResultTemps.Add(resultTemp);
+        }
+    }
+
+    private bool MatchArmReturnsRuntimeManagedTcoParam(Expr body)
+    {
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        return result is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Local local
+            && _tcoCtx?.RuntimeManagedParamSlots.Contains(local.Slot) == true;
+    }
+
+    private List<bool>? LowerMatchArms(
+        Expr.Match match,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms)
+    {
+        List<bool>? runtimeManagedResultArms = [];
+        _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
+        if (TryPlanTagSwitch(match.Cases, out var switchPlan))
+        {
+            LowerMatchArmsViaTagSwitch(match.Value, match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
+        }
+        else
+        {
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
+        }
+        _runtimeManagedMatchResultArms.Pop();
+        return runtimeManagedResultArms;
+    }
+
+    private bool ShouldNormalizeStaticStringMatchArms(IReadOnlyList<MatchCase> cases)
+    {
+        bool hasFreshStringResult = false;
+        foreach (MatchCase matchCase in cases)
+        {
+            if (matchCase.Guard is not null
+                || !IsRuntimeManagedStringMatchArm(matchCase.Body, out bool fresh))
+            {
+                return false;
+            }
+
+            hasFreshStringResult |= fresh;
+        }
+
+        return hasFreshStringResult;
+    }
+
+    private bool IsRuntimeManagedStringMatchArm(Expr expression, out bool fresh)
+    {
+        if (expression is Expr.StrLit)
+        {
+            fresh = false;
+            return true;
+        }
+
+        if (IsRuntimeRcStringProducer(expression))
+        {
+            fresh = true;
+            return true;
+        }
+
+        if (expression is Expr.Let let)
+        {
+            return IsRuntimeManagedStringMatchArm(let.Body, out fresh) && fresh;
+        }
+
+        fresh = false;
+        return false;
+    }
+
+    private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(
+        Expr.Match match,
+        TypeRef valueType,
+        bool matchIsInTailPosition)
+    {
+        if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name)
+            && !IsArenaReuseUnsafeForRuntimeManagedChildren(variable, match))
+        {
+            return (variable.Name, null);
+        }
+
+        if (!TryGetRuntimeManagedReuseScrutinee(
+                match,
+                valueType,
+                matchIsInTailPosition,
+                out string runtimeScrutineeName,
+                out TypeRef.TNamedType runtimeType))
+        {
+            return (null, null);
+        }
+
+        LookupOwnedValue(runtimeScrutineeName)!.ReleaseKind = ResourceReleaseKind.Moved;
+        return (runtimeScrutineeName, runtimeType);
+    }
+
+    /// <summary>
+    /// Proves the first source-level runtime reuse boundary. The scrutinee must be a live
+    /// runtime-managed copy-only, nested-record, or supported self-recursive ADT, and the guard-free
+    /// match must exhaustively consume it. Runtime-managed payload bindings may be dead or
+    /// transferred exactly once into the compatible rebuild. A same-sized constructor may consume
+    /// the token; otherwise the
+    /// arm releases a non-null token with constructor-specialized cleanup after evaluating its body.
+    /// </summary>
+    private bool TryGetRuntimeManagedReuseScrutinee(
+        Expr.Match match,
+        TypeRef valueType,
+        bool matchIsInTailPosition,
+        out string scrutineeName,
+        out TypeRef.TNamedType runtimeType)
+    {
+        scrutineeName = string.Empty;
+        runtimeType = null!;
+        if (match.Value is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not
+            {
+                RuntimeManaged: true,
+                IsDropped: false,
+                Type: TypeRef.TNamedType ownedType,
+            }
+            || Prune(valueType) is not TypeRef.TNamedType matchedType
+            || !string.Equals(ownedType.Symbol.Name, matchedType.Symbol.Name, StringComparison.Ordinal)
+            || (!CanRuntimeManageCopyAdt(matchedType)
+                && !CanRuntimeManageAdt(matchedType)
+                && !CanRuntimeManageOwnedChildAdt(matchedType)
+                && !CanRuntimeManageRecursiveCopyAdt(matchedType))
+            || match.Cases.Count != matchedType.Symbol.Constructors.Count)
+        {
+            return false;
+        }
+
+        var matchedConstructors = new HashSet<string>(StringComparer.Ordinal);
+        bool hasReusableArm = false;
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            if (matchCase.Guard is not null
+                || ExprReferencesName(matchCase.Body, variable.Name, shadowed: false)
+                || !TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol matchedConstructor)
+                || !string.Equals(matchedConstructor.ParentType, matchedType.Symbol.Name, StringComparison.Ordinal)
+                || !matchedConstructors.Add(matchedConstructor.Name))
+            {
+                return false;
+            }
+
+            bool armConsumesToken = TryFindRuntimeReuseConstructorArguments(
+                matchCase.Body,
+                matchedConstructor.Arity,
+                matchedType,
+                out _);
+            if (matchIsInTailPosition && !armConsumesToken)
+            {
+                return false;
+            }
+
+            hasReusableArm |= armConsumesToken;
+        }
+
+        if (!hasReusableArm
+            || (!CanRuntimeManageCopyAdt(matchedType)
+                && !RuntimeReusePointerFieldsAreSafe(match.Cases, matchedType)))
+        {
+            return false;
+        }
+
+        scrutineeName = variable.Name;
+        runtimeType = matchedType;
+        return true;
+    }
+
+    // Arena in-place reuse of a TCO accumulator's ADT cell is unsound when the ADT carries
+    // runtime-managed (pointer-bearing) children: the cell is arena-managed but its children are RC,
+    // so the back-edge deferred drop (TcoBackEdgeDropRuntimeManagedArgCore) releases the previous
+    // value by re-reading THIS cell's fields — which the arena AllocReusing has already overwritten
+    // with the new children, freeing the live new children (observed: a shared-tail child loses cells
+    // across iterations). Keeping the old cell intact (a fresh rebuild) lets the deferred drop
+    // release the real old value. The runtime-managed reuse path (CanCopyOutAdt / TryGetRuntimeManaged
+    // ReuseScrutinee) manages its children explicitly and is unaffected.
+    // Arena in-place reuse of a TCO-parameter ADT cell is unsound when the ADT carries any heap child
+    // (a field that is not an inline copy scalar — List/String/Bytes/BigInt/Tuple/nested ADT). Such a
+    // child is RC-normalized at runtime even when the ADT as a whole is flat-copy-out-able (e.g.
+    // `S(List(Int))`, whose Int-element list still becomes an RC list). The back-edge arena reset then
+    // frees the reused shell before it is stored as the next iteration's parameter — a use-after-free
+    // (fannkuch's `S(perm, count)` enumeration segfaulted; a shared-tail RC child also lost cells,
+    // b70b88a). Declining arena reuse routes the reconstruction through the runtime-managed (RC) reuse
+    // path (or a fresh RC build), which survives the reset. The scrutinee's inferred type is often an
+    // unresolved type variable here (inference is interleaved with lowering), so the ADT constructor
+    // is taken from the match pattern rather than from the value type.
+    private bool IsArenaReuseUnsafeForRuntimeManagedChildren(Expr.Var scrutinee, Expr.Match match)
+        => Lookup(scrutinee.Name) is Binding.Local local
+            && _tcoCtx?.ParamSlots.Contains(local.Slot) == true
+            && match.Cases.Count > 0
+            && TryGetConstructorSymbol(match.Cases[0].Pattern, out ConstructorSymbol constructor)
+            && ConstructorHasHeapField(constructor);
+
+    private bool ConstructorHasHeapField(ConstructorSymbol constructor)
+    {
+        foreach (TypeRef fieldType in constructor.ParameterTypes)
+        {
+            if (!CanArenaReset(Prune(fieldType)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryFindRuntimeReuseConstructorArguments(
+        Expr body,
+        int fieldCount,
+        TypeRef.TNamedType matchedType,
+        out IReadOnlyList<Expr> arguments)
+    {
+        if (TryDescribeConstructorExpression(
+                body,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? constructorArguments,
+                out TypeRef.TNamedType? resultType)
+            && constructor is not null
+            && constructorArguments is not null
+            && resultType is not null
+            && constructor.Arity == fieldCount
+            && ReferenceEquals(resultType.Symbol, matchedType.Symbol)
+            && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageAdt(resultType)
+                || CanRuntimeManageOwnedChildAdt(resultType)
+                || CanRuntimeManageRecursiveCopyAdt(resultType)))
+        {
+            arguments = constructorArguments;
+            return true;
+        }
+
+        if (body is Expr.Let let
+            && (TryFindRuntimeReuseConstructorArguments(
+                    let.Value,
+                    fieldCount,
+                    matchedType,
+                    out arguments)
+                || TryFindRuntimeReuseConstructorArguments(
+                    let.Body,
+                    fieldCount,
+                    matchedType,
+                    out arguments)))
+        {
+            return true;
+        }
+
+        arguments = [];
+        return false;
+    }
+
+    private bool RuntimeReusePointerFieldsAreSafe(
+        IReadOnlyList<MatchCase> cases,
+        TypeRef.TNamedType matchedType)
+    {
+        foreach (MatchCase matchCase in cases)
+        {
+            if (!RuntimeReusePointerFieldsAreSafe(matchCase, matchedType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool RuntimeReusePointerFieldsAreSafe(
+        MatchCase matchCase,
+        TypeRef.TNamedType matchedType)
+    {
+        if (matchCase.Pattern is not Pattern.Constructor pattern
+            || !TryGetConstructorSymbol(pattern, out ConstructorSymbol constructor))
+        {
+            return true;
+        }
+
+        TryFindRuntimeReuseConstructorArguments(
+            matchCase.Body,
+            constructor.Arity,
+            matchedType,
+            out IReadOnlyList<Expr> rebuildArguments);
+
+        HashSet<string> transferableBindings = new(StringComparer.Ordinal);
+        for (int i = 0; i < Math.Min(pattern.Patterns.Count, constructor.Arity); i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                constructor,
+                i,
+                matchedType));
+            if (CanArenaReset(fieldType)
+                || fieldType is not TypeRef.TNamedType)
+            {
+                continue;
+            }
+
+            if (pattern.Patterns[i] is not Pattern.Var binding
+                || _constructorSymbols.ContainsKey(binding.Name))
+            {
+                if (MatchCaseReferencesAnyBinding(
+                    matchCase,
+                    PatternBindings(pattern.Patterns[i])))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            int references = CountNameOccurrences(matchCase.Body, binding.Name);
+            int transfers = rebuildArguments.Count(argument => argument is Expr.Var variable
+                && string.Equals(variable.Name, binding.Name, StringComparison.Ordinal));
+            if (references != transfers || transfers > 1)
+            {
+                return false;
+            }
+
+            transferableBindings.Add(binding.Name);
+        }
+
+        return RuntimeReuseRebuildPointerFieldsAreSafe(
+            constructor,
+            rebuildArguments,
+            matchedType,
+            transferableBindings);
+    }
+
+    private bool RuntimeReuseRebuildPointerFieldsAreSafe(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> rebuildArguments,
+        TypeRef.TNamedType matchedType,
+        IReadOnlySet<string> transferableBindings)
+    {
+        for (int i = 0; i < Math.Min(rebuildArguments.Count, constructor.Arity); i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                constructor,
+                i,
+                matchedType));
+            if (CanArenaReset(fieldType)
+                || (CanRuntimeManageRecursiveCopyAdt(matchedType)
+                    && IsFreshConstructorTree(rebuildArguments[i], matchedType.Symbol))
+                || ((CanRuntimeManageAdt(matchedType)
+                        || CanRuntimeManageOwnedChildAdt(matchedType))
+                    && rebuildArguments[i] is Expr.RecordLit)
+                || (rebuildArguments[i] is Expr.Var variable
+                    && transferableBindings.Contains(variable.Name)))
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -72,7 +452,7 @@ public sealed partial class Lowering
     /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
     /// patterns, and nested refinements.
     /// </summary>
-    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null)
+    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null, TypeRef.TNamedType? runtimeReuseType = null, bool normalizeStaticStringArms = false)
     {
         for (int i = 0; i < match.Cases.Count; i++)
         {
@@ -88,9 +468,14 @@ public sealed partial class Lowering
 
             EmitLinearArmPatternAndGuard(match, i, valueTemp, valueType, armCleanupLabel);
 
-            int reuseTokensBefore = PublishLinearArmReuseToken(match, i, valueTemp, reuseScrutineeName);
+            ArmReuseContext reuseContext = PublishLinearArmReuseToken(
+                match,
+                i,
+                valueTemp,
+                reuseScrutineeName,
+                runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
 
             EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
 
@@ -132,6 +517,8 @@ public sealed partial class Lowering
             Unify(guardType, new TypeRef.TBool());
             Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
         }
+
+        TrackRuntimeManagedMatchScrutinee(match.Value, valueTemp, valueType, patternBindings);
     }
 
     /// <summary>
@@ -139,29 +526,63 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token
     /// the arm body didn't consume.
     /// </summary>
-    private int PublishLinearArmReuseToken(Expr.Match match, int i, int valueTemp, string? reuseScrutineeName)
+    private sealed record ArmReuseContext(int TokensBefore, IReadOnlyList<string> AddedLinearNames);
+
+    private ArmReuseContext PublishLinearArmReuseToken(
+        Expr.Match match,
+        int i,
+        int valueTemp,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType)
     {
         // In-place reuse (#2): publish the dead accumulator node as a reuse token for a same-arity
         // constructor in this arm's body. Only when the body doesn't reference the accumulator
         // again and there is no guard re-test below (payload fields are bound into temps above).
         int reuseTokensBefore = _reuseTokens.Count;
+        var addedLinearNames = new List<string>();
         // A constructor pattern's matched cell is a reuse token. Includes nullary cells (e.g.
         // Leaf), whose bare pattern parses as Pattern.Var of a known nullary constructor.
         int? reuseArity = match.Cases[i].Pattern switch
         {
             Pattern.Constructor reuseCtorPat => reuseCtorPat.Patterns.Count,
             Pattern.Var pv when _constructorSymbols.TryGetValue(pv.Name, out var nc) && nc.Arity == 0 => 0,
+            Pattern.Cons => 2,
             _ => null,
         };
         if (reuseScrutineeName is not null
             && reuseArity is int reuseArityVal
             && !ExprReferencesName(match.Cases[i].Body, reuseScrutineeName))
         {
-            _reuseTokens.Add((valueTemp, reuseArityVal));
-            RecordReuseTokenFieldBindings(valueTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+            RuntimeReuseCleanup? runtimeCleanup = runtimeReuseType is not null
+                && TryGetConstructorSymbol(match.Cases[i].Pattern, out ConstructorSymbol runtimeConstructor)
+                    ? CreateRuntimeReuseCleanup(
+                        runtimeReuseType,
+                        runtimeConstructor,
+                        match.Cases[i].Pattern)
+                    : null;
+            int tokenTemp = NewTemp();
+            Emit(new IrInst.DropReuse(
+                tokenTemp,
+                valueTemp,
+                reuseArityVal,
+                runtimeCleanup is not null));
+            _reuseTokens.Add(new ReuseToken(
+                tokenTemp,
+                reuseArityVal,
+                runtimeCleanup,
+                ListCell: match.Cases[i].Pattern is Pattern.Cons));
+            RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+            if (match.Cases[i].Pattern is Pattern.Cons { Head: Pattern.Var head }
+                && _linearReuseNames.Add(head.Name))
+            {
+                // A list specialization starts from a deep-unique spine. Its head owns a unique
+                // pointer-bearing value as well, so a nested match may reuse that child cell before
+                // the enclosing cons rebuild consumes the list-cell token.
+                addedLinearNames.Add(head.Name);
+            }
         }
 
-        return reuseTokensBefore;
+        return new ArmReuseContext(reuseTokensBefore, addedLinearNames);
     }
 
     /// <summary>
@@ -169,20 +590,20 @@ public sealed partial class Lowering
     /// into the result slot before jumping to the match end label. Shared by the linear and
     /// tag-switch arm lowerings.
     /// </summary>
-    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, int reuseTokensBefore)
+    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, ArmReuseContext reuseContext, bool normalizeStaticStringArms)
     {
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
-        var (bodyTemp, bodyType) = LowerExpr(cases[i].Body);
+        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseContext.TokensBefore, normalizeStaticStringArms);
+        foreach (string name in reuseContext.AddedLinearNames)
+        {
+            _linearReuseNames.Remove(name);
+        }
         EndExclusiveBranch(armCredits);
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        // Drop any reuse token this arm published that the body didn't consume.
-        if (_reuseTokens.Count > reuseTokensBefore)
-        {
-            _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
-        }
+        ReleaseUnconsumedReuseTokens(reuseContext.TokensBefore);
 
         using (PushDiagnosticContext($"in match arm {i + 1}"))
         {
@@ -191,6 +612,7 @@ public sealed partial class Lowering
                 Unify(resultType, bodyType);
             }
         }
+        bodyTemp = TransferDirectRuntimeManagedMatchResult(cases[i].Body, bodyTemp);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
         if (armFinalTemp != bodyTemp)
@@ -198,7 +620,80 @@ public sealed partial class Lowering
             // Copy-out occurred: update the result slot with the freshly allocated copy.
             Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
         }
+        if (_runtimeManagedMatchResultArms.TryPeek(out List<bool>? runtimeManagedArms)
+            && runtimeManagedArms is not null)
+        {
+            bool runtimeManaged = _runtimeManagedResultTemps.Contains(armFinalTemp)
+                || _inst.Any(instruction =>
+                    (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
+                        && adtTarget == armFinalTemp)
+                    || (instruction is IrInst.AllocReusing { Target: var reusedTarget, RuntimeManaged: true }
+                        && reusedTarget == armFinalTemp));
+            runtimeManagedArms.Add(runtimeManaged);
+        }
         Emit(new IrInst.Jump(endLabel));
+    }
+
+    private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore, bool normalizeStaticStringArm)
+    {
+        TypeRef.TNamedType? runtimeReuseType = _reuseTokens
+            .Skip(reuseTokensBefore)
+            .Select(token => token.RuntimeCleanup?.Type)
+            .FirstOrDefault(type => type is not null);
+        TypeRef.TNamedType? savedReuseType = _runtimeRcReuseAllocationTypeRequested;
+        _runtimeRcReuseAllocationTypeRequested = runtimeReuseType ?? savedReuseType;
+        try
+        {
+            if (normalizeStaticStringArm && body is Expr.StrLit literal)
+            {
+                var (sourceTemp, sourceType) = LowerStr(literal);
+                int resultTemp = NewTemp();
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    -1,
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+                _runtimeManagedResultTemps.Add(resultTemp);
+                return (resultTemp, sourceType);
+            }
+
+            return LowerExpr(body);
+        }
+        finally
+        {
+            _runtimeRcReuseAllocationTypeRequested = savedReuseType;
+        }
+    }
+
+    private void ReleaseUnconsumedReuseTokens(int reuseTokensBefore)
+    {
+        for (int i = reuseTokensBefore; i < _reuseTokens.Count; i++)
+        {
+            ReuseToken token = _reuseTokens[i];
+            if (token.RuntimeCleanup is not { } cleanup)
+            {
+                continue;
+            }
+
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int hasTokenTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(hasTokenTemp, token.Temp, zeroTemp));
+            string releasedLabel = NewLabel("reuse_token_released");
+            Emit(new IrInst.JumpIfFalse(hasTokenTemp, releasedLabel));
+            EmitKnownConstructorRuntimeManagedAdtDrop(
+                token.Temp,
+                cleanup.Type,
+                cleanup.Constructor,
+                knownUnique: true);
+            Emit(new IrInst.Label(releasedLabel));
+        }
+
+        if (_reuseTokens.Count > reuseTokensBefore)
+        {
+            _reuseTokens.RemoveRange(reuseTokensBefore, _reuseTokens.Count - reuseTokensBefore);
+        }
     }
 
     /// <summary>
@@ -354,6 +849,7 @@ public sealed partial class Lowering
     /// needed; the switch default handles the (diagnosed) non-exhaustive case.
     /// </summary>
     private void LowerMatchArmsViaTagSwitch(
+        Expr matchValue,
         IReadOnlyList<MatchCase> cases,
         List<(ConstructorSymbol Ctor, long Tag)> plan,
         int valueTemp,
@@ -363,7 +859,9 @@ public sealed partial class Lowering
         string endLabel,
         string noMatchLabel,
         bool savedTailPos,
-        string? reuseScrutineeName = null)
+        string? reuseScrutineeName = null,
+        TypeRef.TNamedType? runtimeReuseType = null,
+        bool normalizeStaticStringArms = false)
     {
         int tagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
@@ -387,11 +885,17 @@ public sealed partial class Lowering
             EmitArenaWatermark();
             PushOwnershipScope();
 
-            EmitTagSwitchArmPattern(cases, plan, i, valueTemp, valueType, noMatchLabel);
+            EmitTagSwitchArmPattern(matchValue, cases, plan, i, valueTemp, valueType, noMatchLabel);
 
-            int reuseTokensBefore = PublishTagSwitchArmReuseToken(cases, plan, i, valueTemp, reuseScrutineeName);
+            ArmReuseContext reuseContext = PublishTagSwitchArmReuseToken(
+                cases,
+                plan,
+                i,
+                valueTemp,
+                reuseScrutineeName,
+                runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseTokensBefore);
+            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
 
             _scopes.Pop();
         }
@@ -400,7 +904,7 @@ public sealed partial class Lowering
     /// <summary>
     /// Infers one tag-switch arm's pattern type and binds its payload fields into the arm scope.
     /// </summary>
-    private void EmitTagSwitchArmPattern(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
+    private void EmitTagSwitchArmPattern(Expr matchValue, IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
     {
         var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var patternType = InferPatternType(cases[i].Pattern, patternBindings);
@@ -413,6 +917,112 @@ public sealed partial class Lowering
         }
 
         TrackOwnedBindingsInPattern(patternBindings);
+        TrackRuntimeManagedMatchScrutinee(matchValue, valueTemp, valueType, patternBindings);
+    }
+
+    private void TrackRuntimeManagedMatchScrutinee(
+        Expr matchValue,
+        int valueTemp,
+        TypeRef valueType,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        // Task/coroutine bodies still use scheduler-owned arenas. Until cross-thread RC publication
+        // exists, their match payloads must stay on that path instead of entering local RC transfer.
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
+
+        string? ownerName = null;
+        if (matchValue is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true })
+        {
+            ownerName = ResolveOwnershipAlias(variable.Name);
+        }
+        else if (matchValue is not Expr.Var && IsRuntimeManagedResultTemp(valueTemp))
+        {
+            TypeRef ownedType = Prune(valueType);
+            string? typeName = GetOwnedTypeName(ownedType);
+            if (typeName is not null)
+            {
+                ownerName = $"$match_rc_{valueTemp}";
+                int ownerSlot = NewLocal();
+                Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
+                TrackOwnedValue(
+                    ownerName,
+                    ownerSlot,
+                    typeName,
+                    isResource: false,
+                    definitionSpan: null,
+                    ownedType,
+                    runtimeManaged: true);
+            }
+        }
+
+        if (ownerName is null)
+        {
+            return;
+        }
+
+        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        {
+            if (!CanArenaReset(Prune(bindingType)))
+            {
+                _ownershipAliases[bindingName] = ownerName;
+            }
+        }
+    }
+
+    private void TrackRuntimeManagedTcoListPatternAliases(
+        Expr matchValue,
+        TypeRef valueType,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        if (matchValue is not Expr.Var variable
+            || Prune(valueType) is not TypeRef.TList
+            || Lookup(variable.Name) is not Binding.Local parent
+            || _tcoCtx?.RuntimeManagedParamSlots.Contains(parent.Slot) != true
+            || !_tcoCtx.RuntimeManagedParamActiveSlots.TryGetValue(parent.Slot, out int activeSlot))
+        {
+            return;
+        }
+
+        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        {
+            TypeRef payloadType = Prune(bindingType);
+            if (CanArenaReset(payloadType)
+                || Lookup(bindingName) is not Binding.Local payload)
+            {
+                continue;
+            }
+
+            _runtimeManagedTcoPatternAliases[bindingName] = new RuntimeManagedTcoPatternAlias(
+                variable.Name,
+                parent.Slot,
+                activeSlot,
+                Prune(valueType),
+                payload.Slot,
+                payloadType);
+        }
+    }
+
+    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp)
+    {
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        if (result is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false } owner)
+        {
+            return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
+        }
+
+        return bodyTemp;
     }
 
     /// <summary>
@@ -420,7 +1030,13 @@ public sealed partial class Lowering
     /// Returns the reuse-token count before publishing so the caller can drop any token the
     /// arm body didn't consume.
     /// </summary>
-    private int PublishTagSwitchArmReuseToken(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, string? reuseScrutineeName)
+    private ArmReuseContext PublishTagSwitchArmReuseToken(
+        IReadOnlyList<MatchCase> cases,
+        List<(ConstructorSymbol Ctor, long Tag)> plan,
+        int i,
+        int valueTemp,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType)
     {
         // In-place reuse (#2): make this arm's dead accumulator node available as a reuse token
         // for a same-arity constructor in the body. Only when the body doesn't reference the
@@ -433,11 +1049,50 @@ public sealed partial class Lowering
         if (reuseScrutineeName is not null
             && !ExprReferencesName(cases[i].Body, reuseScrutineeName))
         {
-            _reuseTokens.Add((valueTemp, plan[i].Ctor.Arity));
-            RecordReuseTokenFieldBindings(valueTemp, cases[i].Pattern, cases[i].Body);
+            RuntimeReuseCleanup? runtimeCleanup = runtimeReuseType is null
+                ? null
+                : CreateRuntimeReuseCleanup(
+                    runtimeReuseType,
+                    plan[i].Ctor,
+                    cases[i].Pattern);
+            int tokenTemp = NewTemp();
+            Emit(new IrInst.DropReuse(
+                tokenTemp,
+                valueTemp,
+                plan[i].Ctor.Arity,
+                runtimeCleanup is not null));
+            _reuseTokens.Add(new ReuseToken(tokenTemp, plan[i].Ctor.Arity, runtimeCleanup));
+            RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
-        return reuseTokensBefore;
+        return new ArmReuseContext(reuseTokensBefore, []);
+    }
+
+    private RuntimeReuseCleanup CreateRuntimeReuseCleanup(
+        TypeRef.TNamedType runtimeType,
+        ConstructorSymbol constructor,
+        Pattern pattern)
+    {
+        var transferableFields = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (pattern is Pattern.Constructor constructorPattern)
+        {
+            for (int i = 0; i < Math.Min(constructorPattern.Patterns.Count, constructor.Arity); i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                    constructor,
+                    i,
+                    runtimeType));
+                if (!CanArenaReset(fieldType)
+                    && fieldType is TypeRef.TNamedType
+                    && constructorPattern.Patterns[i] is Pattern.Var binding
+                    && !_constructorSymbols.ContainsKey(binding.Name))
+                {
+                    transferableFields[binding.Name] = i;
+                }
+            }
+        }
+
+        return new RuntimeReuseCleanup(runtimeType, constructor, transferableFields);
     }
 
     private bool ValidateTuplePatternArity(TypeRef valueType, Pattern pattern)
@@ -478,10 +1133,45 @@ public sealed partial class Lowering
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        Emit(new IrInst.Alloc(nodeTemp, 16));
-        Emit(new IrInst.StoreMemOffset(nodeTemp, 0, headTemp));
-        Emit(new IrInst.StoreMemOffset(nodeTemp, 8, tailTemp));
+        bool runtimeManaged = _runtimeRcListAllocationRequested
+            && IsRuntimeManageableListElement(headType, headTemp);
+        if (TryConsumeReuseToken(
+                2,
+                runtimeManaged,
+                out int reuseTokenTemp,
+                out RuntimeReuseCleanup? runtimeCleanup,
+                listCell: true))
+        {
+            Debug.Assert(runtimeCleanup is null, "Runtime-managed list reuse requires list-specific child cleanup.");
+            Emit(new IrInst.AllocReusing(
+                nodeTemp,
+                0,
+                2,
+                reuseTokenTemp,
+                RuntimeManaged: false,
+                ListCell: true));
+            _reuseResultTemps.Add(nodeTemp);
+        }
+        else
+        {
+            Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
+        }
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
+        if (runtimeManaged && _runtimeRcTcoListTailBinding is not null)
+        {
+            _runtimeManagedResultTemps.Add(nodeTemp);
+        }
         return (nodeTemp, Prune(listType));
+    }
+
+    private bool IsRuntimeManageableListElement(TypeRef type, int temp)
+    {
+        TypeRef elementType = Prune(type);
+        return CanArenaReset(elementType)
+            || IsRuntimeManagedResultTemp(temp)
+                && elementType is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                    or TypeRef.TList or TypeRef.TNamedType;
     }
 
     private TypeRef InferPatternType(Pattern pattern, Dictionary<string, TypeRef> bindings)
@@ -599,8 +1289,8 @@ public sealed partial class Lowering
                 EmitRequireNonZero(valueTemp, failLabel);
                 int headTemp = NewTemp();
                 int tailTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, 0));
-                Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, 8));
+                Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+                Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
                 EmitPattern(c.Head, headTemp, failLabel, bindingTypes);
                 EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes);
                 return;

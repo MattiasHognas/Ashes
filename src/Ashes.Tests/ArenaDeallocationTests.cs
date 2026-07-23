@@ -101,7 +101,7 @@ public sealed class ArenaDeallocationTests
             "Int-result match should emit RestoreArenaState on both cleanup and success paths.");
     }
 
-    // --- RestoreArenaState NOT emitted for heap-type results ---
+    // --- RestoreArenaState for heap-type results depends on result provenance ---
 
     [Test]
     public void String_body_let_does_not_emit_RestoreArenaState()
@@ -112,11 +112,11 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_body_let_does_not_emit_RestoreArenaState()
+    public void Runtime_managed_list_body_let_emits_RestoreArenaState()
     {
         var ir = LowerProgram("let x = 42 in [1, 2, 3]");
-        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeFalse(
-            "Let expression with List body should NOT emit RestoreArenaState.");
+        HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue(
+            "An independent runtime-managed list result permits the let arena to reset.");
     }
 
     [Test]
@@ -463,36 +463,25 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_list_of_int_arg_emits_RestoreArenaState_and_CopyOutArena_before_jump()
+    public void TCO_loop_with_inferred_list_of_int_arg_uses_runtime_ownership()
     {
-        // When a tail-call argument is a TList(Int) (cons cell with copy-type head),
-        // the cons cell is self-contained (head is a direct i64, tail points to pre-watermark
-        // memory from the previous iteration). Emitting RestoreArenaState + CopyOutArena(16)
-        // allows the iteration's arena to be reclaimed while the accumulator survives.
-        var ir = LowerProgram(
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) (n :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        // Find the sequence: RestoreArenaState → CopyOutArena(_, _, 16) → StoreLocal → Jump
-        bool foundCopyOutSequence = false;
-        for (int i = 0; i < insts.Count - 3; i++)
+        instructions.Any(instruction => instruction is IrInst.Alloc
         {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.CopyOutArena copyOut
-                && copyOut.StaticSizeBytes == 16)
-            {
-                foundCopyOutSequence = true;
-                break;
-            }
-        }
-        foundCopyOutSequence.ShouldBeTrue(
-            "TCO loop with TList(Int) arg should emit RestoreArenaState + CopyOutArena(16).");
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is
+            IrInst.CopyOutArena { RuntimeManaged: false }
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
     }
 
     [Test]
@@ -516,62 +505,127 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_list_of_list_arg_emits_RestoreArenaState_and_CopyOutTcoListCell_before_jump()
+    public void Runtime_managed_TCO_parameter_exit_drop_stays_inside_its_active_guard()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build = given (n) -> given (text) ->
+                if n == 0 then text
+                else build(n - 1)(text + "x")
+            in build(5)("")
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.OfType<IrInst.RcDrop>()
+            .Where(drop => string.Equals(drop.TypeName, "String", StringComparison.Ordinal)
+                && drop.RuntimeManaged)
+            .All(drop => drop.OwnerSlot == -1)
+            .ShouldBeTrue(
+                "TCO replacement and conditional exit drops are manually placed; lifetime placement " +
+                "must not move an exit drop out of its active/returned-value guard.");
+    }
+
+    [Test]
+    public void Runtime_managed_TCO_normalizes_all_successor_arguments_before_dropping_predecessors()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> BigInt -> BigInt -> BigInt =
+                given n -> given left -> given right ->
+                    if n == 0 then left
+                    else build(n - 1)(right)(left * right)
+            in build(5)(1N)(2N)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+        int firstReplacementDrop = instructions.FindIndex(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "BigInt",
+            OwnerSlot: -1,
+            RuntimeManaged: true,
+        });
+        int backEdgeRestore = instructions.FindIndex(
+            firstReplacementDrop,
+            instruction => instruction is IrInst.RestoreArenaState);
+
+        firstReplacementDrop.ShouldBeGreaterThanOrEqualTo(0);
+        backEdgeRestore.ShouldBeGreaterThan(firstReplacementDrop);
+        instructions.Skip(firstReplacementDrop).Take(backEdgeRestore - firstReplacementDrop)
+            .Any(instruction => instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: IrInst.CopyOutArena.BigIntSize,
+                RuntimeManaged: true,
+                Purpose: IrInst.CopyOutPurpose.RcNormalization,
+            })
+            .ShouldBeFalse(
+                "Parallel TCO assignment may alias predecessor parameters; every successor must own " +
+                "its normalized value before any predecessor can be released and reused.");
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "A direct successor reference to another RC parameter needs its own ownership before " +
+            "the predecessor parameter set is released.");
+    }
+
+    [Test]
+    public void Runtime_managed_TCO_result_is_retained_for_the_next_normalized_call()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive prepend = given (n) -> given (acc) ->
+                if n == 0 then acc
+                else prepend(n - 1)("x" :: acc)
+            in
+                let recursive lines = given (n) -> given (acc) ->
+                    if n == 0 then acc
+                    else lines(n - 1)(prepend(60)(acc))
+                in lines(5)([])
+            """);
+
+        List<IrInst> allInstructions = ir.Functions
+            .SelectMany(function => function.Instructions)
+            .ToList();
+        allInstructions.Any(instruction => instruction is IrInst.CallClosure
+        {
+            RuntimeManagedArgumentFlagTemp: >= 0,
+        } or IrInst.CallKnown
+        {
+            RuntimeManagedArgumentFlagTemp: >= 0,
+        }).ShouldBeTrue(
+            "An already RC-owned accumulator must be retained for a normalizing parameter " +
+            "instead of being cloned again at every outer-loop call.");
+        allInstructions.Any(instruction => instruction is IrInst.LoadArgumentOwnership)
+            .ShouldBeTrue(
+                "The normalized function entry must select between adopting a transferred RC " +
+                "argument and copying an unknown arena argument.");
+    }
+
+    [Test]
+    public void TCO_loop_with_list_of_list_arg_uses_runtime_ownership()
     {
         // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it
         // to acc. The inner list has copy-type elements, so the outer cell + inner chain
-        // can be copied out via CopyOutTcoListCell(InnerList).
-        var ir = LowerProgram(
+        // can be normalized as one runtime-owned outer and inner graph.
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ([n] :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            var reclaimIndex = -1;
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
-
-            if (reclaimIndex == -1)
-            {
-                continue;
-            }
-
-            for (int j = i + 1; j < reclaimIndex; j++)
-            {
-                if (insts[j] is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.InnerList)
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with TList(TList(Int)) arg should emit CopyOutTcoListCell(InnerList) after RestoreArenaState and before ReclaimArenaChunks.");
+            HeadCopy: IrInst.ListHeadCopyKind.InnerList,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
@@ -608,142 +662,372 @@ public sealed class ArenaDeallocationTests
     // --- Extended TCO copy-out ---
 
     [Test]
-    public void TCO_loop_with_list_of_string_arg_emits_RestoreArenaState_and_CopyOutTcoListCell()
+    public void TCO_loop_with_list_of_string_arg_uses_runtime_ownership()
     {
         // TList(TStr): each iteration creates a string and prepends it to acc.
-        // The cons cell head is a string pointer — CopyOutTcoListCell(String)
-        // copies the cell AND the string to new arena locations.
-        var ir = LowerProgram(
+        // The cons cell and String head form one runtime-owned graph.
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ("x" :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            var reclaimIndex = -1;
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
-
-            if (reclaimIndex == -1)
-            {
-                continue;
-            }
-
-            for (int j = i + 1; j < reclaimIndex; j++)
-            {
-                if (insts[j] is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.String)
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with TList(TStr) arg should emit CopyOutTcoListCell(String) after RestoreArenaState and before ReclaimArenaChunks.");
+            HeadCopy: IrInst.ListHeadCopyKind.String,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "String",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
-    public void TCO_loop_with_closure_arg_emits_RestoreArenaState_and_CopyOutClosure()
+    public void TCO_loop_with_tuple_head_list_accumulator_uses_runtime_ownership()
     {
-        // TFun: the TCO accumulator is a closure. CopyOutClosure copies the 24-byte
-        // closure struct and its environment.
-        var ir = LowerProgram(
+        IrProgram ir = LowerProgram(
             """
-            let recursive build = given (n) -> given (f) ->
+            let recursive build : Int -> List((Int, Str)) -> List((Int, Str)) = given n -> given acc ->
+                if n == 0 then acc
+                else build (n - 1) ((n, "x") :: acc)
+            in build 5 []
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            SizeBytes: 16,
+            RuntimeManaged: true,
+        }).ShouldBeTrue("The tuple head itself must be allocated under RC before the list owns it.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
+                "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_list_overwrite", StringComparison.Ordinal)).ShouldBeFalse(
+                "A growing list with pointer-bearing record heads must retain the recursive RC path.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_record_head_list_accumulator_uses_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive build : Int -> List(Item) -> List(Item) = given n -> given acc ->
+                if n == 0 then acc
+                else build (n - 1) (Item(text = "x", value = n) :: acc)
+            in build 5 []
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
+                "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_consumed_list_tail_keeps_one_runtime_regime()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive reverse : List(Str) -> List(Str) -> List(Str) = given acc -> given rest ->
+                match rest with
+                    | [] -> acc
+                    | head :: tail -> reverse (head :: acc) tail
+            in reverse [] ["a", "b"]
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The consumed tail fact should admit both list parameters to one RC reset regime.");
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
+                "Nil list aliases must bypass RC header access.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_borrows_consumed_inline_list_tail_without_runtime_RC()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive sum : List(Float) -> Float -> Float = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | value :: tail -> sum(tail)(total + value)
+            in sum([1.0, 2.0, 3.0])(0.0)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+                "A tail cursor into an inline-element list can borrow the caller's graph.");
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        } or IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+                "A scalar fold should not update list reference counts per element.");
+        int backEdgeIndex = instructions.FindLastIndex(instruction =>
+            instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal));
+        backEdgeIndex.ShouldBeGreaterThan(1);
+        instructions[backEdgeIndex - 1].ShouldBeOfType<IrInst.RestoreStackPointer>();
+        instructions[backEdgeIndex - 2].ShouldNotBeOfType<IrInst.ReclaimArenaChunks>(
+            "A scalar-only frame must not add a redundant arena reset at every element.");
+    }
+
+    [Test]
+    public void TCO_loop_with_consumed_tuple_head_list_keeps_one_runtime_regime()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | (_, value) :: tail -> consume(tail)(total + value)
+            in consume [("x", 1), ("y", 2)] 0
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Count(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBe(1,
+            "Borrowing the transferred tail must preserve RC provenance and avoid a second deferred dup.");
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Tuple",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("Releasing the consumed list parent must recursively release its tuple head.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_consumed_record_head_list_keeps_one_runtime_regime()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive consume : List(Item) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | Item(_, value) :: tail -> consume(tail)(total + value)
+            in consume [Item(text = "x", value = 1), Item(text = "y", value = 2)] 0
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Item",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("Releasing the consumed list parent must recursively release its record head.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Inferred_consumed_general_head_list_promotes_after_argument_types_resolve()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let formatEntry pair =
+                match pair with
+                    | (key, (a, b, c, d)) -> key + Ashes.Text.fromInt(a + b + c + d)
+
+            let recursive formatAll pairs acc =
+                match pairs with
+                    | [] -> acc
+                    | head :: tail -> formatAll(tail)(formatEntry(head) :: acc)
+            in formatAll([("a", (1, 2, 3, 4)), ("b", (5, 6, 7, 8))])([])
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            HeadCopy: IrInst.ListHeadCopyKind.String,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
+                "The resolved consumed tail must gain its independent reference before the old parent drops.");
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
+                "Exactly one matching active parameter transfers; the other parameter follows its exit-drop path.");
+    }
+
+    [Test]
+    public void TCO_exit_transfers_only_the_returned_runtime_parameter()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> List(Int) -> List(Int) -> List(Int) =
+                given n -> given returned -> given discarded ->
+                    if n == 0 then returned
+                    else build(n - 1)(n :: returned)(n :: discarded)
+            in build(5)([])([])
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
+                "Exactly one matching active list transfers; the other list follows its exit-drop path.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_list_pattern_payload_transfer_consumes_parent_once()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive loop : Int -> List(Str) -> Str -> Int = given n -> given values -> given current ->
+                if n == 0 then Ashes.Text.byteLength(current)
+                else
+                    match values with
+                        | [] -> loop (n - 1) ["next"] current
+                        | head :: _ -> loop (n - 1) ["next"] head
+            in loop 5 ["seed"] "initial"
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The escaping String payload needs its own reference before the list parent is released.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_drop_inactive", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_drop_inactive", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void TCO_list_pattern_payload_transfer_preserves_moved_parent()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive loop : Int -> List(Str) -> Int = given n -> given values ->
+                if n == 0 then n
+                else
+                    match values with
+                        | [] -> loop (n - 1) ("next" :: values)
+                        | head :: _ -> loop (n - 1) (head :: values)
+            in loop 5 ["seed"]
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The payload needs its own reference while the parent list moves to the next iteration.");
+        instructions.Count(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_drop_inactive", StringComparison.Ordinal)).ShouldBe(0,
+                "The moved list parent must stay active across the back edge.");
+    }
+
+    [Test]
+    public void TCO_loop_with_fresh_closure_arg_uses_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
                 if n == 0 then f 0
                 else build (n - 1) (given (x) -> x + n)
             in build 5 (given (x) -> x)
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(insts);
-
-        found.ShouldBeTrue(
-            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
-    }
-
-    private static bool CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(List<IrInst> insts)
-    {
-        static bool IsJumpBackToBodyLabel(object inst)
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
         {
-            var text = inst.ToString() ?? string.Empty;
-            return text.Contains("_body", StringComparison.Ordinal) && (text.Contains("Jump", StringComparison.Ordinal) || text.Contains("Branch", StringComparison.Ordinal) || text.Contains("Br", StringComparison.Ordinal));
-        }
-
-        for (int i = 0; i < insts.Count; i++)
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            int copyOutIndex = -1;
-            int reclaimIndex = -1;
-            int jumpBackIndex = -1;
-
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (copyOutIndex == -1 && insts[j] is IrInst.CopyOutClosure)
-                {
-                    copyOutIndex = j;
-                }
-
-                if (reclaimIndex == -1 && insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                }
-
-                if (jumpBackIndex == -1 && IsJumpBackToBodyLabel(insts[j]))
-                {
-                    jumpBackIndex = j;
-                }
-
-                if (reclaimIndex != -1 && jumpBackIndex != -1)
-                {
-                    break;
-                }
-            }
-
-            if (copyOutIndex != -1
-                && reclaimIndex != -1
-                && jumpBackIndex != -1
-                && copyOutIndex < reclaimIndex
-                && copyOutIndex < jumpBackIndex)
-            {
-                return true;
-            }
-        }
-
-        return false;
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutClosure
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
     }
 
     [Test]
-    public void TCO_loop_with_adt_copy_type_arg_emits_RestoreArenaState_and_CopyOutArena()
+    public void TCO_loop_with_arena_capture_closure_declines_relocation()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
+                if n == 0 then f 0
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n)
+                    in build(n - 1)(given x -> x + Ashes.Text.byteLength(text))
+            in build(5)(given x -> x)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutClosure).ShouldBeFalse(
+            "An arena-backed capture graph has no licensed RC transfer at this back-edge.");
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_inferred_copy_adt_arg_uses_runtime_ownership()
     {
         // TNamedType with copy-type fields: ADT can be shallow-copied.
         var ir = LowerProgram(
@@ -755,126 +1039,146 @@ public sealed class ArenaDeallocationTests
                 else build (n - 1) (Box(n))
             in build 5 (Box(0))
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 3; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutArena
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            var copyOutIndex = -1;
-            for (int j = i + 1; j < insts.Count - 1; j++)
-            {
-                if (insts[j] is IrInst.CopyOutArena c && c.StaticSizeBytes == 16)
-                {
-                    copyOutIndex = j;
-                    break;
-                }
-            }
-
-            if (copyOutIndex == -1)
-            {
-                continue;
-            }
-
-            var reclaimIndex = -1;
-            for (int j = copyOutIndex + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
-
-            if (reclaimIndex != -1)
-            {
-                found = true;
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with ADT(Int) arg should emit RestoreArenaState -> CopyOutArena(16) before ReclaimArenaChunks.");
+            StaticSizeBytes: 16,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutArena
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Box",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
     public void CopyOutTcoListCell_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutTcoListCell(7, 3, IrInst.ListHeadCopyKind.String);
+        var inst = new IrInst.CopyOutTcoListCell(
+            7, 3, IrInst.ListHeadCopyKind.String, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
         inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.String);
 
-        var innerInst = new IrInst.CopyOutTcoListCell(10, 5, IrInst.ListHeadCopyKind.InnerList);
+        var innerInst = new IrInst.CopyOutTcoListCell(
+            10, 5, IrInst.ListHeadCopyKind.InnerList, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         innerInst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.InnerList);
+        innerInst.Purpose.ShouldBe(IrInst.CopyOutPurpose.ArenaTcoCompaction);
     }
 
     [Test]
-    public void CopyOutList_instruction_has_default_inline_head_copy()
+    public void CopyOutList_instruction_records_inline_head_copy()
     {
-        var inst = new IrInst.CopyOutList(7, 3);
+        var inst = new IrInst.CopyOutList(
+            7,
+            3,
+            IrInst.ListHeadCopyKind.Inline,
+            RuntimeManaged: false,
+            IrInst.CopyOutPurpose.IndependentClone);
         inst.HeadCopy.ShouldBe(IrInst.ListHeadCopyKind.Inline);
     }
 
     // --- Copy-out for String scope results ---
 
     [Test]
-    public void String_result_let_with_owned_binding_emits_CopyOutArena()
+    public void Fresh_string_result_let_with_owned_binding_uses_runtime_managed_allocation()
     {
         // let s = "hello" in s + " world"
-        // s is an owned String binding. The body is a heap-allocated concat string.
-        // RestoreArenaState + CopyOutArena(-1) should be emitted for the string result.
+        // The fresh body result is independent of the arena and survives its reset directly.
         var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "String result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue(
+            "The escaping concatenation should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A runtime-managed string result should not be copied out of the arena.");
     }
 
     [Test]
-    public void String_result_let_with_owned_binding_emits_RestoreArenaState_before_CopyOutArena()
+    public void Fresh_string_result_let_with_owned_binding_reclaims_scope_without_copy_out()
     {
         var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
         var insts = ir.EntryFunction.Instructions;
 
-        bool foundSequence = false;
-        for (int i = 0; i < insts.Count - 1; i++)
-        {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.CopyOutArena c
-                && c.StaticSizeBytes == -1)
-            {
-                foundSequence = true;
-                break;
-            }
-        }
-        foundSequence.ShouldBeTrue(
-            "String result copy-out should follow RestoreArenaState with StaticSizeBytes == -1.");
+        HasRestoreArenaState(insts).ShouldBeTrue(
+            "The arena scope should still be reset after producing an independent RC result.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "Resetting a scope with an independent RC result should not require copy-out.");
     }
 
     [Test]
-    public void Nested_owned_string_scopes_emit_copy_out_sequences_for_each_escaping_result()
+    public void Mixed_branch_string_result_normalizes_static_arm_to_runtime_ownership()
+    {
+        var ir = LowerProgram(
+            """
+            let final =
+                let prefix = "outer" in
+                let text =
+                    match 1 with
+                        | 1 ->
+                            let suffix = "inner" in
+                            prefix + suffix
+                        | _ -> "bad"
+                in text
+            in Ashes.Text.byteLength(final)
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+            "The interned fallback arm should be copied once into the match's uniform RC ownership contract.");
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(0,
+            "After branch normalization, the match result should cross both enclosing arena resets without legacy copy-out.");
+        instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue(
+            "The normalized match result must retain a final RC drop.");
+    }
+
+    [Test]
+    public void Nested_fresh_string_result_remains_runtime_managed_across_enclosing_scopes()
     {
         var ir = LowerProgram(
             """
             let prefix = "outer" in
-            let text =
-                match 1 with
-                    | 1 ->
-                        let suffix = "inner" in
-                        prefix + suffix
-                    | _ -> "bad"
-            in text
+            let suffix = "inner" in
+            prefix + suffix
             """);
         var instructions = ir.EntryFunction.Instructions;
 
-        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(3,
-            "Nested string scopes should copy out for the inner let result, the let-bound match result, and the outer let result.");
+        instructions.Any(instruction => instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(0,
+            "Runtime-management provenance should survive the inner scope result slot and both arena resets.");
+    }
+
+    [Test]
+    public void Late_promoted_affine_string_exit_has_uniform_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build partial i output =
+                if i <= 0
+                then
+                    if partial
+                    then output + "z"
+                    else output
+                else build(partial)(i - 1)(output + "xx")
+
+            Ashes.Text.byteLength(build(false)(3000)(""))
+            """);
+        IrFunction tcoFunction = FindTcoFunction(ir);
+
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStrTip { RuntimeManaged: true }).ShouldBeTrue(
+            "The affine back-edge must consume and transfer its runtime-managed accumulator.");
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh exit arm must match the direct accumulator arm's RC ownership.");
     }
 
     [Test]
@@ -892,30 +1196,112 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_body_let_emits_CopyOutList()
+    public void Fresh_list_body_let_uses_runtime_managed_allocation()
     {
-        // Lists are deep-copied (entire cons chain) via CopyOutList.
         var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List(Int) result with owned binding should emit CopyOutList from a let scope.");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh list result should allocate through runtime RC.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "A runtime-managed list should not be deep-copied at scope exit.");
+    }
+
+    [Test]
+    public void Fresh_bytes_and_bigint_bodies_avoid_arena_copy_out()
+    {
+        IrProgram bytes = LowerProgram("let marker = \"owned\" in Ashes.Byte.u16Le(258u16)");
+        IrProgram bigInt = LowerProgram("let marker = \"owned\" in Ashes.Number.BigInt.fromInt(42)");
+
+        bytes.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BytesU16Le { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BigIntFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { bytes, bigInt })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse(
+                "An independent runtime-managed scalar heap result should survive the scope reset directly.");
+        }
+    }
+
+    [Test]
+    public void Fresh_tuple_and_record_bodies_survive_scope_reset_through_runtime_rc()
+    {
+        IrProgram tuple = LowerProgram("let marker = \"owned\" in (40, 2)");
+        IrProgram record = LowerProgram(
+            """
+            type Point =
+                | x: Int
+                | y: Int
+            let marker = "owned" in Point(x = 40, y = 2)
+            """);
+
+        tuple.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        record.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { tuple, record })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public void Borrowed_pointer_tuple_body_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("let text = Ashes.Text.fromInt(42) in (text, 2)");
+
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "A tuple borrowing an existing pointer child must not be promoted to an owning RC graph.");
+    }
+
+    [Test]
+    public void Fresh_builtin_result_bodies_survive_scope_reset_through_runtime_rc()
+    {
+        IrProgram scalar = LowerProgram("let marker = \"owned\" in Ashes.Text.parseInt(\"42\")");
+        IrProgram bigInt = LowerProgram("let marker = \"owned\" in Ashes.Text.parseBigInt(\"42\")");
+        IrProgram uncons = LowerProgram("let marker = \"owned\" in Ashes.Text.uncons(\"hi\")");
+
+        scalar.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeTrue();
+        uncons.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { scalar, bigInt, uncons })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse();
+        }
     }
 
     [Test]
     public void CopyOutArena_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutArena(7, 3, -1);
+        var inst = new IrInst.CopyOutArena(
+            7, 3, -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
         inst.StaticSizeBytes.ShouldBe(-1);
 
-        var fixedInst = new IrInst.CopyOutArena(10, 5, 16);
+        var fixedInst = new IrInst.CopyOutArena(
+            10, 5, 16, RuntimeManaged: false, IrInst.CopyOutPurpose.ArenaTcoCompaction);
         fixedInst.StaticSizeBytes.ShouldBe(16);
+        fixedInst.Purpose.ShouldBe(IrInst.CopyOutPurpose.ArenaTcoCompaction);
     }
 
     [Test]
     public void CopyOutList_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutList(7, 3);
+        var inst = new IrInst.CopyOutList(
+            7,
+            3,
+            IrInst.ListHeadCopyKind.Inline,
+            RuntimeManaged: false,
+            IrInst.CopyOutPurpose.IndependentClone);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
     }
@@ -923,9 +1309,103 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void CopyOutClosure_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutClosure(7, 3);
+        var inst = new IrInst.CopyOutClosure(
+            7, 3, RuntimeManaged: true, IrInst.CopyOutPurpose.RcNormalization);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
+        inst.RuntimeManaged.ShouldBeTrue();
+        inst.Purpose.ShouldBe(IrInst.CopyOutPurpose.RcNormalization);
+    }
+
+    [Test]
+    public void Copy_out_emitters_classify_RC_and_region_boundaries()
+    {
+        IrProgram ordinary = LowerProgram(
+            """
+            let choose : List(Int) -> List(Int) = given source ->
+                let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+        IrProgram taskRegion = LowerProgram(
+            """
+            let pending = async(1)
+            let choose : List(Int) -> List(Int) = given source ->
+                let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+        IrProgram clone = LowerProgram(
+            """
+            let original = [1, 2, 3]
+            let copied = Ashes.Internal.deepCopy(original)
+            match copied with | [] -> 0 | head :: _ -> head
+            """);
+
+        CopyOutInstructions(ordinary).All(instruction =>
+            instruction switch
+            {
+                IrInst.CopyOutArena copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                IrInst.CopyOutList copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                IrInst.CopyOutClosure copy => copy.RuntimeManaged
+                    && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
+                _ => false,
+            }).ShouldBeTrue();
+        CopyOutInstructions(taskRegion).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena
+            {
+                RuntimeManaged: false,
+                Purpose: IrInst.CopyOutPurpose.ArenaScopeBoundary
+                    or IrInst.CopyOutPurpose.ArenaCallBoundary,
+            } => true,
+            IrInst.CopyOutList
+            {
+                RuntimeManaged: false,
+                Purpose: IrInst.CopyOutPurpose.ArenaScopeBoundary
+                    or IrInst.CopyOutPurpose.ArenaCallBoundary,
+            } => true,
+            _ => false,
+        }).ShouldBeTrue("Task-bearing programs retain their explicit scheduler-region boundary.");
+        CopyOutInstructions(clone).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            IrInst.CopyOutList { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            IrInst.CopyOutClosure { Purpose: IrInst.CopyOutPurpose.IndependentClone } => true,
+            _ => false,
+        }).ShouldBeTrue("The explicit deep-copy primitive must remain distinguishable from relocation.");
+    }
+
+    [Test]
+    public void Task_bearing_TCO_classifies_arena_compaction()
+    {
+        IrProgram taskTcoRegion = LowerProgram(
+            """
+            let pending = async(1)
+            let recursive build : Int -> List(Str) -> List(Str) = given n -> given values ->
+                if n <= 0 then values
+                else build(n - 1)("value" :: values)
+            match build(3)([]) with | [] -> 0 | _ :: _ -> 1
+            """);
+
+        CopyOutInstructions(taskTcoRegion).Any(instruction => instruction switch
+        {
+            IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            IrInst.CopyOutList { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            IrInst.CopyOutTcoListCell { Purpose: IrInst.CopyOutPurpose.ArenaTcoCompaction } => true,
+            _ => false,
+        }).ShouldBeTrue("Task-bearing TCO keeps its explicitly classified arena compaction path.");
+    }
+
+    [Test]
+    public void Closure_with_supported_capture_graph_emits_environment_normalizer()
+    {
+        IrProgram ir = LowerProgram(
+            "let make source = given x -> Ashes.Text.byteLength(source) + x in make(\"value\")");
+        ir.Functions.Any(function =>
+            function.Label.EndsWith("$env_normalize", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
     [Test]
@@ -1027,20 +1507,21 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void List_of_list_does_not_emit_CopyOutList()
+    public void Fresh_nested_list_body_uses_recursive_runtime_management()
     {
-        // List(List(Int)) — the head elements are list pointers, which are
-        // not copy-type or TStr. Deep copy of the outer chain doesn't help
-        // because inner lists may also be in the arena.
         var ir = LowerProgram("let s = \"hello\" in [[1, 2], [3, 4]]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeFalse(
-            "List(List(Int)) should NOT emit CopyOutList (nested list heads are not safe).");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Count(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeGreaterThan(2,
+            "Both the outer and inner fresh list cells should allocate through runtime RC.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "A recursively runtime-managed nested list should not be deep-copied at scope exit.");
     }
 
     // --- Extended copy-out: ADT ---
 
     [Test]
-    public void Adt_with_copy_type_fields_let_result_emits_CopyOutArena()
+    public void Adt_with_copy_type_fields_let_result_uses_runtime_managed_allocation()
     {
         // ADT with Int field: (1 + 1) * 8 = 16 bytes → safe for shallow copy.
         var ir = LowerProgram(
@@ -1051,12 +1532,14 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "ADT(Int) result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh ADT result should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A runtime-managed ADT result should not be copied out of the arena.");
     }
 
     [Test]
-    public void Adt_with_copy_type_fields_emits_correct_static_size()
+    public void Adt_with_multiple_copy_type_fields_avoids_shallow_copy_out()
     {
         // ADT with 2 Int fields: (1 + 2) * 8 = 24 bytes.
         var ir = LowerProgram(
@@ -1067,12 +1550,13 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 24);
-        found.ShouldBeTrue("Pair(Int, Int) result should emit CopyOutArena with StaticSizeBytes == 24.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "Pair(Int, Int) should survive the scope reset through its RC allocation.");
     }
 
     [Test]
-    public void Adt_nullary_constructor_let_result_emits_CopyOutArena()
+    public void Adt_nullary_constructor_let_result_uses_runtime_managed_allocation()
     {
         // Nullary ADT: (1 + 0) * 8 = 8 bytes → safe (just a tag, no pointers).
         var ir = LowerProgram(
@@ -1085,12 +1569,13 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "Nullary ADT result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue(
+            "The escaping nullary constructor should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse();
     }
 
     [Test]
-    public void Adt_nullary_constructor_emits_correct_static_size()
+    public void Adt_nullary_constructor_avoids_shallow_copy_out()
     {
         // All-nullary ADT: (1 + 0) * 8 = 8 bytes.
         var ir = LowerProgram(
@@ -1103,8 +1588,9 @@ public sealed class ArenaDeallocationTests
             """);
         var insts = ir.EntryFunction.Instructions;
 
-        bool found = insts.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 8);
-        found.ShouldBeTrue("Nullary ADT result should emit CopyOutArena with StaticSizeBytes == 8.");
+        insts.Any(instruction => instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A nullary RC result should survive the scope reset without shallow copy-out.");
     }
 
     [Test]
@@ -1144,28 +1630,48 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Closure_let_result_does_not_emit_CopyOutClosure()
+    public void Closure_let_result_uses_runtime_ownership_without_CopyOutClosure()
     {
-        // Closures may capture heap pointers in their env, so copy-out is
-        // unsafe until escape analysis / recursive copy-out is implemented.
+        // A fresh closure with no owned pointer captures can escape as an RC-managed value.
         var ir = LowerProgram("let s = \"hello\" in given (y) -> y + 1");
+        ir.EntryFunction.Instructions.Any(i => i is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutClosure).ShouldBeFalse(
-            "Closure result should NOT emit CopyOutClosure (env may contain heap pointers).");
+            "An RC closure should survive directly instead of using shallow closure copy-out.");
     }
 
     [Test]
-    public void List_of_int_let_result_emits_CopyOutList()
+    public void List_of_int_let_result_avoids_CopyOutList()
     {
-        // List(Int): deep cons-chain copy via CopyOutList.
         var ir = LowerProgram("let s = \"hello\" in [1, 2, 3]");
-        ir.EntryFunction.Instructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List(Int) result with owned binding should emit CopyOutList.");
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutList).ShouldBeFalse(
+            "List(Int) should survive through its RC cells instead of a deep arena copy-out.");
     }
 
     [Test]
-    public void Call_returning_adt_with_copy_fields_emits_CopyOutArena()
+    public void Borrowed_list_result_normalizes_to_runtime_ownership_at_scope_exit()
     {
-        // Function returning an ADT with Int field → per-call copy-out with static size.
+        IrProgram ir = LowerProgram(
+            """
+            let choose : List(Int) -> List(Int) = given source -> let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+
+        ir.Functions.Any(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
+                "A borrowed list crossing a reclaimed lexical scope should become an RC-owned spine.");
+        ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
+    {
         var ir = LowerProgram(
             """
             type Box =
@@ -1180,8 +1686,10 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for ADT(Int) result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena c && c.StaticSizeBytes == 16).ShouldBeTrue(
-            "CopyOutArena(16) should appear after CallClosure for Box(Int) result.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
+            "The callee's fresh RC result should survive the caller's arena reset directly.");
+        ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     // --- Per-call arena watermarks ---
@@ -1241,9 +1749,8 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_string_emits_CopyOutArena()
+    public void Call_returning_static_string_uses_runtime_ownership_normalization()
     {
-        // toString returns String — per-call watermark should save+restore+copy-out.
         var ir = LowerProgram(
             """
             let toString = given (x) -> "result"
@@ -1257,20 +1764,16 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for String result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeTrue(
-            "CopyOutArena should appear after CallClosure for String result.");
-
-        // RestoreArenaState must precede CopyOutArena
-        var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
-        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
-        restoreIdx.ShouldBeLessThan(copyOutIdx,
-            "RestoreArenaState must come before CopyOutArena.");
+        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
+            "The callee should return its normalized RC String without caller-side copy-out.");
+        ir.Functions.SelectMany(function => function.Instructions).Count(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+            "The static literal should be normalized once at its function-return boundary.");
     }
 
     [Test]
-    public void Call_returning_string_emits_ReclaimArenaChunks_after_CopyOutArena()
+    public void Call_returning_runtime_string_reclaims_chunks_after_restore()
     {
-        // Sequence should be: RestoreArenaState → CopyOutArena → ReclaimArenaChunks
         var ir = LowerProgram(
             """
             let toString = given (x) -> "result"
@@ -1281,17 +1784,14 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
 
         var restoreIdx = afterCall.FindIndex(i => i is IrInst.RestoreArenaState);
-        var copyOutIdx = afterCall.FindIndex(i => i is IrInst.CopyOutArena);
         var reclaimIdx = afterCall.FindIndex(i => i is IrInst.ReclaimArenaChunks);
 
         restoreIdx.ShouldBeGreaterThanOrEqualTo(0, "RestoreArenaState should be present.");
-        copyOutIdx.ShouldBeGreaterThanOrEqualTo(0, "CopyOutArena should be present.");
         reclaimIdx.ShouldBeGreaterThanOrEqualTo(0, "ReclaimArenaChunks should be present.");
 
-        restoreIdx.ShouldBeLessThan(copyOutIdx,
-            "RestoreArenaState must come before CopyOutArena.");
-        copyOutIdx.ShouldBeLessThan(reclaimIdx,
-            "CopyOutArena must come before ReclaimArenaChunks (source must be readable before chunks are freed).");
+        restoreIdx.ShouldBeLessThan(reclaimIdx,
+            "The caller should restore before reclaiming its now-independent call window.");
+        afterCall.Any(instruction => instruction is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
     [Test]
@@ -1317,14 +1817,14 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_list_emits_RestoreArenaState_and_CopyOutList_after_call()
+    public void Call_returning_list_normalizes_result_to_runtime_ownership_after_call()
     {
-        // identity function returning a list — per-call watermark should
-        // emit RestoreArenaState + CopyOutList for deep cons-chain copy-out.
+        // An opaque arena list result crosses the per-call watermark as a complete RC-owned spine.
         var ir = LowerProgram(
             """
             let id = given (xs) -> xs
-            in id([1, 2, 3])
+            in let result = id([1, 2, 3])
+            in match result with | [] -> 0 | head :: _ -> head
             """);
         var instructions = ir.EntryFunction.Instructions;
         var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
@@ -1333,8 +1833,10 @@ public sealed class ArenaDeallocationTests
         var afterCallInstructions = instructions.Skip(lastCallIdx + 1).ToList();
         afterCallInstructions.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "List result should trigger per-call RestoreArenaState after CallClosure.");
-        afterCallInstructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List result should trigger per-call CopyOutList after CallClosure.");
+        afterCallInstructions.Any(i => i is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue(
+            "List result should normalize to runtime ownership after CallClosure.");
+        instructions.Any(i => i is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue(
+            "The normalized call result should be released after its consuming match.");
     }
 
     [Test]
@@ -1387,6 +1889,16 @@ public sealed class ArenaDeallocationTests
             f.Instructions.Any(i => i is IrInst.Jump j && j.Target.Contains("_body", StringComparison.Ordinal)));
     }
 
+    private static IEnumerable<IrInst> CopyOutInstructions(IrProgram ir)
+    {
+        return ir.Functions.Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Where(instruction => instruction is IrInst.CopyOutArena
+                or IrInst.CopyOutList
+                or IrInst.CopyOutClosure
+                or IrInst.CopyOutTcoListCell);
+    }
+
     private static bool HasSaveArenaState(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.SaveArenaState);
@@ -1420,6 +1932,7 @@ public sealed class ArenaDeallocationTests
 
     private static bool HasDropInstruction(List<IrInst> instructions, string typeName)
     {
-        return instructions.Any(i => i is IrInst.Drop d && string.Equals(d.TypeName, typeName, StringComparison.Ordinal));
+        return instructions.Any(i => i is IrInst.CleanupResource cleanup && string.Equals(cleanup.TypeName, typeName, StringComparison.Ordinal)
+            || i is IrInst.RcDrop drop && string.Equals(drop.TypeName, typeName, StringComparison.Ordinal));
     }
 }

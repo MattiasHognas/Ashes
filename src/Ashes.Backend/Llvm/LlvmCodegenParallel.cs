@@ -28,7 +28,8 @@ internal static partial class LlvmCodegen
     // its stack after publishing the result — distinct from the Done word (result-ready) so the parent
     // can consume the result immediately and only the stack free blocks on true exit. (linux only.)
     private const int ParallelDescExited = 56;
-    private const int ParallelDescSizeBytes = 64;
+    private const int ParallelDescWorkerRcArenaEnd = 64; // arm64: worker-published small-RC arena end
+    private const int ParallelDescSizeBytes = 72;
 
     // Default per-worker stack size when the --parallel-stack-size tunable is unset. On linux this
     // is the mmap'd worker-stack length; on win-x64 CreateThread gets the OS default (dwStackSize=0)
@@ -67,7 +68,7 @@ internal static partial class LlvmCodegen
     // deterministic under reduce's associative-combine contract no matter which worker computes
     // what. The caller awaits only the root.
     //
-    // Region layout: [header 64B][elems 8n][items 8S][flags 8S][worker records 64*W]
+    // Region layout: [header 64B][elems 8n][items 8S][flags 8S][worker records 72*W]
     // where S = n + ceil(n/2) + ceil(n/4) + ... + 1 (total merge-tree nodes; 0 when n = 0).
     private const int ParallelQueueNextIndex = 0;     // atomic: next element index to claim
     private const int ParallelQueueCount = 8;         // n = element count (read by lowering's empty check)
@@ -83,7 +84,7 @@ internal static partial class LlvmCodegen
     // ParallelDescWorkerArenaEnd, exited/ctid word at ParallelDescExited) so EmitCloneWorker's
     // hardcoded ctid offset applies to both layouts; offset 0 holds the queue-region back-pointer.
     private const int ParallelQueueRecDesc = 0;
-    private const int ParallelQueueRecordBytes = 64;
+    private const int ParallelQueueRecordBytes = 72;
 
     private const string ParallelQueueWorkerFnName = "__ashes_parallel_queue_worker";
     private const string ParallelQueueDrainFnName = "__ashes_parallel_queue_drain";
@@ -330,6 +331,9 @@ internal static partial class LlvmCodegen
         // (it can't read it from the TLS block without the link-time tprel offset).
         LlvmValueHandle armHeapEnd = LlvmApi.BuildLoad2(target.Builder, state.I64, state.HeapEndSlot, "worker_heap_end");
         StoreMemory(state, desc, ParallelDescWorkerArenaEnd, armHeapEnd, "worker_arena_end");
+        LlvmValueHandle armRcArenaEnd = LlvmApi.BuildLoad2(target.Builder, state.I64,
+            state.RcArenaEndSlot, "worker_rc_arena_end");
+        StoreMemory(state, desc, ParallelDescWorkerRcArenaEnd, armRcArenaEnd, "worker_rc_arena_end_publish");
         StoreMemory(state, desc, ParallelDescDone, LlvmApi.ConstInt(state.I64, 1, 0), "worker_done");
         // Release the worker slot now that this worker's user work is complete. The cap bounds
         // RUNNING workers, not un-joined descriptors: a fork attempted while this result still
@@ -629,7 +633,11 @@ internal static partial class LlvmCodegen
                 : LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "par_cleanup_arena_end");
         }
 
+        LlvmValueHandle rcArenaEnd = state.Flavor == LlvmCodegenFlavor.LinuxArm64
+            ? LoadMemory(state, desc, ParallelDescWorkerRcArenaEnd, "par_cleanup_rc_arena_end")
+            : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "par_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
+        EmitFreeWorkerArenaChunks(state, rcArenaEnd);
         EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "par_cleanup_tcb");
         LlvmApi.BuildBr(builder, doneBlock);
 
@@ -687,11 +695,17 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildStore(builder, arenaEnd, curEndSlot);
 
         var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_loop");
+        var releaseBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_release");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "par_free_done");
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
         LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "par_free_cur_end_val");
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, curEnd,
+            LlvmApi.ConstInt(state.I64, 0, 0), "par_free_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, doneBlock, releaseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
         // Footer at curEnd -> chunk base; header at base -> previous chunk's end. size = curEnd + footer - base.
         LlvmValueHandle base_ = LoadMemory(state, curEnd, 0, "par_free_base");
         LlvmValueHandle prevEnd = LoadMemory(state, base_, 0, "par_free_prev_end");
@@ -1224,6 +1238,8 @@ internal static partial class LlvmCodegen
             // can't read it from the TLS block without the link-time tprel offset).
             LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, i64, state.HeapEndSlot, "parq_worker_heap_end");
             StoreMemory(state, rec, ParallelDescWorkerArenaEnd, heapEnd, "parq_worker_arena_end");
+            LlvmValueHandle rcArenaEnd = LlvmApi.BuildLoad2(builder, i64, state.RcArenaEndSlot, "parq_worker_rc_arena_end");
+            StoreMemory(state, rec, ParallelDescWorkerRcArenaEnd, rcArenaEnd, "parq_worker_rc_arena_end_publish");
         }
 
         LlvmValueHandle activeAddr = LlvmApi.BuildPtrToInt(builder,
@@ -1654,7 +1670,11 @@ internal static partial class LlvmCodegen
             arenaEnd = LoadMemory(state, workerTcb, (int)TcbHeapEndOffset, "parq_cleanup_arena_end");
         }
 
+        LlvmValueHandle rcArenaEnd = flavor == LlvmCodegenFlavor.LinuxArm64
+            ? LoadMemory(state, recordAddr, ParallelDescWorkerRcArenaEnd, "parq_cleanup_rc_arena_end")
+            : LoadMemory(state, workerTcb, (int)TcbRcArenaEndOffset, "parq_cleanup_rc_arena_end");
         EmitFreeWorkerArenaChunks(state, arenaEnd);
+        EmitFreeWorkerArenaChunks(state, rcArenaEnd);
         EmitFreeOsMemory(state, workerTcb, MainTcbSizeBytes, "parq_cleanup_tcb");
     }
 

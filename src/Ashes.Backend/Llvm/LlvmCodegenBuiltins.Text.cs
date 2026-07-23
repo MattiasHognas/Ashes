@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_uncons_len");
@@ -21,7 +21,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isEmpty, emptyBlock, nonEmptyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
-        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0), resultSlot);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, nonEmptyBlock);
@@ -37,15 +37,20 @@ internal static partial class LlvmCodegen
         LlvmValueHandle headLen = LlvmApi.BuildSelect(builder, hasFullScalar, widthCandidate, LlvmApi.ConstInt(state.I64, 1, 0), "text_uncons_head_len");
         LlvmValueHandle tailLen = LlvmApi.BuildSub(builder, len, headLen, "text_uncons_tail_len");
         LlvmValueHandle tailPtr = LlvmApi.BuildGEP2(builder, state.I8, bytesPtr, [headLen], "text_uncons_tail_ptr");
-        // Views into the input string (no copy): the backing outlives these (it's the string being
-        // unconsed), and any persisted value materializes via copy-out. This is what makes a
-        // char-by-char uncons loop O(T) instead of O(T^2).
-        LlvmValueHandle headRef = EmitStringView(state, bytesPtr, headLen, "text_uncons_head");
-        LlvmValueHandle tailRef = EmitStringView(state, tailPtr, tailLen, "text_uncons_tail");
-        LlvmValueHandle tupleRef = EmitAlloc(state, 16);
+        // The immediate arena path keeps zero-copy views. An escaping runtime-managed result instead
+        // owns copied Strings plus its tuple so no child points back into a reclaimed call region.
+        LlvmValueHandle headRef = runtimeManaged
+            ? EmitHeapStringSliceFromBytesPointer(state, bytesPtr, headLen, "text_uncons_head", runtimeManaged: true)
+            : EmitStringView(state, bytesPtr, headLen, "text_uncons_head");
+        LlvmValueHandle tailRef = runtimeManaged
+            ? EmitHeapStringSliceFromBytesPointer(state, tailPtr, tailLen, "text_uncons_tail", runtimeManaged: true)
+            : EmitStringView(state, tailPtr, tailLen, "text_uncons_tail");
+        LlvmValueHandle tupleRef = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, 16, "rc_text_uncons_tuple")
+            : EmitAlloc(state, 16);
         StoreMemory(state, tupleRef, 0, headRef, "text_uncons_tuple_head");
         StoreMemory(state, tupleRef, 8, tailRef, "text_uncons_tuple_tail");
-        LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);
+        LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1, runtimeManaged);
         StoreMemory(state, someRef, 8, tupleRef, "text_uncons_some_value");
         LlvmApi.BuildStore(builder, someRef, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
@@ -89,7 +94,7 @@ internal static partial class LlvmCodegen
         return (new IntParseSlots(indexSlot, accSlot, negativeSlot, resultSlot), blocks, maxPositive, maxNegativeMagnitude);
     }
 
-    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextParseInt(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_int_len");
@@ -123,7 +128,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, isDigit, updateBlock, invalidBlock);
 
         EmitTextParseIntUpdateBlock(state, index, currentByte, accSlot, negativeSlot, indexSlot, maxPositive, maxNegativeMagnitude, updateBlock, overflowBlock, loopCheckBlock);
-        EmitTextParseIntTerminalBlocks(state, accSlot, negativeSlot, resultSlot, finishBlock, invalidBlock, overflowBlock, continueBlock);
+        EmitTextParseIntTerminalBlocks(state, accSlot, negativeSlot, resultSlot, finishBlock, invalidBlock, overflowBlock, continueBlock, runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_parse_int_result_value");
@@ -150,7 +155,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopCheckBlock);
     }
 
-    private static void EmitTextParseIntTerminalBlocks(LlvmCodegenState state, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock)
+    private static void EmitTextParseIntTerminalBlocks(LlvmCodegenState state, LlvmValueHandle accSlot, LlvmValueHandle negativeSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle finishBlock, LlvmBasicBlockHandle invalidBlock, LlvmBasicBlockHandle overflowBlock, LlvmBasicBlockHandle continueBlock, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, finishBlock);
@@ -158,15 +163,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalNegativeFlag = LlvmApi.BuildLoad2(builder, state.I64, negativeSlot, "text_parse_int_final_negative_flag");
         LlvmValueHandle finalIsNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, finalNegativeFlag, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_int_final_is_negative");
         LlvmValueHandle signedValue = LlvmApi.BuildSelect(builder, finalIsNegative, LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 0, 0), magnitude, "text_parse_int_negated"), magnitude, "text_parse_int_final_value");
-        LlvmApi.BuildStore(builder, EmitResultOk(state, signedValue), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, signedValue, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntInvalidMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntInvalidMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, overflowBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntOverflowMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseIntOverflowMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
     }
 
@@ -186,7 +191,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle ExponentDivCheckBlock, LlvmBasicBlockHandle ExponentDivBodyBlock, LlvmBasicBlockHandle FinishBlock,
         LlvmBasicBlockHandle ContinueBlock);
 
-    private static LlvmValueHandle EmitTextParseFloat(LlvmCodegenState state, LlvmValueHandle textRef)
+    private static LlvmValueHandle EmitTextParseFloat(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_parse_float_len");
@@ -205,7 +210,7 @@ internal static partial class LlvmCodegen
         EmitTextParseFloatExponentFirstDigit(state, bytesPtr, slots, blocks);
         EmitTextParseFloatExponentLoopPhase(state, len, bytesPtr, maxFloat, slots, blocks);
         EmitTextParseFloatExponentApplyPhase(state, maxFloat, slots, blocks);
-        EmitTextParseFloatTerminals(state, slots, blocks);
+        EmitTextParseFloatTerminals(state, slots, blocks, runtimeManaged);
 
         LlvmApi.PositionBuilderAtEnd(builder, blocks.ContinueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, slots.ResultSlot, "text_parse_float_result_value");
@@ -513,7 +518,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, exponentDivCheckBlock);
     }
 
-    private static void EmitTextParseFloatTerminals(LlvmCodegenState state, FloatParseSlots slots, FloatParseBlocks blocks)
+    private static void EmitTextParseFloatTerminals(LlvmCodegenState state, FloatParseSlots slots, FloatParseBlocks blocks, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         var (indexSlot, valueSlot, fractionPlaceSlot, negativeSlot, exponentSlot, exponentNegativeSlot, resultSlot) = slots;
@@ -524,15 +529,15 @@ internal static partial class LlvmCodegen
         LlvmValueHandle finalIsNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, signFlag, LlvmApi.ConstInt(state.I64, 0, 0), "text_parse_float_final_is_negative");
         LlvmValueHandle unsignedValue = LlvmApi.BuildLoad2(builder, state.F64, valueSlot, "text_parse_float_unsigned_value");
         LlvmValueHandle finalValue = LlvmApi.BuildSelect(builder, finalIsNegative, LlvmApi.BuildFSub(builder, LlvmApi.ConstReal(state.F64, 0.0), unsignedValue, "text_parse_float_negated_value"), unsignedValue, "text_parse_float_final_value");
-        LlvmApi.BuildStore(builder, EmitResultOk(state, finalValue), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, finalValue, runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatInvalidMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatInvalidMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, rangeBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatRangeMessage)), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TextParseFloatRangeMessage), runtimeManaged), resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
     }
 

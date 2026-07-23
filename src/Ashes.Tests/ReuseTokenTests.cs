@@ -1,0 +1,582 @@
+using Ashes.Frontend;
+using Ashes.Semantics;
+using Shouldly;
+
+namespace Ashes.Tests;
+
+public sealed class ReuseTokenTests
+{
+    [Test]
+    public void Fresh_record_list_result_is_rewritten_in_place_before_escape()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            moveBodies(1.0)(makeBodies(3))
+            """);
+
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+        IrFunction specialization = program.Functions.Single(function =>
+            function.Instructions.Count(instruction => instruction is IrInst.AllocReusing) == 2
+                && function.Instructions.Any(instruction =>
+                    instruction is IrInst.AllocReusing { ListCell: true }));
+        IrInst.AllocReusing[] allocations = specialization.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .ToArray();
+
+        allocations.Length.ShouldBe(2);
+        allocations.Count(allocation => allocation.ListCell).ShouldBe(1);
+        allocations.Count(allocation => !allocation.ListCell && allocation.FieldCount == 2).ShouldBe(1);
+        allocations.ShouldAllBe(allocation => !allocation.RuntimeManaged);
+        specialization.Instructions.ShouldNotContain(instruction => instruction is IrInst.AllocAdtToSpace);
+        specialization.Instructions.ShouldNotContain(instruction => instruction is IrInst.AllocAdt);
+    }
+
+    [Test]
+    public void Fresh_helper_is_inlined_into_tco_back_edge_before_list_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            let advance dt bodies = moveBodies(dt)(makeBodies(3))
+
+            let recursive run turns bodies =
+                if turns == 0
+                then bodies
+                else run(turns - 1)(advance(1.0)(bodies))
+
+            run(10)([])
+            """);
+
+        program.Functions.Any(function =>
+            function.LocalNames?.Values.Contains("turns", StringComparer.Ordinal) == true
+            && function.Instructions.Any(instruction =>
+                instruction is IrInst.MakeClosure { FuncLabel: var label }
+                    && label.StartsWith("moveBodies__reuse", StringComparison.Ordinal))
+            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
+                && label.Contains("rc_list_overwrite_preflight", StringComparison.Ordinal))
+            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
+                && label.Contains("rc_list_overwrite_fallback", StringComparison.Ordinal))
+            && function.Instructions.Count(instruction => instruction is IrInst.RcIsUnique) >= 2
+            && function.Instructions.Any(instruction => instruction is IrInst.RestoreStackPointer))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_list_rewriter_specialization_reuses_untagged_cells()
+    {
+        IrProgram program = LowerProgram("""
+            let recursive bumpAll values =
+                match values with
+                    | [] -> []
+                    | value :: rest -> value + 1 :: bumpAll(rest)
+
+            let recursive repeat turns values =
+                if turns == 0
+                then values
+                else repeat(turns - 1)(bumpAll(values))
+
+            repeat(100)([1, 2, 3])
+            """);
+
+        IrFunction specialization = program.Functions.Single(function =>
+            function.Label.StartsWith("bumpAll__reuse", StringComparison.Ordinal));
+        IrInst.DropReuse[] tokens = specialization.Instructions
+            .OfType<IrInst.DropReuse>()
+            .Where(token => !token.RuntimeManaged)
+            .ToArray();
+        IrInst.AllocReusing[] allocations = specialization.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .Where(allocation => allocation.ListCell)
+            .ToArray();
+
+        tokens.Length.ShouldBe(1);
+        allocations.Length.ShouldBe(1);
+        allocations[0].RuntimeManaged.ShouldBeFalse();
+        allocations[0].TokenTemp.ShouldBe(tokens[0].Target);
+    }
+
+    [Test]
+    public void Exhaustive_copy_adt_rebuild_uses_runtime_reuse_tokens()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Right(value + 1)
+                | Right(value) -> Left(value - 1)
+            """);
+
+        IrInst.DropReuse[] tokens = program.EntryFunction.Instructions
+            .OfType<IrInst.DropReuse>()
+            .Where(token => token.RuntimeManaged)
+            .ToArray();
+        IrInst.AllocReusing[] allocations = program.EntryFunction.Instructions
+            .OfType<IrInst.AllocReusing>()
+            .Where(allocation => allocation.RuntimeManaged)
+            .ToArray();
+
+        tokens.Length.ShouldBe(2);
+        allocations.Length.ShouldBe(2);
+        foreach (IrInst.AllocReusing allocation in allocations)
+        {
+            IrInst.DropReuse token = tokens.Single(candidate => candidate.Target == allocation.TokenTemp);
+            token.FieldCount.ShouldBe(allocation.FieldCount);
+        }
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Runtime_reuse_releases_token_when_rebuilt_constructor_has_incompatible_layout()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Empty
+                | One(Int)
+
+            let choice = One(1)
+            match choice with
+                | Empty -> Empty
+                | One(_) -> Empty
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Choice", RuntimeManaged: true }).ShouldBe(1);
+    }
+
+    [Test]
+    public void Runtime_token_skips_same_sized_arena_managed_constructor()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            type Box =
+                | Box(String)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> let box = Box("left") in Right(value)
+                | Right(value) -> let box = Box("right") in Left(value)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: false }).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_releases_old_children_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(_, value, _) -> Node(Leaf)(value + 1)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_transfers_child_with_null_fallback_dup()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) -> Node(left)(value + 1)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_adt_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let tree = Node(Leaf)(42)(Leaf)
+            match tree with
+                | Leaf -> Leaf
+                | Node(left, value, _) ->
+                    let bonus = match left with
+                        | Leaf -> 0
+                        | Node(_, childValue, _) -> childValue
+                    in Node(left)(value + bonus)(Leaf)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Nested_record_reuse_releases_old_child_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) -> Node(child = Leaf(value = bonus), bonus = bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_record_reuse_transfers_child_with_null_fallback_dup()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) -> Node(child = child, bonus = bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(1);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_record_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Node =
+                | child: Leaf
+                | bonus: Int
+
+            let node = Node(child = Leaf(value = 40), bonus = 2)
+            match node with
+                | Node(child, bonus) ->
+                    let childValue = match child with
+                        | Leaf(value) -> value
+                    in Node(child = child, bonus = bonus + childValue)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Pointer_variant_reuse_releases_old_record_child_before_overwrite()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(_, bonus) -> Full(Leaf(value = bonus))(bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Leaf", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pointer_variant_reuse_transfers_record_child_with_null_fallback_dup()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(child, bonus) -> Full(child)(bonus + 1)
+            """);
+
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBe(2);
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pointer_variant_reuse_declines_when_transferred_child_has_another_use()
+    {
+        IrProgram program = LowerProgram("""
+            type Leaf =
+                | value: Int
+
+            type Choice =
+                | Empty
+                | Full(Leaf, Int)
+
+            let choice = Full(Leaf(value = 40))(2)
+            match choice with
+                | Empty -> Empty
+                | Full(child, bonus) ->
+                    let childValue = match child with
+                        | Leaf(value) -> value
+                    in Full(child)(bonus + childValue)
+            """);
+
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+        program.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.AllocReusing { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Runtime_reuse_declines_when_tail_arm_would_leave_token_unconsumed()
+    {
+        IrProgram program = LowerProgram("""
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let recursive loop n =
+                if n <= 0 then 0
+                else
+                    let choice = Left(n) in
+                    match choice with
+                        | Left(value) -> loop(value - 1)
+                        | Right(value) -> loop(value - 1)
+
+            Ashes.IO.print(loop(3))
+            """);
+
+        IrFunction loop = program.Functions.Single(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }));
+        loop.Instructions.Any(instruction =>
+            instruction is IrInst.DropReuse { RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Recursive_adt_accumulator_routes_alloc_reusing_through_drop_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            let recursive loop n tree =
+                if n <= 0 then tree
+                else
+                    match tree with
+                        | Leaf -> loop(n - 1)(Node(Leaf)(n)(Leaf))
+                        | Node(left, value, right) -> loop(n - 1)(Node(left)(value + n)(right))
+
+            let result = loop(3)(Node(Leaf)(5)(Leaf))
+            match result with
+                | Leaf -> Ashes.IO.print(0)
+                | Node(_, value, _) -> Ashes.IO.print(value)
+            """);
+
+        int reusingAllocations = 0;
+        foreach (IrFunction function in program.Functions.Prepend(program.EntryFunction))
+        {
+            Dictionary<int, (IrInst.DropReuse Token, int Index)> tokens = function.Instructions
+                .Select((instruction, index) => (instruction, index))
+                .Where(pair => pair.instruction is IrInst.DropReuse)
+                .ToDictionary(
+                    pair => ((IrInst.DropReuse)pair.instruction).Target,
+                    pair => (((IrInst.DropReuse)pair.instruction), pair.index));
+
+            foreach ((IrInst instruction, int index) in function.Instructions.Select((instruction, index) => (instruction, index)))
+            {
+                if (instruction is not IrInst.AllocReusing allocation)
+                {
+                    continue;
+                }
+
+                tokens.TryGetValue(allocation.TokenTemp, out (IrInst.DropReuse Token, int Index) definition)
+                    .ShouldBeTrue($"AllocReusing token %{allocation.TokenTemp} must be defined by DropReuse");
+                definition.Index.ShouldBeLessThan(index);
+                definition.Token.FieldCount.ShouldBe(allocation.FieldCount);
+                definition.Token.RuntimeManaged.ShouldBeFalse();
+                reusingAllocations++;
+            }
+        }
+
+        reusingAllocations.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public void Inspect_only_record_list_traversal_borrows_instead_of_normalizing()
+    {
+        // A tail-recursive reduction that only reads inline-copy fields of an all-scalar record
+        // element and returns a scalar never retains a cons cell or head, so the caller's graph is
+        // borrowed: no defensive per-entry RC normalization (CopyOutArena) and no runtime-managed
+        // list cell allocation. (Pointer-bearing analogue of the inline-element borrowed cursor.)
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | y: Int
+                | mass: Int
+
+            let recursive sumField bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, y, mass) -> sumField(rest)(acc + x * mass + y)
+
+            Ashes.IO.print(sumField([Body(x = 1, y = 2, mass = 3)])(0))
+            """);
+
+        foreach (IrFunction function in program.Functions.Prepend(program.EntryFunction))
+        {
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization })
+                .ShouldBeFalse("an inspect-only record-list traversal must borrow its argument, not RC-normalize it");
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.Alloc { RuntimeManaged: true })
+                .ShouldBeFalse("borrowing the caller's list allocates no runtime-managed cons cell");
+        }
+    }
+
+    [Test]
+    public void Record_list_traversal_that_hands_tail_to_another_function_still_normalizes()
+    {
+        // The tail escapes into a second function (not the tail self-call), so nothing proves it is
+        // only inspected: the borrow is declined and the defensive RC normalization is retained.
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let recursive countRest rest =
+                match rest with
+                    | [] -> 0
+                    | _ :: more -> 1 + countRest(more)
+
+            let recursive walk bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, mass) -> walk(rest)(acc + x * mass + countRest(rest))
+
+            Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
+            """);
+
+        program.Functions.Prepend(program.EntryFunction)
+            .Any(function => function.Instructions.Any(
+                instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
+            .ShouldBeTrue("a traversal whose tail escapes to another function must keep RC normalization");
+    }
+
+    private static IrProgram LowerProgram(string source)
+    {
+        Diagnostics diagnostics = new();
+        Program program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        IrProgram ir = new Lowering(diagnostics).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+}

@@ -81,9 +81,9 @@ Supported on Linux x64, Linux arm64, and Windows x64.
 
 - `readText(path)` returning `Result(Str, Str)` — UTF-8-validated; caps at 1 MiB.
 - `readAllBytes(path)` returning `Result(Str, Bytes)` — read a whole file into a `Bytes` with no UTF-8
-  validation. Uncapped on Linux (the buffer is a standalone `mmap`, so it can exceed one arena chunk);
+  validation. Uncapped on Linux (the buffer is a standalone `mmap`, so it can exceed one managed chunk);
   on Windows it currently shares the `readText` buffer and so caps at the same 1 MiB. The buffer is
-  read-only and program-lifetime; fields sliced from it (`Bytes.subText`) are copied into the arena.
+  read-only and program-lifetime; `Bytes.subText` materializes an independent managed String.
 - `mmap(path)` returning `Result(Str, Bytes)` — memory-map a file read-only and return a **zero-copy**
   `Bytes` **view** over the mapping (no read, no copy). On Linux the pages fault in on access, so a
   data-parallel fold that touches different chunks faults them in **in parallel**, and the mapping is
@@ -184,8 +184,8 @@ Reads are **buffered** until a full request has arrived — the header block plu
 requests are handled. A request is capped at **8 MiB**: a declared `Content-Length` over the cap is
 rejected with `413 Payload Too Large` on the header (before the body is buffered), and an unbounded
 chunked/no-length stream is capped by the buffered size. Streaming a request body *into* the handler
-(rather than buffering it) is the one deferred piece, waiting on the resource-safety/ownership work
-that would check the reader's non-escape guarantee.
+(rather than buffering it) is the one deferred piece; it needs a stream-lifetime API that prevents a
+handler from retaining a reader after its connection closes.
 
 ```ash
 import Ashes.IO
@@ -243,7 +243,7 @@ completes with `Ok(())`. See the language reference, section 20.8.
 `serve` is a **fork-based multi-reactor**: it forks one reactor process per online CPU up front, each
 binding the port with `SO_REUSEPORT` so the kernel load-balances new connections across the workers,
 and each worker serves its connections concurrently on its own thread (cooperative scheduling via
-`Ashes.Task.spawn`; each spawned handler gets a private arena, freed when it completes, so memory
+`Ashes.Task.spawn`; each spawned handler gets a private region, freed when it completes, so memory
 stays bounded under sustained load). Because the workers are separate processes and Ashes is pure, the
 connections are genuinely independent — there is no shared mutable state, and equally no cross-worker
 aggregation. The worker count defaults to the online-CPU count and honors the `--parallel-workers`
@@ -375,7 +375,8 @@ stay total.
 ### `Ashes.Number.BigInt`
 
 Native **arbitrary-precision signed integers** (`BigInt`). Values are immutable and
-arena-allocated; each operation returns a fresh, normalized value. The arithmetic is emitted
+compiler-managed; each operation returns a fresh, normalized value. Escaping results can be
+RC-owned while arithmetic scratch remains scoped. The arithmetic is emitted
 directly as LLVM-IR runtime helpers by the backend (no runtime dependency, no external library);
 see the [architecture notes](../internals/architecture.md#bigint-arbitrary-precision-integers).
 
@@ -627,7 +628,8 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `subView(bytes)(start)(len)` returning `Str` — a zero-copy VIEW over the same range `subText`
   would copy (O(1), no byte copy; same clamping and UTF-8 caveat). The backing bytes must outlive
   the view: a view over an `Ashes.IO.File.mmap` mapping is valid for the program's lifetime, and a
-  view stored into a structure (e.g. a `Map` key) is materialized by the copy-out/blob paths.
+  view stored into an escaping structure is materialized by RC graph normalization or by the
+  specialized persistent collection blob path.
   Prefer it for transient per-record slices in hot scan loops.
 - `append(left, right)` returning `Bytes` — concatenate two sequences
 - `appendByte(bytes, byte)` returning `Bytes` — append one byte
@@ -668,7 +670,7 @@ Supported on Linux x64, Linux arm64, and Windows x64 (run-queue scheduler on all
 Structured, deterministic parallelism over **pure** functions (see
 the [compiler changelog](../internals/changelog.md)). Every result is identical to the sequential
 equivalent. `both` is a **genuinely parallel** fork/join primitive on all three targets
-(per-thread arenas + worker threads + deep-copy-on-join), forking at concrete result types
+(worker-owned heaps + deep-copy-on-join), forking at concrete result types
 and running sequentially for abstract ones. `map`/`reduce` fork at concrete element types via
 call-site monomorphization, degrading to a (correct) sequential evaluation when used polymorphically
 or partially applied.
@@ -761,4 +763,4 @@ Compiler-foundation primitives (not intended for everyday use).
 
 - `deepCopy(value)` returning the same type — an independent deep copy of any value (strings,
   tuples, lists, closures, and recursive ADTs such as `Map`/`HashMap`). Semantically the identity
-  for immutable values; it underlies arena reclamation and parallel result copy-out.
+  for immutable values; it is used for explicit isolation, reuse defense, and parallel publication.

@@ -1309,9 +1309,9 @@ Errors:
 > tag for the matched constructor, so different constructors are always distinguishable
 > and payload values such as `0` or negative integers are safely represented.
 >
-> Cells are arena-allocated by default; the optimizer may instead stack-allocate a
-> provably non-escaping cell or reuse a dead, uniquely-owned cell in place, but the
-> tagged layout is identical in every case.
+> Cells use the same payload layout whether they are RC-managed, scoped-region,
+> stack-allocated, or a reused dead unique cell. An RC allocation adds its common
+> header before the value pointer; the tag and field offsets shown above do not move.
 >
 > A few builtin types use dedicated unboxed representations rather than the tagged-cell
 > scheme: `Bool` is an immediate integer (`0`/`1`); the empty list is the immediate
@@ -2134,96 +2134,116 @@ These checks are performed at compile time during semantic analysis.
 ### 16.4 What Is Not Affected
 
 Resource safety rules (use-after-close, double-close, use-after-move) apply only to resource
-types. General owned types (String, List, ADTs, closures) receive automatic
-Drop but have no restrictions on reuse — see §17.
+types. Ordinary immutable heap values (`Str`, `Bytes`, `List`, tuples, ADTs,
+records, `BigInt`, and closures) use compiler-inferred ownership and RC/region
+lowering but introduce no use-after-move restriction in source code — see §17.
 
 ### 16.5 No Garbage Collection
 
-All resource cleanup is deterministic and compile-time verified. There is
-no garbage collector. The compiler guarantees exactly-once cleanup for every
-resource binding.
+All resource cleanup is deterministic and compile-time verified. It does not
+depend on ordinary reference counts or a garbage collector. The compiler
+guarantees exactly-once cleanup for every resource ownership path.
 
 ---
 
 ## 17. Ownership Model
 
-Ashes uses an **implicit sharing** model for memory management. Every
-value has a clear owner, but ownership is managed entirely by the
-compiler — users never write move, borrow, or drop operations.
+Ashes uses an **implicit sharing** model for memory management. Ordinary
+immutable values follow an internal RC Perceus ownership discipline, while
+resource types retain the affine rules in §16. Users never write ordinary
+move, borrow, `dup`, `drop`, reference-count, or lifetime annotations.
 
 ### 17.1 Copy vs Owned Types
 
 | Category | Types | Behaviour |
 |----------|-------|-----------|
-| **Copy** | `Int`, `Float`, `Bool` | Stack-allocated, trivially duplicated. No cleanup needed. |
-| **Owned** | `String`, `List`, `Tuple`, `Function` (closures), ADTs (`Result`, `Maybe`, user-defined), resource types (`Socket`) | Heap-allocated. The compiler inserts `Drop` at scope exit. |
+| **Inline copy** | `Unit`, `Bool`, `Int`, `Float`, fixed-width unsigned integers | Represented directly and trivially duplicated; no heap ownership. |
+| **Ordinary managed** | `Str`, `Bytes`, `BigInt`, `List`, tuples, functions, records, and ADTs | Immutable heap graphs. Ownership, sharing, precise drop, reuse, and scoped allocation are compiler-internal. |
+| **Resource** | File, socket, TLS, process, and resource-bearing aggregate values | Affine ownership with observable deterministic cleanup and diagnostics; see §16. |
 
 Copy types may be used any number of times without restriction.
 
-Owned types are tracked by the compiler for deterministic cleanup.
+Ordinary managed values may also be used any number of times. The compiler
+creates an additional internal ownership reference only when the program
+retains more than one reference.
 
 ### 17.2 Implicit Sharing
 
 Values in Ashes are **implicitly shared**. When a binding is used —
 passed to a function, stored in a data structure, or returned from a
-scope — the compiler shares it automatically. There is no explicit
-borrow syntax (`&x`), no move keyword, and no use-after-move errors.
+scope — the compiler borrows, moves, or shares it automatically. There is no
+explicit borrow syntax (`&x`), no move keyword, and no ordinary-value
+use-after-move error.
 
-The compiler decides when to share (borrow) and when to copy. Since all
-values are immutable, sharing is always safe.
+Within one thread, immutable subgraphs may share RC cells. Across a structured
+parallel worker boundary, captures and results are independently copied instead
+of sharing a non-atomic reference count. Both representations have identical
+source semantics.
 
 ### 17.3 Deterministic Drop
 
-Every owned binding receives a `Drop` at the end of its owning scope.
-This applies to:
+For ordinary managed values, the compiler inserts `RcDrop` after the last use
+or at the start of a branch where an owner is dead. A shared cell is
+decremented; the last reference recursively releases its owned children and
+then its allocation. Pattern matching transfers or duplicates live payload
+ownership before consuming the matched parent.
 
-- `let` binding scopes
-- `match` case branches
-- The program's top-level scope
-
-For resource types (Socket), `Drop` invokes platform-specific cleanup
-(e.g. close the socket). For other owned types, `Drop` is currently a
-no-op in the linear allocator and will perform actual deallocation when
-a freeing allocator is introduced.
+This timing is not observable in Ashes source because ordinary values have no
+finalizers. Resource cleanup uses the separate rules in §16 and remains
+observable and exactly once.
 
 ### 17.4 Moves as Optimisation
 
 "Move" in Ashes is a **compiler optimisation**, not a user-visible
 operation. When the compiler can prove a value is used for the last
-time, it may transfer the underlying memory rather than sharing. This
-is invisible to user code — the program behaves identically regardless
-of whether a move or share occurs.
+time, it transfers its ownership reference rather than incrementing the count.
+When a dead unique constructor is rebuilt with a compatible constructor, the
+compiler may also reuse the cell in place. Both are invisible to user code —
+the program behaves identically whether a value is moved, shared, freshly
+allocated, or reused.
 
 ### 17.5 Borrowing Is Inferred
 
 Borrowing is **compiler-inferred**, not user-annotated. There is no
 `&x` syntax, no borrow operator, and no lifetime annotations.
 
-When an owned value is accessed — passed to a function, used in an
-expression, or bound to another name — the compiler automatically
-emits a borrow. A borrowed reference is a non-owning access: it
-carries no responsibility for cleanup. The owning scope still drops
-the value when it exits.
+Function ownership summaries infer which parameters are read-only borrows and
+which consume an ownership reference. A borrowed reference carries no cleanup
+responsibility. If a consuming use must coexist with another live use, the
+compiler inserts the required ownership duplicate at the latest safe point.
 
 Since Ashes values are immutable, inferred borrowing is always safe:
 
 - Multiple borrows of the same value can coexist without conflict.
-- Borrows cannot outlive the owning scope (enforced by scope structure).
-- There are no data races because there is no mutation.
+- An escaping graph receives independent ownership; a borrowed child is never
+  left dangling under an RC parent.
+- Non-atomic RC values never cross a worker thread boundary directly.
+- There are no value data races because ordinary values are immutable.
 
-Copy types (`Int`, `Float`, `Bool`) are never borrowed — they are
+Inline copy types are never borrowed — they are
 trivially duplicated on the stack.
 
-Internally the compiler represents a borrow as a `Borrow` IR
-instruction: `Borrow(target, source)`. In the current backend this
-is a simple pointer pass-through. Future phases may use borrow
-information for copy elision and in-place reuse optimizations.
+Internally `Borrow(target, source)` remains an identity-preserving pointer
+pass-through. `RcDup` and `RcDrop` carry ownership changes, and
+`DropReuse`/`AllocReusing` carry unique-cell reuse.
 
 ### 17.6 No Garbage Collection
 
-All ownership and cleanup is deterministic and resolved at compile time.
-There is no garbage collector, no reference counting at runtime (in the
-current implementation), and no finalizers.
+There is no tracing garbage collector and no ordinary finalizer API. Escaping
+ordinary graphs use compiler-inserted runtime reference counting. Values proven
+not to escape may use scoped bump regions; task/capability state, mmap-backed
+views, and specialized persistent collection storage have explicit region
+owners.
+
+Reference counting does not collect cycles. Ashes admits acyclic immutable
+ordinary graphs to RC; scheduler linkage remains region-owned. A future mutable
+reference or cyclic closure representation must add cycle handling or remain
+outside RC admission.
+
+The compiler does not claim that the complete mixed runtime state satisfies the
+Perceus garbage-free theorem. It does preserve that ownership invariant for
+admitted RC graphs and separately regression-tests every retained region for
+bounded memory growth.
 
 ---
 

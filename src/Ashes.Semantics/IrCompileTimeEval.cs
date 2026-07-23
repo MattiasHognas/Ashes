@@ -139,7 +139,7 @@ public static class IrCompileTimeEval
     private static bool IsModeledPureLeaf(IrInst inst) => inst switch
     {
         IrInst.LoadConstInt or IrInst.LoadConstFloat or IrInst.LoadConstBool or IrInst.LoadConstStr
-            or IrInst.LoadLocal or IrInst.StoreLocal or IrInst.Borrow
+            or IrInst.LoadLocal or IrInst.StoreLocal or IrInst.Borrow or IrInst.RcDup
             or IrInst.AddInt or IrInst.SubInt or IrInst.MulInt or IrInst.DivInt or IrInst.DivUInt
             or IrInst.AndInt or IrInst.OrInt or IrInst.XorInt or IrInst.ShlInt or IrInst.ShrInt
             or IrInst.AddFloat or IrInst.SubFloat or IrInst.MulFloat or IrInst.DivFloat
@@ -155,7 +155,7 @@ public static class IrCompileTimeEval
             or IrInst.Label or IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag or IrInst.Return
             or IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks
             or IrInst.SaveStackPointer or IrInst.RestoreStackPointer
-            or IrInst.Drop or IrInst.CallClosure
+            or IrInst.RcDrop or IrInst.CallClosure
             => true,
         _ => false,
     };
@@ -214,6 +214,7 @@ public static class IrCompileTimeEval
             case IrInst.LoadConstFloat lcf: scan.Temps[lcf.Target] = new CtFloat(lcf.Value); return true;
             case IrInst.LoadConstBool lcb: scan.Temps[lcb.Target] = new CtBool(lcb.Value); return true;
             case IrInst.Borrow b: CopyTemp(scan.Temps, b.Target, b.SourceTemp); return true;
+            case IrInst.RcDup d: CopyTemp(scan.Temps, d.Target, d.SourceTemp); return true;
             case IrInst.MakeClosure mc when mc.EnvSizeBytes == 0:
                 scan.Temps[mc.Target] = new CtClosure(mc.FuncLabel);
                 return true;
@@ -541,6 +542,7 @@ public static class IrCompileTimeEval
                 case IrInst.LoadLocal ll: Set(ll.Target, _slots[ll.Slot] ?? throw new CtBailException()); return true;
                 case IrInst.StoreLocal sl: _slots[sl.Slot] = Read(sl.Source); return true;
                 case IrInst.Borrow b: Set(b.Target, Read(b.SourceTemp)); return true;
+                case IrInst.RcDup d: Set(d.Target, Read(d.SourceTemp)); return true;
                 case IrInst.MakeClosure mc:
                     Set(mc.Target, mc.EnvSizeBytes == 0 ? new CtClosure(mc.FuncLabel, Read(mc.EnvPtrTemp)) : throw new CtBailException());
                     return true;
@@ -630,7 +632,7 @@ public static class IrCompileTimeEval
             {
                 case IrInst.CmpStrEq c: Set(c.Target, new CtBool(string.Equals(ReadStr(c.Left), ReadStr(c.Right), StringComparison.Ordinal))); return true;
                 case IrInst.CmpStrNe c: Set(c.Target, new CtBool(!string.Equals(ReadStr(c.Left), ReadStr(c.Right), StringComparison.Ordinal))); return true;
-                case IrInst.ConcatStr c: Set(c.Target, new CtStr(ReadStr(c.Left) + ReadStr(c.Right))); return true;
+                case IrInst.ConcatStr { RuntimeManaged: false } c: Set(c.Target, new CtStr(ReadStr(c.Left) + ReadStr(c.Right))); return true;
                 case IrInst.AllocAdt aa: Set(aa.Target, new CtAdt(aa.Tag, new CtValue?[aa.FieldCount])); return true;
                 case IrInst.AllocAdtStack aa: Set(aa.Target, new CtAdt(aa.Tag, new CtValue?[aa.FieldCount])); return true;
                 case IrInst.SetAdtField sf: ReadAdt(Read(sf.Ptr)).Fields[sf.FieldIndex] = Read(sf.Source); return true;
@@ -641,10 +643,10 @@ public static class IrCompileTimeEval
             }
         }
 
-        // Arena / stack bookkeeping, drops, and labels have no value semantics for evaluation.
+        // Arena / stack bookkeeping, erased RC drops, and labels have no value semantics for evaluation.
         private static bool ExecNoOp(IrInst inst) => inst
             is IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks
-            or IrInst.SaveStackPointer or IrInst.RestoreStackPointer or IrInst.Drop or IrInst.Label;
+            or IrInst.SaveStackPointer or IrInst.RestoreStackPointer or IrInst.RcDrop or IrInst.Label;
     }
 
     // Compile-time value domain.

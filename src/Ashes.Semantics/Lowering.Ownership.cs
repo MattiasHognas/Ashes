@@ -32,6 +32,7 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => "String",
             TypeRef.TBytes => "Bytes",
+            TypeRef.TBigInt => "BigInt",
             TypeRef.TList => "List",
             TypeRef.TTuple => "Tuple",
             TypeRef.TFun => "Function",
@@ -150,14 +151,32 @@ public sealed partial class Lowering
     /// Registers an owned binding in the current ownership scope.
     /// Called when a let binding or pattern binding creates an owned-type variable.
     /// </summary>
-    private void TrackOwnedValue(string name, int slot, string typeName, bool isResource, TextSpan? definitionSpan, TypeRef? type = null)
+    private void TrackOwnedValue(
+        string name,
+        int slot,
+        string typeName,
+        bool isResource,
+        TextSpan? definitionSpan,
+        TypeRef? type = null,
+        bool runtimeManaged = false,
+        ConstructorSymbol? runtimeConstructor = null,
+        bool runtimeDeepUnique = false)
     {
         if (_ownershipScopes.Count > 0)
         {
             // A direct resource is not also "resource-bearing"; only aggregates that nest a resource
             // need the recursive walk at drop time.
             bool isResourceBearing = !isResource && type is not null && IsResourceBearing(type);
-            _ownershipScopes.Peek()[name] = new OwnershipInfo(slot, typeName, isResource, definitionSpan, type is null ? null : Prune(type), isResourceBearing);
+            _ownershipScopes.Peek()[name] = new OwnershipInfo(
+                slot,
+                typeName,
+                isResource,
+                definitionSpan,
+                type is null ? null : Prune(type),
+                isResourceBearing,
+                runtimeManaged,
+                runtimeConstructor,
+                runtimeDeepUnique);
         }
     }
 
@@ -246,7 +265,7 @@ public sealed partial class Lowering
         }
 
         // Attach a dropper to the escaping closure that closes the moved resources when the closure
-        // is itself dropped (EmitDrop "Function" invokes closure+24). This gives the escaped resource
+        // is itself cleaned up (CleanupResource "Function" invokes closure+24). This gives the escaped resource
         // a deterministic close at the closure's death rather than leaking it to program exit.
         string dropperLabel = SynthesizeClosureResourceDropper(escaping);
         int dropperCodeTemp = NewTemp();
@@ -255,14 +274,14 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Emits Drop instructions for every alive resource in the ownership scopes pushed since the
+    /// Emits drops for every alive resource or runtime-RC value in ownership scopes pushed since the
     /// TCO loop body started (those above <see cref="TcoContext.OwnershipDepthAtEntry"/>). Called at
     /// the tail-call back-edge so iteration-local resources are closed before the jump back, instead
     /// of leaking via the per-arm Drop that the jump turns into dead code. Resources moved into the
     /// next iteration (passed as a self-call argument) are marked dropped by the caller and skipped.
     /// Accumulators are loop parameters, not ownership-scope entries, so they are unaffected.
     /// </summary>
-    private void EmitTcoBackEdgeResourceDrops(TcoContext tco)
+    private void EmitTcoBackEdgeOwnedDrops(TcoContext tco)
     {
         if (tco.OwnershipDepthAtEntry < 0)
         {
@@ -280,10 +299,14 @@ public sealed partial class Lowering
 
             foreach (var (_, info) in scope)
             {
-                // Resources/resource-bearing aggregates close their handles; closures ("Function")
-                // may carry a resource dropper (closure+24) set when they captured-and-escaped a
-                // resource (Gap B), so drop them too — it's a cheap no-op for ordinary closures.
-                if ((info.IsResource || info.IsResourceBearing || string.Equals(info.TypeName, "Function", StringComparison.Ordinal)) && !info.IsDropped)
+                // Runtime-managed values must release before the jump because their lexical drop is
+                // unreachable on this path. Resources and resource-bearing values retain the same
+                // deterministic cleanup behavior.
+                if ((info.RuntimeManaged
+                        || info.IsResource
+                        || info.IsResourceBearing
+                        || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+                    && !info.IsDropped)
                 {
                     EmitOwnedValueDrop(info);
                     info.ReleaseKind = ResourceReleaseKind.AutoDropped;
@@ -297,26 +320,603 @@ public sealed partial class Lowering
     /// <summary>
     /// Emits the drop for a single owned value: a type-directed recursive walk closing nested
     /// resources for a resource-bearing aggregate (Result(_, FileHandle), tuples/lists of resources,
-    /// …), or the plain <see cref="IrInst.Drop"/> otherwise (which closes a direct resource and is a
-    /// no-op for ordinary heap values reclaimed by the arena).
+    /// …), <see cref="IrInst.CleanupResource"/> for a direct resource or possibly-resource-owning
+    /// closure, or <see cref="IrInst.RcDrop"/> for an ordinary heap value reclaimed by the arena.
     /// </summary>
     private void EmitOwnedValueDrop(OwnershipInfo info)
     {
         int loadTemp = NewTemp();
         Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
-        if (info.IsResourceBearing && info.Type is not null)
+        if (TryEmitRuntimeManagedTupleDrop(info, loadTemp))
         {
-            EmitResourceBearingDrop(loadTemp, info.Type);
+            return;
+        }
+
+        if (info.RuntimeManaged
+            && info.Type is not null
+            && Prune(info.Type) is TypeRef.TList runtimeList)
+        {
+            if (info.RuntimeDeepUnique)
+            {
+                EmitRuntimeManagedUniqueListDrop(loadTemp, runtimeList.Element);
+            }
+            else
+            {
+                EmitRuntimeManagedListDrop(loadTemp, runtimeList.Element);
+            }
+        }
+        else if (info.RuntimeManaged
+            && info.Type is not null
+            && Prune(info.Type) is TypeRef.TNamedType runtimeAdt
+            && HasRuntimeManagedChildFields(runtimeAdt))
+        {
+            // Keep this recursive program together at lexical scope for now. The ordinary precise
+            // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
+            if (info.RuntimeConstructor is { } constructor)
+            {
+                EmitKnownConstructorRuntimeManagedAdtDrop(
+                    loadTemp,
+                    runtimeAdt,
+                    constructor,
+                    info.RuntimeDeepUnique);
+            }
+            else
+            {
+                EmitRuntimeManagedAdtDrop(loadTemp, runtimeAdt);
+            }
         }
         else
         {
-            Emit(new IrInst.Drop(loadTemp, info.TypeName));
+            EmitSimpleOwnedValueDrop(info, loadTemp);
         }
+    }
+
+    private void EmitSimpleOwnedValueDrop(OwnershipInfo info, int loadTemp)
+    {
+        if (info.IsResourceBearing && info.Type is not null)
+        {
+            EmitResourceBearingDrop(loadTemp, info.Type);
+            // The recursive walk above handles deterministic cleanup of nested resources. The
+            // aggregate cell also has an ordinary heap lifetime, represented separately so later
+            // RC insertion can reclaim the container without conflating it with resource closing.
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
+        }
+        else if (string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+        {
+            EmitFunctionDrop(loadTemp, info);
+        }
+        else if (info.IsResource)
+        {
+            Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
+        }
+    }
+
+    private void EmitFunctionDrop(int loadTemp, OwnershipInfo info)
+    {
+        Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
+        if (info.RuntimeManaged)
+        {
+            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, RuntimeManaged: true));
+        }
+    }
+
+    private bool TryEmitRuntimeManagedTupleDrop(OwnershipInfo info, int loadTemp)
+    {
+        if (!info.RuntimeManaged
+            || info.Type is null
+            || Prune(info.Type) is not TypeRef.TTuple tuple)
+        {
+            return false;
+        }
+
+        EmitRuntimeManagedTupleDrop(loadTemp, tuple);
+        return true;
+    }
+
+    /// <summary>
+    /// Iteratively releases a runtime-managed list spine. A unique cell releases its tail ownership
+    /// and permits the walk to continue; a shared cell is decremented and retains the remaining tail.
+    /// A unique cell releases an owned head before continuing through its tail. A shared cell keeps
+    /// both head and tail ownership and is only decremented.
+    /// </summary>
+    private void EmitRuntimeManagedListDrop(int listTemp, TypeRef elementType)
+    {
+        int currentSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(currentSlot, listTemp));
+        string loopLabel = NewLabel("rcdrop_list");
+        string sharedLabel = NewLabel("rcdrop_list_shared");
+        string endLabel = NewLabel("rcdrop_list_end");
+
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, currentTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        EmitRuntimeManagedListHeadDrop(currentTemp, elementType);
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(endLabel));
+    }
+
+    private void EmitRuntimeManagedUniqueListDrop(int listTemp, TypeRef elementType)
+    {
+        int currentSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(currentSlot, listTemp));
+        string loopLabel = NewLabel("rcdrop_unique_list");
+        string endLabel = NewLabel("rcdrop_unique_list_end");
+
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+        EmitRuntimeManagedListHeadDrop(currentTemp, elementType);
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+        Emit(new IrInst.Label(endLabel));
+    }
+
+    private void EmitRuntimeManagedListHeadDrop(int cellTemp, TypeRef elementType)
+    {
+        TypeRef childType = Prune(elementType);
+        if (CanArenaReset(childType))
+        {
+            return;
+        }
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            headTemp,
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        EmitRuntimeManagedChildDrop(headTemp, childType);
+    }
+
+    private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)
+    {
+        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (!CanArenaReset(fieldType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void EmitRuntimeManagedTupleDrop(int valueTemp, TypeRef.TTuple tuple)
+    {
+        List<(int Index, TypeRef Type)> children = [];
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            TypeRef child = Prune(tuple.Elements[i]);
+            if (child is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                || child is TypeRef.TList
+                || child is TypeRef.TNamedType)
+            {
+                children.Add((i, child));
+            }
+        }
+
+        string sharedLabel = NewLabel("rc_drop_tuple_shared");
+        if (children.Count > 0)
+        {
+            int uniqueTemp = NewTemp();
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+            foreach ((int index, TypeRef childType) in children)
+            {
+                int childTemp = NewTemp();
+                Emit(new IrInst.LoadMemOffset(childTemp, valueTemp, index * 8));
+                EmitRuntimeManagedChildDrop(childTemp, childType);
+            }
+
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
+        Emit(new IrInst.RcDrop(valueTemp, "Tuple", RuntimeManaged: true));
+    }
+
+    private void EmitRuntimeManagedChildDrop(int valueTemp, TypeRef type)
+    {
+        switch (Prune(type))
+        {
+            case TypeRef.TTuple tuple:
+                EmitRuntimeManagedTupleDrop(valueTemp, tuple);
+                break;
+            case TypeRef.TList list:
+                EmitRuntimeManagedListDrop(valueTemp, list.Element);
+                break;
+            case TypeRef.TNamedType adt:
+                EmitRuntimeManagedAdtDrop(valueTemp, adt);
+                break;
+            case TypeRef.TStr:
+                Emit(new IrInst.RcDrop(valueTemp, "String", RuntimeManaged: true));
+                break;
+            case TypeRef.TBytes:
+                Emit(new IrInst.RcDrop(valueTemp, "Bytes", RuntimeManaged: true));
+                break;
+            case TypeRef.TBigInt:
+                Emit(new IrInst.RcDrop(valueTemp, "BigInt", RuntimeManaged: true));
+                break;
+            default:
+                throw new InvalidOperationException("Unsupported runtime-managed aggregate child.");
+        }
+    }
+
+    private int EmitRuntimeManagedParentFieldTransfer(OwnershipInfo parent, int childTemp)
+    {
+        int parentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(parentTemp, parent.Slot));
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, childTemp));
+
+        int uniqueTemp = NewTemp();
+        string sharedLabel = NewLabel("rc_transfer_child_shared");
+        string transferredLabel = NewLabel("rc_transfer_child");
+        Emit(new IrInst.RcIsUnique(uniqueTemp, parentTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        Emit(new IrInst.Jump(transferredLabel));
+        Emit(new IrInst.Label(sharedLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, childTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(transferredLabel));
+
+        Emit(new IrInst.RcDrop(parentTemp, parent.TypeName, parent.Slot, RuntimeManaged: true));
+        parent.ReleaseKind = ResourceReleaseKind.AutoDropped;
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    /// <summary>
+    /// Emits a constructor-specialized recursive drop. Child ownership is released only when the
+    /// parent is unique; a shared parent merely decrements its own count and retains its children.
+    /// </summary>
+    private void EmitRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        if (IsRuntimeManagedScalarResult(named))
+        {
+            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            return;
+        }
+
+        if (IsRuntimeManagedBigIntParseResult(named))
+        {
+            EmitRuntimeManagedBigIntParseResultDrop(valueTemp, named);
+            return;
+        }
+
+        if (IsRuntimeManagedTextUnconsResult(named))
+        {
+            EmitRuntimeManagedTextUnconsResultDrop(valueTemp, named);
+            return;
+        }
+
+        if (CanRuntimeManageRecursiveCopyAdt(named)
+            || CanRuntimeManageOwnedChildAdt(named))
+        {
+            EmitRecursiveRuntimeManagedAdtDrop(valueTemp, named);
+            return;
+        }
+
+        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        List<(int Index, TypeRef Type)> childFields = [];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (!CanArenaReset(fieldType))
+            {
+                childFields.Add((i, fieldType));
+            }
+        }
+
+        if (childFields.Count > 0)
+        {
+            int uniqueTemp = NewTemp();
+            string sharedLabel = NewLabel("rc_drop_shared");
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+            foreach ((int fieldIndex, TypeRef childType) in childFields)
+            {
+                int childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
+                EmitRuntimeManagedChildDrop(childTemp, childType);
+            }
+
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private static bool IsRuntimeManagedBigIntParseResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Result", StringComparison.Ordinal)
+            && named.TypeArgs.Count == 2
+            && named.TypeArgs[0] is TypeRef.TStr
+            && named.TypeArgs[1] is TypeRef.TBigInt;
+    }
+
+    private static bool IsRuntimeManagedScalarResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Result", StringComparison.Ordinal)
+            && named.TypeArgs.Count == 2
+            && named.TypeArgs[0] is TypeRef.TStr
+            && named.TypeArgs[1] is TypeRef.TInt or TypeRef.TFloat;
+    }
+
+    private static bool IsRuntimeManagedTextUnconsResult(TypeRef.TNamedType named)
+    {
+        return string.Equals(named.Symbol.Name, "Maybe", StringComparison.Ordinal)
+            && named.TypeArgs is [TypeRef.TTuple { Elements: [TypeRef.TStr, TypeRef.TStr] }];
+    }
+
+    private void EmitRuntimeManagedTextUnconsResultDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol someConstructor = named.Symbol.Constructors.First(constructor =>
+            string.Equals(constructor.Name, "Some", StringComparison.Ordinal));
+        string sharedLabel = NewLabel("rc_drop_text_uncons_shared");
+        string someLabel = NewLabel("rc_drop_text_uncons_some");
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.SwitchTag(tagTemp, [(GetConstructorTag(someConstructor), someLabel)], sharedLabel));
+        Emit(new IrInst.Label(someLabel));
+        int tupleTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(tupleTemp, valueTemp, 0));
+        for (int offset = 0; offset <= 8; offset += 8)
+        {
+            int stringTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(stringTemp, tupleTemp, offset));
+            Emit(new IrInst.RcDrop(stringTemp, "String", RuntimeManaged: true));
+        }
+
+        Emit(new IrInst.RcDrop(tupleTemp, "Tuple", RuntimeManaged: true));
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private void EmitRuntimeManagedBigIntParseResultDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        ConstructorSymbol okConstructor = named.Symbol.Constructors.First(constructor =>
+            string.Equals(constructor.Name, "Ok", StringComparison.Ordinal));
+        string sharedLabel = NewLabel("rc_drop_bigint_result_shared");
+        string okLabel = NewLabel("rc_drop_bigint_result_ok");
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        Emit(new IrInst.SwitchTag(
+            tagTemp,
+            [(GetConstructorTag(okConstructor), okLabel)],
+            sharedLabel));
+        Emit(new IrInst.Label(okLabel));
+        int childTemp = NewTemp();
+        Emit(new IrInst.GetAdtField(childTemp, valueTemp, 0));
+        Emit(new IrInst.RcDrop(childTemp, "BigInt", RuntimeManaged: true));
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private void EmitKnownConstructorRuntimeManagedAdtDrop(
+        int valueTemp,
+        TypeRef.TNamedType named,
+        ConstructorSymbol constructor,
+        bool knownUnique)
+    {
+        List<(int Index, TypeRef Type)> childFields = [];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            if (!CanArenaReset(fieldType))
+            {
+                childFields.Add((i, fieldType));
+            }
+        }
+
+        if (childFields.Count == 0)
+        {
+            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            return;
+        }
+
+        string sharedLabel = NewLabel("rc_drop_known_shared");
+        if (!knownUnique)
+        {
+            int uniqueTemp = NewTemp();
+            Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        }
+
+        foreach ((int fieldIndex, TypeRef childType) in childFields)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
+            EmitRuntimeManagedChildDrop(childTemp, childType);
+        }
+
+        if (!knownUnique)
+        {
+            Emit(new IrInst.Label(sharedLabel));
+        }
+
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+    }
+
+    private void EmitRuntimeReuseTokenChildrenDrop(
+        int tokenTemp,
+        RuntimeReuseCleanup? runtimeCleanup,
+        IReadOnlySet<int>? transferredFields = null)
+    {
+        if (runtimeCleanup is not { } cleanup)
+        {
+            return;
+        }
+
+        var childFields = new List<(int Index, TypeRef Type)>();
+        for (int i = 0; i < cleanup.Constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
+                cleanup.Constructor,
+                i,
+                cleanup.Type));
+            if (!CanArenaReset(fieldType)
+                && (transferredFields is null || !transferredFields.Contains(i)))
+            {
+                childFields.Add((i, fieldType));
+            }
+        }
+
+        if (childFields.Count == 0)
+        {
+            return;
+        }
+
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasTokenTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
+        string endLabel = NewLabel("reuse_children_released");
+        Emit(new IrInst.JumpIfFalse(hasTokenTemp, endLabel));
+        foreach ((int fieldIndex, TypeRef childType) in childFields)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, fieldIndex));
+            EmitRuntimeManagedChildDrop(childTemp, childType);
+        }
+        Emit(new IrInst.Label(endLabel));
+    }
+
+    private readonly Dictionary<string, string> _runtimeRcDropperLabels = new(StringComparer.Ordinal);
+
+    private void EmitRecursiveRuntimeManagedAdtDrop(int valueTemp, TypeRef.TNamedType named)
+    {
+        string label = SynthesizeRuntimeManagedAdtDropper(named);
+        int envTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(envTemp, 0));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.CallKnown(resultTemp, label, envTemp, valueTemp));
+    }
+
+    private string SynthesizeRuntimeManagedAdtDropper(TypeRef.TNamedType named)
+    {
+        string key = Pretty(named);
+        if (_runtimeRcDropperLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        string label = $"__rcdrop_{_nextLambdaId++}";
+        _runtimeRcDropperLabels[key] = label;
+
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+        EmitRuntimeManagedAdtDropperBody(label, named);
+        _funcs.Add(new IrFunction(
+            Label: label,
+            Instructions: new List<IrInst>(_inst),
+            LocalCount: _nextLocalSlot,
+            TempCount: _nextTempSlot,
+            HasEnvAndArgParams: true));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private void EmitRuntimeManagedAdtDropperBody(string label, TypeRef.TNamedType named)
+    {
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: value (implicit)
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, argSlot));
+
+        string sharedLabel = NewLabel("rcdrop_shared");
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        var cases = new List<(long Tag, string Label)>(named.Symbol.Constructors.Count);
+        var blocks = new List<(string Label, ConstructorSymbol Constructor)>(named.Symbol.Constructors.Count);
+        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
+        {
+            string constructorLabel = NewLabel("rcdrop_ctor");
+            cases.Add((GetConstructorTag(constructor), constructorLabel));
+            blocks.Add((constructorLabel, constructor));
+        }
+
+        Emit(new IrInst.SwitchTag(tagTemp, cases, sharedLabel));
+        foreach ((string constructorLabel, ConstructorSymbol constructor) in blocks)
+        {
+            Emit(new IrInst.Label(constructorLabel));
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                int childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, i));
+                EmitRuntimeManagedChildDrop(childTemp, fieldType);
+            }
+
+            Emit(new IrInst.Jump(sharedLabel));
+        }
+
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
     }
 
     /// <summary>
     /// Walks <paramref name="temp"/> (of <paramref name="type"/>) and closes every resource nested
-    /// in it. Handles a direct resource (Drop), an ADT (tag switch → drop resource-bearing fields of
+    /// in it. Handles a direct resource (CleanupResource), an ADT (tag switch → clean up resource-bearing fields of
     /// the live constructor), a tuple (drop resource-bearing elements), and a list (loop, drop each
     /// resource-bearing element). A self-recursive resource-bearing ADT (one that nests both itself
     /// and a resource) is walked at runtime by a synthesized recursive dropper
@@ -332,7 +932,7 @@ public sealed partial class Lowering
         switch (pruned)
         {
             case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
-                Emit(new IrInst.Drop(temp, named.Symbol.Name));
+                Emit(new IrInst.CleanupResource(temp, named.Symbol.Name));
                 return;
 
             case TypeRef.TNamedType named when IsSelfRecursiveResourceBearingAdt(named):
@@ -656,10 +1256,10 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(nonNilTemp, endLabel));
 
         int headTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(headTemp, curTemp, 0));
+        Emit(new IrInst.LoadMemOffset(headTemp, curTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
         EmitResourceBearingDrop(headTemp, elementType, visiting);
         int tailTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(tailTemp, curTemp, 8));
+        Emit(new IrInst.LoadMemOffset(tailTemp, curTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
         Emit(new IrInst.StoreLocal(curSlot, tailTemp));
         Emit(new IrInst.Jump(headLabel));
 
@@ -685,7 +1285,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (info.CapturedByClosure && (info.IsResource || info.IsResourceBearing))
+            if (info.CapturedByClosure && (info.RuntimeManaged || info.IsResource || info.IsResourceBearing))
             {
                 // A closure captured this resource, so it may be reachable from a value escaping this
                 // scope through a route the type cannot show (a closure, an aggregate holding one, or a
@@ -761,10 +1361,13 @@ public sealed partial class Lowering
         {
             int preRestoreEndSlot = NewLocal();
 
-            if (CanArenaReset(resultType))
+            if (CanArenaReset(resultType)
+                || resultTemp >= 0
+                    && (IsRuntimeManagedResultTemp(resultTemp)
+                        || _reuseResultTemps.Contains(resultTemp)))
             {
-                // Copy-type result: arena reset is always safe — unless a one-shot post pushed
-                // during this scope still lives in its allocations.
+                // Copy-type results and independent runtime-managed heap results survive an arena
+                // reset. A one-shot post pushed during this scope still keeps the window alive.
                 var scopeResetSkipLabel = BeginLivePostsGuard();
                 Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
                 Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
@@ -813,17 +1416,19 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
         int copyDest = NewTemp();
-        switch (copyOutKind)
+        bool normalizeToRuntimeOwnership = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && copyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
+        EmitScopeCopyOutInstruction(
+            copyOutKind,
+            copyDest,
+            resultTemp,
+            staticSizeBytes,
+            normalizeToRuntimeOwnership);
+        if (normalizeToRuntimeOwnership)
         {
-            case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
-                break;
-            case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(copyDest, resultTemp));
-                break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(copyDest, resultTemp));
-                break;
+            _runtimeManagedResultTemps.Add(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
         _ownershipScopes.Pop();
@@ -839,6 +1444,38 @@ public sealed partial class Lowering
 
         copiedResultTemp = copyDest;
         return true;
+    }
+
+    private void EmitScopeCopyOutInstruction(
+        CopyOutKind copyOutKind,
+        int copyDest,
+        int resultTemp,
+        int staticSizeBytes,
+        bool runtimeManaged)
+    {
+        switch (copyOutKind)
+        {
+            case CopyOutKind.Shallow:
+                Emit(new IrInst.CopyOutArena(
+                    copyDest,
+                    resultTemp,
+                    staticSizeBytes,
+                    RuntimeManaged: runtimeManaged,
+                    runtimeManaged
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaScopeBoundary));
+                break;
+            case CopyOutKind.List:
+                Emit(new IrInst.CopyOutList(
+                    copyDest,
+                    resultTemp,
+                    IrInst.ListHeadCopyKind.Inline,
+                    RuntimeManaged: runtimeManaged,
+                    runtimeManaged
+                        ? IrInst.CopyOutPurpose.RcNormalization
+                        : IrInst.CopyOutPurpose.ArenaScopeBoundary));
+                break;
+        }
     }
 
     /// <summary>
@@ -909,6 +1546,33 @@ public sealed partial class Lowering
                 staticSizeBytes = 0;
                 return CopyOutKind.None;
         }
+    }
+
+    private CopyOutKind GetCallCopyOutKind(
+        TypeRef type,
+        out int staticSizeBytes,
+        out IrInst.ListHeadCopyKind listHeadCopy)
+    {
+        CopyOutKind kind = GetCopyOutKind(type, out staticSizeBytes);
+        listHeadCopy = IrInst.ListHeadCopyKind.Inline;
+        if (kind != CopyOutKind.None || Prune(type) is not TypeRef.TList list)
+        {
+            return kind;
+        }
+
+        TypeRef element = Prune(list.Element);
+        if (element is TypeRef.TStr)
+        {
+            listHeadCopy = IrInst.ListHeadCopyKind.String;
+            return CopyOutKind.List;
+        }
+        if (element is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+        {
+            listHeadCopy = IrInst.ListHeadCopyKind.InnerList;
+            return CopyOutKind.List;
+        }
+
+        return CopyOutKind.None;
     }
 
     /// <summary>
@@ -987,7 +1651,659 @@ public sealed partial class Lowering
             }
         }
 
-        staticSizeBytes = (1 + arity) * 8;
+        staticSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(arity);
+        return true;
+    }
+
+    /// <summary>
+    /// Runtime RC supports monomorphic records whose pointer fields can be described by the
+    /// type-directed runtime dropper. Constructor freshness is checked separately so an RC record
+    /// never captures an arena-owned child. Cyclic and resource-bearing layouts stay on the arena path.
+    /// </summary>
+    private bool CanRuntimeManageAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count != 1
+            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        path ??= [];
+        if (!path.Add(symbol))
+        {
+            return false;
+        }
+
+        ConstructorSymbol constructor = symbol.Constructors[0];
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+            bool supported = CanArenaReset(fieldType) || fieldType switch
+            {
+                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+                TypeRef.TNamedType child => CanRuntimeManageAdt(child, path),
+                _ => false,
+            };
+            if (!supported)
+            {
+                path.Remove(symbol);
+                return false;
+            }
+        }
+
+        path.Remove(symbol);
+        return true;
+    }
+
+    private bool CanRuntimeManageOwnedTupleType(TypeRef.TTuple tuple)
+    {
+        foreach (TypeRef element in tuple.Elements)
+        {
+            TypeRef elementType = Prune(element);
+            bool supported = CanArenaReset(elementType) || elementType switch
+            {
+                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                TypeRef.TTuple child => CanRuntimeManageOwnedTupleType(child),
+                _ => false,
+            };
+            if (!supported)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryGetRuntimeManagedListHeadCopy(
+        TypeRef elementType,
+        out IrInst.ListHeadCopyKind headCopy)
+    {
+        TypeRef element = Prune(elementType);
+        if (CanArenaReset(element))
+        {
+            headCopy = IrInst.ListHeadCopyKind.Inline;
+            return true;
+        }
+
+        if (element is TypeRef.TStr)
+        {
+            headCopy = IrInst.ListHeadCopyKind.String;
+            return true;
+        }
+
+        if (element is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+        {
+            headCopy = IrInst.ListHeadCopyKind.InnerList;
+            return true;
+        }
+
+        headCopy = IrInst.ListHeadCopyKind.Inline;
+        return false;
+    }
+
+    private bool CanRuntimeManageTcoListElement(TypeRef elementType)
+    {
+        TypeRef element = Prune(elementType);
+        if (RuntimeManagedTcoListElementContainsBytes(element))
+        {
+            return false;
+        }
+
+        return CanArenaReset(element) || element switch
+        {
+            TypeRef.TStr or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element),
+            TypeRef.TTuple tuple => tuple.Elements.All(CanRuntimeManageTcoListElement),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
+                || CanRuntimeManageAdt(named)
+                || CanRuntimeManageOwnedChildAdt(named),
+            _ => false,
+        };
+    }
+
+    private bool RuntimeManagedTcoListElementContainsBytes(
+        TypeRef type,
+        HashSet<TypeSymbol>? path = null)
+    {
+        TypeRef valueType = Prune(type);
+        switch (valueType)
+        {
+            case TypeRef.TBytes:
+                return true;
+            case TypeRef.TList list:
+                return RuntimeManagedTcoListElementContainsBytes(list.Element, path);
+            case TypeRef.TTuple tuple:
+                return tuple.Elements.Any(element =>
+                    RuntimeManagedTcoListElementContainsBytes(element, path));
+            case TypeRef.TNamedType named:
+                path ??= [];
+                if (!path.Add(named.Symbol))
+                {
+                    return false;
+                }
+
+                bool containsBytes = named.Symbol.Constructors.Any(constructor =>
+                    Enumerable.Range(0, constructor.Arity).Any(index =>
+                        RuntimeManagedTcoListElementContainsBytes(
+                            InstantiateConstructorParameterType(constructor, index, named),
+                            path)));
+                path.Remove(named.Symbol);
+                return containsBytes;
+            default:
+                return false;
+        }
+    }
+
+    private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (!CanArenaReset(fieldType))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanRuntimeManageGenericCopyAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        TypeSymbol symbol = resultType.Symbol;
+        if (symbol.TypeParameters.Count == 0
+            || symbol.Constructors.Count != 1
+            || arguments.Count != constructor.Arity
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (fieldType is not TypeRef.TVar and not TypeRef.TTypeParam
+                || arguments[i] is not (Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanRuntimeManageFreshHeapChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (resultType.Symbol.Constructors.Count != 1
+            || arguments.Count != constructor.Arity
+            || BuiltinRegistry.IsResourceTypeName(resultType.Symbol.Name)
+            || IsResourceBearing(resultType))
+        {
+            return false;
+        }
+
+        bool hasOwnedChild = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            bool supported = fieldType switch
+            {
+                TypeRef.TStr => IsRuntimeRcStringProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]),
+                TypeRef.TBytes => IsRuntimeRcBytesProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(arguments[i]),
+                TypeRef.TBigInt => IsRuntimeRcBigIntProducer(arguments[i])
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
+                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                    && IsFreshListConstructionExpression(arguments[i]),
+                TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
+                    && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
+                TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericPayload(arguments[i]),
+                _ => false,
+            };
+            if (!supported)
+            {
+                return false;
+            }
+
+            hasOwnedChild = true;
+        }
+
+        return hasOwnedChild;
+    }
+
+    private bool IsRuntimeManageableFreshGenericPayload(Expr expression)
+    {
+        return IsRuntimeRcStringProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(expression)
+            || IsRuntimeRcBytesProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression)
+            || IsRuntimeRcBigIntProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
+            || IsFreshCopyListExpression(expression)
+            || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple);
+    }
+
+    private bool IsFreshGenericTupleExpression(Expr.TupleLit tuple)
+        => tuple.Elements.All(IsFreshGenericAggregateElement);
+
+    private bool IsFreshGenericAggregateElement(Expr expression)
+        => IsInlineCopyLiteral(expression)
+            || IsRuntimeManageableFreshGenericPayload(expression);
+
+    private static bool IsInlineCopyLiteral(Expr expression)
+        => expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit;
+
+    private static bool IsFreshCopyListExpression(Expr expression)
+        => expression switch
+        {
+            Expr.ListLit list => list.Elements.All(IsInlineCopyLiteral),
+            Expr.Cons cons => IsInlineCopyLiteral(cons.Head) && IsFreshCopyListExpression(cons.Tail),
+            _ => false,
+        };
+
+    private bool CanRuntimeManageFreshTupleExpression(Expr.TupleLit expression, TypeRef.TTuple tuple)
+    {
+        if (expression.Elements.Count != tuple.Elements.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            TypeRef elementType = Prune(tuple.Elements[i]);
+            Expr element = expression.Elements[i];
+            bool supported = CanArenaReset(elementType) || elementType switch
+            {
+                TypeRef.TStr => IsRuntimeRcStringProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(element),
+                TypeRef.TBytes => IsRuntimeRcBytesProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element),
+                TypeRef.TBigInt => IsRuntimeRcBigIntProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
+                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                    && IsFreshListConstructionExpression(element),
+                TypeRef.TTuple child => element is Expr.TupleLit childExpression
+                    && CanRuntimeManageFreshTupleExpression(childExpression, child),
+                _ => false,
+            };
+            if (!supported)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanRuntimeManageFreshOwnedChildExpression(Expr expression, TypeRef type)
+    {
+        TypeRef childType = Prune(type);
+        return CanArenaReset(childType) || childType switch
+        {
+            TypeRef.TStr => IsRuntimeRcStringProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeStringProducer(expression),
+            TypeRef.TBytes => IsRuntimeRcBytesProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression),
+            TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
+                && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
+            TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                && (IsFreshListConstructionExpression(expression)
+                    || expression is Expr.Var or Expr.Call),
+            TypeRef.TTuple tuple => expression is Expr.TupleLit tupleExpression
+                && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
+            TypeRef.TNamedType => expression is Expr.RecordLit
+                && IsFreshRuntimeManageableRecordTree(expression),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// A heterogeneous ADT boundary: monomorphic variants may own fresh children supported by the
+    /// type-directed runtime dropper. Recursive variants and generic payloads use separate gates.
+    /// </summary>
+    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || symbol.Constructors.Count < 2
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool hasOwnedChild = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                bool supported = fieldType switch
+                {
+                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                    TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+                    TypeRef.TNamedType child => CanRuntimeManageAdt(child),
+                    _ => false,
+                };
+                if (!supported)
+                {
+                    return false;
+                }
+
+                hasOwnedChild = true;
+            }
+        }
+
+        return hasOwnedChild;
+    }
+
+    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.Constructors.Count != 1
+            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
+        {
+            return CanRuntimeManageOwnedChildAdt(named);
+        }
+
+        return CanRuntimeManageTcoOwnedChildAdtConstructorFields(named);
+    }
+
+    private bool CanRuntimeManageTcoOwnedChildAdtConstructorFields(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool hasOwnedChild = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                if (fieldType is not TypeRef.TList list || !CanArenaReset(Prune(list.Element)))
+                {
+                    return false;
+                }
+
+                hasOwnedChild = true;
+            }
+        }
+
+        return hasOwnedChild;
+    }
+
+    private bool CanRuntimeManageOwnedChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageOwnedChildAdt(resultType)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
+                && (fieldType is not TypeRef.TNamedType child
+                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool CanRuntimeManageTcoOwnedChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageTcoOwnedChildAdt(resultType)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The first recursive runtime-RC boundary is a monomorphic user ADT whose fields are either
+    /// inline copy values or direct references to the same ADT. Constructor freshness is checked
+    /// separately so an RC cell can never capture an arena-owned recursive child.
+    /// </summary>
+    private bool CanRuntimeManageRecursiveCopyAdt(TypeRef.TNamedType named)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.TypeParameters.Count > 0
+            || symbol.Constructors.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        bool recursive = false;
+        foreach (ConstructorSymbol constructor in symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                if (fieldType is not TypeRef.TNamedType child
+                    || !string.Equals(child.Symbol.Name, symbol.Name, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                recursive = true;
+            }
+        }
+
+        return recursive;
+    }
+
+    private bool CanRuntimeManageRecursiveAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageRecursiveCopyAdt(resultType) || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (!IsFreshConstructorTree(arguments[i], resultType.Symbol)
+                && !IsRuntimeManagedAdtChildBinding(arguments[i], resultType.Symbol))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsRuntimeManagedAdtChildBinding(Expr expression, TypeSymbol expectedType)
+    {
+        if (expression is not Expr.Var variable
+            || _runtimeRcAdtChildBindings is null
+            || !_runtimeRcAdtChildBindings.ContainsKey(variable.Name)
+            || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false, Type: not null } info
+            || Prune(info.Type) is not TypeRef.TNamedType named)
+        {
+            return false;
+        }
+
+        return string.Equals(named.Symbol.Name, expectedType.Name, StringComparison.Ordinal);
+    }
+
+    private bool IsFreshConstructorTree(Expr expression, TypeSymbol expectedType)
+    {
+        var arguments = new List<Expr>();
+        if (expression is Expr.Var nullary
+            && _constructorSymbols.TryGetValue(nullary.Name, out ConstructorSymbol? nullaryConstructor)
+            && nullaryConstructor is not null
+            && nullaryConstructor.Arity == 0)
+        {
+            return string.Equals(nullaryConstructor.ParentType, expectedType.Name, StringComparison.Ordinal);
+        }
+
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is not Expr.Var constructorVariable
+            || !_constructorSymbols.TryGetValue(constructorVariable.Name, out ConstructorSymbol? constructor)
+            || constructor is null
+            || !string.Equals(constructor.ParentType, expectedType.Name, StringComparison.Ordinal)
+            || arguments.Count != constructor.Arity)
+        {
+            return false;
+        }
+
+        TypeRef.TNamedType resultType = InstantiateAdtType(constructor);
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanArenaReset(fieldType) && !IsFreshConstructorTree(arguments[i], expectedType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsFreshRuntimeManageableRecordTree(Expr expression)
+    {
+        if (!TryDescribeConstructorExpression(
+                expression,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? resultType)
+            || expression is not Expr.RecordLit
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || !CanRuntimeManageAdt(resultType))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Owned child fields must be fresh runtime-managed producers or explicitly tracked
+    /// runtime-managed record bindings. Existing bindings are moved or duplicated by
+    /// <see cref="PrepareRuntimeManagedAdtChildArguments"/>.
+    /// </summary>
+    private bool CanRuntimeManageConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (!CanRuntimeManageAdt(resultType))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
+                && (fieldType is not TypeRef.TNamedType child
+                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -1120,7 +2436,6 @@ public sealed partial class Lowering
     ///     Copy only the top cons cell; the string head value is also copied, while the tail remains in pre-watermark memory.</item>
     ///   <item><b>List with inner-list element (TList(TList(copy-type))):</b>
     ///     Copy only the top cons cell; the inner-list head value is deep-copied, while the tail remains in pre-watermark memory.</item>
-    ///   <item><b>Closure (TFun):</b> Closure struct + env copy (24 bytes + env block).</item>
     ///   <item><b>ADT (TNamedType):</b> Shallow copy when all fields are copy types.</item>
     /// </list>
     /// </para>
@@ -1137,16 +2452,27 @@ public sealed partial class Lowering
         switch (kind)
         {
             case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(destTemp, srcTemp, staticSizeBytes));
+                Emit(new IrInst.CopyOutArena(
+                    destTemp,
+                    srcTemp,
+                    staticSizeBytes,
+                    RuntimeManaged: false,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(destTemp, srcTemp, listHeadCopy));
-                break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(destTemp, srcTemp));
+                Emit(new IrInst.CopyOutList(
+                    destTemp,
+                    srcTemp,
+                    listHeadCopy,
+                    RuntimeManaged: false,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             case CopyOutKind.TcoListCell:
-                Emit(new IrInst.CopyOutTcoListCell(destTemp, srcTemp, listHeadCopy));
+                Emit(new IrInst.CopyOutTcoListCell(
+                    destTemp,
+                    srcTemp,
+                    listHeadCopy,
+                    IrInst.CopyOutPurpose.ArenaTcoCompaction));
                 break;
             default:
                 throw new System.InvalidOperationException($"EmitTcoCopyOut called with non-copyable kind {kind}.");
@@ -1171,7 +2497,12 @@ public sealed partial class Lowering
             case TypeRef.TBytes:
                 {
                     int dest = NewTemp();
-                    Emit(new IrInst.CopyOutArena(dest, temp, -1));
+                    Emit(new IrInst.CopyOutArena(
+                        dest,
+                        temp,
+                        -1,
+                        RuntimeManaged: false,
+                        IrInst.CopyOutPurpose.IndependentClone));
                     return dest;
                 }
 
@@ -1196,7 +2527,11 @@ public sealed partial class Lowering
             case TypeRef.TFun:
                 {
                     int dest = NewTemp();
-                    Emit(new IrInst.CopyOutClosure(dest, temp));
+                    Emit(new IrInst.CopyOutClosure(
+                        dest,
+                        temp,
+                        RuntimeManaged: false,
+                        IrInst.CopyOutPurpose.IndependentClone));
                     return dest;
                 }
 
@@ -1220,21 +2555,36 @@ public sealed partial class Lowering
         if (CanArenaReset(elemPruned))
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.Inline));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.Inline,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 
         if (elemPruned is TypeRef.TStr)
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.String));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.String,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 
         if (elemPruned is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
         {
             int dest = NewTemp();
-            Emit(new IrInst.CopyOutList(dest, temp, IrInst.ListHeadCopyKind.InnerList));
+            Emit(new IrInst.CopyOutList(
+                dest,
+                temp,
+                IrInst.ListHeadCopyKind.InnerList,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.IndependentClone));
             return dest;
         }
 
@@ -1286,11 +2636,162 @@ public sealed partial class Lowering
     private readonly Dictionary<string, string> _adtCopierLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _adtCopierInProgress = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _closureDropperLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _runtimeManagedClosureDropperLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _runtimeManagedClosureNormalizerLabels = new(StringComparer.Ordinal);
+
+    private void AttachRuntimeManagedClosureNormalizer(string closureLabel, IReadOnlyList<string> captures)
+    {
+        List<(int EnvOffset, TypeRef Type)> normalizableCaptures = [];
+        for (int index = 0; index < captures.Count; index++)
+        {
+            Binding? capture = Lookup(captures[index]);
+            if (capture is null || !CanRuntimeNormalizeClosureCapture(capture.Type))
+            {
+                return;
+            }
+
+            normalizableCaptures.Add((index * 8, Prune(capture.Type)));
+        }
+
+        if (normalizableCaptures.Count == 0)
+        {
+            return;
+        }
+
+        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures);
+    }
+
+    private bool CanRuntimeNormalizeClosureCapture(TypeRef type)
+    {
+        TypeRef captureType = Prune(type);
+        return captureType switch
+        {
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+            TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && (CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named)),
+            _ => false,
+        };
+    }
+
+    private string SynthesizeRuntimeManagedClosureNormalizer(
+        string closureLabel,
+        List<(int EnvOffset, TypeRef Type)> captures)
+    {
+        string key = closureLabel;
+        if (_runtimeManagedClosureNormalizerLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        List<(int EnvOffset, TypeRef Type)> ownedCaptures = captures
+            .Where(capture => !CanArenaReset(Prune(capture.Type)))
+            .ToList();
+        string? dropperLabel = ownedCaptures.Count > 0
+            ? SynthesizeRuntimeManagedClosureDropper(ownedCaptures)
+            : null;
+        string label = closureLabel + "$env_normalize";
+        _runtimeManagedClosureNormalizerLabels[key] = label;
+        HashSet<int> savedRuntimeManagedTemps = new(_runtimeManagedResultTemps);
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+
+        int sourceEnvSlot = NewLocal();
+        int targetEnvSlot = NewLocal();
+        int sourceEnvTemp = NewTemp();
+        int targetEnvTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(sourceEnvTemp, sourceEnvSlot));
+        Emit(new IrInst.LoadLocal(targetEnvTemp, targetEnvSlot));
+        foreach ((int envOffset, TypeRef type) in captures)
+        {
+            int capturedTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(capturedTemp, sourceEnvTemp, envOffset));
+            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(capturedTemp, type);
+            Emit(new IrInst.StoreMemOffset(targetEnvTemp, envOffset, normalizedTemp));
+        }
+
+        int resultTemp = NewTemp();
+        if (dropperLabel is null)
+        {
+            Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        }
+        else
+        {
+            Emit(new IrInst.LoadFuncAddr(resultTemp, dropperLabel));
+        }
+        Emit(new IrInst.Return(resultTemp));
+        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        RestoreEnclosingBodyState(saved);
+        _runtimeManagedResultTemps.Clear();
+        _runtimeManagedResultTemps.UnionWith(savedRuntimeManagedTemps);
+        return label;
+    }
+
+    private string SynthesizeRuntimeManagedClosureDropper(List<(int EnvOffset, TypeRef Type)> captures)
+    {
+        string key = string.Join(";", captures.Select(capture => $"{capture.EnvOffset}:{Pretty(capture.Type)}"));
+        if (_runtimeManagedClosureDropperLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        string label = $"__rc_cdrop_{_nextLambdaId++}";
+        _runtimeManagedClosureDropperLabels[key] = label;
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+
+        NewLocal(); // slot 0: own env (unused)
+        int targetEnvSlot = NewLocal();
+        int targetEnvTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(targetEnvTemp, targetEnvSlot));
+        foreach ((int envOffset, TypeRef type) in captures)
+        {
+            int capturedTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(capturedTemp, targetEnvTemp, envOffset));
+            EmitRuntimeManagedClosureCaptureDrop(capturedTemp, type);
+        }
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
+        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private void EmitRuntimeManagedClosureCaptureDrop(int capturedTemp, TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        if (pruned is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(capturedTemp, list.Element);
+            return;
+        }
+        if (pruned is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(capturedTemp, tuple);
+            return;
+        }
+        if (pruned is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(capturedTemp, named);
+            return;
+        }
+
+        string typeName = pruned switch
+        {
+            TypeRef.TStr => "String",
+            TypeRef.TBytes => "Bytes",
+            TypeRef.TBigInt => "BigInt",
+            _ => throw new InvalidOperationException("Unsupported runtime-managed closure capture."),
+        };
+        Emit(new IrInst.RcDrop(capturedTemp, typeName, RuntimeManaged: true));
+    }
 
     /// <summary>
     /// Synthesizes (once per layout, cached) a function that closes the resources an escaping
     /// closure carries. It is stored at the closure's dropper slot (closure+24) and invoked when the
-    /// closure is dropped (see EmitDrop "Function"). Called as <c>dropper(ownEnv, targetEnv)</c> — it
+    /// closure is cleaned up (see CleanupResource "Function"). Called as <c>dropper(ownEnv, targetEnv)</c> — it
     /// ignores its own (empty) env and reads the closure's env (the arg), then closes each moved
     /// resource at its recorded offset. Returns the function label.
     /// </summary>
@@ -1505,10 +3006,10 @@ public sealed partial class Lowering
             for (int j = 0; j < ctor.Arity; j++)
             {
                 int fieldTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, (j + 1) * 8));
+                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j)));
                 var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
                 int copied = CopyFieldInsideCopier(fieldTemp, fieldType, named, selfTemp);
-                Emit(new IrInst.StoreMemOffset(newTemp, (j + 1) * 8, copied));
+                Emit(new IrInst.StoreMemOffset(newTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j), copied));
             }
 
             Emit(new IrInst.Return(newTemp));
@@ -1585,16 +3086,16 @@ public sealed partial class Lowering
 
         Emit(new IrInst.Label(copyLabel));
         int headTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, 0));
+        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
         int tailTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, 8));
+        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
         int copiedHead = EmitDeepCopy(headTemp, elementType);
         int copiedTail = NewTemp();
         Emit(new IrInst.CallClosure(copiedTail, selfTemp, tailTemp));
         int cellTemp = NewTemp();
-        Emit(new IrInst.Alloc(cellTemp, 16));
-        Emit(new IrInst.StoreMemOffset(cellTemp, 0, copiedHead));
-        Emit(new IrInst.StoreMemOffset(cellTemp, 8, copiedTail));
+        Emit(new IrInst.Alloc(cellTemp, HeapLayouts.List.FixedAllocationSizeBytes));
+        Emit(new IrInst.StoreMemOffset(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), copiedHead));
+        Emit(new IrInst.StoreMemOffset(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), copiedTail));
         Emit(new IrInst.Return(cellTemp));
     }
 
@@ -1638,7 +3139,7 @@ public sealed partial class Lowering
 
             case TypeRef.TFun:
                 staticSizeBytes = 0;
-                return CopyOutKind.Closure;
+                return CopyOutKind.None;
 
             case TypeRef.TTuple:
                 // A tuple is a fixed-shape heap record; if every element is deep-copyable, EmitDeepCopy

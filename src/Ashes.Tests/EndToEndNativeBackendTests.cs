@@ -517,6 +517,242 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("12\n");
     }
 
+    [Test]
+    public async Task Tco_adt_with_shared_tail_list_children_survives_across_iterations()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a TCO loop threading an ADT with two runtime-managed List children, each
+        // rebuilt from a shared tail (`value :: rest`). The ADT cell must NOT be reused in place —
+        // the back-edge deferred drop re-reads that cell to release the previous children, and an
+        // in-place overwrite would leave it pointing at the NEW children, freeing them (the last
+        // child then loses its tail, printing 14 instead of 18). Needs two children and >= 2
+        // iterations to surface, so this exact shape is the guard.
+        var src = """
+            type State =
+                | S(List(Int), List(Int))
+
+            let replaceFirst value values =
+                match values with
+                    | [] -> [value]
+                    | _ :: rest -> value :: rest
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | value :: rest -> sum(rest)(total + value)
+
+            let recursive loop n state =
+                if n == 0
+                then
+                    match state with
+                        | S(left, right) -> sum(left)(sum(right)(0))
+                else
+                    match state with
+                        | S(left, right) ->
+                            let nextLeft = replaceFirst(n)(left)
+                            in
+                                let nextRight = replaceFirst(n + 10)(right)
+                                in loop(n - 1)(S(nextLeft)(nextRight))
+
+            Ashes.IO.print(loop(2)(S([1, 2])([3, 4])))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("18\n");
+    }
+
+    [Test]
+    public async Task Large_runtime_managed_string_captured_into_closure_survives_until_applied()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a runtime-managed string captured (by borrow) into a closure's arena/stack env
+        // must stay live until the closure is APPLIED. The lifetime placement dropped it right after
+        // the capture — before the application read it back from the env. Benign for a small string
+        // (recycled on the free list, still mapped) but a use-after-free/segfault for one larger than
+        // the 4 KiB RC cache (backed by an independent mmap that drop munmaps). grow("acgt")(10) is
+        // exactly 4096 bytes. Both a directly-captured closure and a curried partial application
+        // (`f(seq)("xy")`, whose capture happens inside `f`) must survive.
+        var direct = """
+            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let seq = grow("acgt")(10)
+            let g = (given b -> Ashes.Text.byteLength(seq) + Ashes.Text.byteLength(b))
+            Ashes.IO.print(Ashes.Text.fromInt(g("xy")))
+            """;
+        (await CompileRunCaptureProgramAsync(direct).ConfigureAwait(false)).ShouldBe("4098\n");
+
+        var curried = """
+            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let f a b = Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b)
+            let seq = grow("acgt")(10)
+            Ashes.IO.print(Ashes.Text.fromInt(f(seq)("xy")))
+            """;
+        (await CompileRunCaptureProgramAsync(curried).ConfigureAwait(false)).ShouldBe("4098\n");
+    }
+
+    [Test]
+    public async Task Runtime_managed_string_passed_through_identity_then_consuming_call_is_not_freed()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a runtime-managed string routed through a function that returns its parameter
+        // (`skipWs` returns `text` unchanged), then passed to a consuming call (`consumeExact`), is
+        // handled by the conditional runtime-argument retain, which stores the borrowed value into a
+        // fresh slot and reloads it for the call. The lifetime placement lost that borrow across the
+        // slot and dropped the string before the call — a use-after-free (segfault or garbage). The
+        // JSON stdlib and hand-written parsers hit this on every keyword/literal.
+        var src = """
+            let recursive skipWs text =
+                match Ashes.Text.uncons(text) with
+                    | None -> ""
+                    | Some((h, t)) -> if h == " " then skipWs(t) else text
+
+            let recursive consumeExact expected txt =
+                match Ashes.Text.uncons(expected) with
+                    | None -> Ok(txt)
+                    | Some((w, wr)) ->
+                        match Ashes.Text.uncons(txt) with
+                            | None -> Error("end")
+                            | Some((g, gr)) -> if g == w then consumeExact(wr)(gr) else Error("char")
+
+            let parseNull text =
+                (let trimmed = skipWs(text)
+                in
+                    match consumeExact("null")(trimmed) with
+                        | Ok(after) -> "consumed[" + after + "]"
+                        | Error(e) -> e)
+
+            Ashes.IO.print(parseNull("null rest"))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("consumed[ rest]\n");
+    }
+
+    [Test]
+    public async Task Tco_loop_string_accumulator_returned_in_tuple_survives_next_call()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: a tail-recursive loop returns its string accumulator inside a tuple
+        // (`(acc, rest)`). The accumulator lives in the callee's arena, which the loop resets in place
+        // on every back-edge; the returned tuple's string field was not copied out, so a SECOND call
+        // reusing the same arena overwrote the first call's word ("value=value" instead of
+        // "name=value"). MaterializeEscapingStringTupleElement now copies the field out to an
+        // independent RC string inside the TCO loop.
+        var src = """
+            let recursive readWord acc text =
+                match Ashes.Text.uncons(text) with
+                    | None -> (acc, "")
+                    | Some((h, t)) -> if h == " " then (acc, t) else readWord(acc + h)(t)
+            in match readWord("")("name value") with
+                | (w1, r1) ->
+                    match readWord("")(r1) with
+                        | (w2, r2) -> Ashes.IO.print(w1 + "=" + w2)
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("name=value\n");
+    }
+
+    [Test]
+    public async Task Tco_loop_string_accumulator_returned_in_adt_wrapped_tuple_survives_next_call()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression (text_json_parser_smoke): the same hazard when the tuple is wrapped in an ADT
+        // constructor (`Ok((acc, tail))`, as every hand-written parser's `parseStringBody` returns).
+        // ProducesFreshTuple now recurses into constructor arguments so the flag is set, and both the
+        // accumulator and the match-bound tail suffix are materialized out of the reused arena.
+        var src = """
+            let recursive readWord acc text =
+                match Ashes.Text.uncons(text) with
+                    | None -> Error("eof")
+                    | Some((h, t)) -> if h == " " then Ok((acc, t)) else readWord(acc + h)(t)
+            in match readWord("")("name value ") with
+                | Ok((w1, r1)) ->
+                    (match readWord("")(r1) with
+                        | Ok((w2, r2)) -> Ashes.IO.print(w1 + "=" + w2)
+                        | Error(e) -> Ashes.IO.print(e))
+                | Error(e) -> Ashes.IO.print(e)
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("name=value\n");
+    }
+
+    [Test]
+    public async Task Tco_loop_int_accumulator_returned_in_tuple_is_not_corrupted_as_string()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Guards the deferred-materialization pass: a scalar (Int) accumulator returned in a tuple has
+        // the same unresolved element type as a string accumulator during lowering, but must NOT be
+        // byte-copied as a length-prefixed string. ResolveDeferredTupleMaterializations rewrites the
+        // provisional copy-out to a plain Borrow once the type resolves to Int.
+        var src = """
+            let recursive sumTo acc n =
+                if n == 0 then (acc, n) else sumTo(acc + n)(n - 1)
+            in match sumTo(0)(2) with
+                | (a, x) ->
+                    match sumTo(0)(3) with
+                        | (b, y) -> Ashes.IO.print(Ashes.Text.fromInt(a) + "=" + Ashes.Text.fromInt(b))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3=6\n");
+    }
+
+    [Test]
+    public async Task Tco_positional_product_with_list_child_survives_back_edge_reset()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression (fannkuch-redux): a single-constructor product `S(List(Int))` threaded through a
+        // TCO self-recursion (here `nextPerm`) is RC-normalized on entry, but the back-edge rebuilt the
+        // product shell via an arena `AllocReusing` reusing the destructured cell. The back-edge
+        // RestoreArenaState then freed that shell before it was stored as the next iteration's
+        // parameter — a use-after-free that segfaulted (or read a corrupt count and returned early).
+        // The list child is a heap value (RC-normalized) even though its Int elements are copy types,
+        // so arena reuse of the shell is unsound; it is now declined (the ADT constructor is read from
+        // the match pattern because the scrutinee's inferred type is still an unresolved type variable
+        // at the reuse decision). `nextPerm(1)(3)(S([2,1,3])([0,1,3]))` must yield `Continue r=2` with a
+        // count summing to 2, not a premature `Done`.
+        var src = """
+            let recursive getAt i xs =
+                match xs with | [] -> 0 | h :: t -> if i == 0 then h else getAt(i - 1)(t)
+            let recursive setAt i v xs =
+                match xs with | [] -> [] | h :: t -> if i == 0 then v :: t else h :: setAt(i - 1)(v)(t)
+            type State = | S(List(Int), List(Int))
+            type Step = | Done | Continue(State, Int)
+            let recursive nextPerm r n st =
+                if r == n then Done
+                else match st with | S(perm, count) ->
+                    let cr = getAt(r)(count) - 1
+                    in let count2 = setAt(r)(cr)(count)
+                    in if cr > 0 then Continue(S(perm)(count2))(r) else nextPerm(r + 1)(n)(S(perm)(count2))
+            let recursive sumList xs = match xs with | [] -> 0 | h :: t -> h + sumList(t)
+            let result =
+                match nextPerm(1)(3)(S([2, 1, 3])([0, 1, 3])) with
+                    | Done -> 0
+                    | Continue(st, r) -> (match st with | S(p, c) -> sumList(c) + 100 * r)
+            Ashes.IO.print(Ashes.Text.fromInt(result))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("202\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

@@ -559,7 +559,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextUncons(target, textTemp));
+        Emit(new IrInst.TextUncons(target, textTemp, _runtimeRcTextUnconsResultAllocationRequested));
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 
@@ -669,7 +669,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextParseInt(target, textTemp));
+        Emit(new IrInst.TextParseInt(target, textTemp, _runtimeRcScalarResultAllocationRequested));
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
@@ -697,7 +697,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextParseFloat(target, textTemp));
+        Emit(new IrInst.TextParseFloat(target, textTemp, _runtimeRcScalarResultAllocationRequested));
         return (target, CreateStringResultType(new TypeRef.TFloat()));
     }
 
@@ -725,7 +725,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromInt(target, valueTemp));
+        Emit(new IrInst.TextFromInt(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -753,7 +753,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromFloat(target, valueTemp));
+        Emit(new IrInst.TextFromFloat(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -802,7 +802,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp));
+        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -830,7 +830,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextToHex(target, valueTemp));
+        Emit(new IrInst.TextToHex(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -859,7 +859,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextAsciiCase(target, textTemp, upper));
+        Emit(new IrInst.TextAsciiCase(target, textTemp, upper, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -2540,7 +2540,7 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntToInt(target, valueTemp));
+        Emit(new IrInst.BigIntToInt(target, valueTemp, _runtimeRcScalarResultAllocationRequested));
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
@@ -2563,7 +2563,7 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntFromString(target, valueTemp));
+        Emit(new IrInst.BigIntFromString(target, valueTemp, _runtimeRcBigIntParseResultAllocationRequested));
         return (target, CreateStringResultType(new TypeRef.TBigInt()));
     }
 
@@ -2633,7 +2633,7 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntFromInt(target, valueTemp));
+        Emit(new IrInst.BigIntFromInt(target, valueTemp, _runtimeRcBigIntAllocationRequested));
         return (target, new TypeRef.TBigInt());
     }
 
@@ -2656,18 +2656,17 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntToString(target, valueTemp));
+        Emit(new IrInst.BigIntToString(target, valueTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
     private (int, TypeRef) LowerBigIntBinary(Expr leftArg, Expr rightArg, string op, string display, bool resultIsInt)
     {
-        var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+        var (leftTemp, leftType, rightTemp, rightType) = LowerBigIntBinaryOperands(leftArg, rightArg, display);
         if (Prune(leftType) is TypeRef.TNever)
         {
             return (leftTemp, Prune(leftType));
         }
-        var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
         if (Prune(rightType) is TypeRef.TNever)
         {
             return (rightTemp, Prune(rightType));
@@ -2678,8 +2677,24 @@ public sealed partial class Lowering
             Emit(new IrInst.BigIntCompare(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
-        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op));
+        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op, _runtimeRcBigIntAllocationRequested));
         return (target, new TypeRef.TBigInt());
+    }
+
+    private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerBigIntBinaryOperands(Expr leftArg, Expr rightArg, string display)
+    {
+        bool savedRuntimeRequest = _runtimeRcBigIntAllocationRequested;
+        _runtimeRcBigIntAllocationRequested = false;
+        try
+        {
+            var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+            var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
+            return (leftTemp, leftType, rightTemp, rightType);
+        }
+        finally
+        {
+            _runtimeRcBigIntAllocationRequested = savedRuntimeRequest;
+        }
     }
 
     private (int, TypeRef) LowerBigIntOperand(Expr arg, string display)
@@ -3177,7 +3192,7 @@ public sealed partial class Lowering
 
         Unify(prunedArgType, _resolvedTypes["Unit"]);
         var target = NewTemp();
-        Emit(new IrInst.BytesEmpty(target));
+        Emit(new IrInst.BytesEmpty(target, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3204,7 +3219,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesSingleton(target, byteTemp));
+        Emit(new IrInst.BytesSingleton(target, byteTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3400,7 +3415,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesSubText(target, bytesTemp, startTemp, lenTemp));
+        Emit(new IrInst.BytesSubText(target, bytesTemp, startTemp, lenTemp, _runtimeRcStringAllocationRequested));
         return (target, new TypeRef.TStr());
     }
 
@@ -3498,7 +3513,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesAppend(target, leftTemp, rightTemp));
+        Emit(new IrInst.BytesAppend(target, leftTemp, rightTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3545,7 +3560,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesAppendByte(target, bytesTemp, byteTemp));
+        Emit(new IrInst.BytesAppendByte(target, bytesTemp, byteTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3584,7 +3599,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesFromList(target, listTemp));
+        Emit(new IrInst.BytesFromList(target, listTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3611,7 +3626,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU16Le(target, valueTemp));
+        Emit(new IrInst.BytesU16Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3638,7 +3653,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU32Le(target, valueTemp));
+        Emit(new IrInst.BytesU32Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3665,7 +3680,7 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU64Le(target, valueTemp));
+        Emit(new IrInst.BytesU64Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
         return (target, new TypeRef.TBytes());
     }
 

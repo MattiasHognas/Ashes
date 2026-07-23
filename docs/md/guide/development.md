@@ -204,6 +204,42 @@ Filter by test class:
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/ClassName/**"
 ```
 
+RC Perceus work normally starts with the ownership, reuse, and arena-boundary
+classes before the native memory profiles:
+
+```sh
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/PerceusLifetimePlacementTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/OwnershipTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/ReuseTokenTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress \
+  --treenode-filter "/*/*/ArenaDeallocationTests/**"
+```
+
+For allocator/lifetime behavior, add or run the multi-scale native RSS tests in
+`LinuxBackendCoverageTests`; see
+[Compiler Memory Regressions](testing.md#compiler-memory-regressions). Correct
+output alone is insufficient for a memory-management change.
+
+To inspect the compiler-inferred ownership contract and lifetime placement for
+a program, set `ASHES_EXPLAIN_OWNERSHIP`. `all` (or `1`) prints every analyzed
+function; a comma-separated list limits output to named functions:
+
+```sh
+ASHES_EXPLAIN_OWNERSHIP=all \
+  dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
+
+ASHES_EXPLAIN_OWNERSHIP=map,fold \
+  dotnet run --project src/Ashes.Cli -- compile program.ash -o program
+```
+
+The trace is written to stderr and includes stable per-function
+consumed/borrowed parameters, result reach, capture ownership, and uniqueness,
+followed by the `RcDup`/`RcDrop` placement decisions. It is an internal
+diagnostic and does not change generated code.
+
 ### LSP Unit Tests
 
 ```sh

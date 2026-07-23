@@ -33,8 +33,9 @@ syscall notes in the backend); those have no WASM equivalent without a host ABI.
    import shim for browsers. IO built-ins (`File`, `Console`, `Net`, `Process`) must be re-expressed
    as host imports instead of syscalls; some (raw sockets, `Process`) may be unsupported under WASI
    and should fail with a clear diagnostic.
-3. **Memory model.** Map the arena/ownership memory model onto a single linear memory; no `mmap`, so
-   the grow-on-demand arena must use `memory.grow`.
+3. **Memory model.** Map the RC Perceus allocator and retained scoped/specialized regions onto one
+   linear memory. There is no `mmap`/`VirtualAlloc`: RC large-cell release and region growth must use
+   a reusable free-space policy over pages obtained through `memory.grow`.
 4. **Threads.** Structured parallelism relies on `clone`/futex; WASM threads are a separate,
    optional proposal — start single-threaded and gate parallelism behind a capability check.
 5. **Toolchain + validation.** Structural validation on the CI hosts (validate the module, run it

@@ -363,9 +363,9 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildIntToPtr(builder, LlvmApi.BuildLoad2(builder, state.I64, argPtrSlot, "program_args_copy_arg_ptr"), state.I8Ptr, "program_args_string_src"),
             argLen,
             "program_args_copy_bytes");
-        LlvmValueHandle consRef = EmitAlloc(state, 16);
-        StoreMemory(state, consRef, 0, stringRef, "program_args_cons_head");
-        StoreMemory(state, consRef, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
+        LlvmValueHandle consRef = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, consRef, stringRef, "program_args_cons_head");
+        StoreListTail(state, consRef, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
         LlvmApi.BuildStore(builder, consRef, listSlot);
         LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "program_args_index_before_dec"), LlvmApi.ConstInt(state.I64, 1, 0), "program_args_index_dec"),
@@ -623,9 +623,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, linkArgBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, linkArgBlock);
-        LlvmValueHandle consRef = EmitAlloc(state, 16);
-        StoreMemory(state, consRef, 0, LlvmApi.BuildLoad2(builder, state.I64, stringRefSlot, "program_args_string_ref_value"), "program_args_cons_head");
-        StoreMemory(state, consRef, 8, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
+        LlvmValueHandle consRef = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, consRef, LlvmApi.BuildLoad2(builder, state.I64, stringRefSlot, "program_args_string_ref_value"), "program_args_cons_head");
+        StoreListTail(state, consRef, LlvmApi.BuildLoad2(builder, state.I64, listSlot, "program_args_prev_list"), "program_args_cons_tail");
         LlvmApi.BuildStore(builder, consRef, listSlot);
         LlvmApi.BuildStore(builder,
             LlvmApi.BuildSub(builder, LlvmApi.BuildLoad2(builder, state.I32, indexSlot, "program_args_index_before_dec"), LlvmApi.ConstInt(state.I32, 1, 0), "program_args_index_dec"),

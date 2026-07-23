@@ -83,6 +83,12 @@ public sealed partial class Lowering
     private readonly Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> _maResultReach =
         new(StringComparer.Ordinal);
 
+    // Stable per-function ownership contracts materialized after the move-safety and result-reach
+    // fixpoints converge. Later lowering passes read this table instead of reaching into the analysis
+    // dictionaries directly.
+    private readonly Dictionary<string, FunctionOwnershipSummary> _ownershipSummaries =
+        new(StringComparer.Ordinal);
+
     // Reach multiplicity cap: any count reaching this is folded into the poison flag (internal sharing).
     private const int ReachCap = 2;
 
@@ -137,6 +143,7 @@ public sealed partial class Lowering
         _maInProgress.Clear();
         _maResultReach.Clear();
         _maNestedRecursive.Clear();
+        _ownershipSummaries.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -153,6 +160,19 @@ public sealed partial class Lowering
         CollectCallsAndEscapes(desugaredBody, "");
         ComputeResultReach();
         _maAnalyzed = true;
+        foreach (var function in _maFuncs.Keys.OrderBy(name => name, StringComparer.Ordinal))
+        {
+            _ownershipSummaries[function] = CreateOwnershipSummary(function, _maFuncs[function]);
+        }
+
+        string? explainSelection = Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP");
+        if (explainSelection is not null)
+        {
+            foreach (var line in FormatOwnershipSummaries(explainSelection))
+            {
+                Console.Error.WriteLine(line);
+            }
+        }
     }
 
     private static Expr StripOrSelf(Expr value)
@@ -374,60 +394,56 @@ public sealed partial class Lowering
     /// <summary>
     /// The authoritative reuse-elision predicate: the prologue deep-copy of accumulator parameter
     /// <paramref name="accParam"/> of fold <paramref name="funcName"/> can be safely elided exactly
-    /// when the accumulator is a unique parameter of the fold's uniqueness summary (proven uniquely
-    /// owned at every external call site). Read through <see cref="GetUniquenessSummary"/> so the
+    /// when the accumulator is a unique parameter of the fold's ownership summary (proven uniquely
+    /// owned at every external call site). Read through <see cref="GetOwnershipSummary"/> so the
     /// summary is the single source of truth for the decision. Conservative — false on any uncertainty
     /// (no summary, or the parameter not proven unique).
     /// </summary>
     private bool ReuseAccumulatorIsUnique(string funcName, string accParam)
-        => GetUniquenessSummary(funcName) is { } summary && summary.UniqueParameters.Contains(accParam);
+        => GetOwnershipSummary(funcName) is { } summary && summary.UniqueParameters.Contains(accParam);
 
     /// <summary>
-    /// The inferred uniqueness summary of a top-level function: which parameters are uniquely owned at
-    /// every external call (the move-safety GFP) and which of the function's own parameters its result
-    /// may alias, with multiplicity, plus a poison flag (the result-reach LFP). Makes the two
-    /// whole-program fixpoints a first-class, queryable per-function property (Increment 5, S1) — the
-    /// foundation later sub-steps compose across call boundaries and read to guarantee reuse and
-    /// reclaim. This is a read-view over the analysis the reuse path already consumes; producing it
-    /// changes no lowering behaviour.
-    /// </summary>
-    internal sealed record FunctionUniquenessSummary(
-        string Function,
-        IReadOnlyList<string> Parameters,
-        IReadOnlySet<string> UniqueParameters,
-        IReadOnlyDictionary<string, int> ResultReach,
-        bool ResultPoisoned)
-    {
-        /// <summary>
-        /// The result is a fresh, uniquely-owned value: it aliases no parameter and is not poisoned
-        /// (provably confined to the parameters, none of which it reaches).
-        /// </summary>
-        public bool ResultFresh => !ResultPoisoned && ResultReach.Count == 0;
-
-        /// <summary>True if the result may alias parameter <paramref name="param"/>.</summary>
-        public bool ResultReaches(string param) => ResultReach.ContainsKey(param);
-    }
-
-    /// <summary>
-    /// The names of every top-level function the move/uniqueness analysis registered (empty until the
-    /// program has been analysed). Introspection surface for the uniqueness summaries.
+    /// The names of every top-level function the ownership analysis registered (empty until the
+    /// program has been analysed). Introspection surface for ownership summaries.
     /// </summary>
     internal IReadOnlyCollection<string> AnalyzedFunctionNames =>
-        _maAnalyzed ? _maFuncs.Keys.ToList() : [];
+        _maAnalyzed ? _ownershipSummaries.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList() : [];
 
     /// <summary>
-    /// Materializes the <see cref="FunctionUniquenessSummary"/> for a top-level function, or null if
+    /// Returns the materialized <see cref="FunctionOwnershipSummary"/> for a top-level function, or null if
     /// the program has not been analysed or <paramref name="function"/> is not a registered,
-    /// fully-visible top-level function. Faithful by construction: it reads the same move-safety and
-    /// result-reach results the reuse path consumes.
+    /// fully-visible top-level function. The summary combines the same move-safety and result-reach
+    /// fixpoints the reuse path consumes with resource borrow inference and captured values.
     /// </summary>
-    internal FunctionUniquenessSummary? GetUniquenessSummary(string function)
+    internal FunctionOwnershipSummary? GetOwnershipSummary(string function)
     {
-        if (!_maAnalyzed || !_maFuncs.TryGetValue(function, out var info))
+        return _maAnalyzed && _ownershipSummaries.TryGetValue(function, out var summary) ? summary : null;
+    }
+
+    private bool IsFreshOwnershipResultCall(Expr expression)
+    {
+        if (expression is not Expr.Call)
         {
-            return null;
+            return false;
         }
 
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        string? name = root switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(root),
+            _ => null,
+        };
+        return name is not null
+            && GetOwnershipSummary(name) is { ResultFresh: true } summary
+            && arguments.Count == summary.Parameters.Count;
+    }
+
+    private FunctionOwnershipSummary CreateOwnershipSummary(
+        string function,
+        (List<string> Params, Expr Body) info)
+    {
         var unique = new HashSet<string>(StringComparer.Ordinal);
         foreach (var param in info.Params)
         {
@@ -437,16 +453,82 @@ public sealed partial class Lowering
             }
         }
 
+        var parameterOwnership = new Dictionary<string, ParameterOwnership>(StringComparer.Ordinal);
+        foreach (var param in info.Params)
+        {
+            parameterOwnership[param] = ParamUsedOnlyAsBorrowRead(info.Body, param)
+                ? ParameterOwnership.Borrowed
+                : ParameterOwnership.Consumed;
+        }
+
+        var bound = new HashSet<string>(info.Params, StringComparer.Ordinal);
+        var captures = FreeVars(info.Body, bound)
+            .Where(name => _maValueRhs.ContainsKey(name) && !_maFuncs.ContainsKey(name))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
         var (counts, poison) = _maResultReach.TryGetValue(function, out var reach)
             ? reach
             : (new Dictionary<string, int>(StringComparer.Ordinal), false);
 
-        return new FunctionUniquenessSummary(
+        return new FunctionOwnershipSummary(
             function,
-            info.Params,
+            info.Params.ToList(),
+            parameterOwnership,
             unique,
+            captures,
             new Dictionary<string, int>(counts, StringComparer.Ordinal),
             poison);
+    }
+
+    /// <summary>
+    /// Formats stable, single-line ownership summaries. <paramref name="selection"/> may be a
+    /// comma-separated function list; null, empty, <c>1</c>, and <c>all</c> select every function.
+    /// This is also the implementation behind <c>ASHES_EXPLAIN_OWNERSHIP</c>.
+    /// </summary>
+    internal IReadOnlyList<string> FormatOwnershipSummaries(string? selection = null)
+    {
+        HashSet<string>? selected = ParseOwnershipExplainSelection(selection);
+        var lines = new List<string>();
+        foreach (var function in AnalyzedFunctionNames)
+        {
+            if (selected is not null && !selected.Contains(function))
+            {
+                continue;
+            }
+
+            if (GetOwnershipSummary(function) is not { } summary)
+            {
+                continue;
+            }
+
+            string parameters = string.Join(", ", summary.Parameters.Select(parameter =>
+                $"{parameter}:{summary.ParameterOwnership[parameter].ToString().ToLowerInvariant()}"));
+            string unique = string.Join(",", summary.UniqueParameters.OrderBy(name => name, StringComparer.Ordinal));
+            string captures = string.Join(",", summary.CapturedValues);
+            string result = summary.ResultPoisoned
+                ? "poisoned"
+                : summary.ResultFresh
+                    ? "fresh"
+                    : $"reaches{{{string.Join(",", summary.ResultReach.Keys.OrderBy(name => name, StringComparer.Ordinal))}}}";
+            lines.Add($"[ownership] {summary.Function}({parameters}) unique={{{unique}}} captures={{{captures}}} result={result}");
+        }
+
+        return lines;
+    }
+
+    private static HashSet<string>? ParseOwnershipExplainSelection(string? selection)
+    {
+        if (string.IsNullOrWhiteSpace(selection)
+            || string.Equals(selection, "1", StringComparison.Ordinal)
+            || string.Equals(selection, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return new HashSet<string>(
+            selection.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -1171,10 +1253,28 @@ public sealed partial class Lowering
         Expr.RecordLit rec,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
+        ConstructorSymbol? constructor = _constructorSymbols.GetValueOrDefault(rec.TypeName);
+        IReadOnlyList<string> fieldNames = constructor?.DeclaringSyntax.FieldNames ?? [];
         var acc = ReachBottom();
-        foreach (var (_, fv) in rec.Fields)
+        foreach (var (fieldName, fieldValue) in rec.Fields)
         {
-            acc = ReachSum(acc, ResultReach(fv, env));
+            int fieldIndex = -1;
+            for (int i = 0; i < fieldNames.Count; i++)
+            {
+                if (string.Equals(fieldNames[i], fieldName, StringComparison.Ordinal))
+                {
+                    fieldIndex = i;
+                    break;
+                }
+            }
+            bool copyField = constructor is not null
+                && fieldIndex >= 0
+                && fieldIndex < constructor.ParameterTypes.Count
+                && BuiltinRegistry.IsCopyType(constructor.ParameterTypes[fieldIndex]);
+            if (!copyField)
+            {
+                acc = ReachSum(acc, ResultReach(fieldValue, env));
+            }
         }
 
         return acc;

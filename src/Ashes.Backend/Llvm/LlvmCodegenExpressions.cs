@@ -31,45 +31,117 @@ internal static partial class LlvmCodegen
             : LlvmApi.BuildLShr(builder, value, maskedAmount, name);
     }
 
-    // Closure layout: {code@0, env@8, env_size@16, dropper@24}. The dropper is a code pointer that
+    // Closure layout: {code@0, env@8, packed_env_size@16, dropper@24}. The high bit of the packed
+    // size records runtime-managed immediate results; the next bit records whether the function can
+    // adopt a transferred RC argument. The low 62 bits retain the environment size.
+    // The result flag lets an indirect caller reclaim call scratch without copying an independent
+    // runtime-RC result. The dropper is a code pointer that
     // closes resources moved into the closure's env (set only when a captured resource escapes with
     // the closure — see SetClosureDropper); 0 for ordinary closures. Invoked when the closure is
-    // dropped (EmitDrop "Function").
+    // cleaned up (CleanupResource "Function").
     private const int ClosureSizeBytes = 32;
+    private const ulong ClosureResultOwnershipBit = 1UL << 63;
+    private const ulong ClosureArgumentOwnershipBit = 1UL << 62;
+    private const ulong ClosureEnvironmentSizeMask = ClosureArgumentOwnershipBit - 1;
 
-    private static LlvmValueHandle EmitMakeClosure(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
+    private static LlvmValueHandle EmitMakeClosure(
+        LlvmCodegenState state,
+        string funcLabel,
+        LlvmValueHandle envPtr,
+        int envSizeBytes,
+        bool runtimeManaged = false,
+        bool returnsRuntimeManaged = false,
+        bool acceptsRuntimeManagedArgument = false)
     {
-        LlvmValueHandle closurePtr = EmitAlloc(state, ClosureSizeBytes);
+        LlvmValueHandle closurePtr = runtimeManaged
+            ? EmitRuntimeRcAlloc(state, ClosureSizeBytes, "rc_closure")
+            : EmitAlloc(state, ClosureSizeBytes);
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
-        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_env_size_store_{funcLabel}");
+        ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
+            | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0)
+            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0);
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
     }
 
-    private static LlvmValueHandle EmitMakeClosureStack(LlvmCodegenState state, string funcLabel, LlvmValueHandle envPtr, int envSizeBytes)
+    private static bool EmitRuntimeRcClosureDrop(LlvmCodegenState state, LlvmValueHandle closurePtr)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle packedEnvironmentSize = LoadMemory(state, closurePtr, 16, "rc_closure_env_size");
+        LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+            LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "rc_closure_env_size_masked");
+        LlvmValueHandle hasEnv = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, envSize,
+            LlvmApi.ConstInt(state.I64, 0, 0), "rc_closure_has_env");
+        LlvmBasicBlockHandle dropEnvBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_drop_env");
+        LlvmBasicBlockHandle dropClosureBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_drop_value");
+        LlvmApi.BuildCondBr(builder, hasEnv, dropEnvBlock, dropClosureBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, dropEnvBlock);
+        LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "rc_closure_env");
+        EmitRuntimeRcDrop(state, envPtr);
+        LlvmApi.BuildBr(state.Target.Builder, dropClosureBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, dropClosureBlock);
+        return EmitRuntimeRcDrop(state, closurePtr);
+    }
+
+    private static LlvmValueHandle EmitMakeClosureStack(
+        LlvmCodegenState state,
+        string funcLabel,
+        LlvmValueHandle envPtr,
+        int envSizeBytes,
+        bool returnsRuntimeManaged,
+        bool acceptsRuntimeManagedArgument)
     {
         LlvmValueHandle closurePtr = EmitStackAlloc(state, ClosureSizeBytes, $"closure_stack_{funcLabel}");
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_stack_code_{funcLabel}");
         StoreMemory(state, closurePtr, 0, codePtr, $"closure_stack_code_store_{funcLabel}");
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_stack_env_store_{funcLabel}");
-        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, (ulong)envSizeBytes, 0), $"closure_stack_env_size_store_{funcLabel}");
+        ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
+            | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0)
+            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0);
+        StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_stack_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_stack_dropper_store_{funcLabel}");
         return closurePtr;
     }
 
-    private static LlvmValueHandle EmitCallClosure(LlvmCodegenState state, LlvmValueHandle closurePtr, LlvmValueHandle argValue, bool isTailCall = false)
+    private static LlvmValueHandle EmitCallClosure(
+        LlvmCodegenState state,
+        LlvmValueHandle closurePtr,
+        LlvmValueHandle argValue,
+        bool isTailCall = false)
+        => EmitCallClosure(
+            state,
+            closurePtr,
+            argValue,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            isTailCall);
+
+    private static LlvmValueHandle EmitCallClosure(
+        LlvmCodegenState state,
+        LlvmValueHandle closurePtr,
+        LlvmValueHandle argValue,
+        LlvmValueHandle runtimeManagedArgumentFlag,
+        bool isTailCall = false)
     {
         LlvmValueHandle codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
         LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
-        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmTypeHandle closureFunctionPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedCodePtr = LlvmApi.BuildIntToPtr(state.Target.Builder, codePtr, closureFunctionPtrType, "closure_code_ptr");
         LlvmValueHandle callInst = LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             typedCodePtr,
-            [envPtr, argValue],
+            [
+                envPtr,
+                argValue,
+                runtimeManagedArgumentFlag
+            ],
             "closure_call");
         if (isTailCall)
         {
@@ -82,14 +154,24 @@ internal static partial class LlvmCodegen
     // Direct call of a statically-known closure body (IrInst.CallKnown): same (env, arg) → i64
     // convention as EmitCallClosure, but the callee is the lifted function itself, so LLVM's
     // inliner can see (and inline) it. The env value is the one the closure would have captured.
-    private static LlvmValueHandle EmitCallKnown(LlvmCodegenState state, string funcLabel, LlvmValueHandle envValue, LlvmValueHandle argValue, bool isTailCall = false)
+    private static LlvmValueHandle EmitCallKnown(
+        LlvmCodegenState state,
+        string funcLabel,
+        LlvmValueHandle envValue,
+        LlvmValueHandle argValue,
+        LlvmValueHandle runtimeManagedArgumentFlag,
+        bool isTailCall = false)
     {
-        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmValueHandle callee = state.LiftedFunctions[funcLabel];
         LlvmValueHandle callInst = LlvmApi.BuildCall2(state.Target.Builder,
             closureFunctionType,
             callee,
-            [envValue, argValue],
+            [
+                envValue,
+                argValue,
+                runtimeManagedArgumentFlag
+            ],
             "known_call");
         if (isTailCall)
         {
@@ -838,14 +920,18 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, layout.StepBlock);
         EmitClearLeafTaskWait(state, taskPtr, prefix + "_clear_wait_before_step");
         LlvmValueHandle coroutineFn = LoadMemory(state, taskPtr, TaskStructLayout.CoroutineFn, prefix + "_coroutine_fn");
-        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmTypeHandle coroutineFnPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, coroutineFnPtrType, prefix + "_fn_ptr");
         LlvmValueHandle stepStatus = LlvmApi.BuildCall2(
             builder,
             coroutineFnType,
             typedFnPtr,
-            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
+            [
+                taskPtr,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0)
+            ],
             prefix + "_step_status");
         LlvmValueHandle suspended = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stepStatus, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_is_suspended");
         // On suspend the coroutine has stored a fresh AwaitedTask; loop back so that awaited task is
@@ -1475,13 +1561,17 @@ internal static partial class LlvmCodegen
         // --- Step block: call the coroutine ---
         LlvmApi.PositionBuilderAtEnd(builder, layout.StepBlock);
         LlvmValueHandle coroutineFn = LoadMemory(state, taskPtr, TaskStructLayout.CoroutineFn, "run_coroutine_fn");
-        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmTypeHandle coroutineFnPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, coroutineFnPtrType, "run_fn_ptr");
         LlvmValueHandle status = LlvmApi.BuildCall2(builder,
             coroutineFnType,
             typedFnPtr,
-            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
+            [
+                taskPtr,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0)
+            ],
             "run_status");
 
         // Check status: 0 = SUSPENDED, 1 = COMPLETED
@@ -1603,13 +1693,17 @@ internal static partial class LlvmCodegen
         // --- Step: call coroutine ---
         LlvmApi.PositionBuilderAtEnd(builder, layout.SubStepBlock);
         LlvmValueHandle coroutineFn = LoadMemory(state, taskPtr, TaskStructLayout.CoroutineFn, "sub_coroutine_fn");
-        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmTypeHandle coroutineFnPtrType = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
         LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, coroutineFnPtrType, "sub_fn_ptr");
         LlvmValueHandle status = LlvmApi.BuildCall2(builder,
             coroutineFnType,
             typedFnPtr,
-            [taskPtr, LlvmApi.ConstInt(state.I64, 0, 0)],
+            [
+                taskPtr,
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                LlvmApi.ConstInt(state.I64, 0, 0)
+            ],
             "sub_status");
 
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -1959,24 +2053,46 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Frees a completed spawned task's private arena chunk chain (the task struct itself lives in the
-    /// first chunk, so this must run after the last read of the task). Walks the chunks from the most
-    /// recent (<c>ArenaEnd - HeapChunkBytes</c>) back through each chunk header's previous-chunk pointer.
+    /// first chunk, so this must run after the last read of the task). Walks from each chunk footer to
+    /// its base and then through the header's previous-end link, matching the main arena's variable-size
+    /// chunk format.
     /// </summary>
     private static void EmitReapTaskArena(LlvmCodegenState state, LlvmValueHandle task, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle freeBaseSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_free_base_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), prefix + "_last_chunk"), freeBaseSlot);
+        LlvmValueHandle initialBase = LlvmApi.BuildSub(builder, task,
+            LlvmApi.ConstInt(state.I64, ChunkHeaderBytes, 0), prefix + "_initial_base");
+        LlvmValueHandle initialEnd = LlvmApi.BuildAdd(builder, initialBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), prefix + "_initial_end");
+        LlvmValueHandle currentEndSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_current_end_slot");
+        LlvmApi.BuildStore(builder, LoadMemory(state, task, TaskStructLayout.ArenaEnd, prefix + "_reap_end"), currentEndSlot);
         LlvmBasicBlockHandle checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_check");
         LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_body");
+        LlvmBasicBlockHandle initialBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_initial");
+        LlvmBasicBlockHandle grownBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_grown");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_free_done");
         LlvmApi.BuildBr(builder, checkBlock);
         LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
-        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, freeBaseSlot, prefix + "_free_base");
-        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
+        LlvmValueHandle currentEnd = LlvmApi.BuildLoad2(builder, state.I64, currentEndSlot, prefix + "_current_end");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, currentEnd, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_free_end"), doneBlock, bodyBlock);
         LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
-        LlvmApi.BuildStore(builder, LoadMemory(state, freeBase, 0, prefix + "_prev_chunk"), freeBaseSlot);
-        EmitFreeOsMemory(state, freeBase, HeapChunkBytes, prefix + "_free_chunk");
+        LlvmValueHandle freeEnd = LlvmApi.BuildLoad2(builder, state.I64, currentEndSlot, prefix + "_free_end_value");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEnd, initialEnd, prefix + "_is_initial"),
+            initialBlock,
+            grownBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, initialBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), currentEndSlot);
+        EmitFreeOsMemory(state, initialBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), prefix + "_free_initial_chunk");
+        LlvmApi.BuildBr(builder, checkBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, grownBlock);
+        LlvmValueHandle freeBase = LoadMemory(state, freeEnd, 0, prefix + "_free_base");
+        LlvmValueHandle previousEnd = LoadMemory(state, freeBase, 0, prefix + "_previous_end");
+        LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, freeEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), prefix + "_chunk_top"),
+            freeBase, prefix + "_chunk_size");
+        LlvmApi.BuildStore(builder, previousEnd, currentEndSlot);
+        EmitFreeOsMemory(state, freeBase, chunkSize, prefix + "_free_chunk");
         LlvmApi.BuildBr(builder, checkBlock);
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
@@ -2262,9 +2378,14 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, layout.CoroBlock);
         (LlvmValueHandle coroOwner, LlvmValueHandle coroSavedCursor, LlvmValueHandle coroSavedEnd) = EmitInstallTaskArena(state, task, "sched_coro");
         LlvmValueHandle coroutineFn = LoadMemory(state, task, TaskStructLayout.CoroutineFn, "sched_coro_fn");
-        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle coroutineFnType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmValueHandle typedFnPtr = LlvmApi.BuildIntToPtr(builder, coroutineFn, LlvmApi.PointerTypeInContext(state.Target.Context, 0), "sched_coro_ptr");
-        LlvmValueHandle coroStatus = LlvmApi.BuildCall2(builder, coroutineFnType, typedFnPtr, [task, zero], "sched_coro_status");
+        LlvmValueHandle coroStatus = LlvmApi.BuildCall2(
+            builder,
+            coroutineFnType,
+            typedFnPtr,
+            [task, zero, zero],
+            "sched_coro_status");
         EmitRestoreTaskArena(state, coroOwner, coroSavedCursor, coroSavedEnd, "sched_coro");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, coroStatus, zero, "sched_suspended"), layout.SuspendBlock, layout.CompleteBlock);
     }
@@ -2679,10 +2800,16 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
-        // Private arena chunk for the task; header slot 0 = no previous chunk.
+        // Private arena chunk for the task. Grown chunks use the common header/footer
+        // representation. The initial chunk's footer is deliberately lazy: touching the far end of
+        // every fresh 4 MiB mapping would fault a second page per spawned request. Reapers recognize
+        // this first chunk from the task address; a reset that crosses grown chunks stops at its
+        // saved initial end without reading a footer there.
         LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_chunk");
         EmitHeapChunkInitCheck(state, chunkBase);
         StoreMemory(state, chunkBase, 0, LlvmApi.ConstInt(state.I64, 0, 0), "spawn_chunk_prev");
+        LlvmValueHandle chunkEnd = LlvmApi.BuildAdd(builder, chunkBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), "spawn_chunk_end");
 
         // Copy the task frame (header + captures + live slots) into the chunk.
         LlvmValueHandle frameSize = LoadMemory(state, taskPtr, TaskStructLayout.FrameSizeBytes, "spawn_frame_size");
@@ -2698,7 +2825,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, copyPtr, TaskStructLayout.ArenaCursor,
             LlvmApi.BuildAdd(builder, copyPtr, alignedSize, "spawn_arena_cursor"), "spawn_arena_cursor_store");
         StoreMemory(state, copyPtr, TaskStructLayout.ArenaEnd,
-            LlvmApi.BuildAdd(builder, chunkBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "spawn_arena_end"), "spawn_arena_end_store");
+            chunkEnd, "spawn_arena_end_store");
 
         if (state.UseRunQueueScheduler)
         {
@@ -2829,8 +2956,7 @@ internal static partial class LlvmCodegen
         // Capture the arena end BEFORE freeing (the task lives inside its first chunk).
         LlvmValueHandle reapCur = LlvmApi.BuildLoad2(builder, state.I64, layout.CurSlot, "rd_reap_cur");
         LlvmValueHandle reapEnd = LoadMemory(state, reapCur, TaskStructLayout.ArenaEnd, "rd_reap_end");
-        LlvmApi.BuildStore(builder, LlvmApi.BuildSub(builder, reapEnd,
-            LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "rd_last_chunk_base"), layout.FreeBaseSlot);
+        LlvmApi.BuildStore(builder, reapEnd, layout.FreeBaseSlot);
         LlvmValueHandle reapPrev = LlvmApi.BuildLoad2(builder, state.I64, layout.PrevSlot, "rd_reap_prev");
         LlvmValueHandle prevIsHead = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, reapPrev, LlvmApi.ConstInt(state.I64, 0, 0), "rd_prev_is_head");
         LlvmApi.BuildCondBr(builder, prevIsHead, layout.UnlinkHeadBlock, layout.UnlinkMidBlock);
@@ -2849,14 +2975,37 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeCheckBlock);
-        LlvmValueHandle freeBase = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_base");
-        LlvmValueHandle freeDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeBase, LlvmApi.ConstInt(state.I64, 0, 0), "rd_free_done_check");
+        LlvmValueHandle freeEnd = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_end");
+        LlvmValueHandle freeDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEnd, LlvmApi.ConstInt(state.I64, 0, 0), "rd_free_done_check");
         LlvmApi.BuildCondBr(builder, freeDone, layout.FreeDoneBlock, layout.FreeBodyBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeBodyBlock);
-        LlvmValueHandle freeBaseBody = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_base_body");
-        LlvmApi.BuildStore(builder, LoadMemory(state, freeBaseBody, 0, "rd_prev_chunk"), layout.FreeBaseSlot);
-        EmitFreeOsMemory(state, freeBaseBody, HeapChunkBytes, "rd_free_chunk");
+        LlvmValueHandle freeEndBody = LlvmApi.BuildLoad2(builder, state.I64, layout.FreeBaseSlot, "rd_free_end_body");
+        LlvmValueHandle reapTask = LlvmApi.BuildLoad2(builder, state.I64, layout.CurSlot, "rd_reap_task");
+        LlvmValueHandle initialBase = LlvmApi.BuildSub(builder, reapTask,
+            LlvmApi.ConstInt(state.I64, ChunkHeaderBytes, 0), "rd_initial_base");
+        LlvmValueHandle initialEnd = LlvmApi.BuildAdd(builder, initialBase,
+            LlvmApi.ConstInt(state.I64, HeapChunkBytes - ChunkFooterBytes, 0), "rd_initial_end");
+        LlvmBasicBlockHandle initialBlock =
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_initial");
+        LlvmBasicBlockHandle grownBlock =
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rd_free_grown");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, freeEndBody, initialEnd, "rd_is_initial"),
+            initialBlock,
+            grownBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, initialBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), layout.FreeBaseSlot);
+        EmitFreeOsMemory(state, initialBase, LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0), "rd_free_initial_chunk");
+        LlvmApi.BuildBr(builder, layout.FreeCheckBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, grownBlock);
+        LlvmValueHandle freeBaseBody = LoadMemory(state, freeEndBody, 0, "rd_free_base_body");
+        LlvmValueHandle previousEnd = LoadMemory(state, freeBaseBody, 0, "rd_previous_end");
+        LlvmValueHandle chunkSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, freeEndBody, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "rd_chunk_top"),
+            freeBaseBody, "rd_chunk_size");
+        LlvmApi.BuildStore(builder, previousEnd, layout.FreeBaseSlot);
+        EmitFreeOsMemory(state, freeBaseBody, chunkSize, "rd_free_chunk");
         LlvmApi.BuildBr(builder, layout.FreeCheckBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.FreeDoneBlock);
@@ -3555,8 +3704,8 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.ScanBodyBlock);
         LlvmValueHandle scanNode = LlvmApi.BuildLoad2(builder, state.I64, layout.ListSlot, "all_scan_node");
-        LlvmValueHandle headTask = LoadMemory(state, scanNode, 0, "all_head_task");
-        LlvmValueHandle tailList = LoadMemory(state, scanNode, 8, "all_tail_list");
+        LlvmValueHandle headTask = LoadListHead(state, scanNode, "all_head_task");
+        LlvmValueHandle tailList = LoadListTail(state, scanNode, "all_tail_list");
         LlvmApi.BuildStore(builder, tailList, layout.ListSlot);
         EmitNetworkingRuntimeCall(state, "ashes_step_task_until_wait_or_done", [headTask], "all_step_task");
         LlvmValueHandle headState = LoadMemory(state, headTask, TaskStructLayout.StateIndex, "all_head_state");
@@ -3570,7 +3719,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.InspectResultBlock);
         LlvmValueHandle taskResult = LoadMemory(state, headTask, TaskStructLayout.ResultSlot, "all_task_result");
-        LlvmValueHandle taskTag = LoadMemory(state, taskResult, 0, "all_task_tag");
+        LlvmValueHandle taskTag = LoadAdtTag(state, taskResult, "all_task_tag");
         LlvmValueHandle isError = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, taskTag, LlvmApi.ConstInt(state.I64, 0, 0), "all_task_is_error");
         LlvmApi.BuildCondBr(builder, isError, layout.FailureBlock, layout.ScanCheckBlock);
 
@@ -3606,14 +3755,14 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.BuildBodyBlock);
         LlvmValueHandle buildNode = LlvmApi.BuildLoad2(builder, state.I64, layout.RevSrcSlot, "all_build_node");
-        LlvmValueHandle buildTask = LoadMemory(state, buildNode, 0, "all_build_task");
-        LlvmValueHandle buildTail = LoadMemory(state, buildNode, 8, "all_build_tail");
+        LlvmValueHandle buildTask = LoadListHead(state, buildNode, "all_build_task");
+        LlvmValueHandle buildTail = LoadListTail(state, buildNode, "all_build_tail");
         LlvmValueHandle buildResult = LoadMemory(state, buildTask, TaskStructLayout.ResultSlot, "all_build_result");
-        LlvmValueHandle buildValue = LoadMemory(state, buildResult, 8, "all_build_value");
+        LlvmValueHandle buildValue = LoadAdtField(state, buildResult, 0, "all_build_value");
         LlvmValueHandle buildAcc = LlvmApi.BuildLoad2(builder, state.I64, layout.RevDstSlot, "all_build_acc");
-        LlvmValueHandle buildCons = EmitAlloc(state, 16);
-        StoreMemory(state, buildCons, 0, buildValue, "all_build_cons_head");
-        StoreMemory(state, buildCons, 8, buildAcc, "all_build_cons_tail");
+        LlvmValueHandle buildCons = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, buildCons, buildValue, "all_build_cons_head");
+        StoreListTail(state, buildCons, buildAcc, "all_build_cons_tail");
         LlvmApi.BuildStore(builder, buildTail, layout.RevSrcSlot);
         LlvmApi.BuildStore(builder, buildCons, layout.RevDstSlot);
         LlvmApi.BuildBr(builder, layout.BuildCheckBlock);
@@ -3636,12 +3785,12 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.ReverseBodyBlock);
         LlvmValueHandle reverseNode = LlvmApi.BuildLoad2(builder, state.I64, layout.RevSrcSlot, "all_reverse_node");
-        LlvmValueHandle reverseHead = LoadMemory(state, reverseNode, 0, "all_reverse_head");
-        LlvmValueHandle reverseTail = LoadMemory(state, reverseNode, 8, "all_reverse_tail");
+        LlvmValueHandle reverseHead = LoadListHead(state, reverseNode, "all_reverse_head");
+        LlvmValueHandle reverseTail = LoadListTail(state, reverseNode, "all_reverse_tail");
         LlvmValueHandle reverseAcc = LlvmApi.BuildLoad2(builder, state.I64, layout.RevDstSlot, "all_reverse_acc");
-        LlvmValueHandle reverseCons = EmitAlloc(state, 16);
-        StoreMemory(state, reverseCons, 0, reverseHead, "all_reverse_cons_head");
-        StoreMemory(state, reverseCons, 8, reverseAcc, "all_reverse_cons_tail");
+        LlvmValueHandle reverseCons = EmitAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes);
+        StoreListHead(state, reverseCons, reverseHead, "all_reverse_cons_head");
+        StoreListTail(state, reverseCons, reverseAcc, "all_reverse_cons_tail");
         LlvmApi.BuildStore(builder, reverseTail, layout.RevSrcSlot);
         LlvmApi.BuildStore(builder, reverseCons, layout.RevDstSlot);
         LlvmApi.BuildBr(builder, layout.ReverseCheckBlock);

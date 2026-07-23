@@ -1095,14 +1095,6 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "fs_exists_win_result_value");
     }
 
-    /// <summary>
-    /// Emits a Drop operation for deterministic cleanup of owned values.
-    /// Resource types (Socket) route to platform-specific close functions.
-    /// Other owned types (String, List, ADTs, Closures) are no-ops in the
-    /// current linear allocator — the IR records the drop for correctness;
-    /// actual deallocation is handled by arena-based memory reclamation.
-    /// Returns false because Drop does not terminate the current basic block.
-    /// </summary>
     // FileHandle resource value is the OS fd (Linux) / HANDLE (Windows), carried as i64.
 
     private static LlvmValueHandle EmitFileOpenForReading(LlvmCodegenState state, LlvmValueHandle pathRef, string name)
