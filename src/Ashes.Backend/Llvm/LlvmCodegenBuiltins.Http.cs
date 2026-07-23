@@ -66,11 +66,15 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, callBlock);
         LlvmValueHandle env = LoadMemory(state, closure, 8, "closure_dropper_env");
-        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(builder, dropperCode,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0), "closure_dropper_ptr");
         LlvmApi.BuildCall2(builder, dropperType, dropperPtr,
-            [LlvmApi.ConstInt(state.I64, 0, 0), env], "closure_dropper_call");
+            [
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                env,
+                LlvmApi.ConstInt(state.I64, 0, 0)
+            ], "closure_dropper_call");
         LlvmApi.BuildBr(builder, endBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, endBlock);

@@ -230,11 +230,26 @@ That is an attempted allocation of about 254 TiB. The server stays alive but emi
 `Runtime error: failed to allocate heap memory from OS` and returns no valid response. Audit the
 ownership and length provenance of HTTP request/response strings crossing the task/worker boundary.
 
-### CRP-6 — P1: reverse-complement becomes superlinear
+### CRP-6 — P1: reverse-complement becomes superlinear — resolved
 
-The RC build is already more than 1,800x slower at a 100,000-base fixture while producing correct
-output at completed scales. Profile the accumulator/reversal ownership path for repeated graph
-normalization, `RcDup` traversal, or loss of the prior amortized/reuse behavior.
+**Resolved 2026-07-23.** `compLine` was called once per input line with the sequence accumulator
+produced by the preceding call. Its generic entry could not tell that this argument was already
+runtime-managed, so it defensively deep-copied the complete accumulated list on every line. That
+made time proportional to the sum of all preceding sequence lengths.
+
+Closure metadata now advertises whether a direct parameter entry can adopt an RC-owned argument. A
+fresh result transfers its existing reference; a caller that must preserve its own RC argument
+conditionally retains only the root before passing the ownership flag through the closure-call ABI.
+Unknown/arena arguments still take the defensive normalization path, and earlier curried parameters
+already captured in an environment do not advertise direct-argument adoption. Parameters whose RC
+eligibility resolves only after the tail self-call constrains inference are finalized before their
+pending call flags are enabled. This preserves the generic-call safety boundary while turning
+repeated whole-graph copies into constant-time ownership handoffs.
+
+The optimized challenge remained byte-identical and changed from 0.00/0.04/0.54/4.80 seconds at
+fasta N=1,000/3,000/10,000/30,000 to 0.00/0.00/0.00/0.01 seconds. At N=100,000
+(1,016,745 input bytes) it completed in 0.06 seconds at 82,000 KB peak RSS. The separate
+list-of-small-`Str` representation constant remains tracked below.
 
 ### CRP-7 — P1: 1BRC becomes superlinear
 

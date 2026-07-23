@@ -149,6 +149,17 @@ The final exit gates were:
 > The migration's design and paper comparison remain the intended model, but
 > full challenge conformance is not verified until that ledger is cleared.
 
+The first post-migration scaling correction removed repeated RC graph normalization across ordinary
+closure calls. A second ownership bit in the closure's packed metadata now advertises that the
+direct parameter entry can adopt an RC-owned argument. The caller transfers a fresh result directly
+or conditionally retains a non-fresh root, then passes the ownership bit through the closure ABI;
+the callee adopts that reference or keeps the defensive arena-to-RC copy for unknown inputs. Only
+the direct lifted-function parameter advertises adoption; earlier curried parameters have already
+been captured in closure environments. Late-inferred TCO parameter eligibility resolves pending
+call flags before code generation. This restored reverse-complement from quadratic time
+(4.80 seconds at fasta N=30,000) to linear scaling (0.01 seconds at N=30,000; 0.06 seconds at
+N=100,000), with byte-identical output. See CRP-6 in the challenge regression sweep.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

@@ -498,7 +498,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle i32Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         LlvmTypeHandle i64Ptr = LlvmApi.PointerTypeInContext(target.Context, 0);
         var stringLiterals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
-        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64]);
+        LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64, i64]);
 
         EmitProgramModuleFlags flags = EmitProgramModuleComputeFlags(program, flavor);
         EmitProgramModuleArena arena = EmitProgramModuleArenaGlobals(target, program, flavor, i64, flags.Arm64UsesTlsArena);
@@ -2055,18 +2055,34 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, makeClosure.EnvPtrTemp),
                 makeClosure.EnvSizeBytes,
                 makeClosure.RuntimeManaged,
-                makeClosure.ReturnsRuntimeManaged)),
+                makeClosure.ReturnsRuntimeManaged,
+                makeClosure.AcceptsRuntimeManagedArgument)),
             IrInst.LoadFuncAddr loadFuncAddr => StoreTemp(state, loadFuncAddr.Target,
                 LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[loadFuncAddr.FuncLabel], state.I64, $"func_addr_{loadFuncAddr.FuncLabel}")),
-            IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target, EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp), makeClosureStack.EnvSizeBytes, makeClosureStack.ReturnsRuntimeManaged)),
+            IrInst.MakeClosureStack makeClosureStack => StoreTemp(state, makeClosureStack.Target,
+                EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp),
+                    makeClosureStack.EnvSizeBytes, makeClosureStack.ReturnsRuntimeManaged, makeClosureStack.AcceptsRuntimeManagedArgument)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
+                LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
+                LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
                 isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
+            IrInst.LoadArgumentOwnership loadOwnership => StoreTemp(
+                state,
+                loadOwnership.Target,
+                LlvmApi.GetParam(state.Function, 2)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
             _ => (bool?)null,
         };
     }
+
+    private static LlvmValueHandle LoadRuntimeManagedArgumentFlag(
+        LlvmCodegenState state,
+        int flagTemp)
+        => flagTemp < 0
+            ? LlvmApi.ConstInt(state.I64, 0, 0)
+            : LoadTemp(state, flagTemp);
 
     private static bool? EmitInstructionGroup7(LlvmCodegenState state, IrInst instruction, int index)
     {

@@ -753,6 +753,7 @@ public static class StateMachineTransform
             IrInst.MakeClosureStack i => [i.Target],
             IrInst.CallClosure i => [i.Target],
             IrInst.CallKnown i => [i.Target],
+            IrInst.LoadArgumentOwnership i => [i.Target],
             IrInst.ToCString i => [i.Target],
             IrInst.CallExternal i => [i.Target],
             _ => GetDefinedTempsAllocFileText(inst)
@@ -962,8 +963,12 @@ public static class StateMachineTransform
             IrInst.RegexSubstitute c => [c.Code, c.Subject, c.Replacement],
             IrInst.MakeClosure mc => [mc.EnvPtrTemp],
             IrInst.MakeClosureStack mc => [mc.EnvPtrTemp],
-            IrInst.CallClosure cc => [cc.ClosureTemp, cc.ArgTemp],
-            IrInst.CallKnown ck => [ck.EnvTemp, ck.ArgTemp],
+            IrInst.CallClosure cc => cc.RuntimeManagedArgumentFlagTemp >= 0
+                ? [cc.ClosureTemp, cc.ArgTemp, cc.RuntimeManagedArgumentFlagTemp]
+                : [cc.ClosureTemp, cc.ArgTemp],
+            IrInst.CallKnown ck => ck.RuntimeManagedArgumentFlagTemp >= 0
+                ? [ck.EnvTemp, ck.ArgTemp, ck.RuntimeManagedArgumentFlagTemp]
+                : [ck.EnvTemp, ck.ArgTemp],
             IrInst.ToCString c => [c.StrTemp],
             IrInst.CallExternal c => c.ArgTemps,
             IrInst.TcoResetPending p => p.UsedTemps,

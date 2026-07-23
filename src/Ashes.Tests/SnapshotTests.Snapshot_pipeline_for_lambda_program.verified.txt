@@ -213,7 +213,8 @@
         {
           Target: 1,
           FuncLabel: lambda_0,
-          ReturnsRuntimeManaged: false
+          ReturnsRuntimeManaged: false,
+          AcceptsRuntimeManagedArgument: false
         },
         {
           Slot: 2,
@@ -239,7 +240,8 @@
         {
           Target: 5,
           ClosureTemp: 3,
-          ArgTemp: 4
+          ArgTemp: 4,
+          RuntimeManagedArgumentFlagTemp: -1
         },
         {
           Target: 6,
@@ -248,7 +250,8 @@
         {
           Target: 7,
           ClosureTemp: 5,
-          ArgTemp: 6
+          ArgTemp: 6,
+          RuntimeManagedArgumentFlagTemp: -1
         },
         {
           CursorLocalSlot: 3,
@@ -370,7 +373,8 @@
             FuncLabel: lambda_1,
             EnvSizeBytes: 8,
             RuntimeManaged: false,
-            ReturnsRuntimeManaged: false
+            ReturnsRuntimeManaged: false,
+            AcceptsRuntimeManagedArgument: false
           },
           {
             Source: 2
@@ -396,5 +400,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: FA6E0B0F06E44FABBB3D5AB87B3EABA82F5E8D3B8900BED6C27FA6985B18AF37
+  ElfSha256: 7003099E3383D5C6C6BAE20B0A26E98243114733A46DA5E3470E4A5C814E496C
 }

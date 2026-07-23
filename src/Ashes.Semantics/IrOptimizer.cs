@@ -502,7 +502,13 @@ public static class IrOptimizer
                 };
                 if (known is { } k && defCount.GetValueOrDefault(k.EnvTemp) == 1)
                 {
-                    result.Add(new IrInst.CallKnown(cc.Target, k.Label, k.EnvTemp, cc.ArgTemp) { Location = cc.Location });
+                    result.Add(new IrInst.CallKnown(
+                        cc.Target,
+                        k.Label,
+                        k.EnvTemp,
+                        cc.ArgTemp,
+                        cc.RuntimeManagedArgumentFlagTemp)
+                    { Location = cc.Location });
                     changed = true;
                     continue;
                 }
@@ -729,8 +735,22 @@ public static class IrOptimizer
             // Closures.
             IrInst.MakeClosure mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
             IrInst.MakeClosureStack mc => mc with { EnvPtrTemp = R(mc.EnvPtrTemp) },
-            IrInst.CallClosure cc => cc with { ClosureTemp = R(cc.ClosureTemp), ArgTemp = R(cc.ArgTemp) },
-            IrInst.CallKnown ck => ck with { EnvTemp = R(ck.EnvTemp), ArgTemp = R(ck.ArgTemp) },
+            IrInst.CallClosure cc => cc with
+            {
+                ClosureTemp = R(cc.ClosureTemp),
+                ArgTemp = R(cc.ArgTemp),
+                RuntimeManagedArgumentFlagTemp = cc.RuntimeManagedArgumentFlagTemp < 0
+                    ? -1
+                    : R(cc.RuntimeManagedArgumentFlagTemp),
+            },
+            IrInst.CallKnown ck => ck with
+            {
+                EnvTemp = R(ck.EnvTemp),
+                ArgTemp = R(ck.ArgTemp),
+                RuntimeManagedArgumentFlagTemp = ck.RuntimeManagedArgumentFlagTemp < 0
+                    ? -1
+                    : R(ck.RuntimeManagedArgumentFlagTemp),
+            },
             IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
             IrInst.CallExternal c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
@@ -1933,8 +1953,22 @@ public static class IrOptimizer
             case IrInst.LoadMemOffset l: usedTemps.Add(l.BasePtr); break;
             case IrInst.MakeClosure mc: usedTemps.Add(mc.EnvPtrTemp); break;
             case IrInst.MakeClosureStack mc: usedTemps.Add(mc.EnvPtrTemp); break;
-            case IrInst.CallClosure cc: usedTemps.Add(cc.ClosureTemp); usedTemps.Add(cc.ArgTemp); break;
-            case IrInst.CallKnown ck: usedTemps.Add(ck.EnvTemp); usedTemps.Add(ck.ArgTemp); break;
+            case IrInst.CallClosure cc:
+                usedTemps.Add(cc.ClosureTemp);
+                usedTemps.Add(cc.ArgTemp);
+                if (cc.RuntimeManagedArgumentFlagTemp >= 0)
+                {
+                    usedTemps.Add(cc.RuntimeManagedArgumentFlagTemp);
+                }
+                break;
+            case IrInst.CallKnown ck:
+                usedTemps.Add(ck.EnvTemp);
+                usedTemps.Add(ck.ArgTemp);
+                if (ck.RuntimeManagedArgumentFlagTemp >= 0)
+                {
+                    usedTemps.Add(ck.RuntimeManagedArgumentFlagTemp);
+                }
+                break;
             case IrInst.ToCString c: usedTemps.Add(c.StrTemp); break;
             case IrInst.CallExternal c:
                 foreach (var argTemp in c.ArgTemps) usedTemps.Add(argTemp);

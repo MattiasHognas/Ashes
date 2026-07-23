@@ -410,6 +410,7 @@ public sealed partial class Lowering
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, string> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
     // an arbitrary closure value as known.
@@ -4685,9 +4686,62 @@ public sealed partial class Lowering
         HashSet<string> specElidedAccs,
         int bodyTemp)
     {
+        LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
+        ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, tco, reuseInsertIndex);
         LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
         LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
+    }
+
+    private void LowerLambdaCoreRefreshRuntimeManagedTcoParams(TcoContext? tco)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        // The first scan runs before the body has constrained every parameter type. A list whose
+        // head comes from another inferred function can therefore still be a TVar at loop entry
+        // and miss RC eligibility. Re-run the scan after lowering the complete body, when the
+        // self-call has resolved those types, so entry normalization and deferred back-edge
+        // lowering see the final ownership shape.
+        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
+            _scopes.Peek(),
+            tco,
+            includeFreshClosures: false);
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            if (tco.RuntimeManagedParamTypes[slot] is not TypeRef.TFun
+                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
+        }
+    }
+
+    private void ResolvePendingRuntimeArgumentFlags(TcoContext? tco)
+    {
+        foreach ((int flagTemp, string parameterName) in _pendingRuntimeArgumentFlags)
+        {
+            int parameterIndex = tco?.ParamNames.IndexOf(parameterName) ?? -1;
+            bool runtimeManaged = parameterIndex >= 0
+                && parameterIndex < tco!.ParamSlots.Count
+                && tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]);
+            if (runtimeManaged)
+            {
+                continue;
+            }
+
+            int definitionIndex = _inst.FindIndex(instruction =>
+                instruction is IrInst.AndInt { Target: var target } && target == flagTemp);
+            if (definitionIndex >= 0)
+            {
+                _inst[definitionIndex] = new IrInst.LoadConstInt(flagTemp, 0)
+                {
+                    Location = _inst[definitionIndex].Location,
+                };
+            }
+        }
     }
 
     private void LowerLambdaCoreRefreshRuntimeManagedTcoResult(TcoContext? tco, int bodyTemp)
@@ -4892,6 +4946,7 @@ public sealed partial class Lowering
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
         HashSet<int> RuntimeManagedResultTemps,
+        Dictionary<int, string> PendingRuntimeArgumentFlags,
         Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
         HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
@@ -4937,28 +4992,36 @@ public sealed partial class Lowering
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var savedPendingRuntimeArgumentFlags = new Dictionary<int, string>(_pendingRuntimeArgumentFlags);
         var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
             SaveAndClearRuntimeManagedTcoPatternAliases();
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
         var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
+        ClearLambdaFrameState();
+
+        return new LowerLambdaCoreFrame(
+            savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
+            savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
+            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
+            savedRuntimeManagedResultTemps, savedPendingRuntimeArgumentFlags,
+            savedRuntimeManagedTcoPatternAliases,
+            savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
+            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
+    }
+
+    private void ClearLambdaFrameState()
+    {
         _linearReuseNames.Clear();
         _reuseTokens.Clear();
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
         _runtimeManagedResultTemps.Clear();
+        _pendingRuntimeArgumentFlags.Clear();
         _knownFunctionLabelsBySlot.Clear();
         _knownFunctionLabelsByEnvIndex.Clear();
         _letBindingValues.Clear();
-
-        return new LowerLambdaCoreFrame(
-            savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
-            savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
-            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
-            savedRuntimeManagedResultTemps, savedRuntimeManagedTcoPatternAliases,
-            savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
-            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
     }
 
     private (Dictionary<string, RuntimeManagedTcoPatternAlias> Aliases, HashSet<string> ActiveAliases)
@@ -5603,38 +5666,9 @@ public sealed partial class Lowering
             }
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
-            int normalizedTemp = NewTemp();
-            if (tco.RuntimeManagedListParamSlots.Contains(slot)
-                && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
-            {
-                if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
-                {
-                    Emit(new IrInst.CopyOutList(
-                        normalizedTemp, sourceTemp, headCopy, RuntimeManaged: true,
-                        IrInst.CopyOutPurpose.RcNormalization));
-                }
-                else
-                {
-                    normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
-                }
-            }
-            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple
-                && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
-            {
-                normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
-            }
-            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TNamedType named
-                && !CanCopyOutAdt(named, out _))
-            {
-                normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
-            }
-            else
-            {
-                int copySize = TcoRuntimeManagedCopySize(tco.RuntimeManagedParamTypes[slot]);
-                Emit(new IrInst.CopyOutArena(
-                    normalizedTemp, sourceTemp, copySize, RuntimeManaged: true,
-                    IrInst.CopyOutPurpose.RcNormalization));
-            }
+            int normalizedTemp = slot == 1
+                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.RuntimeManagedParamTypes[slot])
+                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.RuntimeManagedParamTypes[slot]);
             _runtimeManagedResultTemps.Add(normalizedTemp);
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
             int activeTemp = NewTemp();
@@ -5648,8 +5682,71 @@ public sealed partial class Lowering
         _inst.InsertRange(insertIndex, generated);
     }
 
+    private int EmitRuntimeManagedTcoArgumentNormalization(int sourceTemp, TypeRef type)
+    {
+        int resultSlot = NewLocal();
+        int ownershipTemp = NewTemp();
+        Emit(new IrInst.LoadArgumentOwnership(ownershipTemp));
+        string copyLabel = NewLabel("rc_arg_normalize_copy");
+        string doneLabel = NewLabel("rc_arg_normalize_done");
+        Emit(new IrInst.JumpIfFalse(ownershipTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedTcoParamCopy(sourceTemp, type);
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoParamCopy(int sourceTemp, TypeRef type)
+    {
+        int normalizedTemp = NewTemp();
+        if (type is TypeRef.TList list)
+        {
+            if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+            {
+                Emit(new IrInst.CopyOutList(
+                    normalizedTemp, sourceTemp, headCopy, RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+            }
+            else
+            {
+                normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+            }
+        }
+        else if (type is TypeRef.TTuple tuple
+            && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named
+            && !CanCopyOutAdt(named, out _))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+        }
+        else
+        {
+            int copySize = TcoRuntimeManagedCopySize(type);
+            Emit(new IrInst.CopyOutArena(
+                normalizedTemp, sourceTemp, copySize, RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        }
+        return normalizedTemp;
+    }
+
     private void RecordRuntimeNormalizedTcoParamLabel(TcoContext tco, int slot)
     {
+        // Only the lifted lambda's direct argument (local slot 1) can observe the hidden
+        // ownership flag. Earlier arguments in a curried chain have already been captured in an
+        // environment by the time the innermost TCO body normalizes them.
+        if (slot != 1)
+        {
+            return;
+        }
+
         int paramIndex = tco.ParamSlots.IndexOf(slot);
         if (paramIndex >= 0
             && tco.ParamLabels.TryGetValue(tco.ParamNames[paramIndex], out string? paramLabel))
@@ -5837,12 +5934,22 @@ public sealed partial class Lowering
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         _runtimeManagedResultTemps.Clear();
         foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
+        RestoreRuntimeManagedFrameState(frame);
         RestoreRuntimeManagedTcoPatternAliases(frame);
         RestoreKnownFunctionLabels(frame);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
         foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+    }
+
+    private void RestoreRuntimeManagedFrameState(LowerLambdaCoreFrame frame)
+    {
+        _pendingRuntimeArgumentFlags.Clear();
+        foreach ((int temp, string parameter) in frame.PendingRuntimeArgumentFlags)
+        {
+            _pendingRuntimeArgumentFlags[temp] = parameter;
+        }
     }
 
     private void RestoreRuntimeManagedTcoPatternAliases(LowerLambdaCoreFrame frame)
@@ -5875,15 +5982,15 @@ public sealed partial class Lowering
         int envSizeBytes = captures.Count * 8;
         bool returnsRuntimeManaged = !_usesAsync && CapabilityGlobalCount == 0
             && _runtimeManagedFunctionResultLabels.Contains(label);
-        if (stackAllocateClosure)
-        {
-            Emit(new IrInst.MakeClosureStack(closureTemp, label, envPtrTemp, envSizeBytes, returnsRuntimeManaged));
-        }
-        else
-        {
-            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes,
-                _runtimeRcClosureAllocationRequested, returnsRuntimeManaged));
-        }
+        bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
+        EmitLambdaClosureObject(
+            closureTemp,
+            label,
+            envPtrTemp,
+            envSizeBytes,
+            stackAllocateClosure,
+            returnsRuntimeManaged,
+            acceptsRuntimeManagedArgument);
 
         // Record any resource captured by this closure, with its env offset (capture i lives at
         // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
@@ -5929,6 +6036,34 @@ public sealed partial class Lowering
         AttachRuntimeManagedClosureNormalizer(label, captures);
 
         return closureTemp;
+    }
+
+    private void EmitLambdaClosureObject(
+        int closureTemp,
+        string label,
+        int envPtrTemp,
+        int envSizeBytes,
+        bool stackAllocateClosure,
+        bool returnsRuntimeManaged,
+        bool acceptsRuntimeManagedArgument)
+    {
+        if (stackAllocateClosure)
+        {
+            Emit(new IrInst.MakeClosureStack(
+                closureTemp,
+                label,
+                envPtrTemp,
+                envSizeBytes,
+                returnsRuntimeManaged,
+                acceptsRuntimeManagedArgument));
+        }
+        else
+        {
+            Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes,
+                _runtimeRcClosureAllocationRequested,
+                returnsRuntimeManaged,
+                acceptsRuntimeManagedArgument));
+        }
     }
 
     // Collect the names a pattern binds (Var subpatterns), recursively.
@@ -7277,14 +7412,27 @@ public sealed partial class Lowering
         ref int runtimeManagedResultFlagTemp)
     {
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
+        int originalArgumentTemp = argumentTemp;
         bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);
+        bool transfersFreshRuntimeArgument = !borrowsOnly
+            && argument is not Expr.Var
+            && IsRuntimeManagedResultTemp(originalArgumentTemp)
+            && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
+        int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
+            argument,
+            argumentType,
+            closureTemp,
+            borrowsOnly,
+            transfersFreshRuntimeArgument,
+            ref argumentTemp);
         if (!borrowsOnly)
         {
             MarkResourceArgMoved(argument);
-            if (IsRuntimeManagedResultTemp(argumentTemp)
-                && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex))
+            if (argument is not Expr.Var
+                && IsRuntimeManagedResultTemp(originalArgumentTemp)
+                && !transfersFreshRuntimeArgument)
             {
-                consumedRuntimeArguments.Add((argumentTemp, Prune(argumentType)));
+                consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType)));
             }
         }
 
@@ -7302,8 +7450,112 @@ public sealed partial class Lowering
         }
 
         int target = NewTemp();
-        EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly);
+        EmitClosureCall(
+            target,
+            closureTemp,
+            argumentTemp,
+            borrowsOnly,
+            runtimeManagedArgumentFlagTemp);
         return target;
+    }
+
+    private int PrepareRuntimeManagedCallArgument(
+        Expr argument,
+        TypeRef argumentType,
+        int closureTemp,
+        bool borrowsOnly,
+        bool transfersFreshRuntimeArgument,
+        ref int argumentTemp)
+    {
+        if (borrowsOnly
+            || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out string? pendingParameter))
+        {
+            return -1;
+        }
+
+        int packedEnvironmentSizeTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+        int ownershipShiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 62));
+        int shiftedFlagTemp = NewTemp();
+        Emit(new IrInst.ShrInt(shiftedFlagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+        int ownershipMaskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
+        int flagTemp = NewTemp();
+        Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
+        if (pendingParameter is not null)
+        {
+            _pendingRuntimeArgumentFlags[flagTemp] = pendingParameter;
+        }
+        if (!transfersFreshRuntimeArgument)
+        {
+            argumentTemp = EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
+        }
+        return flagTemp;
+    }
+
+    private int EmitConditionallyRetainedRuntimeArgument(
+        int argumentTemp,
+        TypeRef argumentType,
+        int ownershipFlagTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, argumentTemp));
+        string doneLabel = NewLabel("rc_call_argument_not_retained");
+        Emit(new IrInst.JumpIfFalse(ownershipFlagTemp, doneLabel));
+        int retainedTemp;
+        if (Prune(argumentType) is TypeRef.TList)
+        {
+            retainedTemp = EmitRuntimeManagedNullableDup(argumentTemp);
+        }
+        else
+        {
+            retainedTemp = NewTemp();
+            Emit(new IrInst.RcDup(retainedTemp, argumentTemp, RuntimeManaged: true));
+            _runtimeManagedResultTemps.Add(retainedTemp);
+        }
+        Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private bool TryGetRuntimeManagedCallArgument(
+        Expr argument,
+        int argumentTemp,
+        out string? pendingParameter)
+    {
+        pendingParameter = null;
+        if (IsRuntimeManagedResultTemp(argumentTemp)
+            || argument is Expr.Var variable
+                && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+        {
+            return true;
+        }
+
+        if (argument is not Expr.Var localVariable || _tcoCtx is not { } tco)
+        {
+            return false;
+        }
+
+        int parameterIndex = tco.ParamNames.IndexOf(localVariable.Name);
+        if (parameterIndex < 0 || parameterIndex >= tco.ParamSlots.Count)
+        {
+            return false;
+        }
+
+        if (tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]))
+        {
+            return true;
+        }
+
+        // Eligibility can resolve only after this call's surrounding tail self-call constrains the
+        // parameter types. Emit the ownership flag now and replace it with zero during finalization
+        // if the completed TCO frame does not admit this parameter to runtime RC.
+        pendingParameter = localVariable.Name;
+        return true;
     }
 
     private void LowerCallDropConsumedRuntimeArguments(
@@ -7356,9 +7608,18 @@ public sealed partial class Lowering
         return _runtimeNormalizedFunctionArgumentLabels.Contains(label);
     }
 
-    private void EmitClosureCall(int target, int closureTemp, int argumentTemp, bool borrowsArgument)
+    private void EmitClosureCall(
+        int target,
+        int closureTemp,
+        int argumentTemp,
+        bool borrowsArgument,
+        int runtimeManagedArgumentFlagTemp = -1)
     {
-        var callInstruction = new IrInst.CallClosure(target, closureTemp, argumentTemp);
+        var callInstruction = new IrInst.CallClosure(
+            target,
+            closureTemp,
+            argumentTemp,
+            runtimeManagedArgumentFlagTemp);
         Emit(callInstruction);
         if (borrowsArgument)
         {

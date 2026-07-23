@@ -754,11 +754,20 @@ must add cycle handling or be explicitly excluded from RC admission.
 | List cons | `[head:i64][tail:i64]`; nil is zero |
 | ADT / record | `[tag:i64][field0:i64]...` |
 | Tuple / environment | `[word0:i64][word1:i64]...` |
-| Closure | `[code:i64][env:i64][packed_env_size_and_result_owner:i64][dropper:i64]` |
+| Closure | `[code:i64][env:i64][packed_env_size_and_ownership:i64][dropper:i64]` |
 
 An RC value has the common 16-byte allocation header immediately before this
 payload. Read-only literals and borrowed views do not. Stack allocation remains
 available for short-lived compiler-proven values.
+
+The closure packed word reserves bit 63 for runtime-managed result ownership,
+bit 62 for RC-argument adoption, and the low 62 bits for environment size.
+Closure code uses the internal `(env, arg, owns_arg) -> value` ABI. When
+`owns_arg` is set, a normalizing direct-parameter entry adopts the transferred
+RC root. A caller retains the root when it must keep its own reference, while a
+fresh result can transfer its existing reference. Otherwise the entry
+defensively copies an arena graph. Curried parameters already captured in an
+environment do not advertise direct-argument adoption.
 
 ### Stacks
 

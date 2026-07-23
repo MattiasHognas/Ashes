@@ -185,14 +185,21 @@ specialized region; it is not an instruction to read an RC header.
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
 | `MakeClosure` | `Target`, `FuncLabel`, `EnvPtrTemp`, `EnvSizeBytes`, ownership flags | Allocate a closure payload, optionally behind an RC header |
-| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp` | Call closure: `Target = code(env, arg)` |
+| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp`, `RuntimeManagedArgumentFlagTemp` | Call closure with an optional retained-RC argument ownership flag |
 
 A closure payload is 32 bytes:
-`[code, env, packed_env_size_and_result_ownership, dropper]`.
+`[code, env, packed_env_size_and_ownership, dropper]`. The packed word uses bit 63
+for runtime-managed result ownership, bit 62 for RC-argument adoption, and the
+low 62 bits for the environment size.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the
-code and environment pointers and calls `code(env, arg)`.
+code and environment pointers and calls `code(env, arg, owns_arg)`. A normalizing
+direct-parameter entry adopts a transferred RC root when `owns_arg` is set and
+otherwise performs the defensive arena-to-RC graph copy. The caller retains a
+non-fresh root before transfer; fresh owned results can transfer their existing
+reference. Curried parameters captured in closure environments cannot consume
+this direct-argument flag.
 
 ### Algebraic Data Types (ADTs)
 
@@ -381,7 +388,7 @@ The LLVM backend (`LlvmCodegen`) processes each `IrFunction`:
 | String / Bytes | `[length_and_view_flag:i64][bytes...]` |
 | BigInt | `[sign_and_limb_count:i64][limbs...]` |
 | List cons | `[head:i64][tail:i64]`; nil is zero |
-| Closure | `[code:i64][env:i64][packed_env_size_and_result_owner:i64][dropper:i64]` |
+| Closure | `[code:i64][env:i64][packed_env_size_and_ownership:i64][dropper:i64]` |
 | ADT / record | `[tag:i64][field0:i64]...[fieldN:i64]` |
 | Tuple / environment | `[word0:i64][word1:i64]...` |
 

@@ -568,6 +568,39 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Runtime_managed_TCO_result_is_retained_for_the_next_normalized_call()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive prepend = given (n) -> given (acc) ->
+                if n == 0 then acc
+                else prepend(n - 1)("x" :: acc)
+            in
+                let recursive lines = given (n) -> given (acc) ->
+                    if n == 0 then acc
+                    else lines(n - 1)(prepend(60)(acc))
+                in lines(5)([])
+            """);
+
+        List<IrInst> allInstructions = ir.Functions
+            .SelectMany(function => function.Instructions)
+            .ToList();
+        allInstructions.Any(instruction => instruction is IrInst.CallClosure
+        {
+            RuntimeManagedArgumentFlagTemp: >= 0,
+        } or IrInst.CallKnown
+        {
+            RuntimeManagedArgumentFlagTemp: >= 0,
+        }).ShouldBeTrue(
+            "An already RC-owned accumulator must be retained for a normalizing parameter " +
+            "instead of being cloned again at every outer-loop call.");
+        allInstructions.Any(instruction => instruction is IrInst.LoadArgumentOwnership)
+            .ShouldBeTrue(
+                "The normalized function entry must select between adopting a transferred RC " +
+                "argument and copying an unknown arena argument.");
+    }
+
+    [Test]
     public void TCO_loop_with_list_of_list_arg_uses_runtime_ownership()
     {
         // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it

@@ -187,25 +187,44 @@ public abstract record IrInst
         int EnvPtrTemp,
         int EnvSizeBytes,
         bool RuntimeManaged = false,
-        bool ReturnsRuntimeManaged = false
+        bool ReturnsRuntimeManaged = false,
+        bool AcceptsRuntimeManagedArgument = false
     ) : IrInst; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
     public sealed record MakeClosureStack(
         int Target,
         string FuncLabel,
         int EnvPtrTemp,
         int EnvSizeBytes,
-        bool ReturnsRuntimeManaged = false
+        bool ReturnsRuntimeManaged = false,
+        bool AcceptsRuntimeManagedArgument = false
     ) : IrInst; // stack alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper
     /// into an escaping closure's dropper slot, so a resource a closure captured is closed
     /// deterministically when the closure is dropped.</summary>
     public sealed record LoadFuncAddr(int Target, string FuncLabel) : IrInst;
-    public sealed record CallClosure(int Target, int ClosureTemp, int ArgTemp) : IrInst;
+    public sealed record CallClosure(
+        int Target,
+        int ClosureTemp,
+        int ArgTemp,
+        int RuntimeManagedArgumentFlagTemp = -1
+    ) : IrInst;
     // Devirtualized closure call: the callee label is statically known (the closure temp was
     // produced by a MakeClosure with this label), so codegen emits a direct call the LLVM
     // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
-    public sealed record CallKnown(int Target, string FuncLabel, int EnvTemp, int ArgTemp) : IrInst;
+    public sealed record CallKnown(
+        int Target,
+        string FuncLabel,
+        int EnvTemp,
+        int ArgTemp,
+        int RuntimeManagedArgumentFlagTemp = -1
+    ) : IrInst;
+    /// <summary>
+    /// Loads the hidden closure-call ownership flag. A true value means the caller transferred an
+    /// already runtime-managed argument, so an RC-normalizing function entry may adopt it instead
+    /// of deep-copying it. Unknown and arena-managed calls pass false.
+    /// </summary>
+    public sealed record LoadArgumentOwnership(int Target) : IrInst;
 
     // Generic fixed-size allocation. RuntimeManaged is used for selected list cells and closure
     // environments; tuples and other runtime buffers remain arena-managed.

@@ -2005,7 +2005,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle copiedBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "copy_closure_env_copied");
         const string normalizerSuffix = "$env_normalize";
-        LlvmTypeHandle normalizerType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        LlvmTypeHandle normalizerType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         foreach ((string label, LlvmValueHandle normalizerFunction) in state.LiftedFunctions
             .Where(pair => pair.Key.EndsWith(normalizerSuffix, StringComparison.Ordinal)))
         {
@@ -2026,7 +2026,9 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildCondBr(builder, matches, normalizeBlock, nextBlock);
             LlvmApi.PositionBuilderAtEnd(builder, normalizeBlock);
             LlvmValueHandle normalizedDropper = LlvmApi.BuildCall2(builder, normalizerType,
-                normalizerFunction, [source, destination], "copy_closure_normalizer_call");
+                normalizerFunction,
+                [source, destination, LlvmApi.ConstInt(state.I64, 0, 0)],
+                "copy_closure_normalizer_call");
             LlvmApi.BuildStore(builder, normalizedDropper, dropperSlot);
             LlvmApi.BuildBr(builder, copiedBlock);
             LlvmApi.PositionBuilderAtEnd(builder, nextBlock);
