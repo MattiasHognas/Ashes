@@ -2100,7 +2100,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 129).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
-            outputPerIteration: 109).ConfigureAwait(false);
+            outputPerIteration: 111).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -5192,6 +5192,9 @@ public sealed class LinuxBackendCoverageTests
             type Box(a) =
                 | Box(a)
 
+            type TextBox =
+                | TextBox(Str)
+
             let recursive loop n total =
                 if n <= 0 then total
                 else
@@ -5199,19 +5202,23 @@ public sealed class LinuxBackendCoverageTests
                         let pair = Pair(40)(2) in pair
                     in match escaped with
                         | Pair(left, right) ->
-                            let boxed =
-                                let fresh = Box(5) in fresh
-                            in match boxed with
-                                | Box(boxedValue) ->
-                                    let tree =
-                                        let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
-                                    in
-                                    match tree with
-                                        | Leaf -> loop(n - 1)(total + left + right + boxedValue)
-                                        | Node(child, value, _) ->
-                                            match child with
-                                                | Leaf -> loop(n - 1)(total + left + right + boxedValue + value)
-                                                | Node(_, childValue, _) -> loop(n - 1)(total + left + right + boxedValue + value + childValue)
+                            let textBox =
+                                let fresh = TextBox(Ashes.Text.fromInt(40)) in fresh
+                            in match textBox with
+                                | TextBox(text) ->
+                                    let boxed =
+                                        let fresh = Box(5) in fresh
+                                    in match boxed with
+                                        | Box(boxedValue) ->
+                                            let tree =
+                                                let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
+                                            in
+                                            match tree with
+                                                | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue)
+                                                | Node(child, value, _) ->
+                                                    match child with
+                                                        | Leaf -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue + value)
+                                                        | Node(_, childValue, _) -> loop(n - 1)(total + left + right + Ashes.Text.byteLength(text) + boxedValue + value + childValue)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

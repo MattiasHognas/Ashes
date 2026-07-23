@@ -442,6 +442,9 @@ BigInt producers use the same owned-child rule and are released by the parent's 
 fully fresh copy-element list may move into a tuple as well. Fresh runtime-manageable user ADTs and
 records now join that graph through their type-directed droppers; borrowed aggregate children remain
 rejected.
+Single-constructor user ADTs may now directly own a fresh String producer. Their parent uniqueness
+check guards the String drop; literal and borrowed String fields remain non-owning and keep the ADT
+on the arena path.
 Escaping `Text.uncons` results now materialize an entirely owned RC graph: the outer `Maybe`, success
 tuple, and copied head/tail Strings are independent of the source arena. A tag- and uniqueness-aware
 drop releases nested children only for the last owner; the immediate-match path retains the same contract.

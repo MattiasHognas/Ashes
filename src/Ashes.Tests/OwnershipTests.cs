@@ -292,6 +292,27 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_adt_with_fresh_string_child_transfers_child_ownership()
+    {
+        IrProgram ir = LowerProgram("type TextBox = | TextBox(Str)\nlet escaped = (let box = TextBox(Ashes.Text.fromInt(40)) in box) in match escaped with | TextBox(text) -> Ashes.Text.byteLength(text)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "TextBox", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_adt_with_literal_string_child_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type TextBox = | TextBox(Str)\nlet escaped = (let box = TextBox(\"40\") in box) in match escaped with | TextBox(text) -> Ashes.Text.byteLength(text)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "TextBox", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {
         IrProgram ir = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box(42) in box) in match escaped with | Box(value) -> value");

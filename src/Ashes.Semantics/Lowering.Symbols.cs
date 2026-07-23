@@ -673,6 +673,7 @@ public sealed partial class Lowering
                 || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
                     && (CanRuntimeManageCopyAdt(named)
                         || CanRuntimeManageGenericCopyAdtConstructorApplication(ctor, args, named)
+                        || CanRuntimeManageFreshStringChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecordChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
                         || (runtimeReuseRequest
@@ -798,7 +799,14 @@ public sealed partial class Lowering
         {
             for (int i = 0; i < arguments.Count; i++)
             {
+                bool savedStringRequest = _runtimeRcStringAllocationRequested;
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+                _runtimeRcStringAllocationRequested = savedStringRequest
+                    || runtimeManagedCandidate && fieldType is TypeRef.TStr
+                        && IsRuntimeRcStringProducer(arguments[i])
+                        && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]);
                 (int argumentTemp, TypeRef argumentType) = LowerExpr(arguments[i]);
+                _runtimeRcStringAllocationRequested = savedStringRequest;
                 argumentTemps.Add(argumentTemp);
                 TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
                 Unify(parameterType, argumentType);

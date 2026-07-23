@@ -525,35 +525,40 @@ public sealed partial class Lowering
             {
                 int childTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(childTemp, valueTemp, index * 8));
-                if (childType is TypeRef.TTuple childTuple)
-                {
-                    EmitRuntimeManagedTupleDrop(childTemp, childTuple);
-                }
-                else if (childType is TypeRef.TList)
-                {
-                    EmitRuntimeManagedListDrop(childTemp);
-                }
-                else if (childType is TypeRef.TNamedType childAdt)
-                {
-                    EmitRuntimeManagedAdtDrop(childTemp, childAdt);
-                }
-                else
-                {
-                    string typeName = childType switch
-                    {
-                        TypeRef.TStr => "String",
-                        TypeRef.TBytes => "Bytes",
-                        TypeRef.TBigInt => "BigInt",
-                        _ => throw new InvalidOperationException("Unsupported runtime-managed tuple child."),
-                    };
-                    Emit(new IrInst.RcDrop(childTemp, typeName, RuntimeManaged: true));
-                }
+                EmitRuntimeManagedChildDrop(childTemp, childType);
             }
 
             Emit(new IrInst.Label(sharedLabel));
         }
 
         Emit(new IrInst.RcDrop(valueTemp, "Tuple", RuntimeManaged: true));
+    }
+
+    private void EmitRuntimeManagedChildDrop(int valueTemp, TypeRef type)
+    {
+        switch (Prune(type))
+        {
+            case TypeRef.TTuple tuple:
+                EmitRuntimeManagedTupleDrop(valueTemp, tuple);
+                break;
+            case TypeRef.TList:
+                EmitRuntimeManagedListDrop(valueTemp);
+                break;
+            case TypeRef.TNamedType adt:
+                EmitRuntimeManagedAdtDrop(valueTemp, adt);
+                break;
+            case TypeRef.TStr:
+                Emit(new IrInst.RcDrop(valueTemp, "String", RuntimeManaged: true));
+                break;
+            case TypeRef.TBytes:
+                Emit(new IrInst.RcDrop(valueTemp, "Bytes", RuntimeManaged: true));
+                break;
+            case TypeRef.TBigInt:
+                Emit(new IrInst.RcDrop(valueTemp, "BigInt", RuntimeManaged: true));
+                break;
+            default:
+                throw new InvalidOperationException("Unsupported runtime-managed aggregate child.");
+        }
     }
 
     /// <summary>
@@ -588,13 +593,13 @@ public sealed partial class Lowering
         }
 
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
-        List<(int Index, TypeRef.TNamedType Type)> childFields = [];
+        List<(int Index, TypeRef Type)> childFields = [];
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType) && fieldType is TypeRef.TNamedType child)
+            if (!CanArenaReset(fieldType))
             {
-                childFields.Add((i, child));
+                childFields.Add((i, fieldType));
             }
         }
 
@@ -604,11 +609,11 @@ public sealed partial class Lowering
             string sharedLabel = NewLabel("rc_drop_shared");
             Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
-            foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
+            foreach ((int fieldIndex, TypeRef childType) in childFields)
             {
                 int childTemp = NewTemp();
                 Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
-                EmitRuntimeManagedAdtDrop(childTemp, childType);
+                EmitRuntimeManagedChildDrop(childTemp, childType);
             }
 
             Emit(new IrInst.Label(sharedLabel));
@@ -697,13 +702,13 @@ public sealed partial class Lowering
         ConstructorSymbol constructor,
         bool knownUnique)
     {
-        List<(int Index, TypeRef.TNamedType Type)> childFields = [];
+        List<(int Index, TypeRef Type)> childFields = [];
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType) && fieldType is TypeRef.TNamedType child)
+            if (!CanArenaReset(fieldType))
             {
-                childFields.Add((i, child));
+                childFields.Add((i, fieldType));
             }
         }
 
@@ -721,11 +726,11 @@ public sealed partial class Lowering
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
         }
 
-        foreach ((int fieldIndex, TypeRef.TNamedType childType) in childFields)
+        foreach ((int fieldIndex, TypeRef childType) in childFields)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
-            EmitRuntimeManagedAdtDrop(childTemp, childType);
+            EmitRuntimeManagedChildDrop(childTemp, childType);
         }
 
         if (!knownUnique)
@@ -1637,6 +1642,41 @@ public sealed partial class Lowering
         }
 
         return true;
+    }
+
+    private bool CanRuntimeManageFreshStringChildAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        if (resultType.Symbol.Constructors.Count != 1
+            || arguments.Count != constructor.Arity
+            || BuiltinRegistry.IsResourceTypeName(resultType.Symbol.Name)
+            || IsResourceBearing(resultType))
+        {
+            return false;
+        }
+
+        bool hasString = false;
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (fieldType is not TypeRef.TStr
+                || !IsRuntimeRcStringProducer(arguments[i])
+                || !IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]))
+            {
+                return false;
+            }
+
+            hasString = true;
+        }
+
+        return hasString;
     }
 
     /// <summary>
