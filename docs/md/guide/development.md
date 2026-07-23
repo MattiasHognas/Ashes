@@ -223,6 +223,23 @@ For allocator/lifetime behavior, add or run the multi-scale native RSS tests in
 [Compiler Memory Regressions](testing.md#compiler-memory-regressions). Correct
 output alone is insufficient for a memory-management change.
 
+To inspect the compiler-inferred ownership contract and lifetime placement for
+a program, set `ASHES_EXPLAIN_OWNERSHIP`. `all` (or `1`) prints every analyzed
+function; a comma-separated list limits output to named functions:
+
+```sh
+ASHES_EXPLAIN_OWNERSHIP=all \
+  dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
+
+ASHES_EXPLAIN_OWNERSHIP=map,fold \
+  dotnet run --project src/Ashes.Cli -- compile program.ash -o program
+```
+
+The trace is written to stderr and includes stable per-function
+consumed/borrowed parameters, result reach, capture ownership, and uniqueness,
+followed by the `RcDup`/`RcDrop` placement decisions. It is an internal
+diagnostic and does not change generated code.
+
 ### LSP Unit Tests
 
 ```sh

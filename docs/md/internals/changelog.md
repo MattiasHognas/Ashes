@@ -20,7 +20,7 @@ All original audit findings have been addressed:
 
 | Area | What was done |
 |------|---------------|
-| **RC Perceus migration** | Escaping ordinary graphs now use compiler-inferred ownership and runtime RC: per-function borrowed/consumed summaries, last-use/branch-entry `RcDrop`, late `RcDup`, layout-aware recursive drops, uniqueness specialization, and `DropReuse`/`AllocReusing` with a fresh-allocation null fallback. Complete-graph normalization prevents mixed-lifetime parents and children. Small cells use dense per-thread RC chunks plus exact-size free-list reuse; large cells return directly to the OS. Compiler-proven scratch, task/capability state, mmap-backed views, parallel publication copies, and the persistent Map/HashMap to-space retain explicitly classified regions with multi-scale RSS gates. The paper conformance ledger and full validation history are in the [migration record](../future/RC_PERCEUS_MIGRATION.md). |
+| **RC Perceus migration** | Escaping ordinary graphs now use compiler-inferred ownership and runtime RC: per-function borrowed/consumed summaries, last-use/branch-entry `RcDrop`, late `RcDup`, layout-aware recursive drops, uniqueness specialization, and `DropReuse`/`AllocReusing` with a fresh-allocation null fallback. Complete-graph normalization prevents mixed-lifetime parents and children. Small cells use dense per-thread RC chunks plus exact-size free-list reuse; large cells return directly to the OS. Compiler-proven scratch, task/capability state, mmap-backed views, parallel publication copies, and the persistent Map/HashMap to-space retain explicitly classified regions with multi-scale RSS gates. See [RC Perceus migration chronology and verification](#rc-perceus-migration-chronology-and-verification). |
 | **LLVM passes** | Targeted pipeline (mem2reg, instcombine, early-cse, reassociate, gvn, dce, inline, licm, dse) at O1–O3. PLT32 + PE relocation support. Freestanding builtins (memcpy, memset, strlen, memcmp, bcmp) emitted per module. |
 | **Memory allocator** | OS-backed `mmap`/`VirtualAlloc` chunks (4 MB each, on demand; a single allocation larger than one chunk grows a chunk to fit — see CO-31). Bounds checking with clean error. |
 | **Arena deallocation** | Phase 1: scope watermarks for copy-type results. Phase 2a: TCO per-iteration reset for copy-type args. Phase 2b: copy-out (`CopyOutArena` IR instruction) for `TStr` scope results. Phase 2c: TCO copy-out for `TStr` and `TList(copy-type)` args. Phase 2d: abandoned OS chunk reclamation via `ReclaimArenaChunks` (split from `RestoreArenaState` to prevent use-after-free — restore resets pointers, reclaim frees chunks after copy-out completes). Phase 3: per-function-call watermarks. Phase 4: extended copy-out — `CopyOutList` (deep cons-chain copy for `TList` with copy-type element), `CopyOutClosure` (closure struct + env copy; 24-byte closure layout `{code, env, env_size}`), ADT with copy-type fields. Phase 5: extended TCO copy-out — `CopyOutTcoListCell` for `TList(TStr)` and `TList(TList(copy-type))` args (single-cell + head copy), closure and ADT args via `CopyOutClosure`/`CopyOutArena`. |
@@ -94,14 +94,80 @@ All original audit findings have been addressed:
 | **Diagnostic source mapping — combined-source spans render at the user's coordinates** | Compilation runs on the stitched **combined** source (imported source modules + reshaped entry), so diagnostic spans are offsets into it — but the CLI rendered them against the original file text, producing positions **past EOF** (line 71 in a 66-line file, columns in the thousands pointing into the stitched single-line prefix) whenever the entry sat behind a stitched module, and off-by-the-import-header positions even for simple files. `ProjectSupport.MapDiagnosticsToOriginal` now maps spans back before rendering, using the property that makes this a contained fix rather than full source-map infrastructure: the **entry region of the combined source is line/column-preserving** with respect to the user's file (imports blanked keeping newlines, hoisted declarations blanked via `BlankSpans`, alias preludes overwriting blank import lines) — entry spans map by line/column arithmetic. Hoisted entry `type`/`capability`/`provide` declarations map **exactly** via a fragment table recorded as `TryShapeFlatModule` extracts them (`CombinedCompilationLayout.EntryTypeDeclFragments`); spans inside a stitched (reconstructed) non-entry module region render header-only, attributed to the **owning file** via `ModuleOffsets`. Measured: `x + "oops"` behind an `Ashes.List` import went from `9:2568` (blank caret past EOF) to the exact `6:9` with the right line text and underline; multi-error files locate every error. Unit tests cover the three mapping paths (`ProjectSupportTests.MapDiagnosticsToOriginal_*`). |
 | **Formatter fidelity — standalone comments preserved, trailing whitespace eliminated** | The canonical formatter is AST-based and the AST carries no trivia, so CLI `fmt -w` silently deleted every `//` comment outside the leading header block; it also left trailing whitespace after `=`/`->`/`in`/`else` wherever the tree writers appended structural padding before breaking the line. Comments: the anchor-based reinsertion the LSP's format-document path already had was formatter-domain logic living in a consumer — moved to `Ashes.Formatter.CommentReinserter` and wired into CLI `fmt`, so both paths behave identically (each standalone comment line is re-anchored to the surrounding significant lines by a whitespace-insensitive token signature; a comment whose anchor disappears falls back to the previous anchor, then the top of the file — never dropped; idempotent). Whitespace: `Formatter.FinishOutput` trims every line (safe — string literals are emitted single-line with escaped `\n`), landed with the coordinated ~400-file repo-wide reformat it was deferred for (verified whitespace-only via `git diff --ignore-space-at-eol` and idempotent). Gotcha recorded: `fmt -w` itself does not honor `// fmt-skip:` (only `scripts/verify.sh`'s check loop does) — bulk `fmt -w` runs must exclude those fixtures. |
 
-> **Scope decision — runtime string interning rejected.** *Runtime* interning of dynamically-produced
-> strings (`concat` / `substring` results) was considered and **rejected**: under the arena memory
-> model there is no sound, bounded implementation. A permanent intern region never reclaims, so it
-> grows monotonically (a leak that violates the "No GC / deterministic reclamation" invariant);
-> interning into the arena instead dangles on the next arena reset (use-after-free). A bounded,
-> reclaimed table would require reference counting or GC, both of which the language forbids. We
-> therefore intern only the compile-time-known literal set, which is finite, static, and leak-free
-> by construction.
+### RC Perceus migration chronology and verification
+
+The migration completed on 2026-07-23. It replaced the arena/copy-out model as
+the general lifetime mechanism for escaping ordinary values while retaining
+regions only where their owner and reclamation boundary are explicit. The
+current contract lives in [Compiler Architecture](architecture.md#memory-model)
+and [IR Reference](ir.md#ownership-and-lifetime); this section preserves why
+the implementation took its present shape.
+
+The work was grounded in the PLDI 2021 paper and extended report,
+[Perceus: Garbage Free Reference Counting with Reuse](https://www.microsoft.com/en-us/research/publication/perceus-garbage-free-reference-counting-with-reuse/).
+Ashes adopted precise owned/borrowed environments, late `dup`, early `drop`,
+recursive drop specialization, uniqueness, and reuse tokens without exposing
+ownership syntax in the language.
+
+| Phase | Lasting result |
+|---|---|
+| **0 — decision and inventory** | Classified language heap values, runtime buffers, layouts, allocation sites, ABI constraints, and the intended RC header. |
+| **1 — ownership summaries** | Replaced fragile call-site reasoning with `FunctionOwnershipSummary`: consumed/borrowed parameters, result reach, captures, and uniqueness. |
+| **2 — explicit lifetime IR** | Separated ordinary `RcDup`/`RcDrop` from deterministic resource cleanup and introduced control-flow-precise `PerceusLifetimePlacement`. |
+| **3 — first runtime family** | Added the 16-byte RC header, runtime counts, and type-directed recursive drops for ADTs and lists while preserving payload offsets. |
+| **4 — specialization and fusion** | Added constructor/deep-unique drop paths, branch sinking, safe `dup`/`drop` fusion, and the per-thread exact-size free list after native profiling exposed per-cell OS map/unmap as untenable. |
+| **5 — reuse tokens** | Made `DropReuse` return a compatible unique cell or null after decrementing a shared cell; `AllocReusing` consumes the token or allocates fresh, including field-transfer rules. |
+| **6 — broader heap coverage** | Added runtime ownership for Strings, Bytes, BigInts, result containers, tuples, records, user ADTs, lists, and supported closure environments. |
+| **7 — arena retirement** | Propagated ownership through scopes, calls, higher-order results, matches, closures, and TCO; normalized complete graphs so an RC parent never owns an arena child; confined to-space operations to persistent `Map`/`HashMap`. |
+| **8 — conformance and documentation** | Classified every remaining copy by `CopyOutPurpose`, compared the implementation with the paper, resolved ordinary-value blockers, and audited permanent documentation. |
+
+The migration tests found correctness problems that output-only tests did not:
+branch-local releases suppressed by other arms, mixed RC/arena graphs,
+premature parent drops during payload transfer, unreturned TCO owners, and
+linear growth in String, closure, async HTTP, and persistent-collection
+workloads. Each fix gained focused IR/native coverage. Memory tests use
+2K/10K/50K workloads to bound total and late `ru_maxrss` growth while checking
+output at every scale; the 1BRC gate additionally uses
+75K/150K/300K-row inputs. The permanent method and matrix are documented under
+[Compiler Memory Regressions](../guide/testing.md#compiler-memory-regressions).
+
+The final exit gates were:
+
+- `dotnet build Ashes.slnx --no-restore`: zero warnings and errors;
+- `dotnet format Ashes.slnx --verify-no-changes --no-restore`: clean;
+- compiler suite: 1,641 passed, zero failed, including native RSS/CPU gates;
+- linux-x64 native execution, linux-arm64/qemu coverage, win-x64/Wine coverage,
+  and a win-arm64 PE machine-field smoke test;
+- README showcase and the VitePress production documentation build.
+
+The paper comparison found no unresolved blocker inside the declared Ashes
+memory model. The scope is intentionally hybrid:
+
+- ordinary escaping acyclic graphs use RC Perceus ownership;
+- proven non-escaping scratch may use scoped arenas;
+- task/capability state remains scheduler-region-owned because suspension is
+  non-linear;
+- RC counts are thread-local, so worker publication uses independent copies
+  until `tshare` marking or an atomic transition exists;
+- borrowed mmap-backed `Bytes` views remain tied to their mapping/resource;
+- persistent `Map`/`HashMap` reuse retains a measured specialized region;
+- language resources keep affine `CleanupResource`, separate from ordinary RC;
+- cyclic graphs require future cycle handling and are not admitted to RC.
+
+These are named IR boundaries with bounded-memory regressions, not implicit
+fallbacks. Consequently Ashes claims the Perceus ownership invariant for
+admitted RC graphs, not that every byte of mixed runtime state is governed by
+the paper's formal calculus.
+
+> **Scope decision — runtime string interning remains rejected.** The original
+> arena-only design could neither retain dynamic entries safely nor reclaim a
+> permanent intern table. RC Perceus removes the first obstacle, but a strong
+> table reference would still keep every distinct dynamic string alive. A
+> bounded implementation now requires weak table entries or eviction, removal
+> synchronization, and a workload demonstrating that the lookup cost wins back
+> enough allocation. Ashes therefore still interns only the finite,
+> compile-time-known literal set. This is a performance decision, not a claim
+> that reference counting is unavailable.
 
 ---
 

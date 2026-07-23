@@ -558,7 +558,7 @@ to a dependency-free native binary, that is what Ashes is for.
 | [Project Specification](docs/md/guide/projects.md) | Multi-file project format |
 | [Compiler Architecture](docs/md/internals/architecture.md) | Pipeline, backend, memory model, linking |
 | [IR Reference](docs/md/internals/ir.md) | Intermediate representation instruction set |
-| [RC Perceus Migration Record](docs/md/future/RC_PERCEUS_MIGRATION.md) | Completed migration phases, verification, and intentional boundaries |
+| [Compiler Changelog](docs/md/internals/changelog.md) | Implementation history, including the RC Perceus migration chronology and verification |
 | [CLI Specification](docs/md/reference/cli.md) | All CLI commands and flags |
 | [Debugging Guide](docs/md/guide/debugging.md) | Debug extension setup and usage |
 | [Formatter Specification](docs/md/reference/formatter.md) | Canonical formatting rules |

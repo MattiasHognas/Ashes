@@ -8,8 +8,9 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 The RC Perceus memory model has shipped. Its current contract is documented in
 [Compiler Architecture](../internals/architecture.md#memory-model); the
-[migration record](RC_PERCEUS_MIGRATION.md) preserves the phased implementation,
-paper comparison, validation evidence, and intentional region/thread boundaries.
+[compiler changelog](../internals/changelog.md#rc-perceus-migration-chronology-and-verification)
+preserves the phased implementation, paper comparison, validation evidence,
+and intentional region/thread boundaries.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
