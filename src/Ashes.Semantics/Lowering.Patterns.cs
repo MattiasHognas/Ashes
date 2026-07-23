@@ -98,7 +98,7 @@ public sealed partial class Lowering
         _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
-            LowerMatchArmsViaTagSwitch(match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
+            LowerMatchArmsViaTagSwitch(match.Value, match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
         }
         else
         {
@@ -464,6 +464,8 @@ public sealed partial class Lowering
             Unify(guardType, new TypeRef.TBool());
             Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
         }
+
+        TrackRuntimeManagedMatchScrutinee(match.Value, valueTemp, valueType, patternBindings);
     }
 
     /// <summary>
@@ -538,6 +540,7 @@ public sealed partial class Lowering
             }
         }
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        MarkDirectRuntimeManagedMatchResultMoved(cases[i].Body);
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
         if (armFinalTemp != bodyTemp)
         {
@@ -768,6 +771,7 @@ public sealed partial class Lowering
     /// needed; the switch default handles the (diagnosed) non-exhaustive case.
     /// </summary>
     private void LowerMatchArmsViaTagSwitch(
+        Expr matchValue,
         IReadOnlyList<MatchCase> cases,
         List<(ConstructorSymbol Ctor, long Tag)> plan,
         int valueTemp,
@@ -803,7 +807,7 @@ public sealed partial class Lowering
             EmitArenaWatermark();
             PushOwnershipScope();
 
-            EmitTagSwitchArmPattern(cases, plan, i, valueTemp, valueType, noMatchLabel);
+            EmitTagSwitchArmPattern(matchValue, cases, plan, i, valueTemp, valueType, noMatchLabel);
 
             int reuseTokensBefore = PublishTagSwitchArmReuseToken(
                 cases,
@@ -822,7 +826,7 @@ public sealed partial class Lowering
     /// <summary>
     /// Infers one tag-switch arm's pattern type and binds its payload fields into the arm scope.
     /// </summary>
-    private void EmitTagSwitchArmPattern(IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
+    private void EmitTagSwitchArmPattern(Expr matchValue, IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
     {
         var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var patternType = InferPatternType(cases[i].Pattern, patternBindings);
@@ -835,6 +839,76 @@ public sealed partial class Lowering
         }
 
         TrackOwnedBindingsInPattern(patternBindings);
+        TrackRuntimeManagedMatchScrutinee(matchValue, valueTemp, valueType, patternBindings);
+    }
+
+    private void TrackRuntimeManagedMatchScrutinee(
+        Expr matchValue,
+        int valueTemp,
+        TypeRef valueType,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        // Task/coroutine bodies still use scheduler-owned arenas. Until cross-thread RC publication
+        // exists, their match payloads must stay on that path instead of entering local RC transfer.
+        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        {
+            return;
+        }
+
+        string? ownerName = null;
+        if (matchValue is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true })
+        {
+            ownerName = ResolveOwnershipAlias(variable.Name);
+        }
+        else if (matchValue is not Expr.Var && IsRuntimeManagedResultTemp(valueTemp))
+        {
+            TypeRef ownedType = Prune(valueType);
+            string? typeName = GetOwnedTypeName(ownedType);
+            if (typeName is not null)
+            {
+                ownerName = $"$match_rc_{valueTemp}";
+                int ownerSlot = NewLocal();
+                Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
+                TrackOwnedValue(
+                    ownerName,
+                    ownerSlot,
+                    typeName,
+                    isResource: false,
+                    definitionSpan: null,
+                    ownedType,
+                    runtimeManaged: true);
+            }
+        }
+
+        if (ownerName is null)
+        {
+            return;
+        }
+
+        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        {
+            if (!CanArenaReset(Prune(bindingType)))
+            {
+                _ownershipAliases[bindingName] = ownerName;
+            }
+        }
+    }
+
+    private void MarkDirectRuntimeManagedMatchResultMoved(Expr body)
+    {
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        if (result is Expr.Var variable
+            && ResolveOwnershipAlias(variable.Name).StartsWith("$match_rc_", StringComparison.Ordinal)
+            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false } owner)
+        {
+            owner.ReleaseKind = ResourceReleaseKind.Moved;
+        }
     }
 
     /// <summary>

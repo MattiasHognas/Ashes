@@ -1839,7 +1839,8 @@ public sealed partial class Lowering
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
-                && IsFreshListConstructionExpression(expression),
+                && (IsFreshListConstructionExpression(expression)
+                    || expression is Expr.Var or Expr.Call),
             TypeRef.TTuple tuple => expression is Expr.TupleLit tupleExpression
                 && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
             TypeRef.TNamedType => expression is Expr.RecordLit

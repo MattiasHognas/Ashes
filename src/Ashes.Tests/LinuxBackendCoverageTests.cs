@@ -2153,6 +2153,11 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
+        IrProgram aggregateProbe = LowerProgram(BuildRuntimeRcNormalizedListAdtResultMemoryProgram(1));
+        AllInstructions(aggregateProbe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true }).ShouldBeTrue(
+                "An anonymous RC aggregate call result must be dropped after its scalar match result is formed.");
+
         List<MemoryExecutionResult> copySamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderListResultMemoryProgram,
             outputPerIteration: 40).ConfigureAwait(false);
@@ -2162,10 +2167,14 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderNestedListResultMemoryProgram,
             outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> aggregateSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNormalizedListAdtResultMemoryProgram,
+            outputPerIteration: 10).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
         AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
         AssertMemoryPlateaus("runtime-RC higher-order nested-list result", nestedSamples);
+        AssertMemoryPlateaus("runtime-RC normalized list ADT result", aggregateSamples);
     }
 
     [Test]
@@ -3088,7 +3097,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+        const string source = """
             type Step =
                 | Done
                 | Hit(List(Int))
@@ -3106,14 +3115,25 @@ public sealed class LinuxBackendCoverageTests
                     | [] -> ""
                     | h :: t -> Ashes.Text.fromInt(h) + "," + show(t)
 
-            let updated = setAt(1)(42)([10, 20, 30])
-            let step = Hit(updated)
+            let build _ =
+                let updated = setAt(1)(42)([10, 20, 30])
+                in Hit(updated)
+
+            let step = build(0)
             let rendered =
                 match step with
                     | Done -> "done"
                     | Hit(values) -> show(values)
             Ashes.IO.print(rendered)
-            """)).ConfigureAwait(false);
+            """;
+
+        IrProgram program = LowerProgram(source);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
         result.Stdout.ShouldBe("10,42,30,\n");
     }
@@ -5609,6 +5629,37 @@ public sealed class LinuxBackendCoverageTests
                     match result with
                         | [] -> loop(n - 1)(total)
                         | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcNormalizedListAdtResultMemoryProgram(int iterations)
+        => $$"""
+            type Step =
+                | Done
+                | Hit(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let build unit =
+                let updated = setAt(1)(42)([10, 20, 30])
+                in Hit(updated)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match build(0) with
+                        | Done -> loop(n - 1)(total)
+                        | Hit(values) ->
+                            match values with
+                                | [] -> loop(n - 1)(total)
+                                | head :: _ -> loop(n - 1)(total + head)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

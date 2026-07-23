@@ -852,6 +852,20 @@ public sealed partial class Lowering
                     || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                 && argument is Expr.TupleLit;
         (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+        if (runtimeManagedParent
+            && fieldType is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && !IsRuntimeManagedResultTemp(lowered.Temp))
+        {
+            int normalizedTemp = NewTemp();
+            Emit(new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                IrInst.ListHeadCopyKind.Inline,
+                RuntimeManaged: true));
+            _runtimeManagedResultTemps.Add(normalizedTemp);
+            lowered = (normalizedTemp, lowered.Type);
+        }
         (_runtimeRcStringAllocationRequested,
             _runtimeRcBytesAllocationRequested,
             _runtimeRcBigIntAllocationRequested,

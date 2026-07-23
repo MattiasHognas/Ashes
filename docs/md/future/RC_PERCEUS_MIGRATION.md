@@ -625,6 +625,18 @@ establish uniform RC ownership for complete escaping aggregate graphs, then repl
 scope/call/TCO copy-outs. The final audit will rename or clearly distinguish RC normalization from
 arena relocation and will re-run this emitter census before declaring completion.
 
+The first remediation slice now promotes a copy-element list returned by an arena helper before
+embedding it in a runtime-managed ADT, so the parent and child form one RC-owned graph. Exact closure
+label provenance carries that ownership through direct curried calls. Anonymous runtime-managed match
+scrutinees are registered as arm-local owners: ordinary arm cleanup releases them, and tail-call
+cleanup releases them before an otherwise-unreachable TCO back-edge. Payload aliases transfer the
+owner instead of dropping it underneath an escaping child. The regression exercises 2,000, 10,000,
+and 50,000 iterations of `Step(List(Int))` construction and consumption and now has a bounded RSS
+slope; the complete 1,623-test compiler suite, including the HTTP keep-alive plateau, remains green.
+Task/coroutine matches deliberately remain on their scheduler-owned arena path pending shared-RC
+publication. The remaining Phase 8 blockers are the non-runtime scope/call/TCO copy-outs and precise
+field-aware release when an RC parent is consumed but one payload is transferred.
+
 Deliverables:
 
 - Re-read the RC Perceus paper against the completed implementation and record any intentional

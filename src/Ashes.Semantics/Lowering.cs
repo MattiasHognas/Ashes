@@ -1879,6 +1879,13 @@ public sealed partial class Lowering
             _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
             _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
         }
+        else if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1)
+        {
+            // A capturing top-level let is not callable as a global label because it still needs its
+            // environment, but the closure in this exact local slot has a statically known code label.
+            // Preserve that provenance so a later closure capture can retain its result-ownership fact.
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+        }
         else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
         {
             _knownFunctionLabelsBySlot[slot] = aliasedFunctionLabel;
@@ -3987,7 +3994,16 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
         var resultType = thenType is TypeRef.TNever ? elseType : thenType;
+        MarkUniformRuntimeManagedResult(target, tTemp, eTemp);
         return (target, Prune(resultType));
+    }
+
+    private void MarkUniformRuntimeManagedResult(int resultTemp, int leftTemp, int rightTemp)
+    {
+        if (IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp))
+        {
+            _runtimeManagedResultTemps.Add(resultTemp);
+        }
     }
 
     private (int, TypeRef) LowerLambda(Expr.Lambda lam, bool stackAllocateClosure = false)
