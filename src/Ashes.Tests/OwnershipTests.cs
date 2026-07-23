@@ -292,6 +292,25 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box(42) in box) in match escaped with | Box(value) -> value");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Directly_escaping_generic_adt_with_pointer_payload_remains_arena_managed()
+    {
+        IrProgram ir = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box(\"hello\") in box) in match escaped with | Box(value) -> Ashes.IO.print(value)");
+
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeFalse();
+    }
+
+    [Test]
     public void Directly_escaping_fresh_recursive_adt_transfers_child_ownership()
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet escaped = (let tree = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in tree) in match escaped with | Leaf -> 0 | Node(left, value, _) -> match left with | Leaf -> value | Node(_, childValue, _) -> value + childValue");

@@ -2701,9 +2701,12 @@ public sealed partial class Lowering
         bool consumedByParent = IsConstructorExpression(let.Value)
             && IsRecursiveAdtChildConsumedByImmediateMatch(let.Name, let.Body);
         bool directOwnedEscape = IsDirectBindingResult(let.Body, let.Name)
-            && TryDescribeConstructorExpression(let.Value, out _, out _, out TypeRef.TNamedType? resultType)
+            && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
+            && directConstructor is not null
+            && directArguments is not null
             && resultType is not null
             && (CanRuntimeManageCopyAdt(resultType)
+                || CanRuntimeManageGenericCopyAdtConstructorApplication(directConstructor, directArguments, resultType)
                 || (CanRuntimeManageRecursiveCopyAdt(resultType)
                     && IsFreshConstructorTree(let.Value, resultType.Symbol)));
         if (!immediateMatch && !consumedByParent && !directOwnedEscape)

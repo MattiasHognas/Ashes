@@ -2089,7 +2089,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 41).ConfigureAwait(false);
         List<MemoryExecutionResult> adt = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtMemoryProgram,
-            outputPerIteration: 104).ConfigureAwait(false);
+            outputPerIteration: 109).ConfigureAwait(false);
         List<MemoryExecutionResult> reuse = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcAdtReuseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -5138,6 +5138,9 @@ public sealed class LinuxBackendCoverageTests
             type Pair =
                 | Pair(Int, Int)
 
+            type Box(a) =
+                | Box(a)
+
             let recursive loop n total =
                 if n <= 0 then total
                 else
@@ -5145,15 +5148,19 @@ public sealed class LinuxBackendCoverageTests
                         let pair = Pair(40)(2) in pair
                     in match escaped with
                         | Pair(left, right) ->
-                            let tree =
-                                let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
-                            in
-                            match tree with
-                                | Leaf -> loop(n - 1)(total + left + right)
-                                | Node(child, value, _) ->
-                                    match child with
-                                        | Leaf -> loop(n - 1)(total + left + right + value)
-                                        | Node(_, childValue, _) -> loop(n - 1)(total + left + right + value + childValue)
+                            let boxed =
+                                let fresh = Box(5) in fresh
+                            in match boxed with
+                                | Box(boxedValue) ->
+                                    let tree =
+                                        let fresh = Node(Node(Leaf)(20)(Leaf))(42)(Leaf) in fresh
+                                    in
+                                    match tree with
+                                        | Leaf -> loop(n - 1)(total + left + right + boxedValue)
+                                        | Node(child, value, _) ->
+                                            match child with
+                                                | Leaf -> loop(n - 1)(total + left + right + boxedValue + value)
+                                                | Node(_, childValue, _) -> loop(n - 1)(total + left + right + boxedValue + value + childValue)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

@@ -672,6 +672,7 @@ public sealed partial class Lowering
             && ((_runtimeRcRecordAllocationRequested && CanRuntimeManageConstructorApplication(ctor, args, named))
                 || ((_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
                     && (CanRuntimeManageCopyAdt(named)
+                        || CanRuntimeManageGenericCopyAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecordChildAdtConstructorApplication(ctor, args, named)
                         || CanRuntimeManageRecursiveAdtConstructorApplication(ctor, args, named)
                         || (runtimeReuseRequest

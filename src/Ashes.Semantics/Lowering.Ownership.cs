@@ -1486,6 +1486,38 @@ public sealed partial class Lowering
         return true;
     }
 
+    private bool CanRuntimeManageGenericCopyAdtConstructorApplication(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments,
+        TypeRef.TNamedType resultType)
+    {
+        TypeSymbol symbol = resultType.Symbol;
+        if (symbol.TypeParameters.Count == 0
+            || symbol.Constructors.Count != 1
+            || arguments.Count != constructor.Arity
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < constructor.Arity; i++)
+        {
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (fieldType is not TypeRef.TVar and not TypeRef.TTypeParam
+                || arguments[i] is not (Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// A narrow heterogeneous ADT boundary: monomorphic variants may own fresh runtime-managed
     /// record children, but not strings, lists, resources, recursive variants, or generic payloads.
