@@ -1906,6 +1906,11 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type) LowerLetBody(Expr body)
     {
+        if (TryLowerRuntimeManagedBuiltinResultBody(body, out (int Temp, TypeRef Type) builtinResult))
+        {
+            return builtinResult;
+        }
+
         bool runtimeManagedString = IsRuntimeRcStringProducer(body);
         bool runtimeManagedAdt = IsFreshRuntimeManageableAdtExpression(body);
         bool runtimeManagedList = IsFreshListConstructionExpression(body);
@@ -1948,6 +1953,38 @@ public sealed partial class Lowering
             _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
             _runtimeRcTupleAllocationRequested = savedTupleRequest;
             _runtimeRcRecordAllocationRequested = savedRecordRequest;
+        }
+    }
+
+    private bool TryLowerRuntimeManagedBuiltinResultBody(
+        Expr body,
+        out (int Temp, TypeRef Type) lowered)
+    {
+        bool scalarResult = IsRuntimeRcScalarResultProducer(body);
+        bool bigIntParseResult = IsRuntimeRcBigIntParseResultProducer(body);
+        bool textUnconsResult = IsRuntimeRcTextUnconsResultProducer(body);
+        if (!scalarResult && !bigIntParseResult && !textUnconsResult)
+        {
+            lowered = default;
+            return false;
+        }
+
+        bool savedScalarRequest = _runtimeRcScalarResultAllocationRequested;
+        bool savedBigIntRequest = _runtimeRcBigIntParseResultAllocationRequested;
+        bool savedUnconsRequest = _runtimeRcTextUnconsResultAllocationRequested;
+        _runtimeRcScalarResultAllocationRequested |= scalarResult;
+        _runtimeRcBigIntParseResultAllocationRequested |= bigIntParseResult;
+        _runtimeRcTextUnconsResultAllocationRequested |= textUnconsResult;
+        try
+        {
+            lowered = LowerExpr(body);
+            return true;
+        }
+        finally
+        {
+            _runtimeRcScalarResultAllocationRequested = savedScalarRequest;
+            _runtimeRcBigIntParseResultAllocationRequested = savedBigIntRequest;
+            _runtimeRcTextUnconsResultAllocationRequested = savedUnconsRequest;
         }
     }
 

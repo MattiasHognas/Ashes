@@ -963,6 +963,26 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Fresh_builtin_result_bodies_survive_scope_reset_through_runtime_rc()
+    {
+        IrProgram scalar = LowerProgram("let marker = \"owned\" in Ashes.Text.parseInt(\"42\")");
+        IrProgram bigInt = LowerProgram("let marker = \"owned\" in Ashes.Text.parseBigInt(\"42\")");
+        IrProgram uncons = LowerProgram("let marker = \"owned\" in Ashes.Text.uncons(\"hi\")");
+
+        scalar.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.TextParseInt { RuntimeManaged: true }).ShouldBeTrue();
+        bigInt.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.BigIntFromString { RuntimeManaged: true }).ShouldBeTrue();
+        uncons.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.TextUncons { RuntimeManaged: true }).ShouldBeTrue();
+        foreach (IrProgram ir in new[] { scalar, bigInt, uncons })
+        {
+            HasRestoreArenaState(ir.EntryFunction.Instructions).ShouldBeTrue();
+            HasCopyOutArena(ir.EntryFunction.Instructions).ShouldBeFalse();
+        }
+    }
+
+    [Test]
     public void CopyOutArena_instruction_has_correct_fields()
     {
         var inst = new IrInst.CopyOutArena(7, 3, -1);
