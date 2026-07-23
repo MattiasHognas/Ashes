@@ -1898,10 +1898,29 @@ public sealed partial class Lowering
             // so match the defining let by the value object identity recorded at registration.
             || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
-        var (bodyTemp, bodyType) = LowerExpr(let.Body);
+        var (bodyTemp, bodyType) = LowerLetBody(let.Body);
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
+    }
+
+    private (int Temp, TypeRef Type) LowerLetBody(Expr body)
+    {
+        if (!IsRuntimeRcStringProducer(body))
+        {
+            return LowerExpr(body);
+        }
+
+        bool savedRequest = _runtimeRcStringAllocationRequested;
+        _runtimeRcStringAllocationRequested = true;
+        try
+        {
+            return LowerExpr(body);
+        }
+        finally
+        {
+            _runtimeRcStringAllocationRequested = savedRequest;
+        }
     }
 
     // Seed parameter types from the annotation (if any) before lowering the value, so operators on
@@ -3356,8 +3375,13 @@ public sealed partial class Lowering
                 return (finalTemp, bodyType);
             }
 
+            bool runtimeManagedResult = IsRuntimeManagedResultTemp(bodyTemp);
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+            if (runtimeManagedResult)
+            {
+                _runtimeManagedResultTemps.Add(resultTemp);
+            }
             return (resultTemp, bodyType);
         }
 

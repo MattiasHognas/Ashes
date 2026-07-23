@@ -824,41 +824,33 @@ public sealed class ArenaDeallocationTests
     // --- Copy-out for String scope results ---
 
     [Test]
-    public void String_result_let_with_owned_binding_emits_CopyOutArena()
+    public void Fresh_string_result_let_with_owned_binding_uses_runtime_managed_allocation()
     {
         // let s = "hello" in s + " world"
-        // s is an owned String binding. The body is a heap-allocated concat string.
-        // RestoreArenaState + CopyOutArena(-1) should be emitted for the string result.
+        // The fresh body result is independent of the arena and survives its reset directly.
         var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
         var insts = ir.EntryFunction.Instructions;
 
-        HasCopyOutArena(insts).ShouldBeTrue(
-            "String result with owned binding should emit CopyOutArena.");
+        insts.Any(instruction => instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue(
+            "The escaping concatenation should allocate through runtime RC.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "A runtime-managed string result should not be copied out of the arena.");
     }
 
     [Test]
-    public void String_result_let_with_owned_binding_emits_RestoreArenaState_before_CopyOutArena()
+    public void Fresh_string_result_let_with_owned_binding_reclaims_scope_without_copy_out()
     {
         var ir = LowerProgram("let s = \"hello\" in s + \" world\"");
         var insts = ir.EntryFunction.Instructions;
 
-        bool foundSequence = false;
-        for (int i = 0; i < insts.Count - 1; i++)
-        {
-            if (insts[i] is IrInst.RestoreArenaState
-                && insts[i + 1] is IrInst.CopyOutArena c
-                && c.StaticSizeBytes == -1)
-            {
-                foundSequence = true;
-                break;
-            }
-        }
-        foundSequence.ShouldBeTrue(
-            "String result copy-out should follow RestoreArenaState with StaticSizeBytes == -1.");
+        HasRestoreArenaState(insts).ShouldBeTrue(
+            "The arena scope should still be reset after producing an independent RC result.");
+        HasCopyOutArena(insts).ShouldBeFalse(
+            "Resetting a scope with an independent RC result should not require copy-out.");
     }
 
     [Test]
-    public void Nested_owned_string_scopes_emit_copy_out_sequences_for_each_escaping_result()
+    public void Mixed_branch_string_result_retains_copy_out_at_unproven_match_boundaries()
     {
         var ir = LowerProgram(
             """
@@ -873,8 +865,24 @@ public sealed class ArenaDeallocationTests
             """);
         var instructions = ir.EntryFunction.Instructions;
 
-        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(3,
-            "Nested string scopes should copy out for the inner let result, the let-bound match result, and the outer let result.");
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(2,
+            "The fresh concatenation no longer needs copy-out, while the mixed static/RC match result remains conservative at its two enclosing boundaries.");
+    }
+
+    [Test]
+    public void Nested_fresh_string_result_remains_runtime_managed_across_enclosing_scopes()
+    {
+        var ir = LowerProgram(
+            """
+            let prefix = "outer" in
+            let suffix = "inner" in
+            prefix + suffix
+            """);
+        var instructions = ir.EntryFunction.Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue();
+        CountRestoreCopyOutArenaReclaimSequences(instructions).ShouldBe(0,
+            "Runtime-management provenance should survive the inner scope result slot and both arena resets.");
     }
 
     [Test]
