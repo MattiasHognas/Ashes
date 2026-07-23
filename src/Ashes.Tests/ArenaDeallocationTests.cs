@@ -1261,6 +1261,25 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Borrowed_list_result_normalizes_to_runtime_ownership_at_scope_exit()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let choose : List(Int) -> List(Int) = given source -> let marker = "owned" in source
+            let result = choose([1, 2, 3])
+            match result with | [] -> 0 | head :: _ -> head
+            """);
+
+        ir.Functions.Any(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
+                "A borrowed list crossing a reclaimed lexical scope should become an RC-owned spine.");
+        ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
     {
         var ir = LowerProgram(

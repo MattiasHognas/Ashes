@@ -289,7 +289,7 @@
           DestTemp: 10,
           SrcTemp: 8,
           StaticSizeBytes: 8,
-          RuntimeManaged: false
+          RuntimeManaged: true
         },
         {
           SavedEndSlot: 1,
@@ -396,5 +396,5 @@
     UsesClosures: true,
     UsesAsync: false
   },
-  ElfSha256: FDE8530A87B0310AFE5346C0F47F06BDFFE5F318388B9C0A32AB8C9EFD412057
+  ElfSha256: CAB79EC7F20069045878BF5F31E2F5040B5DCA4E672D6A7956BA0826F03888DC
 }

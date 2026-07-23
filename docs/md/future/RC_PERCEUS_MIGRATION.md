@@ -646,6 +646,14 @@ calls in async/coroutine or capability-bearing programs deliberately retain sche
 behavior until shared publication is implemented. The remaining emitter blockers are therefore
 scope copy-out, TCO relocation, closure graph normalization, and the field-aware parent release above.
 
+Lexical scope exit now follows the same rule for supported synchronous results. When an arena-owned
+shallow value or list crosses a reclaiming scope, the copy is allocated with an RC header and its
+ownership provenance flows through the function result and caller. A borrowed `List(Int)` scope
+result passes the 2,000/10,000/50,000 RSS profile, and the complete compiler suite now passes
+1,624/1,624 tests. Async, coroutine, capability, and closure scope results retain their documented
+conservative paths. The remaining non-runtime emitter work is TCO relocation and closure graph
+normalization, plus precise field transfer and the final emitter census.
+
 Deliverables:
 
 - Re-read the RC Perceus paper against the completed implementation and record any intentional

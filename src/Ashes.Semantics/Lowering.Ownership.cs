@@ -1387,17 +1387,19 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
         int copyDest = NewTemp();
-        switch (copyOutKind)
+        bool normalizeToRuntimeOwnership = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && copyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
+        EmitScopeCopyOutInstruction(
+            copyOutKind,
+            copyDest,
+            resultTemp,
+            staticSizeBytes,
+            normalizeToRuntimeOwnership);
+        if (normalizeToRuntimeOwnership)
         {
-            case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(copyDest, resultTemp, staticSizeBytes));
-                break;
-            case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(copyDest, resultTemp));
-                break;
-            case CopyOutKind.Closure:
-                Emit(new IrInst.CopyOutClosure(copyDest, resultTemp));
-                break;
+            _runtimeManagedResultTemps.Add(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
         _ownershipScopes.Pop();
@@ -1413,6 +1415,34 @@ public sealed partial class Lowering
 
         copiedResultTemp = copyDest;
         return true;
+    }
+
+    private void EmitScopeCopyOutInstruction(
+        CopyOutKind copyOutKind,
+        int copyDest,
+        int resultTemp,
+        int staticSizeBytes,
+        bool runtimeManaged)
+    {
+        switch (copyOutKind)
+        {
+            case CopyOutKind.Shallow:
+                Emit(new IrInst.CopyOutArena(
+                    copyDest,
+                    resultTemp,
+                    staticSizeBytes,
+                    RuntimeManaged: runtimeManaged));
+                break;
+            case CopyOutKind.List:
+                Emit(new IrInst.CopyOutList(
+                    copyDest,
+                    resultTemp,
+                    RuntimeManaged: runtimeManaged));
+                break;
+            case CopyOutKind.Closure:
+                Emit(new IrInst.CopyOutClosure(copyDest, resultTemp));
+                break;
+        }
     }
 
     /// <summary>
