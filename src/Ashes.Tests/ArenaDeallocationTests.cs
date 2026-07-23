@@ -505,62 +505,31 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_list_of_list_arg_emits_RestoreArenaState_and_CopyOutTcoListCell_before_jump()
+    public void TCO_loop_with_list_of_list_arg_uses_runtime_ownership()
     {
         // TList(TList(Int)): each iteration creates a new inner list [n] and prepends it
         // to acc. The inner list has copy-type elements, so the outer cell + inner chain
-        // can be copied out via CopyOutTcoListCell(InnerList).
-        var ir = LowerProgram(
+        // can be normalized as one runtime-owned outer and inner graph.
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ([n] :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            var reclaimIndex = -1;
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
-
-            if (reclaimIndex == -1)
-            {
-                continue;
-            }
-
-            for (int j = i + 1; j < reclaimIndex; j++)
-            {
-                if (insts[j] is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.InnerList)
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with TList(TList(Int)) arg should emit CopyOutTcoListCell(InnerList) after RestoreArenaState and before ReclaimArenaChunks.");
+            HeadCopy: IrInst.ListHeadCopyKind.InnerList,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
@@ -597,62 +566,56 @@ public sealed class ArenaDeallocationTests
     // --- Extended TCO copy-out ---
 
     [Test]
-    public void TCO_loop_with_list_of_string_arg_emits_RestoreArenaState_and_CopyOutTcoListCell()
+    public void TCO_loop_with_list_of_string_arg_uses_runtime_ownership()
     {
         // TList(TStr): each iteration creates a string and prepends it to acc.
-        // The cons cell head is a string pointer — CopyOutTcoListCell(String)
-        // copies the cell AND the string to new arena locations.
-        var ir = LowerProgram(
+        // The cons cell and String head form one runtime-owned graph.
+        IrProgram ir = LowerProgram(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ("x" :: acc)
             in build 5 []
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = false;
-        for (int i = 0; i < insts.Count - 1; i++)
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
+            HeadCopy: IrInst.ListHeadCopyKind.String,
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "String",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+    }
 
-            var reclaimIndex = -1;
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                    break;
-                }
-            }
+    [Test]
+    public void TCO_loop_does_not_mix_runtime_and_arena_managed_heap_params()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive reverse : List(Str) -> List(Str) -> List(Str) = given acc -> given rest ->
+                match rest with
+                    | [] -> acc
+                    | head :: tail -> reverse (head :: acc) tail
+            in reverse [] ["a", "b"]
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-            if (reclaimIndex == -1)
-            {
-                continue;
-            }
-
-            for (int j = i + 1; j < reclaimIndex; j++)
-            {
-                if (insts[j] is IrInst.CopyOutTcoListCell cell
-                    && cell.HeadCopy == IrInst.ListHeadCopyKind.String)
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                break;
-            }
-        }
-
-        found.ShouldBeTrue(
-            "TCO loop with TList(TStr) arg should emit CopyOutTcoListCell(String) after RestoreArenaState and before ReclaimArenaChunks.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "An arena-threaded rest parameter must keep the whole TCO frame out of the RC reset regime.");
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "The conservative frame must not emit RC drops for arena-owned parameters.");
     }
 
     [Test]

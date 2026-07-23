@@ -2770,6 +2770,34 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_owned_head_list_TCO_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcStringHeadListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.String,
+            "String");
+        AssertRuntimeRcOwnedHeadListTcoProbe(
+            LowerProgram(BuildRuntimeRcNestedListTcoMemoryProgram(1)),
+            IrInst.ListHeadCopyKind.InnerList,
+            "nested-list");
+
+        List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcStringHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcNestedListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
+        AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -5586,6 +5614,28 @@ public sealed class LinuxBackendCoverageTests
                 "The migrated tuple TCO path must not relocate through an arena allocation.");
     }
 
+    private static void AssertRuntimeRcOwnedHeadListTcoProbe(
+        IrProgram probe,
+        IrInst.ListHeadCopyKind headCopy,
+        string elementDescription)
+    {
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutList
+        {
+            HeadCopy: var actualHeadCopy,
+            RuntimeManaged: true,
+        } && actualHeadCopy == headCopy).ShouldBeTrue(
+            $"The {elementDescription} list graph should normalize under runtime RC.");
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
+                $"The migrated {elementDescription} list must not use arena relocation.");
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            $"The migrated {elementDescription} list must release its owned graph.");
+    }
+
     private static void AssertRuntimeRcStringTcoProbe()
     {
         IrProgram probe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
@@ -6855,6 +6905,30 @@ public sealed class LinuxBackendCoverageTests
                         | [] -> limit
                         | _ :: _ -> limit
                 else loop(n - 1)(limit)(n :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcStringHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Str) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)("value" :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcNestedListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(List(Int)) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)([n] :: values)
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
             """;

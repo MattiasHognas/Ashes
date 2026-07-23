@@ -969,12 +969,16 @@ public sealed partial class Lowering
         }
 
         int normalizedTemp = NewTemp();
-        if (argType is TypeRef.TList)
+        if (argType is TypeRef.TList list)
         {
+            if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+            {
+                throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+            }
             Emit(new IrInst.CopyOutList(
                 normalizedTemp,
                 sourceTemp,
-                IrInst.ListHeadCopyKind.Inline,
+                headCopy,
                 RuntimeManaged: true));
         }
         else if (argType is TypeRef.TFun)
@@ -1053,7 +1057,7 @@ public sealed partial class Lowering
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
                 || CanRuntimeManageAdt(named)
                 || CanRuntimeManageOwnedChildAdt(named),
-            TypeRef.TList list => CanArenaReset(Prune(list.Element))
+            TypeRef.TList list => TryGetRuntimeManagedListHeadCopy(list.Element, out _)
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
                     || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
@@ -1080,11 +1084,15 @@ public sealed partial class Lowering
                     TcoRuntimeManagedCopySize(valueType),
                     RuntimeManaged: true));
                 break;
-            case TypeRef.TList:
+            case TypeRef.TList list:
+                if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+                {
+                    throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+                }
                 Emit(new IrInst.CopyOutList(
                     resultTemp,
                     sourceTemp,
-                    IrInst.ListHeadCopyKind.Inline,
+                    headCopy,
                     RuntimeManaged: true));
                 break;
             case TypeRef.TTuple tuple:
@@ -4856,7 +4864,7 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
                 || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
-                    && CanArenaReset(Prune(list.Element))
+                    && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
                     && (freshRebuiltList || affineConsList)
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
@@ -4872,6 +4880,41 @@ public sealed partial class Lowering
                 }
             }
         }
+
+        LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(scope, tco);
+    }
+
+    private void LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(
+        IReadOnlyDictionary<string, Binding> scope,
+        TcoContext tco)
+    {
+        foreach (int slot in tco.ParamSlots)
+        {
+            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
+                .FirstOrDefault(local => local.Slot == slot);
+            int index = tco.ParamSlots.IndexOf(slot);
+            if (parameter is null
+                || index < 0
+                || CanArenaReset(Prune(parameter.T))
+                || IsResourceHandleType(Prune(parameter.T))
+                || tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                || tco.RuntimeManagedParamSlots.Contains(slot))
+            {
+                continue;
+            }
+
+            ClearRuntimeManagedTcoParams(tco);
+            return;
+        }
+    }
+
+    private static void ClearRuntimeManagedTcoParams(TcoContext tco)
+    {
+        tco.RuntimeManagedParamSlots.Clear();
+        tco.RuntimeManagedListParamSlots.Clear();
+        tco.RuntimeManagedClosureParamSlots.Clear();
+        tco.RuntimeManagedClosureActiveSlots.Clear();
+        tco.RuntimeManagedParamTypes.Clear();
     }
 
     private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
@@ -5215,12 +5258,16 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             int normalizedTemp = NewTemp();
             if (tco.RuntimeManagedListParamSlots.Contains(slot)
-                && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList)
+                && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
             {
+                if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+                {
+                    throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+                }
                 Emit(new IrInst.CopyOutList(
                     normalizedTemp,
                     sourceTemp,
-                    IrInst.ListHeadCopyKind.Inline,
+                    headCopy,
                     RuntimeManaged: true));
             }
             else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple
@@ -5833,7 +5880,7 @@ public sealed partial class Lowering
                     || CanRuntimeManageAdt(named)
                     || CanRuntimeManageOwnedChildAdt(named))
                 || type is TypeRef.TList list
-                    && CanArenaReset(Prune(list.Element))
+                    && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
                     && (tco.FreshRebuiltListParams.Contains(name)
                         || tco.AffineConsListParams.Contains(name));
             if (!supported
@@ -5849,6 +5896,19 @@ public sealed partial class Lowering
             if (type is TypeRef.TList)
             {
                 tco.RuntimeManagedListParamSlots.Add(slot);
+            }
+        }
+
+        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
+        {
+            TypeRef type = Prune(argTypes[index]);
+            if (!CanArenaReset(type)
+                && !IsResourceHandleType(type)
+                && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                && !tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[index]))
+            {
+                ClearRuntimeManagedTcoParams(tco);
+                return;
             }
         }
     }
@@ -5955,10 +6015,6 @@ public sealed partial class Lowering
         try
         {
             (int Temp, TypeRef Type) lowered = LowerExpr(argument);
-            if (affineConsList)
-            {
-                _runtimeManagedResultTemps.Add(lowered.Temp);
-            }
             if (freshClosure)
             {
                 _runtimeManagedResultTemps.Add(lowered.Temp);
@@ -7112,11 +7168,49 @@ public sealed partial class Lowering
         _runtimeRcTupleAllocationRequested = saved.Tuple
             || _runtimeRcListAllocationRequested && element is Expr.TupleLit;
         (int Temp, TypeRef Type) lowered = LowerExpr(element);
+        lowered = NormalizeRuntimeManagedListElement(lowered);
         (_runtimeRcStringAllocationRequested,
             _runtimeRcBytesAllocationRequested,
             _runtimeRcBigIntAllocationRequested,
             _runtimeRcTupleAllocationRequested) = saved;
         return lowered;
+    }
+
+    private (int Temp, TypeRef Type) NormalizeRuntimeManagedListElement((int Temp, TypeRef Type) lowered)
+    {
+        if (!_runtimeRcListAllocationRequested
+            || _runtimeRcTcoListTailBinding is null
+            || IsRuntimeManagedResultTemp(lowered.Temp))
+        {
+            return lowered;
+        }
+
+        TypeRef elementType = Prune(lowered.Type);
+        int normalizedTemp = NewTemp();
+        if (elementType is TypeRef.TStr)
+        {
+            Emit(new IrInst.CopyOutArena(
+                normalizedTemp,
+                lowered.Temp,
+                -1,
+                RuntimeManaged: true));
+        }
+        else if (elementType is TypeRef.TList inner
+            && TryGetRuntimeManagedListHeadCopy(inner.Element, out IrInst.ListHeadCopyKind headCopy))
+        {
+            Emit(new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                headCopy,
+                RuntimeManaged: true));
+        }
+        else
+        {
+            return lowered;
+        }
+
+        _runtimeManagedResultTemps.Add(normalizedTemp);
+        return (normalizedTemp, lowered.Type);
     }
 
     private (int, TypeRef) LowerTupleLit(Expr.TupleLit tuple)

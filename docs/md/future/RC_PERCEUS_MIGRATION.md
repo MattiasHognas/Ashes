@@ -720,6 +720,18 @@ function frames cannot alias temp IDs. Dead scope, call, and TCO
 `CopyOutKind.Closure` branches have been removed, leaving closure copy construction only in explicit
 deep-copy/thread-transfer machinery and the RC normalizer. The remaining census is focused on the
 legacy non-runtime aggregate/string/list deep-copy paths and their intentional boundary uses.
+The first final-census correction extends runtime-owned list graphs beyond inline heads: `List(Str)`
+and `List(List(Int))` TCO accumulators now select field-aware RC normalization, allocate fresh cons
+replacements directly under RC, and recursively release String or inner-list children. Runtime list
+allocations in the affine TCO path now publish their actual ownership provenance at construction,
+allowing a normalized String or nested fresh list to become an owned outer-list child without an
+optimistic arena/RC misclassification. Admission is frame-coherent: if any live heap parameter is
+neither runtime-manageable nor loop-invariant, all parameters retain the conservative arena regime.
+This prevents an RC parameter from falling through a declined reset into legacy relocation; the 1BRC
+`formatAll`/`reverse` workload is the regression gate. Fully admitted shapes contain no legacy
+`CopyOutTcoListCell` or non-runtime list relocation, and their 2,000/10,000/50,000 RSS profiles
+plateau. The complete compiler suite passes 1,630/1,630 tests. Lists with more general element graphs
+remain in the final census.
 
 Deliverables:
 

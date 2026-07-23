@@ -1712,6 +1712,33 @@ public sealed partial class Lowering
         return true;
     }
 
+    private bool TryGetRuntimeManagedListHeadCopy(
+        TypeRef elementType,
+        out IrInst.ListHeadCopyKind headCopy)
+    {
+        TypeRef element = Prune(elementType);
+        if (CanArenaReset(element))
+        {
+            headCopy = IrInst.ListHeadCopyKind.Inline;
+            return true;
+        }
+
+        if (element is TypeRef.TStr)
+        {
+            headCopy = IrInst.ListHeadCopyKind.String;
+            return true;
+        }
+
+        if (element is TypeRef.TList inner && CanArenaReset(Prune(inner.Element)))
+        {
+            headCopy = IrInst.ListHeadCopyKind.InnerList;
+            return true;
+        }
+
+        headCopy = IrInst.ListHeadCopyKind.Inline;
+        return false;
+    }
+
     private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named)
     {
         TypeSymbol symbol = named.Symbol;
