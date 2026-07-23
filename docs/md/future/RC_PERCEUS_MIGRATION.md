@@ -699,14 +699,19 @@ Pointer-bearing multi-constructor ADTs now dispatch on the source tag, allocate 
 layout size, recursively normalize the selected fields, and use the synthesized tag-aware dropper;
 the nullary/owned-child variant profile plateaus. Runtime-managed TCO params now bypass the superseded
 static-reuse defensive deep copy, removing its redundant arena String/list staging; the probe contains
-no non-runtime relocation. Closure values now carry a separate optional environment-normalizer
-descriptor alongside their destructor. For supported capture layouts the synthesized normalizer
+no non-runtime relocation. Closure code labels now have separate optional environment-normalizer
+metadata alongside each value's destructor. For supported capture layouts the synthesized normalizer
 deep-promotes every captured ordinary graph and returns the matching RC dropper for the destination;
 resource, nested-function, and unresolved capture layouts keep a null descriptor. Runtime-managed
 `CopyOutClosure` is in place; normalizers are shared per lifted code label so the established
 32-byte closure layout does not gain per-value metadata or cross an additional arena-chunk boundary.
-Opaque TCO closure sites remain conservative until the next slice gates them by descriptor.
-Closure relocation enablement and the final emitter census remain.
+Fresh closure TCO arguments with copy-valued or already-RC captures now allocate their closure and
+environment directly under RC. A per-parameter active flag distinguishes the arbitrary initial
+arena closure from RC replacements: the first back-edge does not falsely drop the input, later
+back-edges release the prior closure, and function exit releases the final replacement. Arena-backed,
+resource-bearing, or nested-function captures decline the reset without emitting shallow
+`CopyOutClosure`. The 2,000/10,000/50,000 replacement profile plateaus, and the final emitter census
+remains.
 
 Deliverables:
 

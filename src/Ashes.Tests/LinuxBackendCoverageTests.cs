@@ -2887,6 +2887,35 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_runtime_rc_tco_closure_memory_should_plateau_as_work_scales()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = LowerProgram(BuildRuntimeRcTcoClosureMemoryProgram(1));
+        AllInstructions(probe).Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        AllInstructions(probe).Any(instruction => instruction is IrInst.CopyOutClosure
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+
+        List<MemoryExecutionResult> closures = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTcoClosureMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        AssertMemoryPlateaus("runtime-RC TCO closure", closures);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_persistent_map_reuse_memory_should_plateau_as_updates_scale()
     {
         if (!OperatingSystem.IsLinux())
@@ -7001,6 +7030,15 @@ public sealed class LinuxBackendCoverageTests
                     in loop(n - 1)(total + f(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTcoClosureMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> (Int -> Int) -> Int = given n -> given total -> given f ->
+                if n <= 0 then total
+                else loop(n - 1)(total + f(0))(given x -> if n > 0 then x + 1 else x + 1)
+
+            Ashes.IO.print(loop({{iterations}})(0)(given x -> x + 1))
             """;
 
     private static string BuildPersistentMapStringUpdateMemoryProgram(int iterations)

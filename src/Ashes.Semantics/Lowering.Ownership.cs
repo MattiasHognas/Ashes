@@ -2950,7 +2950,7 @@ public sealed partial class Lowering
 
             case TypeRef.TFun:
                 staticSizeBytes = 0;
-                return CopyOutKind.Closure;
+                return CopyOutKind.None;
 
             case TypeRef.TTuple:
                 // A tuple is a fixed-shape heap record; if every element is deep-copyable, EmitDeepCopy

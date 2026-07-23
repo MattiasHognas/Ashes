@@ -807,6 +807,7 @@ public sealed partial class Lowering
         bool[] StableAccArg,
         int[] OldRuntimeParamTemps,
         bool[] RuntimeManagedParams,
+        int[] RuntimeManagedClosureActiveSlots,
         int[] ParamSlots,
         int FixedCursorSlot,
         int FixedEndSlot,
@@ -923,7 +924,7 @@ public sealed partial class Lowering
                 && IsRuntimeManagedResultTemp(info.ArgTemps[i]);
             if (!movedListTail)
             {
-                TcoBackEdgeDropRuntimeManagedArg(info.OldRuntimeParamTemps[i], argType);
+                TcoBackEdgeDropRuntimeManagedArg(info, i, argType);
             }
         }
 
@@ -939,6 +940,12 @@ public sealed partial class Lowering
             if (normalizedTemps[i] >= 0)
             {
                 Emit(new IrInst.StoreLocal(info.ParamSlots[i], normalizedTemps[i]));
+                if (info.RuntimeManagedClosureActiveSlots[i] >= 0)
+                {
+                    int activeTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(activeTemp, 1));
+                    Emit(new IrInst.StoreLocal(info.RuntimeManagedClosureActiveSlots[i], activeTemp));
+                }
             }
         }
         Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot));
@@ -960,6 +967,10 @@ public sealed partial class Lowering
                 sourceTemp,
                 IrInst.ListHeadCopyKind.Inline,
                 RuntimeManaged: true));
+        }
+        else if (argType is TypeRef.TFun)
+        {
+            Emit(new IrInst.CopyOutClosure(normalizedTemp, sourceTemp, RuntimeManaged: true));
         }
         else if (argType is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
@@ -983,8 +994,17 @@ public sealed partial class Lowering
         return normalizedTemp;
     }
 
-    private void TcoBackEdgeDropRuntimeManagedArg(int sourceTemp, TypeRef argType)
+    private void TcoBackEdgeDropRuntimeManagedArg(PendingTcoReset info, int index, TypeRef argType)
     {
+        int sourceTemp = info.OldRuntimeParamTemps[index];
+        if (argType is TypeRef.TFun)
+        {
+            EmitRuntimeManagedClosureDropIfActive(
+                sourceTemp,
+                info.RuntimeManagedClosureActiveSlots[index]);
+            return;
+        }
+
         if (argType is TypeRef.TList list)
         {
             EmitRuntimeManagedListDrop(sourceTemp, list.Element);
@@ -1028,6 +1048,7 @@ public sealed partial class Lowering
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
                     || info.SingleFreshCons[index] && IsRuntimeManagedResultTemp(info.ArgTemps[index])),
+            TypeRef.TFun => IsRuntimeManagedResultTemp(info.ArgTemps[index]),
             _ => false,
         };
     }
@@ -1157,6 +1178,7 @@ public sealed partial class Lowering
             TypeRef.TBigInt => "BigInt",
             TypeRef.TTuple => "Tuple",
             TypeRef.TNamedType named => named.Symbol.Name,
+            TypeRef.TFun => "Function",
             _ => "String",
         };
 
@@ -2779,6 +2801,39 @@ public sealed partial class Lowering
         return false;
     }
 
+    private bool ClosureCapturesOnlyRuntimeManagedOrCopyValues(Expr expression)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return ClosureCapturesOnlyRuntimeManagedOrCopyValues(conditional.Then)
+                && ClosureCapturesOnlyRuntimeManagedOrCopyValues(conditional.Else);
+        }
+
+        if (expression is not Expr.Lambda lambda)
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        foreach (string name in FreeVars(lambda.Body, bound))
+        {
+            OwnershipInfo? owned = LookupOwnedValue(name);
+            if (owned is null)
+            {
+                continue;
+            }
+
+            if (owned.IsResource || owned.IsResourceBearing
+                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal)
+                || !owned.RuntimeManaged && owned.Type is not null && !CanArenaReset(owned.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
     {
         HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
@@ -4082,6 +4137,7 @@ public sealed partial class Lowering
                 LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
                 FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
             };
         }
@@ -4774,6 +4830,8 @@ public sealed partial class Lowering
                 && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
             bool affineConsList = paramIndex >= 0
                 && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
+            bool freshClosure = paramIndex >= 0
+                && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
                 || parameterType is TypeRef.TTuple tuple
                     && CanRuntimeManageOwnedTupleType(tuple)
@@ -4782,13 +4840,18 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
-                    && (freshRebuiltList || affineConsList))
+                    && (freshRebuiltList || affineConsList)
+                || parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
                 tco.RuntimeManagedParamTypes[slot] = parameterType;
                 if (parameterType is TypeRef.TList)
                 {
                     tco.RuntimeManagedListParamSlots.Add(slot);
+                }
+                else if (parameterType is TypeRef.TFun)
+                {
+                    tco.RuntimeManagedClosureParamSlots.Add(slot);
                 }
             }
         }
@@ -4988,6 +5051,13 @@ public sealed partial class Lowering
             tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
         }
 
+        foreach (int closureSlot in tco.RuntimeManagedClosureParamSlots)
+        {
+            int activeSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(activeSlot, compactionZero));
+            tco.RuntimeManagedClosureActiveSlots[closureSlot] = activeSlot;
+        }
+
         // Emit loop start label
         tco.BodyLabel = $"{label}_body";
         Emit(new IrInst.Label(tco.BodyLabel));
@@ -5120,6 +5190,10 @@ public sealed partial class Lowering
         int generatedStart = _inst.Count;
         foreach (int slot in tco.RuntimeManagedParamSlots)
         {
+            if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            {
+                continue;
+            }
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             int normalizedTemp = NewTemp();
@@ -5168,7 +5242,13 @@ public sealed partial class Lowering
         {
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
-            if (tco.RuntimeManagedListParamSlots.Contains(slot)
+            if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            {
+                EmitRuntimeManagedClosureDropIfActive(
+                    sourceTemp,
+                    tco.RuntimeManagedClosureActiveSlots[slot]);
+            }
+            else if (tco.RuntimeManagedListParamSlots.Contains(slot)
                 && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
             {
                 EmitRuntimeManagedListDrop(sourceTemp, list.Element);
@@ -5187,6 +5267,17 @@ public sealed partial class Lowering
                 Emit(new IrInst.RcDrop(sourceTemp, typeName, slot, RuntimeManaged: true));
             }
         }
+    }
+
+    private void EmitRuntimeManagedClosureDropIfActive(int closureTemp, int activeSlot)
+    {
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_closure_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        Emit(new IrInst.CleanupResource(closureTemp, "Function"));
+        Emit(new IrInst.RcDrop(closureTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
     }
 
     // Address-stable-fold recording: with the body lowered (its in-place reuse calls now recorded),
@@ -5783,17 +5874,26 @@ public sealed partial class Lowering
     {
         (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
         bool savedListRequest = _runtimeRcListAllocationRequested;
+        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
         string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.AffineConsListParams.Contains(tco.ParamNames[index])
             && argument is Expr.Cons { Tail: Expr.Var tail }
             && string.Equals(tail.Name, tco.ParamNames[index], StringComparison.Ordinal);
+        bool freshClosure = index < tco.ParamNames.Count
+            && tco.FreshClosureParams.Contains(tco.ParamNames[index])
+            && IsRuntimeRcCopyClosureProducer(argument)
+            && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
         LowerCallTcoArmAffineStringArg(tco, argument, index);
         if (affineConsList)
         {
             _runtimeRcListAllocationRequested = true;
             _runtimeRcTcoListTailBinding = tco.ParamNames[index];
+        }
+        if (freshClosure)
+        {
+            _runtimeRcClosureAllocationRequested = true;
         }
 
         try
@@ -5803,12 +5903,17 @@ public sealed partial class Lowering
             {
                 _runtimeManagedResultTemps.Add(lowered.Temp);
             }
+            if (freshClosure)
+            {
+                _runtimeManagedResultTemps.Add(lowered.Temp);
+            }
             return lowered;
         }
         finally
         {
             _affineAppendCtx = savedAffineCtx;
             _runtimeRcListAllocationRequested = savedListRequest;
+            _runtimeRcClosureAllocationRequested = savedClosureRequest;
             _runtimeRcTcoListTailBinding = savedTcoTailBinding;
         }
     }
@@ -5904,6 +6009,7 @@ public sealed partial class Lowering
             facts.StableAccArg,
             oldRuntimeParamTemps,
             tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
+            tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.ToArray(),
             tco.FixedCursorSlot,
             tco.FixedEndSlot,

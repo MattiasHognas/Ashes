@@ -667,79 +667,53 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_with_closure_arg_emits_RestoreArenaState_and_CopyOutClosure()
+    public void TCO_loop_with_fresh_closure_arg_uses_runtime_ownership()
     {
-        // TFun: the TCO accumulator is a closure. CopyOutClosure copies the 24-byte
-        // closure struct and its environment.
-        var ir = LowerProgram(
+        IrProgram ir = LowerProgram(
             """
-            let recursive build = given (n) -> given (f) ->
+            let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
                 if n == 0 then f 0
                 else build (n - 1) (given (x) -> x + n)
             in build 5 (given (x) -> x)
             """);
-        var tcoFunc = FindTcoFunction(ir);
-        var insts = tcoFunc.Instructions;
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
-        bool found = CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(insts);
-
-        found.ShouldBeTrue(
-            "TCO loop with closure arg should emit CopyOutClosure after RestoreArenaState and before ReclaimArenaChunks and the jump-back to the _body label.");
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutClosure
+        {
+            RuntimeManaged: false,
+        }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
     }
 
-    private static bool CopyOutClosureFollowsRestoreBeforeReclaimAndJumpBack(List<IrInst> insts)
+    [Test]
+    public void TCO_loop_with_arena_capture_closure_declines_relocation()
     {
-        static bool IsJumpBackToBodyLabel(object inst)
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
+                if n == 0 then f 0
+                else
+                    let text = "value-" + Ashes.Text.fromInt(n)
+                    in build(n - 1)(given x -> x + Ashes.Text.byteLength(text))
+            in build(5)(given x -> x)
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutClosure).ShouldBeFalse(
+            "An arena-backed capture graph has no licensed RC transfer at this back-edge.");
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
         {
-            var text = inst.ToString() ?? string.Empty;
-            return text.Contains("_body", StringComparison.Ordinal) && (text.Contains("Jump", StringComparison.Ordinal) || text.Contains("Branch", StringComparison.Ordinal) || text.Contains("Br", StringComparison.Ordinal));
-        }
-
-        for (int i = 0; i < insts.Count; i++)
-        {
-            if (insts[i] is not IrInst.RestoreArenaState)
-            {
-                continue;
-            }
-
-            int copyOutIndex = -1;
-            int reclaimIndex = -1;
-            int jumpBackIndex = -1;
-
-            for (int j = i + 1; j < insts.Count; j++)
-            {
-                if (copyOutIndex == -1 && insts[j] is IrInst.CopyOutClosure)
-                {
-                    copyOutIndex = j;
-                }
-
-                if (reclaimIndex == -1 && insts[j] is IrInst.ReclaimArenaChunks)
-                {
-                    reclaimIndex = j;
-                }
-
-                if (jumpBackIndex == -1 && IsJumpBackToBodyLabel(insts[j]))
-                {
-                    jumpBackIndex = j;
-                }
-
-                if (reclaimIndex != -1 && jumpBackIndex != -1)
-                {
-                    break;
-                }
-            }
-
-            if (copyOutIndex != -1
-                && reclaimIndex != -1
-                && jumpBackIndex != -1
-                && copyOutIndex < reclaimIndex
-                && copyOutIndex < jumpBackIndex)
-            {
-                return true;
-            }
-        }
-
-        return false;
+            RuntimeManaged: true,
+        }).ShouldBeFalse();
     }
 
     [Test]

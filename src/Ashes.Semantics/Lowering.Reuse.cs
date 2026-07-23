@@ -264,6 +264,25 @@ public sealed partial class Lowering
             (index, argument) => argument is Expr.Cons { Tail: Expr.Var tail }
                 && string.Equals(tail.Name, paramNames[index], StringComparison.Ordinal));
 
+    private static HashSet<string> CollectFreshClosureParams(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName)
+        => CollectTcoParamsMatchingArguments(
+            body,
+            paramNames,
+            selfName,
+            (_, argument) => argument is Expr.Lambda
+                || argument is Expr.If iff
+                    && IsFreshClosureExpression(iff.Then)
+                    && IsFreshClosureExpression(iff.Else));
+
+    private static bool IsFreshClosureExpression(Expr expression)
+        => expression is Expr.Lambda
+            || expression is Expr.If iff
+                && IsFreshClosureExpression(iff.Then)
+                && IsFreshClosureExpression(iff.Else);
+
     private static HashSet<string> CollectTcoParamsMatchingArguments(
         Expr body,
         IReadOnlyList<string> paramNames,
