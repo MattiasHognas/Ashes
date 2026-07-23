@@ -919,9 +919,13 @@ public sealed partial class Lowering
         EndLivePostsGuard(tcoCopySkipLabel);
     }
 
-    private static PendingTcoReset TcoBackEdgeRefreshRuntimeManagedParams(PendingTcoReset info)
+    private PendingTcoReset TcoBackEdgeRefreshRuntimeManagedParams(PendingTcoReset info)
         => info with
         {
+            RuntimeManagedArgResults = info.RuntimeManagedArgResults
+                .Select((runtimeManaged, index) =>
+                    runtimeManaged || IsRuntimeManagedConcatStrTipResult(info.ArgTemps[index]))
+                .ToArray(),
             RuntimeManagedParams = info.ParamSlots
                 .Select(info.Tco.RuntimeManagedParamSlots.Contains)
                 .ToArray(),
@@ -1002,7 +1006,9 @@ public sealed partial class Lowering
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
                 && info.RuntimeManagedArgResults[i];
-            dropPredecessor[i] = !movedListTail;
+            bool consumedStringPredecessor = info.RuntimeManagedArgResults[i]
+                && IsRuntimeManagedConcatStrTipResult(info.ArgTemps[i]);
+            dropPredecessor[i] = !movedListTail && !consumedStringPredecessor;
         }
 
         // A tail call is a parallel assignment. Successor arguments may alias more than one
@@ -1019,6 +1025,11 @@ public sealed partial class Lowering
 
         return normalizedTemps;
     }
+
+    private bool IsRuntimeManagedConcatStrTipResult(int temp)
+        => _inst.Any(instruction =>
+            instruction is IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true }
+            && target == temp);
 
     private int TcoBackEdgeNormalizeRuntimeManagedArg(
         int sourceTemp,
@@ -1607,7 +1618,7 @@ public sealed partial class Lowering
     {
         for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
         {
-            if (info.ArgResvStartSlots[r] < 0)
+            if (info.ArgResvStartSlots[r] < 0 || info.RuntimeManagedArgResults[r])
             {
                 continue;
             }
@@ -1685,7 +1696,7 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(resvZeroTemp, 0));
             for (int r = 0; r < info.ArgResvStartSlots.Length; r++)
             {
-                if (info.ArgResvStartSlots[r] >= 0)
+                if (info.ArgResvStartSlots[r] >= 0 && !info.RuntimeManagedArgResults[r])
                 {
                     Emit(new IrInst.StoreLocal(info.ArgResvStartSlots[r], resvZeroTemp));
                     Emit(new IrInst.StoreLocal(info.ArgResvEndSlots[r], resvZeroTemp));
@@ -1910,7 +1921,14 @@ public sealed partial class Lowering
 
             instructions[i] = Prune(operandType) switch
             {
-                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(add.Target, add.Left, add.Right, add.AffineResvStartSlot, add.AffineResvEndSlot) { Location = add.Location }),
+                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(
+                    add.Target,
+                    add.Left,
+                    add.Right,
+                    add.AffineResvStartSlot,
+                    add.AffineResvEndSlot,
+                    IsRuntimeManagedResultTemp(add.Left))
+                { Location = add.Location }),
                 TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
@@ -4133,6 +4151,7 @@ public sealed partial class Lowering
                 IrInst.AllocReusing { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
+                IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
                 IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
@@ -4757,14 +4776,21 @@ public sealed partial class Lowering
             return;
         }
 
+        bool[] reachableInstructions = FindReachableInstructions(_inst);
         var managedTemps = new HashSet<int>(_runtimeManagedResultTemps);
         var managedLocals = new HashSet<int>();
         bool changed;
         do
         {
             changed = false;
-            foreach (IrInst instruction in _inst)
+            for (int instructionIndex = 0; instructionIndex < _inst.Count; instructionIndex++)
             {
+                if (!reachableInstructions[instructionIndex])
+                {
+                    continue;
+                }
+
+                IrInst instruction = _inst[instructionIndex];
                 changed |= instruction switch
                 {
                     IrInst.LoadLocal load
@@ -4775,11 +4801,17 @@ public sealed partial class Lowering
                         => managedTemps.Add(borrow.Target),
                     IrInst.RcDup duplicate when managedTemps.Contains(duplicate.SourceTemp)
                         => managedTemps.Add(duplicate.Target),
+                    IrInst.ConcatStr concat when managedTemps.Contains(concat.Left)
+                        || managedTemps.Contains(concat.Right)
+                        => managedTemps.Add(concat.Target),
+                    IrInst.ConcatStrTip concat when managedTemps.Contains(concat.Left)
+                        => managedTemps.Add(concat.Target),
                     _ => false,
                 };
             }
 
             foreach (IGrouping<int, IrInst.StoreLocal> stores in _inst
+                         .Where((_, instructionIndex) => reachableInstructions[instructionIndex])
                          .OfType<IrInst.StoreLocal>()
                          .GroupBy(store => store.Slot))
             {
@@ -4791,10 +4823,91 @@ public sealed partial class Lowering
         }
         while (changed);
 
+        PromoteRuntimeManagedStringConcats(managedTemps);
+
         if (managedTemps.Contains(bodyTemp))
         {
             _runtimeManagedResultTemps.Add(bodyTemp);
         }
+    }
+
+    private void PromoteRuntimeManagedStringConcats(IReadOnlySet<int> managedTemps)
+    {
+        for (int index = 0; index < _inst.Count; index++)
+        {
+            if (_inst[index] is IrInst.ConcatStr { RuntimeManaged: false } concat
+                && managedTemps.Contains(concat.Target))
+            {
+                _inst[index] = concat with { RuntimeManaged = true };
+            }
+            else if (_inst[index] is IrInst.ConcatStrTip { RuntimeManaged: false } concatTip
+                && managedTemps.Contains(concatTip.Target))
+            {
+                _inst[index] = concatTip with { RuntimeManaged = true };
+            }
+        }
+    }
+
+    private static bool[] FindReachableInstructions(IReadOnlyList<IrInst> instructions)
+    {
+        var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            if (instructions[index] is IrInst.Label label)
+            {
+                labels[label.Name] = index;
+            }
+        }
+
+        var reachable = new bool[instructions.Count];
+        var pending = new Queue<int>();
+        if (instructions.Count > 0)
+        {
+            pending.Enqueue(0);
+        }
+
+        void Enqueue(int index)
+        {
+            if (index >= 0 && index < instructions.Count && !reachable[index])
+            {
+                pending.Enqueue(index);
+            }
+        }
+
+        while (pending.Count > 0)
+        {
+            int index = pending.Dequeue();
+            if (reachable[index])
+            {
+                continue;
+            }
+
+            reachable[index] = true;
+            switch (instructions[index])
+            {
+                case IrInst.Jump jump:
+                    Enqueue(labels[jump.Target]);
+                    break;
+                case IrInst.JumpIfFalse jumpIfFalse:
+                    Enqueue(index + 1);
+                    Enqueue(labels[jumpIfFalse.Target]);
+                    break;
+                case IrInst.SwitchTag switchTag:
+                    foreach ((long _, string label) in switchTag.Cases)
+                    {
+                        Enqueue(labels[label]);
+                    }
+                    Enqueue(labels[switchTag.DefaultLabel]);
+                    break;
+                case IrInst.Return:
+                    break;
+                default:
+                    Enqueue(index + 1);
+                    break;
+            }
+        }
+
+        return reachable;
     }
 
     private void RecordTcoParamLabel(string paramName, string label)

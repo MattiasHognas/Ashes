@@ -178,7 +178,8 @@ specialized region; it is not an instruction to read an RC header.
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
-| `ConcatStr` | `Target`, `Left`, `Right` | `Target = Left ++ Right` (string concatenation) |
+| `ConcatStr` | `Target`, `Left`, `Right`, `RuntimeManaged` | `Target = Left ++ Right`; the flag selects arena or RC allocation |
+| `ConcatStrTip` | `Target`, `Left`, `Right`, reservation slots, `RuntimeManaged` | Affine string append with geometric headroom; the RC form consumes `Left` |
 
 ### Closures
 

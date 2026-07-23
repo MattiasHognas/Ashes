@@ -186,6 +186,14 @@ footer/previous-end chain. Minor faults for the 1,000-request diagnostic returne
 throughput at concurrency 1, 8, and 64. A native minor-fault gate and an 8 MiB receive stress cover
 the short-task and grown-chunk paths. See CRP-10 in the challenge regression sweep.
 
+The final standard-workload sweep found a scale-dependent TCO string-exit defect that small
+`pidigits` probes missed. Unreachable dummy stores after tail jumps obscured a returned-accumulator
+join, and its sibling exit concat retained stale arena provenance after late RC parameter
+promotion. Control-flow reachability now excludes those stores, derived exit concatenations adopt
+the managed regime, and runtime-managed `ConcatStrTip` consumes its predecessor uniformly across
+in-place and fallback paths. Standard N=10,000 is byte-identical and completes in 3.26 seconds; see
+CRP-11 in the challenge regression sweep.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

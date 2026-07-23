@@ -1154,6 +1154,31 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Late_promoted_affine_string_exit_has_uniform_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build partial i output =
+                if i <= 0
+                then
+                    if partial
+                    then output + "z"
+                    else output
+                else build(partial)(i - 1)(output + "xx")
+
+            Ashes.Text.byteLength(build(false)(3000)(""))
+            """);
+        IrFunction tcoFunction = FindTcoFunction(ir);
+
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStrTip { RuntimeManaged: true }).ShouldBeTrue(
+            "The affine back-edge must consume and transfer its runtime-managed accumulator.");
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStr { RuntimeManaged: true }).ShouldBeTrue(
+            "The fresh exit arm must match the direct accumulator arm's RC ownership.");
+    }
+
+    [Test]
     public void String_body_let_without_owned_binding_does_not_emit_CopyOutArena()
     {
         // let x = 42 in "hello" — x is Int (not owned), no heap to reclaim.

@@ -619,6 +619,13 @@ from lexical anchors to control-flow-precise positions:
 - TCO back-edges drop replaced owners, and function exit transfers only the
   returned root while dropping every other active owner.
 
+Affine string accumulation gives `ConcatStrTip` a consuming ownership contract
+when its accumulator is runtime-managed. Extending in place transfers the same
+reference; allocating a larger reservation copies the bytes and releases the
+old reference. This conditional implementation still presents one uniform
+"consume left, produce target" contract to TCO parallel assignment, preventing
+both a predecessor double-drop and a retained old reservation.
+
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, and
 resource-bearing closures and remains governed by the `ASH006`-`ASH008`

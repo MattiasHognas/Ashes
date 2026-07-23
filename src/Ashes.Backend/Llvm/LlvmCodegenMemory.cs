@@ -3168,7 +3168,13 @@ internal static partial class LlvmCodegen
     /// loop itself reserved can match the recorded start (a caller-passed seed never does), and
     /// lowering only arms the instruction for accumulators the affine analysis proved unaliased.
     /// </summary>
-    private static LlvmValueHandle EmitConcatStrTip(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, int resvStartSlot, int resvEndSlot)
+    private static LlvmValueHandle EmitConcatStrTip(
+        LlvmCodegenState state,
+        LlvmValueHandle leftRef,
+        LlvmValueHandle rightRef,
+        int resvStartSlot,
+        int resvEndSlot,
+        bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         var extendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_extend");
@@ -3195,7 +3201,17 @@ internal static partial class LlvmCodegen
         EmitConcatStrTipExtend(state, leftRef, rightRef, la, lb, accEnd, resultSlot, doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, fallbackBlock);
-        EmitConcatStrTipFallback(state, leftRef, rightRef, la, lb, resvStartSlot, resvEndSlot, resultSlot, doneBlock);
+        EmitConcatStrTipFallback(
+            state,
+            leftRef,
+            rightRef,
+            la,
+            lb,
+            resvStartSlot,
+            resvEndSlot,
+            runtimeManaged,
+            resultSlot,
+            doneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "csr_final");
@@ -3217,7 +3233,17 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>Fallback path of <see cref="EmitConcatStrTip"/>: concatenates into a fresh doubling-headroom allocation and records the new reservation.</summary>
-    private static void EmitConcatStrTipFallback(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef, LlvmValueHandle la, LlvmValueHandle lb, int resvStartSlot, int resvEndSlot, LlvmValueHandle resultSlot, LlvmBasicBlockHandle doneBlock)
+    private static void EmitConcatStrTipFallback(
+        LlvmCodegenState state,
+        LlvmValueHandle leftRef,
+        LlvmValueHandle rightRef,
+        LlvmValueHandle la,
+        LlvmValueHandle lb,
+        int resvStartSlot,
+        int resvEndSlot,
+        bool runtimeManaged,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle doneBlock)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // Concatenate into a fresh allocation with doubling headroom and record the new
@@ -3227,7 +3253,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle allocSize = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildMul(builder, total, LlvmApi.ConstInt(state.I64, 2, 0), "csr_fb_2x"),
             LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
-        LlvmValueHandle dest = EmitAllocDynamic(state, allocSize);
+        LlvmValueHandle dest = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, allocSize, "rc_csr_fb")
+            : EmitAllocDynamic(state, allocSize);
         StoreMemory(state, dest, 0, total, "csr_fb_hdr");
         LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
             LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");
@@ -3239,6 +3267,10 @@ internal static partial class LlvmCodegen
             state.I8Ptr, "csr_fb_dtail");
         LlvmValueHandle rightBytesF = GetStringBytesPointer(state, rightRef, "csr_fb_rbytes");
         EmitCopyBytes(state, destTail, rightBytesF, lb, "csr_fb_rcopy");
+        if (runtimeManaged)
+        {
+            EmitRuntimeRcDrop(state, leftRef);
+        }
         // Reservation bounds: EmitAllocDynamic reserved align8(allocSize) bytes at dest.
         LlvmValueHandle reservedEnd = LlvmApi.BuildAdd(builder, dest,
             AlignRuntimeSize(state, allocSize, "csr_fb_rsz"), "csr_fb_rend");

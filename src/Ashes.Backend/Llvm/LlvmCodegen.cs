@@ -2048,7 +2048,7 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, concatStr.Left),
                 LoadTemp(state, concatStr.Right),
                 concatStr.RuntimeManaged)),
-            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot)),
+            IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot, concatStrTip.RuntimeManaged)),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(
                 state,
                 makeClosure.FuncLabel,

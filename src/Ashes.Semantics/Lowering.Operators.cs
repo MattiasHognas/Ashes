@@ -206,7 +206,18 @@ public sealed partial class Lowering
         // uniquely-owned accumulator (extended in place, or a fresh tip copy after a fallback).
         if (affineResvStart >= 0)
         {
-            Emit(new IrInst.ConcatStrTip(target, leftTemp, rightTemp, affineResvStart, affineResvEnd));
+            bool runtimeManaged = IsRuntimeManagedResultTemp(leftTemp);
+            Emit(new IrInst.ConcatStrTip(
+                target,
+                leftTemp,
+                rightTemp,
+                affineResvStart,
+                affineResvEnd,
+                runtimeManaged));
+            if (runtimeManaged)
+            {
+                _runtimeManagedResultTemps.Add(target);
+            }
             return (target, new TypeRef.TStr());
         }
 

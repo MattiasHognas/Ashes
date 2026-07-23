@@ -5862,14 +5862,17 @@ public sealed class LinuxBackendCoverageTests
     {
         IrProgram probe = LowerProgram(BuildLegacyArenaGrowingStringMemoryProgram(1));
         AllInstructions(probe).Count(instruction =>
-            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "The annotated TCO String accumulator should normalize at loop entry and replacement.");
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true }).ShouldBe(1,
+                "The affine TCO String accumulator should normalize once at loop entry.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.ConcatStrTip { RuntimeManaged: true }).ShouldBeTrue(
+                "The replacement should consume the RC accumulator directly instead of copying it.");
         AllInstructions(probe).Count(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "TCO replacement and function exit should release runtime-owned Strings.");
+            instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBe(1,
+                "ConcatStrTip consumes replacements internally; only function exit needs an IR drop.");
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "String", OwnerSlot: -1, RuntimeManaged: true }).ShouldBeTrue(
-                "The back-edge replacement drop must remain fixed instead of being moved by lifetime placement.");
+                "The function-exit drop must remain fixed instead of being moved by lifetime placement.");
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
                 "The migrated String TCO path must not relocate through an arena allocation.");

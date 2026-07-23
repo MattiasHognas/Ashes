@@ -338,6 +338,32 @@ The final three-run, 50,000-request interleaved A/B medians shown above match th
 binary at all three concurrency levels with zero errors. A focused native regression counts minor
 faults across 300 spawned handlers so an eager far-footer write cannot silently return.
 
+### CRP-11 — P1: pidigits exact-line results crash above 4 KiB — resolved
+
+**Resolved 2026-07-23 during the final standard-workload sweep.** The earlier small `pidigits`
+retests did not exercise the scale boundary: exact multiples of ten returned the threaded `output`
+accumulator directly, and N=2,500 or greater crashed after its RC allocation crossed 4 KiB and was
+returned to the OS. Adjacent partial-line runs (N=2,499 and N=2,501) succeeded because their exit
+arm built one final concatenation.
+
+Two late-TCO facts were missing. First, unreachable dummy stores emitted after tail jumps poisoned
+the result-join provenance scan. Second, after whole-body analysis promoted `output` to runtime RC,
+the partial-line `ConcatStr` arm still retained its earlier arena allocation regime. Reachability is
+now computed over the function IR before join provenance is refreshed, and string concatenations
+derived from managed values are upgraded so every reachable exit arm has one ownership regime.
+
+Affine back-edge concatenation has a separate consuming RC contract: its in-place path transfers
+the predecessor reference, while its fallback copies into a fresh RC reservation and releases the
+predecessor. The TCO parallel assignment therefore does not drop that predecessor a second time,
+and RC reservation slots survive arena resets. This retains the linear unoptimized
+`tco_affine_string_append.ash` path instead of reintroducing a full copy per append.
+
+The focused >4 KiB direct/concat exit regression and the existing 6 MB affine-growth regression
+both pass. Fresh `-O2` `pidigits` runs at N=2,499/2,500/2,501 all succeed; standard N=10,000 is
+byte-identical to the pre-migration control and completed in 3.26 seconds versus 3.47 seconds.
+Peak RSS was 12,556 KB versus 4,108 KB; this is a bounded process-level RC/arena overhead, not a
+growing retained-output leak, and remains part of the final multi-scale memory comparison.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against

@@ -161,12 +161,18 @@ public abstract record IrInst
     // only the length header grows — the cursor is untouched, so per-iteration scratch allocated
     // above the reservation is irrelevant. Otherwise the fallback concatenates into a NEW
     // allocation with doubling headroom (capacity = 2x the result) and records it in the slots —
-    // fallbacks are geometric, so total copy work is linear in appended bytes. The identity check
-    // makes mutation safe: only a string this loop itself reserved can match ResvStart (a
-    // caller-passed seed never does), and the static affine analysis guarantees the loop holds no
-    // other reference to it. The compaction/reset paths zero the slots (the reservation's memory
-    // is reclaimed there).
-    public sealed record ConcatStrTip(int Target, int Left, int Right, int ResvStartSlot, int ResvEndSlot) : IrInst;
+    // fallbacks are geometric, so total copy work is linear in appended bytes. A runtime-managed
+    // form CONSUMES Left: the extend path transfers that reference unchanged, while the fallback
+    // copies into a fresh RC allocation and releases Left. The identity check makes mutation safe:
+    // only a string this loop itself reserved can match ResvStart (a caller-passed seed never does),
+    // and the static affine analysis guarantees the loop holds no other reference to it.
+    public sealed record ConcatStrTip(
+        int Target,
+        int Left,
+        int Right,
+        int ResvStartSlot,
+        int ResvEndSlot,
+        bool RuntimeManaged = false) : IrInst;
 
     // Ashes.Text.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
