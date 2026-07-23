@@ -270,7 +270,13 @@ public sealed class DapServer : IDisposable
     {
         try
         {
-            await _debugger!.RunAsync().ConfigureAwait(false);
+            IDebuggerBackend? debugger = _debugger;
+            if (debugger is null)
+            {
+                return;
+            }
+
+            await debugger.RunAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {

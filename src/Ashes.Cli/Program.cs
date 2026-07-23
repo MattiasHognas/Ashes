@@ -59,7 +59,7 @@ static string DeriveOutputPath(string inputPath, string targetId)
     var name = Path.GetFileNameWithoutExtension(inputPath);
 
     var outName = TargetIds.IsWindows(targetId) ? name + ".exe" : name;
-    return string.IsNullOrWhiteSpace(dir) ? outName : Path.Combine(dir!, outName);
+    return string.IsNullOrWhiteSpace(dir) ? outName : Path.Combine(dir, outName);
 }
 
 static AshesProject? ResolveProject(string? projectOption, string? inputFile, string? expr)
@@ -121,7 +121,7 @@ static async Task AutoRestoreProjectAsync(string? projectOption, string? inputFi
 static string DeriveProjectOutputPath(AshesProject project, string targetId)
 {
     var outputName = !string.IsNullOrWhiteSpace(project.Name)
-        ? project.Name!
+        ? project.Name
         : Path.GetFileNameWithoutExtension(project.EntryPath);
 
     if (TargetIds.IsWindows(targetId))
@@ -609,7 +609,7 @@ async Task<int> RunCompileAsync(string[] a)
     var outDir = Path.GetDirectoryName(outPath);
     if (!string.IsNullOrWhiteSpace(outDir))
     {
-        Directory.CreateDirectory(outDir!);
+        Directory.CreateDirectory(outDir);
     }
     await File.WriteAllBytesAsync(outPath, image).ConfigureAwait(false);
     SetUnixExecutableModeIfSupported(outPath);

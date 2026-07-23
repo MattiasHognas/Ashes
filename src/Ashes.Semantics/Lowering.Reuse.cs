@@ -1158,14 +1158,14 @@ public sealed partial class Lowering
                 case IrInst.Alloc alloc when !IsFullyReusingSafelyConsumed(alloc.Target, 0, readers, slotStores, slotLoads):
                     if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
                     {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected: {alloc} readers: {string.Join(" | ", readers.GetValueOrDefault(alloc.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected: {alloc} readers: {string.Join(" | ", readers.GetValueOrDefault(alloc.Target, []).Select(x => x.ToString()[..Math.Min(90, x.ToString().Length)]))}");
                     }
 
                     return false;
                 case IrInst.MakeClosure mk when !IsFullyReusingClosureConsumedAsCallTarget(mk.Target, 0, readers, slotStores, slotLoads):
                     if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
                     {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", readers.GetValueOrDefault(mk.Target, []).Select(x => x.ToString()![..Math.Min(90, x.ToString()!.Length)]))}");
+                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", readers.GetValueOrDefault(mk.Target, []).Select(x => x.ToString()[..Math.Min(90, x.ToString().Length)]))}");
                     }
 
                     return false;

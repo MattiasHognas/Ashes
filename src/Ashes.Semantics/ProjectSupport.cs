@@ -223,7 +223,7 @@ public static class ProjectSupport
         var include = ReadStringArray(root, "include");
 
         var outDirValue = ReadString(root, "outDir");
-        var outDir = ResolvePath(projectDirectory, string.IsNullOrWhiteSpace(outDirValue) ? "out" : outDirValue!);
+        var outDir = ResolvePath(projectDirectory, string.IsNullOrWhiteSpace(outDirValue) ? "out" : outDirValue);
 
         var name = ReadString(root, "name");
         var target = ReadString(root, "target");
@@ -2276,7 +2276,7 @@ public static class ProjectSupport
 
         return string.IsNullOrWhiteSpace(shape.LegacyExportName)
             ? []
-            : [shape.LegacyExportName!];
+            : [shape.LegacyExportName];
     }
 
     private static ModuleSourceShape ShapeModuleSource(string source)
@@ -3008,7 +3008,7 @@ public static class ProjectSupport
             return false;
         }
 
-        if (!EmbeddedStdSources.Value.TryGetValue(descriptor.ResourceName!, out var source))
+        if (!EmbeddedStdSources.Value.TryGetValue(descriptor.ResourceName, out var source))
         {
             throw new InvalidOperationException($"Could not load standard library module '{moduleName}'.");
         }
@@ -3110,14 +3110,14 @@ public static class ProjectSupport
                 continue;
             }
 
-            using var stream = assembly.GetManifestResourceStream(descriptor.ResourceName!);
+            using var stream = assembly.GetManifestResourceStream(descriptor.ResourceName);
             if (stream is null)
             {
                 throw new InvalidOperationException($"Missing embedded standard library resource '{descriptor.ResourceName}'.");
             }
 
             using var reader = new StreamReader(stream);
-            sources[descriptor.ResourceName!] = reader.ReadToEnd();
+            sources[descriptor.ResourceName] = reader.ReadToEnd();
         }
 
         return sources;

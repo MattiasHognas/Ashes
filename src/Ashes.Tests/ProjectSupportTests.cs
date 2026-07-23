@@ -775,7 +775,7 @@ public sealed class ProjectSupportTests
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
         layout.BodyStart.ShouldBeGreaterThan(0, "the type declaration must be hoisted");
         layout.EntryTypeDeclFragments.ShouldNotBeNull();
-        layout.EntryTypeDeclFragments!.Count.ShouldBe(1);
+        layout.EntryTypeDeclFragments.Count.ShouldBe(1);
 
         var fragment = layout.EntryTypeDeclFragments[0];
         var entry = new DiagnosticEntry(TextSpan.FromBounds(fragment.CombinedStart, fragment.CombinedStart + 4), "synthetic");
