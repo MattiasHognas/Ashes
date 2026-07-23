@@ -526,7 +526,7 @@ public sealed partial class Lowering
         {
             TypeRef child = Prune(tuple.Elements[i]);
             if (child is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                || child is TypeRef.TList list && CanArenaReset(Prune(list.Element))
+                || child is TypeRef.TList
                 || child is TypeRef.TNamedType)
             {
                 children.Add((i, child));
@@ -1737,6 +1737,59 @@ public sealed partial class Lowering
 
         headCopy = IrInst.ListHeadCopyKind.Inline;
         return false;
+    }
+
+    private bool CanRuntimeManageTcoListElement(TypeRef elementType)
+    {
+        TypeRef element = Prune(elementType);
+        if (RuntimeManagedTcoListElementContainsBytes(element))
+        {
+            return false;
+        }
+
+        return CanArenaReset(element) || element switch
+        {
+            TypeRef.TStr or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element),
+            TypeRef.TTuple tuple => tuple.Elements.All(CanRuntimeManageTcoListElement),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
+                || CanRuntimeManageAdt(named)
+                || CanRuntimeManageOwnedChildAdt(named),
+            _ => false,
+        };
+    }
+
+    private bool RuntimeManagedTcoListElementContainsBytes(
+        TypeRef type,
+        HashSet<TypeSymbol>? path = null)
+    {
+        TypeRef valueType = Prune(type);
+        switch (valueType)
+        {
+            case TypeRef.TBytes:
+                return true;
+            case TypeRef.TList list:
+                return RuntimeManagedTcoListElementContainsBytes(list.Element, path);
+            case TypeRef.TTuple tuple:
+                return tuple.Elements.Any(element =>
+                    RuntimeManagedTcoListElementContainsBytes(element, path));
+            case TypeRef.TNamedType named:
+                path ??= [];
+                if (!path.Add(named.Symbol))
+                {
+                    return false;
+                }
+
+                bool containsBytes = named.Symbol.Constructors.Any(constructor =>
+                    Enumerable.Range(0, constructor.Arity).Any(index =>
+                        RuntimeManagedTcoListElementContainsBytes(
+                            InstantiateConstructorParameterType(constructor, index, named),
+                            path)));
+                path.Remove(named.Symbol);
+                return containsBytes;
+            default:
+                return false;
+        }
     }
 
     private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named)

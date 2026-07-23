@@ -989,15 +989,18 @@ public sealed partial class Lowering
         int normalizedTemp = NewTemp();
         if (argType is TypeRef.TList list)
         {
-            if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+            if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
             {
-                throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+                Emit(new IrInst.CopyOutList(
+                    normalizedTemp,
+                    sourceTemp,
+                    headCopy,
+                    RuntimeManaged: true));
             }
-            Emit(new IrInst.CopyOutList(
-                normalizedTemp,
-                sourceTemp,
-                headCopy,
-                RuntimeManaged: true));
+            else
+            {
+                return EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+            }
         }
         else if (argType is TypeRef.TFun)
         {
@@ -1092,10 +1095,12 @@ public sealed partial class Lowering
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
                 || CanRuntimeManageAdt(named)
                 || CanRuntimeManageOwnedChildAdt(named),
-            TypeRef.TList list => TryGetRuntimeManagedListHeadCopy(list.Element, out _)
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
-                    || info.ConsumedListTail[index] && info.RuntimeManagedArgResults[index]
+                    || TryGetRuntimeManagedListHeadCopy(list.Element, out _)
+                        && info.ConsumedListTail[index]
+                        && info.RuntimeManagedArgResults[index]
                     || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
             TypeRef.TFun => info.RuntimeManagedArgResults[index],
             _ => false,
@@ -1121,15 +1126,18 @@ public sealed partial class Lowering
                     RuntimeManaged: true));
                 break;
             case TypeRef.TList list:
-                if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+                if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
                 {
-                    throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+                    Emit(new IrInst.CopyOutList(
+                        resultTemp,
+                        sourceTemp,
+                        headCopy,
+                        RuntimeManaged: true));
                 }
-                Emit(new IrInst.CopyOutList(
-                    resultTemp,
-                    sourceTemp,
-                    headCopy,
-                    RuntimeManaged: true));
+                else
+                {
+                    return EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+                }
                 break;
             case TypeRef.TTuple tuple:
                 Emit(new IrInst.Alloc(resultTemp, tuple.Elements.Count * 8, RuntimeManaged: true));
@@ -1141,6 +1149,13 @@ public sealed partial class Lowering
                     Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
                 }
                 break;
+            case TypeRef.TNamedType named when CanCopyOutAdt(named, out int sizeBytes):
+                Emit(new IrInst.CopyOutArena(
+                    resultTemp,
+                    sourceTemp,
+                    sizeBytes,
+                    RuntimeManaged: true));
+                break;
             case TypeRef.TNamedType named when CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
             default:
@@ -1149,6 +1164,85 @@ public sealed partial class Lowering
 
         _runtimeManagedResultTemps.Add(resultTemp);
         return resultTemp;
+    }
+
+    private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
+    {
+        int currentSlot = NewLocal();
+        int firstSlot = NewLocal();
+        int lastSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(currentSlot, sourceTemp));
+        Emit(new IrInst.StoreLocal(firstSlot, zeroTemp));
+        Emit(new IrInst.StoreLocal(lastSlot, zeroTemp));
+
+        string loopLabel = NewLabel("rc_normalize_list");
+        string endLabel = NewLabel("rc_normalize_list_end");
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            headTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        int copiedHead = EmitRuntimeManagedTcoDeepCopy(headTemp, elementType);
+        int cellTemp = NewTemp();
+        Emit(new IrInst.Alloc(cellTemp, HeapLayouts.List.FixedAllocationSizeBytes, RuntimeManaged: true));
+        Emit(new IrInst.StoreMemOffset(
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex),
+            copiedHead));
+        Emit(new IrInst.StoreMemOffset(
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            zeroTemp));
+
+        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, cellTemp);
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(endLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, firstSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
+    private void EmitRuntimeManagedTcoListAppendCell(
+        int firstSlot,
+        int lastSlot,
+        int zeroTemp,
+        int cellTemp)
+    {
+        string firstCellLabel = NewLabel("rc_normalize_list_first");
+        string linkedLabel = NewLabel("rc_normalize_list_linked");
+        int firstTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(firstTemp, firstSlot));
+        int hasFirstTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasFirstTemp, firstTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(hasFirstTemp, firstCellLabel));
+        int lastTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(lastTemp, lastSlot));
+        Emit(new IrInst.StoreMemOffset(
+            lastTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            cellTemp));
+        Emit(new IrInst.Jump(linkedLabel));
+        Emit(new IrInst.Label(firstCellLabel));
+        Emit(new IrInst.StoreLocal(firstSlot, cellTemp));
+        Emit(new IrInst.Label(linkedLabel));
+        Emit(new IrInst.StoreLocal(lastSlot, cellTemp));
     }
 
     private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named)
@@ -4923,8 +5017,10 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
                 || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
-                    && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
-                    && (freshRebuiltList || affineConsList || consumedListTail)
+                    && CanRuntimeManageTcoListElement(list.Element)
+                    && (freshRebuiltList
+                        || affineConsList
+                        || consumedListTail && TryGetRuntimeManagedListHeadCopy(list.Element, out _))
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
@@ -5328,15 +5424,18 @@ public sealed partial class Lowering
             if (tco.RuntimeManagedListParamSlots.Contains(slot)
                 && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
             {
-                if (!TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
+                if (TryGetRuntimeManagedListHeadCopy(list.Element, out IrInst.ListHeadCopyKind headCopy))
                 {
-                    throw new InvalidOperationException("Unsupported runtime-managed TCO list element.");
+                    Emit(new IrInst.CopyOutList(
+                        normalizedTemp,
+                        sourceTemp,
+                        headCopy,
+                        RuntimeManaged: true));
                 }
-                Emit(new IrInst.CopyOutList(
-                    normalizedTemp,
-                    sourceTemp,
-                    headCopy,
-                    RuntimeManaged: true));
+                else
+                {
+                    normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+                }
             }
             else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple
                 && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
@@ -6056,10 +6155,11 @@ public sealed partial class Lowering
                     || CanRuntimeManageAdt(named)
                     || CanRuntimeManageOwnedChildAdt(named))
                 || type is TypeRef.TList list
-                    && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
+                    && CanRuntimeManageTcoListElement(list.Element)
                     && (tco.FreshRebuiltListParams.Contains(name)
                         || tco.AffineConsListParams.Contains(name)
-                        || tco.ConsumedListTailParams.Contains(name));
+                        || tco.ConsumedListTailParams.Contains(name)
+                            && TryGetRuntimeManagedListHeadCopy(list.Element, out _));
             if (!supported
                 || _linearReuseNames.Contains(name)
                 || _linearSpecializationAccumulators.Contains(name)
@@ -7387,6 +7487,10 @@ public sealed partial class Lowering
                 lowered.Temp,
                 headCopy,
                 RuntimeManaged: true));
+        }
+        else if (CanRuntimeManageTcoListElement(elementType))
+        {
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(lowered.Temp, elementType);
         }
         else
         {

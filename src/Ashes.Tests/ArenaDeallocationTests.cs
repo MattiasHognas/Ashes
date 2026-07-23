@@ -593,6 +593,60 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_loop_with_tuple_head_list_accumulator_uses_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build : Int -> List((Int, Str)) -> List((Int, Str)) = given n -> given acc ->
+                if n == 0 then acc
+                else build (n - 1) ((n, "x") :: acc)
+            in build 5 []
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Tuple",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_loop_with_record_head_list_accumulator_uses_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive build : Int -> List(Item) -> List(Item) = given n -> given acc ->
+                if n == 0 then acc
+                else build (n - 1) (Item(text = "x", value = n) :: acc)
+            in build 5 []
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Item",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
     public void TCO_loop_with_consumed_list_tail_keeps_one_runtime_regime()
     {
         IrProgram ir = LowerProgram(

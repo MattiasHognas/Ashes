@@ -733,9 +733,9 @@ This prevents an RC parameter from falling through a declined reset into legacy 
 plateau. The complete compiler suite passes 1,630/1,630 tests. Lists with more general element graphs
 remain in the final census.
 An attempted general tuple/ADT-head list admission exposed the next precise blocker in 1BRC's
-`buildChunks`: an escaping RC list that is later destructured must transfer its payload references
-before releasing the matched parent. The general normalizer remains unadmitted until that rule is
-implemented. Runtime-managed non-closure TCO parameters now carry an explicit active-ownership slot,
+list-processing pipeline: an escaping RC list that is later destructured must transfer its payload
+references before releasing the matched parent. Runtime-managed non-closure TCO parameters now carry
+an explicit active-ownership slot,
 initialized when entry normalization succeeds and consulted by both back-edge and function-exit
 drops. This is the required state for a match arm to consume a parent locally, clear the slot, and
 avoid a later double drop; closure parameters retain their separate first-replacement active flag.
@@ -755,6 +755,14 @@ Pattern transfer also distinguishes consuming a matched parent from moving that 
 next iteration. When both a payload and the original list occur in the self-call arguments, the
 payload receives its independent reference but the list remains active; the later argument build
 owns the moved parent and no premature parent drop is emitted.
+Freshly rebuilt and affine-growing list accumulators now admit tuple and supported ADT/record heads.
+A compiler-emitted iterative normalizer rebuilds the spine under RC and recursively normalizes every
+head; the runtime list dropper correspondingly releases nested tuple, list, and ADT children. Tuple-
+and record-head programs produce correct output and plateau at 2,000/10,000/50,000 iterations without
+legacy list relocation. Consumed general-head input lists remain conservative until nested-pattern
+payload transfer is complete. Lists whose element graph contains `Bytes` also remain conservative:
+blind deep-copy normalization could duplicate an entire mmap-backed buffer per cell, as 1BRC's chunk
+tuples demonstrate. The complete 1BRC correctness and bounded-memory gate remains green.
 
 Deliverables:
 

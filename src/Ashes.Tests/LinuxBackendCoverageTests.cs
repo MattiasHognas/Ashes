@@ -2790,6 +2790,22 @@ public sealed class LinuxBackendCoverageTests
         {
             RuntimeManaged: true,
         }).ShouldBeTrue();
+        IrProgram tupleHeadProbe = LowerProgram(BuildRuntimeRcTupleHeadListTcoMemoryProgram(1));
+        AllInstructions(tupleHeadProbe).Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        AllInstructions(tupleHeadProbe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Tuple",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        IrProgram recordHeadProbe = LowerProgram(BuildRuntimeRcRecordHeadListTcoMemoryProgram(1));
+        AllInstructions(recordHeadProbe).Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
+        AllInstructions(recordHeadProbe).Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Item",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
 
         List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcStringHeadListTcoMemoryProgram,
@@ -2800,10 +2816,18 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> transferSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcListPatternTransferMemoryProgram,
             outputPerIteration: 4).ConfigureAwait(false);
+        List<MemoryExecutionResult> tupleHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTupleHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> recordHeadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcRecordHeadListTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
         AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
+        AssertMemoryPlateaus("runtime-RC tuple-head list TCO accumulator", tupleHeadSamples);
+        AssertMemoryPlateaus("runtime-RC record-head list TCO accumulator", recordHeadSamples);
     }
 
     [Test]
@@ -3005,11 +3029,8 @@ public sealed class LinuxBackendCoverageTests
             {
                 string inputPath = Path.Combine(tmpDir, $"measurements_{rows}.txt");
                 File.WriteAllText(inputPath, BuildOneBrcMeasurements(rows));
-                MemoryExecutionResult sample = await RunLinuxExecutablePeakRssAsync(exePath, [inputPath])
+                MemoryExecutionResult sample = await MeasureOneBrcMedianPeakRssAsync(exePath, inputPath)
                     .ConfigureAwait(false);
-                sample.Stdout.ShouldContain("Alpha=1.0/1.0/1.0");
-                sample.Stdout.ShouldContain("Beta=-2.0/-2.0/-2.0");
-                sample.Stdout.ShouldContain("Gamma=3.5/3.5/3.5");
                 samples.Add(sample);
             }
 
@@ -4673,7 +4694,9 @@ public sealed class LinuxBackendCoverageTests
         {
             proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
 
-            // Wait for the listener, then open the four measured connections.
+            // Wait for the listener, establish all four measured connections, then release their
+            // payloads together. This keeps host scheduling delays while opening sockets from
+            // consuming the server-side overlap window.
             _ = await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false);
 
             var clients = new List<TcpClient>();
@@ -4681,9 +4704,11 @@ public sealed class LinuxBackendCoverageTests
             {
                 for (int i = 0; i < 4; i++)
                 {
-                    clients.Add(await ConnectAndSendAsync(port, $"conc-{i}").ConfigureAwait(false));
+                    clients.Add(await ConnectAsync(port).ConfigureAwait(false));
                 }
 
+                await Task.WhenAll(clients.Select((client, index) =>
+                    SendAsync(client, $"conc-{index}"))).ConfigureAwait(false);
                 var replies = await Task.WhenAll(clients.Select(ReadWholeReplyAsync)).ConfigureAwait(false);
                 var windows = replies.Select(ParseConcurrencyReply).ToList();
 
@@ -4704,13 +4729,17 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private static async Task<TcpClient> ConnectAndSendAsync(int port, string payload)
+    private static async Task<TcpClient> ConnectAsync(int port)
     {
         var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+        return client;
+    }
+
+    private static async Task SendAsync(TcpClient client, string payload)
+    {
         var outBytes = Encoding.UTF8.GetBytes(payload);
         await client.GetStream().WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
-        return client;
     }
 
     private static async Task<string> ReadWholeReplyAsync(TcpClient client)
@@ -6954,6 +6983,34 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0)(["seed"])("initial"))
             """;
 
+    private static string BuildRuntimeRcTupleHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List((Int, Str)) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)((n, "value") :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcRecordHeadListTcoMemoryProgram(int iterations)
+        => $$"""
+            type Item =
+                | text: Str
+                | value: Int
+
+            let recursive loop : Int -> Int -> List(Item) -> Int = given n -> given limit -> given values ->
+                if n <= 0 then
+                    match values with
+                        | [] -> limit
+                        | _ :: _ -> limit
+                else loop(n - 1)(limit)(Item(text = "value", value = n) :: values)
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
     private static string BuildLegacyArenaStringMemoryProgram(int iterations)
         => $$"""
             let recursive loop n total =
@@ -7179,6 +7236,24 @@ public sealed class LinuxBackendCoverageTests
         }
 
         return source.ToString();
+    }
+
+    private static async Task<MemoryExecutionResult> MeasureOneBrcMedianPeakRssAsync(
+        string exePath,
+        string inputPath)
+    {
+        List<MemoryExecutionResult> repetitions = new(3);
+        for (int repetition = 0; repetition < 3; repetition++)
+        {
+            MemoryExecutionResult sample = await RunLinuxExecutablePeakRssAsync(exePath, [inputPath])
+                .ConfigureAwait(false);
+            sample.Stdout.ShouldContain("Alpha=1.0/1.0/1.0");
+            sample.Stdout.ShouldContain("Beta=-2.0/-2.0/-2.0");
+            sample.Stdout.ShouldContain("Gamma=3.5/3.5/3.5");
+            repetitions.Add(sample);
+        }
+
+        return repetitions.OrderBy(sample => sample.MaxRssKb).ElementAt(1);
     }
 
     private static string GetRepositoryRoot([CallerFilePath] string callerFile = "")
