@@ -364,6 +364,30 @@ byte-identical to the pre-migration control and completed in 3.26 seconds versus
 Peak RSS was 12,556 KB versus 4,108 KB; this is a bounded process-level RC/arena overhead, not a
 growing retained-output leak, and remains part of the final multi-scale memory comparison.
 
+### CRP-12 — P2: n-body immutable rebuild pays per-cell RC traffic
+
+**Open; isolated during the final standard-workload sweep.** Correctness remains restored: the
+standard N=50,000,000 output is byte-identical to the pre-migration control
+(`-0.169075164` / `-0.169059907`). Peak RSS is also bounded at 8,204 KB versus 4,108 KB. Runtime,
+however, regressed from 20.40 to 37.00 seconds (1.81x); an N=5,000,000 diagnostic reproduces the
+same proportional loss at about 2.00 versus 3.82 seconds.
+
+The five-body live graph is constant-sized. Each timestep nevertheless rebuilds five `Body` records
+and five cons cells in `updateVel`, then rebuilds both layers again in `updatePos`. The RC lowering
+allocates the escaping replacement cells from exact-size bins and releases the preceding graph.
+That keeps memory flat, but adds reference-count, free-bin, and recursive child-drop work to the
+hot float loop. Returning these cells to the arena instead is not a fix: a diagnostic arena build
+retained about 272 MB after only 5,000,000 steps and did not recover the lost CPU time.
+
+The required fix is ownership-proven in-place reuse of untagged list cells together with their
+single-constructor record heads. Existing `DropReuse` / `AllocReusing` supports tagged ADT layouts
+only. The list extension must preserve the important alias boundary in `updateVel`: `allBodies`
+reads the same source graph as `remaining`, so a cell can be overwritten only after the recursive
+suffix and its final acceleration read have completed, or after a defensive unique copy. A fresh
+`updateVel` result is uniquely consumed by `updatePos` and is the simpler first reuse boundary.
+Verification must keep the standard output byte-identical, restore time close to the pre-migration
+control, and confirm a flat RSS slope across increasing and repeated workloads.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against
