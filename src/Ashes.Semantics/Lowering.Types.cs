@@ -40,6 +40,7 @@ public sealed partial class Lowering
         public HashSet<int> RuntimeManagedParamSlots { get; } = [];
         public HashSet<int> RuntimeManagedListParamSlots { get; } = [];
         public HashSet<int> RuntimeManagedClosureParamSlots { get; } = [];
+        public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
         public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
         public Dictionary<int, TypeRef> RuntimeManagedParamTypes { get; } = [];
         public bool InTailPosition { get; set; }

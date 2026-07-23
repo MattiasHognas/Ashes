@@ -812,6 +812,7 @@ public sealed partial class Lowering
         bool[] StableAccArg,
         int[] OldRuntimeParamTemps,
         bool[] RuntimeManagedParams,
+        int[] RuntimeManagedParamActiveSlots,
         int[] RuntimeManagedClosureActiveSlots,
         int[] ParamSlots,
         int FixedCursorSlot,
@@ -946,6 +947,12 @@ public sealed partial class Lowering
             if (normalizedTemps[i] >= 0)
             {
                 Emit(new IrInst.StoreLocal(info.ParamSlots[i], normalizedTemps[i]));
+                if (info.RuntimeManagedParamActiveSlots[i] >= 0)
+                {
+                    int activeTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(activeTemp, 1));
+                    Emit(new IrInst.StoreLocal(info.RuntimeManagedParamActiveSlots[i], activeTemp));
+                }
                 if (info.RuntimeManagedClosureActiveSlots[i] >= 0)
                 {
                     int activeTemp = NewTemp();
@@ -1008,6 +1015,23 @@ public sealed partial class Lowering
     }
 
     private void TcoBackEdgeDropRuntimeManagedArg(PendingTcoReset info, int index, TypeRef argType)
+    {
+        int activeSlot = info.RuntimeManagedParamActiveSlots[index];
+        if (activeSlot < 0)
+        {
+            TcoBackEdgeDropRuntimeManagedArgCore(info, index, argType);
+            return;
+        }
+
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_tco_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        TcoBackEdgeDropRuntimeManagedArgCore(info, index, argType);
+        Emit(new IrInst.Label(skipLabel));
+    }
+
+    private void TcoBackEdgeDropRuntimeManagedArgCore(PendingTcoReset info, int index, TypeRef argType)
     {
         int sourceTemp = info.OldRuntimeParamTemps[index];
         if (argType is TypeRef.TFun)
@@ -4913,6 +4937,7 @@ public sealed partial class Lowering
         tco.RuntimeManagedParamSlots.Clear();
         tco.RuntimeManagedListParamSlots.Clear();
         tco.RuntimeManagedClosureParamSlots.Clear();
+        tco.RuntimeManagedParamActiveSlots.Clear();
         tco.RuntimeManagedClosureActiveSlots.Clear();
         tco.RuntimeManagedParamTypes.Clear();
     }
@@ -5118,6 +5143,14 @@ public sealed partial class Lowering
             tco.RuntimeManagedClosureActiveSlots[closureSlot] = activeSlot;
         }
 
+        foreach (int slot in tco.RuntimeManagedParamSlots)
+        {
+            if (!tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
+        }
+
         // Emit loop start label
         tco.BodyLabel = $"{label}_body";
         Emit(new IrInst.Label(tco.BodyLabel));
@@ -5287,6 +5320,9 @@ public sealed partial class Lowering
             }
             _runtimeManagedResultTemps.Add(normalizedTemp);
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
+            int activeTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(activeTemp, 1));
+            Emit(new IrInst.StoreLocal(tco.RuntimeManagedParamActiveSlots[slot], activeTemp));
         }
 
         int generatedCount = _inst.Count - generatedStart;
@@ -5312,25 +5348,41 @@ public sealed partial class Lowering
                     sourceTemp,
                     tco.RuntimeManagedClosureActiveSlots[slot]);
             }
-            else if (tco.RuntimeManagedListParamSlots.Contains(slot)
-                && tco.RuntimeManagedParamTypes[slot] is TypeRef.TList list)
-            {
-                EmitRuntimeManagedListDrop(sourceTemp, list.Element);
-            }
-            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TTuple tuple)
-            {
-                EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
-            }
-            else if (tco.RuntimeManagedParamTypes[slot] is TypeRef.TNamedType named)
-            {
-                EmitRuntimeManagedAdtDrop(sourceTemp, named);
-            }
             else
             {
-                string typeName = TcoRuntimeManagedTypeName(tco.RuntimeManagedParamTypes[slot]);
-                Emit(new IrInst.RcDrop(sourceTemp, typeName, slot, RuntimeManaged: true));
+                EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp);
             }
         }
+    }
+
+    private void EmitRuntimeManagedTcoParamDropIfActive(TcoContext tco, int slot, int sourceTemp)
+    {
+        int activeTemp = NewTemp();
+        string skipLabel = NewLabel("rc_tco_exit_drop_inactive");
+        Emit(new IrInst.LoadLocal(activeTemp, tco.RuntimeManagedParamActiveSlots[slot]));
+        Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
+        TypeRef type = tco.RuntimeManagedParamTypes[slot];
+        if (tco.RuntimeManagedListParamSlots.Contains(slot) && type is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+        }
+        else if (type is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(
+                sourceTemp,
+                TcoRuntimeManagedTypeName(type),
+                slot,
+                RuntimeManaged: true));
+        }
+        Emit(new IrInst.Label(skipLabel));
     }
 
     private void EmitRuntimeManagedClosureDropIfActive(int closureTemp, int activeSlot)
@@ -5893,6 +5945,11 @@ public sealed partial class Lowering
 
             tco.RuntimeManagedParamSlots.Add(slot);
             tco.RuntimeManagedParamTypes[slot] = type;
+            if (type is not TypeRef.TFun
+                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
+            {
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
+            }
             if (type is TypeRef.TList)
             {
                 tco.RuntimeManagedListParamSlots.Add(slot);
@@ -6122,6 +6179,7 @@ public sealed partial class Lowering
             facts.StableAccArg,
             oldRuntimeParamTemps,
             tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
+            tco.ParamSlots.Select(slot => tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.ToArray(),
             tco.FixedCursorSlot,

@@ -732,6 +732,13 @@ This prevents an RC parameter from falling through a declined reset into legacy 
 `CopyOutTcoListCell` or non-runtime list relocation, and their 2,000/10,000/50,000 RSS profiles
 plateau. The complete compiler suite passes 1,630/1,630 tests. Lists with more general element graphs
 remain in the final census.
+An attempted general tuple/ADT-head list admission exposed the next precise blocker in 1BRC's
+`buildChunks`: an escaping RC list that is later destructured must transfer its payload references
+before releasing the matched parent. The general normalizer remains unadmitted until that rule is
+implemented. Runtime-managed non-closure TCO parameters now carry an explicit active-ownership slot,
+initialized when entry normalization succeeds and consulted by both back-edge and function-exit
+drops. This is the required state for a match arm to consume a parent locally, clear the slot, and
+avoid a later double drop; closure parameters retain their separate first-replacement active flag.
 
 Deliverables:
 
