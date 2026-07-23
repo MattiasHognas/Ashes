@@ -2794,6 +2794,7 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
                 "An affine TCO accumulator should move into its replacement without an extra reference.");
         AssertRuntimeRcTupleTcoProbe();
+        AssertRuntimeRcCopyAdtTcoProbes();
 
         List<MemoryExecutionResult> strings = await MeasureMemoryGrowthAsync(
             BuildLegacyArenaStringMemoryProgram,
@@ -2807,11 +2808,15 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> tuples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> copyAdts = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcCopyAdtTcoMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
 
         AssertMemoryPlateaus("legacy arena string", strings);
         AssertMemoryPlateaus("legacy arena pointer record", records);
         AssertMemoryPlateaus("runtime-RC growing string accumulator", growingStrings);
         AssertMemoryPlateaus("runtime-RC tuple TCO accumulator", tuples);
+        AssertMemoryPlateaus("runtime-RC copy-field ADT TCO accumulator", copyAdts);
     }
 
     [Test]
@@ -5552,6 +5557,42 @@ public sealed class LinuxBackendCoverageTests
                 "The migrated tuple TCO path must not relocate through an arena allocation.");
     }
 
+    private static void AssertRuntimeRcCopyAdtTcoProbes()
+    {
+        AssertRuntimeRcCopyAdtTcoProbe(
+            LowerProgram(BuildRuntimeRcCopyAdtTcoMemoryProgram(1)),
+            "Pair");
+        AssertRuntimeRcCopyAdtTcoProbe(
+            LowerProgram(BuildRuntimeRcCopyRecordTcoProbe()),
+            "Point");
+    }
+
+    private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
+    {
+        AllInstructions(probe).Count(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: true
+            }).ShouldBeGreaterThanOrEqualTo(2,
+                $"The annotated {typeName} TCO accumulator should normalize at entry and replacement.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.RcDrop
+            {
+                TypeName: var droppedType,
+                OwnerSlot: -1,
+                RuntimeManaged: true
+            } && string.Equals(droppedType, typeName, StringComparison.Ordinal)).ShouldBeTrue(
+                $"{typeName} replacement must release its old RC cell at the back-edge.");
+        AllInstructions(probe).Any(instruction =>
+            instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: 24,
+                RuntimeManaged: false
+            }).ShouldBeFalse(
+                $"The migrated {typeName} TCO path must not relocate through an arena allocation.");
+    }
+
     private static string BuildRuntimeRcListMemoryProgram(int iterations)
         => $$"""
             let recursive loop n total =
@@ -6729,6 +6770,33 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(limit)((n, n + 1))
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})((0, 0)))
+            """;
+
+    private static string BuildRuntimeRcCopyAdtTcoMemoryProgram(int iterations)
+        => $$"""
+            type Pair =
+                | Pair(Int, Int)
+
+            let recursive loop : Int -> Int -> Pair -> Int = given n -> given limit -> given pair ->
+                if n <= 0 then
+                    match pair with
+                        | Pair(_, _) -> limit
+                else loop(n - 1)(limit)(Pair(n)(n + 1))
+
+            Ashes.IO.print(loop({{iterations}})({{iterations}})(Pair(0)(0)))
+            """;
+
+    private static string BuildRuntimeRcCopyRecordTcoProbe()
+        => """
+            type Point =
+                | x: Int
+                | y: Int
+
+            let recursive loop : Int -> Point -> Int = given n -> given point ->
+                if n <= 0 then point.x + point.y
+                else loop(n - 1)(Point(x = n, y = n + 1))
+
+            Ashes.IO.print(loop(1)(Point(x = 0, y = 0)))
             """;
 
     private static string BuildLegacyArenaBytesMemoryProgram(int iterations)

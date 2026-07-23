@@ -687,7 +687,9 @@ per-thread RC region, released cells retain exact-size free-list reuse, large bl
 allocation/free, and worker cleanup releases RC-region chunks as a unit. The next aggregate TCO
 path covers copy-only tuples: their fixed payload is shallow-normalized at entry and
 replacement, the previous tuple is dropped at the back-edge, and the 2,000/10,000/50,000 profile
-plateaus without non-runtime relocation. Pointer-bearing tuples, records/ADTs, closure graph
+plateaus without non-runtime relocation. Equal-layout copy-field records and user ADTs now follow the
+same type-directed fixed-size path; both record and constructor-form IR are covered, and the ADT RSS
+profile plateaus across the same scales. Pointer-bearing tuples/records/ADTs, closure graph
 normalization, and the final emitter census remain.
 
 Deliverables:

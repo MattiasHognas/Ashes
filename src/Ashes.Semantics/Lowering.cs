@@ -1000,6 +1000,7 @@ public sealed partial class Lowering
         {
             TypeRef.TStr or TypeRef.TBigInt => true,
             TypeRef.TTuple tuple => tuple.Elements.All(element => CanArenaReset(Prune(element))),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
@@ -1008,11 +1009,12 @@ public sealed partial class Lowering
         };
     }
 
-    private static int TcoRuntimeManagedCopySize(TypeRef type)
+    private int TcoRuntimeManagedCopySize(TypeRef type)
         => type switch
         {
             TypeRef.TBigInt => IrInst.CopyOutArena.BigIntSize,
             TypeRef.TTuple tuple => tuple.Elements.Count * 8,
+            TypeRef.TNamedType named when CanCopyOutAdt(named, out int sizeBytes) => sizeBytes,
             _ => -1,
         };
 
@@ -1021,6 +1023,7 @@ public sealed partial class Lowering
         {
             TypeRef.TBigInt => "BigInt",
             TypeRef.TTuple => "Tuple",
+            TypeRef.TNamedType named => named.Symbol.Name,
             _ => "String",
         };
 
@@ -4641,6 +4644,7 @@ public sealed partial class Lowering
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
                 || parameterType is TypeRef.TTuple tuple
                     && tuple.Elements.All(element => CanArenaReset(Prune(element)))
+                || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
                 || parameterType is TypeRef.TList list
                     && CanArenaReset(Prune(list.Element))
                     && (freshRebuiltList || affineConsList))
