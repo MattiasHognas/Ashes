@@ -712,6 +712,47 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("3=6\n");
     }
 
+    [Test]
+    public async Task Tco_positional_product_with_list_child_survives_back_edge_reset()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression (fannkuch-redux): a single-constructor product `S(List(Int))` threaded through a
+        // TCO self-recursion (here `nextPerm`) is RC-normalized on entry, but the back-edge rebuilt the
+        // product shell via an arena `AllocReusing` reusing the destructured cell. The back-edge
+        // RestoreArenaState then freed that shell before it was stored as the next iteration's
+        // parameter — a use-after-free that segfaulted (or read a corrupt count and returned early).
+        // The list child is a heap value (RC-normalized) even though its Int elements are copy types,
+        // so arena reuse of the shell is unsound; it is now declined (the ADT constructor is read from
+        // the match pattern because the scrutinee's inferred type is still an unresolved type variable
+        // at the reuse decision). `nextPerm(1)(3)(S([2,1,3])([0,1,3]))` must yield `Continue r=2` with a
+        // count summing to 2, not a premature `Done`.
+        var src = """
+            let recursive getAt i xs =
+                match xs with | [] -> 0 | h :: t -> if i == 0 then h else getAt(i - 1)(t)
+            let recursive setAt i v xs =
+                match xs with | [] -> [] | h :: t -> if i == 0 then v :: t else h :: setAt(i - 1)(v)(t)
+            type State = | S(List(Int), List(Int))
+            type Step = | Done | Continue(State, Int)
+            let recursive nextPerm r n st =
+                if r == n then Done
+                else match st with | S(perm, count) ->
+                    let cr = getAt(r)(count) - 1
+                    in let count2 = setAt(r)(cr)(count)
+                    in if cr > 0 then Continue(S(perm)(count2))(r) else nextPerm(r + 1)(n)(S(perm)(count2))
+            let recursive sumList xs = match xs with | [] -> 0 | h :: t -> h + sumList(t)
+            let result =
+                match nextPerm(1)(3)(S([2, 1, 3])([0, 1, 3])) with
+                    | Done -> 0
+                    | Continue(st, r) -> (match st with | S(p, c) -> sumList(c) + 100 * r)
+            Ashes.IO.print(Ashes.Text.fromInt(result))
+            """;
+        (await CompileRunCaptureProgramAsync(src).ConfigureAwait(false)).ShouldBe("202\n");
+    }
+
     private static async Task<string> CompileRunCaptureAsync(string source, string[]? programArgs = null, string? stdin = null)
     {
         var diag = new Diagnostics();

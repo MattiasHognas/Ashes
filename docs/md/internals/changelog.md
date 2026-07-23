@@ -277,6 +277,21 @@ keys and member suffixes were both corrupted). Regressions:
 `EndToEndNativeBackendTests.Tco_loop_string_accumulator_returned_in_tuple_survives_next_call`, its
 `_adt_wrapped_tuple_` counterpart, and `Tco_loop_int_accumulator_returned_in_tuple_is_not_corrupted_as_string`.
 
+Arena in-place reuse of a TCO-parameter ADT cell is now declined for any ADT with a heap child. A
+tail-recursive loop that destructures and rebuilds a single-constructor product around its back edge
+(fannkuch-redux's `nextPerm` rebuilding `S(perm, count)`) had its product shell rebuilt with an arena
+`AllocReusing` reusing the destructured cell; the back-edge `RestoreArenaState` then freed that shell
+before it became the next iteration's parameter — a use-after-free (segfault, or a corrupt `count`
+read returning a premature result). The reuse-decline gate now fires whenever a matched constructor
+has a field that is not an inline copy scalar (`List`/`String`/`Bytes`/`BigInt`/`Tuple`/nested ADT):
+such a child is RC-normalized at runtime even when the ADT is flat-copy-out-able (`S(List(Int))`'s
+`Int`-element list still becomes an RC list), so the arena shell cannot survive the reset. This
+supersedes the earlier narrower `!CanCopyOutAdt` gate, which missed the copy-out-able-but-heap-bearing
+case. The constructor is read from the match pattern, since the scrutinee's inferred type is often
+still an unresolved type variable at the reuse decision. Recovers `challenges/fannkuch-redux` (hung at
+N=3, segfaulted at N≥4 at every optimization level). Regression:
+`EndToEndNativeBackendTests.Tco_positional_product_with_list_child_survives_back_edge_reset`.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 

@@ -175,20 +175,30 @@ by `final`. Audit result-reach ownership summaries and the required late `RcDup`
 
 ### CRP-3 — P1: fannkuch permutation state is corrupted
 
-**Resolved 2026-07-23.** `nextPerm` rebuilt its single-constructor positional `State` product around
-runtime-managed permutation and counter lists at a TCO back edge. The product itself stayed
-arena-managed, so its child lets were dropped at scope exit and the next iteration received dangling
-list pointers. TCO argument lowering now admits this narrow monomorphic positional-product shape as
-an RC owner, records whether repeated child variables need duplication, and moves unique children
-into it. The general escaping-ADT gate remains unchanged, including its borrowed-child behavior.
+**Resolved.** The earlier attempt (a TCO-argument-lowering change admitting the positional product as
+an RC owner) did **not** actually fix the challenge — fannkuch stayed broken at every optimization
+level (N=3 hung, N≥4 segfaulted) because the real defect was in the **match-arm arena reuse**, not the
+argument lowering. `nextPerm` destructures its single-constructor product `S(perm, count)` and rebuilds
+it around the same back edge. The product is RC-normalized on entry, but the match-arm reuse rebuilt
+the shell with an arena `AllocReusing` reusing the destructured cell; the back-edge `RestoreArenaState`
+then freed that arena shell before it was stored as the next iteration's parameter — a use-after-free
+(segfault at N≥4, a corrupt `count` read returning a premature `Done` at N=3).
 
-A dedicated positional-product/owned-child TCO regression passes. Fannkuch now matches the reference
-from N=3 through N=8 at `-O2`, including checksum/max `1616/22` for N=8, and the Ownership,
-ArenaDeallocation, and ReuseToken test classes pass.
+Arena in-place reuse of a TCO-parameter ADT cell is now declined whenever the ADT carries **any heap
+child** — a field that is not an inline copy scalar (`List`/`String`/`Bytes`/`BigInt`/`Tuple`/nested
+ADT). Such a child is RC-normalized at runtime even when the ADT as a whole is flat-copy-out-able
+(`S(List(Int))`, whose `Int`-element list still becomes an RC list), so the arena shell cannot survive
+the reset. Declining routes the reconstruction through the runtime-managed (RC) reuse path. This
+supersedes the narrower `!CanCopyOutAdt` gate from the earlier partial fix (b70b88a), which missed the
+copy-out-able-but-heap-bearing case. The ADT constructor is read from the **match pattern** because the
+scrutinee's inferred type is still an unresolved type variable at the reuse decision (inference is
+interleaved with lowering).
 
-N=1 and N=2 match the baseline. N=3 changes checksum/max from `2/2` to `-1/1`, N=4 changes
-`4/4` to `3/4`, N=5 changes `11/7` to `3/4`, and N>=6 does not terminate within 20 seconds.
-Audit match-payload ownership and ADT/list state carried between `nextPerm` and the tail loop.
+Fannkuch now matches the reference at `-O0` and `-O2`: N=3 `2 / Pfannkuchen(3) = 2`, N=4 `4 / 4`,
+N=5 `11 / 7`, N=7 `228 / 16`. Regression:
+`EndToEndNativeBackendTests.Tco_positional_product_with_list_child_survives_back_edge_reset`; the
+existing `runtime_rc_tco_positional_adt_children.ash`, `reuse_user_local_helper_specialization.ash`,
+and `reuse_map_tco_reset_declined_seed.ash` reuse specs continue to pass.
 
 ### CRP-4 — P1: regex substitution graph becomes dangling at scale
 

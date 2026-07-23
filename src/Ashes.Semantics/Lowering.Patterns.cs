@@ -168,7 +168,7 @@ public sealed partial class Lowering
         bool matchIsInTailPosition)
     {
         if (match.Value is Expr.Var variable && _linearReuseNames.Contains(variable.Name)
-            && !IsArenaReuseUnsafeForRuntimeManagedChildren(variable, valueType))
+            && !IsArenaReuseUnsafeForRuntimeManagedChildren(variable, match))
         {
             return (variable.Name, null);
         }
@@ -268,11 +268,35 @@ public sealed partial class Lowering
     // across iterations). Keeping the old cell intact (a fresh rebuild) lets the deferred drop
     // release the real old value. The runtime-managed reuse path (CanCopyOutAdt / TryGetRuntimeManaged
     // ReuseScrutinee) manages its children explicitly and is unaffected.
-    private bool IsArenaReuseUnsafeForRuntimeManagedChildren(Expr.Var scrutinee, TypeRef valueType)
+    // Arena in-place reuse of a TCO-parameter ADT cell is unsound when the ADT carries any heap child
+    // (a field that is not an inline copy scalar — List/String/Bytes/BigInt/Tuple/nested ADT). Such a
+    // child is RC-normalized at runtime even when the ADT as a whole is flat-copy-out-able (e.g.
+    // `S(List(Int))`, whose Int-element list still becomes an RC list). The back-edge arena reset then
+    // frees the reused shell before it is stored as the next iteration's parameter — a use-after-free
+    // (fannkuch's `S(perm, count)` enumeration segfaulted; a shared-tail RC child also lost cells,
+    // b70b88a). Declining arena reuse routes the reconstruction through the runtime-managed (RC) reuse
+    // path (or a fresh RC build), which survives the reset. The scrutinee's inferred type is often an
+    // unresolved type variable here (inference is interleaved with lowering), so the ADT constructor
+    // is taken from the match pattern rather than from the value type.
+    private bool IsArenaReuseUnsafeForRuntimeManagedChildren(Expr.Var scrutinee, Expr.Match match)
         => Lookup(scrutinee.Name) is Binding.Local local
             && _tcoCtx?.ParamSlots.Contains(local.Slot) == true
-            && Prune(valueType) is TypeRef.TNamedType named
-            && !CanCopyOutAdt(named, out _);
+            && match.Cases.Count > 0
+            && TryGetConstructorSymbol(match.Cases[0].Pattern, out ConstructorSymbol constructor)
+            && ConstructorHasHeapField(constructor);
+
+    private bool ConstructorHasHeapField(ConstructorSymbol constructor)
+    {
+        foreach (TypeRef fieldType in constructor.ParameterTypes)
+        {
+            if (!CanArenaReset(Prune(fieldType)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private bool TryFindRuntimeReuseConstructorArguments(
         Expr body,
