@@ -2165,6 +2165,9 @@ public sealed class LinuxBackendCoverageTests
         scopeProbe.Functions.Any(function => function.Instructions.Any(instruction =>
             instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
                 "A borrowed list result should normalize to RC at its lexical scope boundary.");
+        IrProgram transferredPayloadProbe = LowerProgram(BuildRuntimeRcTransferredListPayloadMemoryProgram(1));
+        AllInstructions(transferredPayloadProbe).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
 
         List<MemoryExecutionResult> copySamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderListResultMemoryProgram,
@@ -2184,6 +2187,9 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> scopeSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcBorrowedListScopeMemoryProgram,
             outputPerIteration: 40).ConfigureAwait(false);
+        List<MemoryExecutionResult> transferredPayloadSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcTransferredListPayloadMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
         AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
@@ -2191,6 +2197,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC normalized list ADT result", aggregateSamples);
         AssertMemoryPlateaus("runtime-RC known arena list call result", knownArenaCallSamples);
         AssertMemoryPlateaus("runtime-RC borrowed list scope result", scopeSamples);
+        AssertMemoryPlateaus("runtime-RC transferred list payload", transferredPayloadSamples);
     }
 
     [Test]
@@ -3148,9 +3155,55 @@ public sealed class LinuxBackendCoverageTests
             instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue();
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
+        result.Stdout.ShouldBe("10,42,30,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_should_transfer_runtime_managed_match_payload_before_parent_drop()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            type Box =
+                | First(List(Int))
+                | Second(List(Int))
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive show xs =
+                match xs with
+                    | [] -> ""
+                    | h :: t -> Ashes.Text.fromInt(h) + "," + show(t)
+
+            let box = (let inner = First(setAt(1)(42)([10, 20, 30])) in inner)
+            let values = match box with | First(items) -> items | Second(items) -> items
+            Ashes.IO.print(show(values))
+            """;
+
+        IrProgram program = LowerProgram(source);
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        AllInstructions(program).Any(instruction =>
+            instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue(
+                "A shared parent must duplicate the transferred child before decrementing the parent.");
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
         result.Stdout.ShouldBe("10,42,30,\n");
     }
 
@@ -5705,6 +5758,24 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let result = choose([40, 2])
                     in match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcTransferredListPayloadMemoryProgram(int iterations)
+        => $$"""
+            type Box =
+                | First(List(Int))
+                | Second(List(Int))
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let box = (let inner = First([40, 2]) in inner) in
+                    let values = match box with | First(items) -> items | Second(items) -> items in
+                    match values with
                         | [] -> loop(n - 1)(total)
                         | head :: _ -> loop(n - 1)(total + head)
 

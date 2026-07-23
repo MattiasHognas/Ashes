@@ -579,6 +579,33 @@ public sealed partial class Lowering
         }
     }
 
+    private int EmitRuntimeManagedParentFieldTransfer(OwnershipInfo parent, int childTemp)
+    {
+        int parentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(parentTemp, parent.Slot));
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, childTemp));
+
+        int uniqueTemp = NewTemp();
+        string sharedLabel = NewLabel("rc_transfer_child_shared");
+        string transferredLabel = NewLabel("rc_transfer_child");
+        Emit(new IrInst.RcIsUnique(uniqueTemp, parentTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        Emit(new IrInst.Jump(transferredLabel));
+        Emit(new IrInst.Label(sharedLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, childTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
+        Emit(new IrInst.Label(transferredLabel));
+
+        Emit(new IrInst.RcDrop(parentTemp, parent.TypeName, parent.Slot, RuntimeManaged: true));
+        parent.ReleaseKind = ResourceReleaseKind.AutoDropped;
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        _runtimeManagedResultTemps.Add(resultTemp);
+        return resultTemp;
+    }
+
     /// <summary>
     /// Emits a constructor-specialized recursive drop. Child ownership is released only when the
     /// parent is unique; a shared parent merely decrements its own count and retains its children.

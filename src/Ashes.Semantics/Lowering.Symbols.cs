@@ -628,6 +628,10 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManagedCandidate));
         }
+        if (runtimeManagedCandidate)
+        {
+            _runtimeManagedResultTemps.Add(ptrTemp);
+        }
         return (ptrTemp, resultType);
     }
 
@@ -705,6 +709,10 @@ public sealed partial class Lowering
         {
             int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp);
             Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
+        }
+        if (runtimeManagedCandidate)
+        {
+            _runtimeManagedResultTemps.Add(ptrTemp);
         }
 
         return (ptrTemp, resultType);

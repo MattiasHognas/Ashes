@@ -654,6 +654,14 @@ result passes the 2,000/10,000/50,000 RSS profile, and the complete compiler sui
 conservative paths. The remaining non-runtime emitter work is TCO relocation and closure graph
 normalization, plus precise field transfer and the final emitter census.
 
+Runtime-managed match payload transfer is now field-aware. A unique parent relinquishes the selected
+child and frees only its own cell; a shared parent first `dup`s the selected child, then decrements the
+parent so the shared graph retains its original ownership. The transferred child remains runtime-owned
+through the match result and is released by its eventual lexical or TCO consumer. Both unique/shared
+IR paths are covered, the transferred `List(Int)` workload plateaus at 2,000/10,000/50,000 iterations,
+and all 1,625 compiler tests pass. This removes the parent-leak workaround from the blocker list;
+TCO relocation, closure graph normalization, and the final emitter census remain.
+
 Deliverables:
 
 - Re-read the RC Perceus paper against the completed implementation and record any intentional

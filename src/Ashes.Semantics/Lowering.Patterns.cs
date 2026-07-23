@@ -539,8 +539,8 @@ public sealed partial class Lowering
                 Unify(resultType, bodyType);
             }
         }
+        bodyTemp = TransferDirectRuntimeManagedMatchResult(cases[i].Body, bodyTemp);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
-        MarkDirectRuntimeManagedMatchResultMoved(cases[i].Body);
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
         if (armFinalTemp != bodyTemp)
         {
@@ -895,7 +895,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void MarkDirectRuntimeManagedMatchResultMoved(Expr body)
+    private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp)
     {
         Expr result = body;
         while (result is Expr.Let let)
@@ -904,11 +904,12 @@ public sealed partial class Lowering
         }
 
         if (result is Expr.Var variable
-            && ResolveOwnershipAlias(variable.Name).StartsWith("$match_rc_", StringComparison.Ordinal)
             && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false } owner)
         {
-            owner.ReleaseKind = ResourceReleaseKind.Moved;
+            return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
         }
+
+        return bodyTemp;
     }
 
     /// <summary>
