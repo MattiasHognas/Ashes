@@ -2785,6 +2785,11 @@ public sealed class LinuxBackendCoverageTests
             LowerProgram(BuildRuntimeRcNestedListTcoMemoryProgram(1)),
             IrInst.ListHeadCopyKind.InnerList,
             "nested-list");
+        IrProgram transferProbe = LowerProgram(BuildRuntimeRcListPatternTransferMemoryProgram(1));
+        AllInstructions(transferProbe).Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
 
         List<MemoryExecutionResult> stringSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcStringHeadListTcoMemoryProgram,
@@ -2792,9 +2797,13 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> nestedSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcNestedListTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> transferSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcListPatternTransferMemoryProgram,
+            outputPerIteration: 4).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
+        AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
     }
 
     [Test]
@@ -6931,6 +6940,18 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(limit)([n] :: values)
 
             Ashes.IO.print(loop({{iterations}})({{iterations}})([]))
+            """;
+
+    private static string BuildRuntimeRcListPatternTransferMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop : Int -> Int -> List(Str) -> Str -> Int = given n -> given total -> given values -> given current ->
+                if n <= 0 then total
+                else
+                    match values with
+                        | [] -> loop(n - 1)(total + 4)(["next"])(current)
+                        | head :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head))(["next"])(head)
+
+            Ashes.IO.print(loop({{iterations}})(0)(["seed"])("initial"))
             """;
 
     private static string BuildLegacyArenaStringMemoryProgram(int iterations)

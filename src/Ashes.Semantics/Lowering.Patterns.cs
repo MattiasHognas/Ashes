@@ -855,6 +855,8 @@ public sealed partial class Lowering
             return;
         }
 
+        TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
+
         string? ownerName = null;
         if (matchValue is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { RuntimeManaged: true })
@@ -892,6 +894,38 @@ public sealed partial class Lowering
             {
                 _ownershipAliases[bindingName] = ownerName;
             }
+        }
+    }
+
+    private void TrackRuntimeManagedTcoListPatternAliases(
+        Expr matchValue,
+        TypeRef valueType,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        if (matchValue is not Expr.Var variable
+            || Prune(valueType) is not TypeRef.TList
+            || Lookup(variable.Name) is not Binding.Local parent
+            || _tcoCtx?.RuntimeManagedParamSlots.Contains(parent.Slot) != true
+            || !_tcoCtx.RuntimeManagedParamActiveSlots.TryGetValue(parent.Slot, out int activeSlot))
+        {
+            return;
+        }
+
+        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        {
+            TypeRef payloadType = Prune(bindingType);
+            if (CanArenaReset(payloadType)
+                || Lookup(bindingName) is not Binding.Local payload)
+            {
+                continue;
+            }
+
+            _runtimeManagedTcoPatternAliases[bindingName] = new RuntimeManagedTcoPatternAlias(
+                parent.Slot,
+                activeSlot,
+                Prune(valueType),
+                payload.Slot,
+                payloadType);
         }
     }
 

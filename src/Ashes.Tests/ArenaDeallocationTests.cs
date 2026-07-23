@@ -619,6 +619,32 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_list_pattern_payload_transfer_consumes_parent_once()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive loop : Int -> List(Str) -> Str -> Int = given n -> given values -> given current ->
+                if n == 0 then Ashes.Text.byteLength(current)
+                else
+                    match values with
+                        | [] -> loop (n - 1) ["next"] current
+                        | head :: _ -> loop (n - 1) ["next"] head
+            in loop 5 ["seed"] "initial"
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The escaping String payload needs its own reference before the list parent is released.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_drop_inactive", StringComparison.Ordinal)).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_drop_inactive", StringComparison.Ordinal)).ShouldBeTrue();
+    }
+
+    [Test]
     public void TCO_loop_with_fresh_closure_arg_uses_runtime_ownership()
     {
         IrProgram ir = LowerProgram(

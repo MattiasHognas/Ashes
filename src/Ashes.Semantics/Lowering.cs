@@ -151,6 +151,15 @@ public sealed partial class Lowering
     // This prevents double-Drop and propagates diagnostics through aliases.
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
+    private sealed record RuntimeManagedTcoPatternAlias(
+        int ParentSlot,
+        int ParentActiveSlot,
+        TypeRef ParentType,
+        int AliasSlot,
+        TypeRef AliasType);
+    private readonly Dictionary<string, RuntimeManagedTcoPatternAlias> _runtimeManagedTcoPatternAliases =
+        new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeRuntimeManagedTcoPatternAliases = new(StringComparer.Ordinal);
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
@@ -1938,7 +1947,8 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        if (ownerInfo is { RuntimeManaged: true }
+        if (_activeRuntimeManagedTcoPatternAliases.Contains(v.Name)
+            || ownerInfo is { RuntimeManaged: true }
             || b is Binding.Local runtimeLocal
                 && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true)
         {
@@ -4602,6 +4612,8 @@ public sealed partial class Lowering
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
         HashSet<int> RuntimeManagedResultTemps,
+        Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
+        HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
         Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
         Dictionary<int, Expr> LetBindingValues);
@@ -4645,6 +4657,8 @@ public sealed partial class Lowering
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
+            SaveAndClearRuntimeManagedTcoPatternAliases();
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
         var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
@@ -4662,8 +4676,23 @@ public sealed partial class Lowering
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
-            savedRuntimeManagedResultTemps, savedKnownFunctionLabelsBySlot,
+            savedRuntimeManagedResultTemps, savedRuntimeManagedTcoPatternAliases,
+            savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
             savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
+    }
+
+    private (Dictionary<string, RuntimeManagedTcoPatternAlias> Aliases, HashSet<string> ActiveAliases)
+        SaveAndClearRuntimeManagedTcoPatternAliases()
+    {
+        var aliases = new Dictionary<string, RuntimeManagedTcoPatternAlias>(
+            _runtimeManagedTcoPatternAliases,
+            StringComparer.Ordinal);
+        var activeAliases = new HashSet<string>(
+            _activeRuntimeManagedTcoPatternAliases,
+            StringComparer.Ordinal);
+        _runtimeManagedTcoPatternAliases.Clear();
+        _activeRuntimeManagedTcoPatternAliases.Clear();
+        return (aliases, activeAliases);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -5465,11 +5494,27 @@ public sealed partial class Lowering
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         _runtimeManagedResultTemps.Clear();
         foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
+        RestoreRuntimeManagedTcoPatternAliases(frame);
         RestoreKnownFunctionLabels(frame);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
         foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+    }
+
+    private void RestoreRuntimeManagedTcoPatternAliases(LowerLambdaCoreFrame frame)
+    {
+        _runtimeManagedTcoPatternAliases.Clear();
+        foreach (var pair in frame.RuntimeManagedTcoPatternAliases)
+        {
+            _runtimeManagedTcoPatternAliases[pair.Key] = pair.Value;
+        }
+
+        _activeRuntimeManagedTcoPatternAliases.Clear();
+        foreach (string alias in frame.ActiveRuntimeManagedTcoPatternAliases)
+        {
+            _activeRuntimeManagedTcoPatternAliases.Add(alias);
+        }
     }
 
     private void RestoreKnownFunctionLabels(LowerLambdaCoreFrame frame)
@@ -5847,7 +5892,12 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
+        List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(collectedArgs);
         var (newArgTemps, newArgTypes) = LowerCallTcoEvalArgs(tco, collectedArgs);
+        foreach (string alias in transferredPatternAliases)
+        {
+            _activeRuntimeManagedTcoPatternAliases.Remove(alias);
+        }
         LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
         int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
@@ -5897,6 +5947,69 @@ public sealed partial class Lowering
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
         return (dummy, NewTypeVar());
+    }
+
+    private List<string> LowerCallTcoTransferPatternAliases(IReadOnlyList<Expr> collectedArgs)
+    {
+        List<(string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> transfers = [];
+        foreach ((string name, RuntimeManagedTcoPatternAlias alias) in _runtimeManagedTcoPatternAliases)
+        {
+            int uses = collectedArgs.Sum(argument => CountNameOccurrences(argument, name));
+            if (uses > 0)
+            {
+                transfers.Add((name, alias, uses));
+            }
+        }
+
+        foreach (IGrouping<int, (string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> group in
+            transfers.GroupBy(transfer => transfer.Alias.ParentSlot))
+        {
+            foreach ((string name, RuntimeManagedTcoPatternAlias alias, int uses) in group)
+            {
+                LowerCallTcoDuplicatePatternAlias(name, alias, uses);
+            }
+
+            RuntimeManagedTcoPatternAlias parent = group.First().Alias;
+            LowerCallTcoConsumePatternParent(parent);
+        }
+
+        return transfers.Select(transfer => transfer.Name).ToList();
+    }
+
+    private void LowerCallTcoDuplicatePatternAlias(
+        string name,
+        RuntimeManagedTcoPatternAlias alias,
+        int uses)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, alias.AliasSlot));
+        int duplicatedTemp = valueTemp;
+        for (int use = 0; use < uses; use++)
+        {
+            duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
+        }
+
+        Emit(new IrInst.StoreLocal(alias.AliasSlot, duplicatedTemp));
+        _activeRuntimeManagedTcoPatternAliases.Add(name);
+    }
+
+    private void LowerCallTcoConsumePatternParent(RuntimeManagedTcoPatternAlias parent)
+    {
+        int parentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(parentTemp, parent.ParentSlot));
+        if (parent.ParentType is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(parentTemp, list.Element);
+        }
+        else
+        {
+            throw new InvalidOperationException("Unsupported runtime-managed TCO pattern parent.");
+        }
+
+        int inactiveTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+        Emit(new IrInst.StoreLocal(parent.ParentActiveSlot, inactiveTemp));
     }
 
     private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)

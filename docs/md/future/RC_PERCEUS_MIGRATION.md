@@ -739,6 +739,12 @@ implemented. Runtime-managed non-closure TCO parameters now carry an explicit ac
 initialized when entry normalization succeeds and consulted by both back-edge and function-exit
 drops. This is the required state for a match arm to consume a parent locally, clear the slot, and
 avoid a later double drop; closure parameters retain their separate first-replacement active flag.
+The first list-pattern transfer now uses that state: each pointer payload escaping through a TCO
+self-call receives one `dup` per use, the old list graph is dropped exactly once, its active bit is
+cleared, and payload loads are marked runtime-owned while replacement arguments are built. The
+replacement reset reactivates the new parameters. A String-head transfer loop has correct output and
+plateauing RSS at 2,000/10,000/50,000 iterations. General tuple/ADT-head admission still waits for
+the corresponding non-TCO/cross-call payload-transfer audit exposed by `buildChunks`.
 
 Deliverables:
 
