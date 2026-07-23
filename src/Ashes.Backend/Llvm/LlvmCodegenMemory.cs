@@ -1782,10 +1782,13 @@ internal static partial class LlvmCodegen
     /// <summary>
     /// Copies a closure ({code, env, packed env_size/result ownership, dropper}) and its environment
     /// out of the arena. If the env pointer is non-nil, allocates a fresh env of
-    /// env_size bytes and memcpy's it, then allocates a fresh 24-byte closure and
-    /// stores the new env pointer.
+    /// env_size bytes and either invokes its field-aware normalizer (runtime-managed mode) or
+    /// memcpy's it, then allocates a fresh closure and stores the new env pointer.
     /// </summary>
-    private static LlvmValueHandle EmitCopyOutClosure(LlvmCodegenState state, int srcTemp)
+    private static LlvmValueHandle EmitCopyOutClosure(
+        LlvmCodegenState state,
+        int srcTemp,
+        bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
@@ -1797,37 +1800,109 @@ internal static partial class LlvmCodegen
         LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
             LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "copy_closure_env_size_masked");
         LlvmValueHandle dropper = LoadMemory(state, srcPtr, 24, "copy_closure_dropper");
-
-        // Alloca for the new env pointer (nil path: keep 0; non-nil path: new alloc)
-        LlvmValueHandle newEnvSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_env_slot");
-        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), newEnvSlot);
-
-        LlvmValueHandle envIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            envPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_env_nil");
-        var envCopyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_closure_env_copy");
-        var envMergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_closure_env_merge");
-        LlvmApi.BuildCondBr(builder, envIsNil, envMergeBlock, envCopyBlock);
-
-        // Non-nil env: allocate and copy
-        LlvmApi.PositionBuilderAtEnd(builder, envCopyBlock);
-        LlvmValueHandle newEnv = EmitAllocDynamic(state, envSize);
-        LlvmValueHandle envSrcBytes = LlvmApi.BuildIntToPtr(builder, envPtr, state.I8Ptr, "copy_closure_env_src");
-        LlvmValueHandle envDestBytes = LlvmApi.BuildIntToPtr(builder, newEnv, state.I8Ptr, "copy_closure_env_dest");
-        EmitMoveBytes(state, envDestBytes, envSrcBytes, envSize, "copy_closure_env");
-        LlvmApi.BuildStore(builder, newEnv, newEnvSlot);
-        LlvmApi.BuildBr(builder, envMergeBlock);
-
-        // Merge: allocate new closure struct
-        LlvmApi.PositionBuilderAtEnd(builder, envMergeBlock);
-        LlvmValueHandle newEnvPtr = LlvmApi.BuildLoad2(builder, state.I64, newEnvSlot, "copy_closure_new_env");
+        LlvmValueHandle newEnvPtr = EmitCopyOutClosureEnvironment(
+            state, code, envPtr, envSize, dropper, runtimeManaged, out LlvmValueHandle newDropper);
         LlvmValueHandle closureSize = LlvmApi.ConstInt(state.I64, ClosureSizeBytes, 0);
-        LlvmValueHandle newClosure = EmitAllocDynamic(state, closureSize);
+        LlvmValueHandle newClosure = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, closureSize, "copy_closure_rc")
+            : EmitAllocDynamic(state, closureSize);
         StoreMemory(state, newClosure, 0, code, "copy_closure_store_code");
         StoreMemory(state, newClosure, 8, newEnvPtr, "copy_closure_store_env");
         StoreMemory(state, newClosure, 16, packedEnvironmentSize, "copy_closure_store_env_size");
-        StoreMemory(state, newClosure, 24, dropper, "copy_closure_store_dropper");
+        StoreMemory(state, newClosure, 24, newDropper, "copy_closure_store_dropper");
 
         return newClosure;
+    }
+
+    private static LlvmValueHandle EmitCopyOutClosureEnvironment(
+        LlvmCodegenState state,
+        LlvmValueHandle code,
+        LlvmValueHandle envPtr,
+        LlvmValueHandle envSize,
+        LlvmValueHandle dropper,
+        bool runtimeManaged,
+        out LlvmValueHandle newDropper)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle envSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_env_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), envSlot);
+        LlvmValueHandle dropperSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_dropper_slot");
+        LlvmApi.BuildStore(builder, dropper, dropperSlot);
+        LlvmValueHandle envIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            envPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_env_nil");
+        LlvmBasicBlockHandle copyBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "copy_closure_env_copy");
+        LlvmBasicBlockHandle mergeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "copy_closure_env_merge");
+        LlvmApi.BuildCondBr(builder, envIsNil, mergeBlock, copyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, copyBlock);
+        LlvmValueHandle newEnv = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, envSize, "copy_closure_rc_env")
+            : EmitAllocDynamic(state, envSize);
+        EmitNormalizeOrCopyClosureEnvironment(
+            state, code, envPtr, newEnv, envSize, dropperSlot, runtimeManaged);
+        LlvmApi.BuildStore(builder, newEnv, envSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        newDropper = LlvmApi.BuildLoad2(builder, state.I64, dropperSlot, "copy_closure_new_dropper");
+        return LlvmApi.BuildLoad2(builder, state.I64, envSlot, "copy_closure_new_env");
+    }
+
+    private static void EmitNormalizeOrCopyClosureEnvironment(
+        LlvmCodegenState state,
+        LlvmValueHandle code,
+        LlvmValueHandle source,
+        LlvmValueHandle destination,
+        LlvmValueHandle size,
+        LlvmValueHandle dropperSlot,
+        bool runtimeManaged)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle sourceBytes = LlvmApi.BuildIntToPtr(builder, source, state.I8Ptr, "copy_closure_env_src");
+        LlvmValueHandle destinationBytes = LlvmApi.BuildIntToPtr(builder, destination, state.I8Ptr, "copy_closure_env_dest");
+        if (!runtimeManaged)
+        {
+            EmitMoveBytes(state, destinationBytes, sourceBytes, size, "copy_closure_env");
+            return;
+        }
+
+        LlvmBasicBlockHandle rawCopyBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "copy_closure_raw_env");
+        LlvmBasicBlockHandle copiedBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "copy_closure_env_copied");
+        const string normalizerSuffix = "$env_normalize";
+        LlvmTypeHandle normalizerType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64]);
+        foreach ((string label, LlvmValueHandle normalizerFunction) in state.LiftedFunctions
+            .Where(pair => pair.Key.EndsWith(normalizerSuffix, StringComparison.Ordinal)))
+        {
+            string closureLabel = label[..^normalizerSuffix.Length];
+            if (!state.LiftedFunctions.TryGetValue(closureLabel, out LlvmValueHandle closureFunction))
+            {
+                continue;
+            }
+
+            LlvmBasicBlockHandle normalizeBlock = LlvmApi.AppendBasicBlockInContext(
+                state.Target.Context, state.Function, "copy_closure_normalize_env");
+            LlvmBasicBlockHandle nextBlock = LlvmApi.AppendBasicBlockInContext(
+                state.Target.Context, state.Function, "copy_closure_check_normalizer");
+            LlvmValueHandle closureCode = LlvmApi.BuildPtrToInt(builder, closureFunction, state.I64,
+                "copy_closure_known_code");
+            LlvmValueHandle matches = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+                code, closureCode, "copy_closure_has_normalizer");
+            LlvmApi.BuildCondBr(builder, matches, normalizeBlock, nextBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, normalizeBlock);
+            LlvmValueHandle normalizedDropper = LlvmApi.BuildCall2(builder, normalizerType,
+                normalizerFunction, [source, destination], "copy_closure_normalizer_call");
+            LlvmApi.BuildStore(builder, normalizedDropper, dropperSlot);
+            LlvmApi.BuildBr(builder, copiedBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, nextBlock);
+        }
+
+        LlvmApi.BuildBr(builder, rawCopyBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, rawCopyBlock);
+        EmitMoveBytes(state, destinationBytes, sourceBytes, size, "copy_closure_env");
+        LlvmApi.BuildBr(builder, copiedBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, copiedBlock);
     }
 
     /// <summary>

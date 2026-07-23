@@ -5275,7 +5275,7 @@ public sealed partial class Lowering
 
     private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
     {
-        // Produce closure object: alloc 32 bytes and store code, env, packed env size, and dropper.
+        // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
         bool returnsRuntimeManaged = !_usesAsync && CapabilityGlobalCount == 0
@@ -5330,6 +5330,8 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadFuncAddr(dropperTemp, dropperLabel));
             Emit(new IrInst.StoreMemOffset(closureTemp, 24, dropperTemp));
         }
+
+        AttachRuntimeManagedClosureNormalizer(label, captures);
 
         return closureTemp;
     }

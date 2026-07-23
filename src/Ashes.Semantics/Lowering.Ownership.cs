@@ -2448,6 +2448,96 @@ public sealed partial class Lowering
     private readonly HashSet<string> _adtCopierInProgress = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _closureDropperLabels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _runtimeManagedClosureDropperLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _runtimeManagedClosureNormalizerLabels = new(StringComparer.Ordinal);
+
+    private void AttachRuntimeManagedClosureNormalizer(string closureLabel, IReadOnlyList<string> captures)
+    {
+        List<(int EnvOffset, TypeRef Type)> normalizableCaptures = [];
+        for (int index = 0; index < captures.Count; index++)
+        {
+            Binding? capture = Lookup(captures[index]);
+            if (capture is null || !CanRuntimeNormalizeClosureCapture(capture.Type))
+            {
+                return;
+            }
+
+            normalizableCaptures.Add((index * 8, Prune(capture.Type)));
+        }
+
+        if (normalizableCaptures.Count == 0)
+        {
+            return;
+        }
+
+        SynthesizeRuntimeManagedClosureNormalizer(closureLabel, normalizableCaptures);
+    }
+
+    private bool CanRuntimeNormalizeClosureCapture(TypeRef type)
+    {
+        TypeRef captureType = Prune(type);
+        return captureType switch
+        {
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+            TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && (CanRuntimeManageAdt(named) || CanRuntimeManageOwnedChildAdt(named)),
+            _ => false,
+        };
+    }
+
+    private string SynthesizeRuntimeManagedClosureNormalizer(
+        string closureLabel,
+        List<(int EnvOffset, TypeRef Type)> captures)
+    {
+        string key = closureLabel;
+        if (_runtimeManagedClosureNormalizerLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        List<(int EnvOffset, TypeRef Type)> ownedCaptures = captures
+            .Where(capture => !CanArenaReset(Prune(capture.Type)))
+            .ToList();
+        string? dropperLabel = ownedCaptures.Count > 0
+            ? SynthesizeRuntimeManagedClosureDropper(ownedCaptures)
+            : null;
+        string label = closureLabel + "$env_normalize";
+        _runtimeManagedClosureNormalizerLabels[key] = label;
+        HashSet<int> savedRuntimeManagedTemps = new(_runtimeManagedResultTemps);
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+
+        int sourceEnvSlot = NewLocal();
+        int targetEnvSlot = NewLocal();
+        int sourceEnvTemp = NewTemp();
+        int targetEnvTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(sourceEnvTemp, sourceEnvSlot));
+        Emit(new IrInst.LoadLocal(targetEnvTemp, targetEnvSlot));
+        foreach ((int envOffset, TypeRef type) in captures)
+        {
+            int capturedTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(capturedTemp, sourceEnvTemp, envOffset));
+            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(capturedTemp, type);
+            Emit(new IrInst.StoreMemOffset(targetEnvTemp, envOffset, normalizedTemp));
+        }
+
+        int resultTemp = NewTemp();
+        if (dropperLabel is null)
+        {
+            Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        }
+        else
+        {
+            Emit(new IrInst.LoadFuncAddr(resultTemp, dropperLabel));
+        }
+        Emit(new IrInst.Return(resultTemp));
+        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        RestoreEnclosingBodyState(saved);
+        _runtimeManagedResultTemps.Clear();
+        _runtimeManagedResultTemps.UnionWith(savedRuntimeManagedTemps);
+        return label;
+    }
 
     private string SynthesizeRuntimeManagedClosureDropper(List<(int EnvOffset, TypeRef Type)> captures)
     {

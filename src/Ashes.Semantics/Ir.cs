@@ -561,13 +561,13 @@ public abstract record IrInst
     ) : IrInst;
 
     /// <summary>
-    /// Copies a closure (24 bytes: {code:i64, env:i64, env_size:i64}) and its
+    /// Copies a closure ({code, env, packed env size, dropper}) and its
     /// environment out of the arena to a fresh allocation. Reads the env_size field
     /// from the source closure at offset 16, allocates env_size bytes for the env
     /// copy, then allocates the closure payload. Relinks the env pointer
     /// in the new closure to point to the new env copy.
     /// <para>
-    /// If the env pointer is 0 (no captures), only the 24-byte closure struct is
+    /// If the env pointer is 0 (no captures), only the closure struct is
     /// copied (no env allocation needed).
     /// </para>
     /// <para>
@@ -575,7 +575,11 @@ public abstract record IrInst
     /// <see cref="ReclaimArenaChunks"/>, so old arena chunks are still readable.
     /// </para>
     /// </summary>
-    public sealed record CopyOutClosure(int DestTemp, int SrcTemp) : IrInst;
+    public sealed record CopyOutClosure(
+        int DestTemp,
+        int SrcTemp,
+        bool RuntimeManaged = false
+    ) : IrInst;
 
     /// <summary>
     /// TCO-specific: copies a single cons cell (16 bytes) out of the arena and also

@@ -699,7 +699,14 @@ Pointer-bearing multi-constructor ADTs now dispatch on the source tag, allocate 
 layout size, recursively normalize the selected fields, and use the synthesized tag-aware dropper;
 the nullary/owned-child variant profile plateaus. Runtime-managed TCO params now bypass the superseded
 static-reuse defensive deep copy, removing its redundant arena String/list staging; the probe contains
-no non-runtime relocation. Closure graph normalization and the final emitter census remain.
+no non-runtime relocation. Closure values now carry a separate optional environment-normalizer
+descriptor alongside their destructor. For supported capture layouts the synthesized normalizer
+deep-promotes every captured ordinary graph and returns the matching RC dropper for the destination;
+resource, nested-function, and unresolved capture layouts keep a null descriptor. Runtime-managed
+`CopyOutClosure` is in place; normalizers are shared per lifted code label so the established
+32-byte closure layout does not gain per-value metadata or cross an additional arena-chunk boundary.
+Opaque TCO closure sites remain conservative until the next slice gates them by descriptor.
+Closure relocation enablement and the final emitter census remain.
 
 Deliverables:
 
@@ -846,7 +853,9 @@ Current files:
 Current state:
 
 - ADTs are payload pointers with tag at offset `0` and fields at `8 + i * 8`.
-- Closures are `{code, env, env_size, dropper}` with resource-dropper behavior.
+- Closures are `{code, env, packed env_size/result ownership, dropper}`. The dropper deterministically
+  releases moved resources or RC captures; independent optional environment normalizers are shared
+  metadata keyed by the lifted closure code label, avoiding per-closure layout growth.
 - Strings/bytes/bigints are self-contained buffers without a common RC header.
 - Arena save/restore/reclaim is embedded in backend memory helpers.
 

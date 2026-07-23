@@ -1013,9 +1013,19 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void CopyOutClosure_instruction_has_correct_fields()
     {
-        var inst = new IrInst.CopyOutClosure(7, 3);
+        var inst = new IrInst.CopyOutClosure(7, 3, RuntimeManaged: true);
         inst.DestTemp.ShouldBe(7);
         inst.SrcTemp.ShouldBe(3);
+        inst.RuntimeManaged.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Closure_with_supported_capture_graph_emits_environment_normalizer()
+    {
+        IrProgram ir = LowerProgram(
+            "let make source = given x -> Ashes.Text.byteLength(source) + x in make(\"value\")");
+        ir.Functions.Any(function =>
+            function.Label.EndsWith("$env_normalize", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
     [Test]
