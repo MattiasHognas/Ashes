@@ -442,6 +442,73 @@ correct output through N=1,000 and flat peak RSS at roughly 8.2 MB. The result i
 recovery, not closure: it remains well above the approximately 2.00-second pre-migration control,
 so this ledger item stays open pending another profile of the remaining call/RC overhead.
 
+#### Handoff after the predecessor-reuse slice
+
+The accepted implementation is commit `df99d07` on branch `rc-perceus`, pushed to the remote branch
+of the same name. It is deliberately narrow:
+
+- the successor must be a fresh rebuilt `List(record)` TCO argument;
+- the record must have one constructor and every field must be an inline copy type;
+- an active runtime-owned predecessor must exist;
+- a complete read-only preflight checks equal list length plus uniqueness of every predecessor cons
+  cell and record head before any mutation;
+- success copies record fields into the predecessor heads, preserves the old spine and RC headers,
+  and transfers that graph to the successor slot;
+- any failed condition uses the prior deep-normalize and recursive-drop path. Pointer-bearing
+  records and non-fresh/growing lists never enter the optimization.
+
+The focused `ReuseTokenTests` class (17 tests), the pointer-bearing exclusion in
+`ArenaDeallocationTests`, and `tests/reuse_list_record_composition.ash` pass. `just ci-quick` builds
+the complete solution cleanly. Native n-body correctness was checked at N=0, 1, 2, 3, 10, and 1,000;
+the N=1,000 result remains `-0.169075164` / `-0.169087605`. The accepted interleaved N=5,000,000
+measurements are 3.32–3.46 seconds at approximately 8.2 MB peak RSS, versus 3.63–3.74 seconds for
+the preceding commit and approximately 2.00 seconds for the pre-migration control.
+
+Three follow-up experiments were measured and rejected; none remains in the worktree:
+
+1. Constructing `updateVel`'s fresh result directly in runtime RC was correct through N=1,000 but
+   took 3.76, 3.76, and 3.93 seconds at N=5,000,000. Replacing arena construction plus normalization
+   with RC construction does not remove the dominant work.
+2. Resolving captured-call runtime-argument ownership flags from the current compile-time label
+   registry was correct but took about 4.02 seconds, interleaved against 3.63–3.66 seconds. The
+   dynamic closure ownership bit currently enables a cheaper lifetime route that the registry does
+   not faithfully expose; do not simply replace it with the present static lookup.
+3. Removing the full uniqueness preflight did not improve time (3.35–3.45 seconds versus
+   3.37–3.40 seconds). Replacing seven scalar record-field transfers with one 64-byte
+   `CopyFixedInto` was worse (3.62–3.63 seconds versus 3.35–3.36 seconds): the freestanding backend
+   lowered the fixed copy to its byte-wise local `memcpy`. Keep both the preflight and scalar field
+   stores unless backend copy lowering changes first.
+
+Symbolized `-O2 -g` comparison gives the next investigator a bounded starting point. The current
+TCO `run` body (`lambda_126`) is 1,931 machine-code bytes / 473 disassembled instructions versus
+1,650 bytes / 404 instructions for the pre-migration `lambda_127`. Current `updateVel`'s inner body
+(`lambda_110`) is close to the old one (808 versus 776 bytes), while the current
+`updatePos__reuse` inner body (`lambda_115`) is substantially smaller than the old normal
+`updatePos` inner body (`lambda_114`): 246 versus 632 bytes. The accepted reuse therefore removed
+the second rebuild as intended; the remaining 1.6–1.7x gap is not explained by `updatePos` code
+size, RC allocation, the uniqueness walk, or scalar field-copy selection.
+
+The next safe slice should profile the saturated captured `updateVel` application and its
+argument-retention/drop path with instruction sampling or explicit counters if hardware `perf`
+becomes available (`perf` is not installed in the current environment). A more structural endpoint
+would avoid materializing the five-record scratch result and then copying its fields into the old
+graph, but it must preserve `updateVel`'s alias rule: every acceleration reads `allBodies`, so no old
+body may be overwritten while a later recursive acceleration can still observe it. A compiler
+specialization would need an explicit two-phase proof or scratch-value phase followed by a
+uniqueness-proven overwrite; broadening ordinary reuse or treating `remaining` as independently
+unique is unsound.
+
+Before closing this item, repeat all of these gates:
+
+- native N=0/1/2/3 probes before any large run (the earlier false-RC attempt corrupted N=2 and
+  crashed N=3);
+- byte-identical N=1,000 and standard N=50,000,000 output;
+- at least three interleaved N=5,000,000 timing runs against both `df99d07` and the pre-migration
+  control;
+- increasing and repeated workloads with a flat RSS slope, not only one peak-RSS sample;
+- focused ownership/reuse/arena tests, the native composition regression, `just ci-quick`, and the
+  final full challenge sweep when the performance item is actually resolved.
+
 ## Remaining benchmark gaps outside the RC regression sweep
 
 These issues predate the RC Perceus migration. They remain relevant, but are not regressions against
