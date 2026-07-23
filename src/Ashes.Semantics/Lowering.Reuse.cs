@@ -264,6 +264,72 @@ public sealed partial class Lowering
             (index, argument) => argument is Expr.Cons { Tail: Expr.Var tail }
                 && string.Equals(tail.Name, paramNames[index], StringComparison.Ordinal));
 
+    private static HashSet<string> CollectConsumedListTailParams(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName)
+    {
+        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
+        bool sawSelfCall = false;
+
+        void Walk(Expr expression, IReadOnlyDictionary<string, string> tailOwners)
+        {
+            switch (expression)
+            {
+                case Expr.If iff:
+                    Walk(iff.Then, tailOwners);
+                    Walk(iff.Else, tailOwners);
+                    return;
+                case Expr.Match match:
+                    foreach (MatchCase matchCase in match.Cases)
+                    {
+                        var armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
+                        if (match.Value is Expr.Var source
+                            && paramNames.Contains(source.Name, StringComparer.Ordinal)
+                            && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
+                        {
+                            armTailOwners[tail.Name] = source.Name;
+                        }
+                        Walk(matchCase.Body, armTailOwners);
+                    }
+                    return;
+                case Expr.Let let:
+                    Walk(let.Body, tailOwners);
+                    return;
+                case Expr.LetResult letResult:
+                    Walk(letResult.Body, tailOwners);
+                    return;
+                case Expr.LetRecursive letRecursive:
+                    Walk(letRecursive.Body, tailOwners);
+                    return;
+                case Expr.Call:
+                    var arguments = new List<Expr>();
+                    Expr root = CollectCallArgs(expression, arguments);
+                    if (root is not Expr.Var function
+                        || !string.Equals(function.Name, selfName, StringComparison.Ordinal)
+                        || arguments.Count != paramNames.Count)
+                    {
+                        return;
+                    }
+
+                    sawSelfCall = true;
+                    for (int i = 0; i < paramNames.Count; i++)
+                    {
+                        if (arguments[i] is not Expr.Var argument
+                            || !tailOwners.TryGetValue(argument.Name, out string? owner)
+                            || !string.Equals(owner, paramNames[i], StringComparison.Ordinal))
+                        {
+                            candidates.Remove(paramNames[i]);
+                        }
+                    }
+                    return;
+            }
+        }
+
+        Walk(body, new Dictionary<string, string>(StringComparer.Ordinal));
+        return sawSelfCall ? candidates : [];
+    }
+
     private static HashSet<string> CollectFreshClosureParams(
         Expr body,
         IReadOnlyList<string> paramNames,

@@ -745,6 +745,12 @@ cleared, and payload loads are marked runtime-owned while replacement arguments 
 replacement reset reactivates the new parameters. A String-head transfer loop has correct output and
 plateauing RSS at 2,000/10,000/50,000 iterations. General tuple/ADT-head admission still waits for
 the corresponding non-TCO/cross-call payload-transfer audit exposed by `buildChunks`.
+List parameters passed onward as a cons-pattern tail now have a separate consumed-tail fact. The
+payload transfer makes that tail an independent RC reference, so loops such as `List.reverse` can
+admit both the growing accumulator and shrinking input to one coherent runtime regime. They no
+longer fall back to an arena result that shares children with an RC input. The reverse IR contains
+runtime list normalization, payload `dup`/parent drops, and no legacy list relocation; the complete
+1BRC correctness and bounded-memory workload remains green.
 
 Deliverables:
 

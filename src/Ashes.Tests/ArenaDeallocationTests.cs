@@ -593,7 +593,7 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_loop_does_not_mix_runtime_and_arena_managed_heap_params()
+    public void TCO_loop_with_consumed_list_tail_keeps_one_runtime_regime()
     {
         IrProgram ir = LowerProgram(
             """
@@ -608,14 +608,19 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
             RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "An arena-threaded rest parameter must keep the whole TCO frame out of the RC reset regime.");
+        }).ShouldBeTrue(
+            "The consumed tail fact should admit both list parameters to one RC reset regime.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
             TypeName: "List",
             RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "The conservative frame must not emit RC drops for arena-owned parameters.");
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDup
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
+            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
 
     [Test]

@@ -56,6 +56,7 @@ public sealed partial class Lowering
         // separate ownership-transfer path instead.
         public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> AffineConsListParams { get; init; } = new(System.StringComparer.Ordinal);
+        public HashSet<string> ConsumedListTailParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> FreshClosureParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // True only while we are still descending the recursive binding's curried lambda chain

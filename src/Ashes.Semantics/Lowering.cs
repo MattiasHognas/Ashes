@@ -818,6 +818,7 @@ public sealed partial class Lowering
         bool[] PassThrough,
         bool[] SingleFreshCons,
         bool[] FreshListRebuild,
+        bool[] ConsumedListTail,
         bool[] StableAccArg,
         int[] OldRuntimeParamTemps,
         bool[] RuntimeManagedParams,
@@ -1093,6 +1094,7 @@ public sealed partial class Lowering
             TypeRef.TList list => TryGetRuntimeManagedListHeadCopy(list.Element, out _)
                 && (info.PassThrough[index]
                     || info.FreshListRebuild[index]
+                    || info.ConsumedListTail[index] && info.RuntimeManagedArgResults[index]
                     || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
             TypeRef.TFun => info.RuntimeManagedArgResults[index],
             _ => false,
@@ -4189,6 +4191,7 @@ public sealed partial class Lowering
                 LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
                 FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                ConsumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name),
                 FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
                 AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
             };
@@ -4908,6 +4911,8 @@ public sealed partial class Lowering
                 && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
             bool affineConsList = paramIndex >= 0
                 && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
+            bool consumedListTail = paramIndex >= 0
+                && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
             bool freshClosure = paramIndex >= 0
                 && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
             if (parameterType is TypeRef.TStr or TypeRef.TBigInt
@@ -4918,7 +4923,7 @@ public sealed partial class Lowering
                 || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageOwnedChildAdt(ownedAdt)
                 || parameterType is TypeRef.TList list
                     && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
-                    && (freshRebuiltList || affineConsList)
+                    && (freshRebuiltList || affineConsList || consumedListTail)
                 || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
@@ -6047,7 +6052,8 @@ public sealed partial class Lowering
                 || type is TypeRef.TList list
                     && TryGetRuntimeManagedListHeadCopy(list.Element, out _)
                     && (tco.FreshRebuiltListParams.Contains(name)
-                        || tco.AffineConsListParams.Contains(name));
+                        || tco.AffineConsListParams.Contains(name)
+                        || tco.ConsumedListTailParams.Contains(name));
             if (!supported
                 || _linearReuseNames.Contains(name)
                 || _linearSpecializationAccumulators.Contains(name)
@@ -6289,6 +6295,7 @@ public sealed partial class Lowering
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
+            tco.ParamNames.Select(tco.ConsumedListTailParams.Contains).ToArray(),
             facts.StableAccArg,
             oldRuntimeParamTemps,
             tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
