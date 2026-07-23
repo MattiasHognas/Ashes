@@ -637,6 +637,15 @@ Task/coroutine matches deliberately remain on their scheduler-owned arena path p
 publication. The remaining Phase 8 blockers are the non-runtime scope/call/TCO copy-outs and precise
 field-aware release when an RC parent is consumed but one payload is transferred.
 
+The next remediation slice removes ordinary synchronous call-boundary relocation for shallow values
+and supported lists: an arena result is now normalized into an RC allocation, its result temp carries
+runtime ownership, and lexical/TCO cleanup emits the matching recursive drop. A statically known
+arena `List(Int)` identity result plateaus across the same 2,000/10,000/50,000 RSS profile, and the
+full compiler suite remains green. Closure results still use their conservative arena treatment, and
+calls in async/coroutine or capability-bearing programs deliberately retain scheduler-owned arena
+behavior until shared publication is implemented. The remaining emitter blockers are therefore
+scope copy-out, TCO relocation, closure graph normalization, and the field-aware parent release above.
+
 Deliverables:
 
 - Re-read the RC Perceus paper against the completed implementation and record any intentional

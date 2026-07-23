@@ -2157,6 +2157,10 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(aggregateProbe).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true }).ShouldBeTrue(
                 "An anonymous RC aggregate call result must be dropped after its scalar match result is formed.");
+        IrProgram knownArenaCallProbe = LowerProgram(BuildRuntimeRcKnownArenaListCallMemoryProgram(1));
+        AllInstructions(knownArenaCallProbe).Any(instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue(
+                "A statically known arena list result should normalize to RC at the call boundary.");
 
         List<MemoryExecutionResult> copySamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcHigherOrderListResultMemoryProgram,
@@ -2170,11 +2174,15 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> aggregateSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcNormalizedListAdtResultMemoryProgram,
             outputPerIteration: 10).ConfigureAwait(false);
+        List<MemoryExecutionResult> knownArenaCallSamples = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcKnownArenaListCallMemoryProgram,
+            outputPerIteration: 40).ConfigureAwait(false);
 
         AssertMemoryPlateaus("runtime-RC higher-order copy-list result", copySamples);
         AssertMemoryPlateaus("runtime-RC higher-order String-list result", stringSamples);
         AssertMemoryPlateaus("runtime-RC higher-order nested-list result", nestedSamples);
         AssertMemoryPlateaus("runtime-RC normalized list ADT result", aggregateSamples);
+        AssertMemoryPlateaus("runtime-RC known arena list call result", knownArenaCallSamples);
     }
 
     [Test]
@@ -5660,6 +5668,21 @@ public sealed class LinuxBackendCoverageTests
                             match values with
                                 | [] -> loop(n - 1)(total)
                                 | head :: _ -> loop(n - 1)(total + head)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildRuntimeRcKnownArenaListCallMemoryProgram(int iterations)
+        => $$"""
+            let identity xs = xs
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let result = identity([40, 2])
+                    in match result with
+                        | [] -> loop(n - 1)(total)
+                        | head :: _ -> loop(n - 1)(total + head)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

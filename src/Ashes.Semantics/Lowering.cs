@@ -6156,17 +6156,33 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         int copyDest = NewTemp();
+        bool normalizeToRuntimeOwnership = !_usesAsync
+            && !_inCoroutineBody
+            && CapabilityGlobalCount == 0
+            && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         switch (callCopyOutKind)
         {
             case CopyOutKind.Shallow:
-                Emit(new IrInst.CopyOutArena(copyDest, currentTemp, callCopySize));
+                Emit(new IrInst.CopyOutArena(
+                    copyDest,
+                    currentTemp,
+                    callCopySize,
+                    RuntimeManaged: normalizeToRuntimeOwnership));
                 break;
             case CopyOutKind.List:
-                Emit(new IrInst.CopyOutList(copyDest, currentTemp, listHeadCopy));
+                Emit(new IrInst.CopyOutList(
+                    copyDest,
+                    currentTemp,
+                    listHeadCopy,
+                    RuntimeManaged: normalizeToRuntimeOwnership));
                 break;
             case CopyOutKind.Closure:
                 Emit(new IrInst.CopyOutClosure(copyDest, currentTemp));
                 break;
+        }
+        if (normalizeToRuntimeOwnership)
+        {
+            _runtimeManagedResultTemps.Add(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         if (callGuardResultSlot >= 0)

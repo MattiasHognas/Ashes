@@ -1408,14 +1408,14 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void Call_returning_list_emits_RestoreArenaState_and_CopyOutList_after_call()
+    public void Call_returning_list_normalizes_result_to_runtime_ownership_after_call()
     {
-        // identity function returning a list — per-call watermark should
-        // emit RestoreArenaState + CopyOutList for deep cons-chain copy-out.
+        // An opaque arena list result crosses the per-call watermark as a complete RC-owned spine.
         var ir = LowerProgram(
             """
             let id = given (xs) -> xs
-            in id([1, 2, 3])
+            in let result = id([1, 2, 3])
+            in match result with | [] -> 0 | head :: _ -> head
             """);
         var instructions = ir.EntryFunction.Instructions;
         var lastCallIdx = instructions.FindLastIndex(i => i is IrInst.CallClosure);
@@ -1424,8 +1424,10 @@ public sealed class ArenaDeallocationTests
         var afterCallInstructions = instructions.Skip(lastCallIdx + 1).ToList();
         afterCallInstructions.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "List result should trigger per-call RestoreArenaState after CallClosure.");
-        afterCallInstructions.Any(i => i is IrInst.CopyOutList).ShouldBeTrue(
-            "List result should trigger per-call CopyOutList after CallClosure.");
+        afterCallInstructions.Any(i => i is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue(
+            "List result should normalize to runtime ownership after CallClosure.");
+        instructions.Any(i => i is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue(
+            "The normalized call result should be released after its consuming match.");
     }
 
     [Test]
