@@ -486,6 +486,23 @@ Unresolved polymorphic results, lists, and closures still use their legacy behav
 layout descriptor can construct and drop a complete RC graph. Programs using async/task lowering keep
 the established task-region boundary for now; enabling this closure-result channel there caused the
 HTTP keep-alive RSS gate to grow linearly and is therefore blocked on suspension-aware ownership.
+Fresh values produced directly as a let body now use the same escape request as a directly returned
+binding. String, Bytes, BigInt, fully owned List, Tuple, record, user-ADT, scalar parse-result,
+BigInt parse-result, and `Text.uncons` graphs therefore survive the scope reset through RC without a
+scope-exit `CopyOutArena` or `CopyOutList`. Runtime provenance is preserved when an enclosing scope
+temporarily routes the result through a local slot. Requests remain type- and expression-directed:
+borrowed pointer children and unsupported producer graphs stay arena-managed.
+String matches whose arms combine fresh RC results with interned literals now normalize each literal
+once into an RC String. This gives the match one uniform ownership contract, preserves the eventual
+drop, and removes repeated copy-out at every enclosing scope. Match-result runtime provenance is now
+collected for ordinary matches as well as reuse-token matches, but is propagated only when every arm
+is runtime-managed.
+Non-async, capability-free function bodies now apply the same direct-result escape rules. Exact known
+calls returning fresh supported graphs restore and reclaim their call windows without caller-side
+copy-out. A directly returned interned String is normalized once at the callee boundary so its
+ownership bit and final drop remain unambiguous. Async/task programs retain the established region
+contract and do not enable this function-body promotion; the keep-alive HTTP RSS slope remains the
+regression gate for that exclusion.
 
 Deliverables:
 
