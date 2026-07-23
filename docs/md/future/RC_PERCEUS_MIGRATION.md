@@ -397,9 +397,10 @@ Phase 6 exit audit:
 
 ### Phase 7: Retire Obsolete Arena/Reuse Paths
 
-Current status: in progress. The Phase 6 exit audit above is the blocking ledger. Phase 7 must first
-carry runtime-managed provenance across escaping let results and direct function-result boundaries,
-then remove the copy-out/to-space machinery made unreachable by each broadened ownership boundary.
+Current status: implementation and exit validation complete; Phase 8 owns the final paper comparison
+and repository-wide documentation audit. The Phase 6 exit ledger was resolved by carrying
+runtime-managed provenance across escaping let results and direct function-result boundaries, then
+narrowing copy-out/to-space machinery to the scoped and specialized regions described below.
 The first retirement slice carries scratch-free RC String concatenations through a direct nested-let
 result. Lowering marks the inner owner moved, propagates runtime provenance through its load, and lets
 the receiving scope place the final drop; the old `CopyOutArena` path is absent for this shape.
@@ -563,6 +564,28 @@ Validation:
 - Full `just ci` or equivalent.
 - Memory profiles for 1BRC, map/hashmap folds, string/bigint accumulators, parallel workloads, async
   server loops, and resource-heavy tests.
+
+Phase 7 exit evidence (2026-07-23):
+
+- The host compiler suite passes 1,623/1,623 tests, including the kernel-backed RSS/CPU profiles; the
+  complete linux-x64 language suite passes 527/527 runnable tests with 44 declarative skips.
+- A freshly published win-x64 compiler passes the complete Wine leg: 510 runnable tests, zero
+  failures, and 61 declared platform skips. A win-arm64 source-to-link smoke produces a PE with the
+  required `IMAGE_FILE_MACHINE_ARM64` (`0xAA64`) machine field.
+- The emulated linux-arm64 leg passed 525 runnable cases. Its first run used the immediately preceding
+  compiler artifact and reproduced the direct-curried-list UAF; the freshly published compiler then
+  passed `tco_deep_adt_accumulator` in isolation, confirming the fix on ARM64. The only remaining
+  harness failure is `process_drop_releases_fds`: nested ARM64 `/bin/true` launches exhaust the host's
+  QEMU thread capacity and report `qemu_thread_create: Resource temporarily unavailable`. The normal
+  process suite and every dedicated resource-drop test pass; this is an emulation-host limitation,
+  not an Ashes exit-code or ownership mismatch.
+- Formatter stability, the VS Code extension suite, and the documentation-independent portions of
+  `just ci` pass. The aggregate dependency gate is blocked only by newly published advisories in
+  existing pnpm dependencies. The docs link gate still identifies a stale consolidated ownership-doc
+  link, which Phase 8 must repair as part of the required full documentation audit.
+- Valgrind and a directly invokable `qemu-aarch64` are not installed on this host. Native memory
+  behavior is therefore gated by the automated multi-scale RSS slopes rather than an unavailable
+  ad-hoc tool; Wine supplies the feasible Windows runtime check.
 
 ### Phase 8: Final Paper Verification And Documentation Audit
 
