@@ -85,9 +85,13 @@ deps_check() {
 
 # Documentation site build (docs/builder -> docs/site). VitePress fails the
 # build on dead internal links, so this doubles as the docs link gate.
+# Regenerates the Internals API Reference pages from the C# source first —
+# tools/docs-api-gen parses source directly with Roslyn, so it needs only the
+# .NET SDK already in this image, not a full compiler build.
 docs() {
   run_in base "
     set -e
+    dotnet run --project tools/docs-api-gen -- .
     cd docs/builder
     corepack enable
     export COREPACK_ENABLE_AUTO_PIN=0

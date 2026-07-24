@@ -30,6 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Generate Internals API Reference
+        run: dotnet run --project tools/docs-api-gen -- .
+
       - uses: actions/setup-node@v6
         with:
           node-version: 26

@@ -242,7 +242,12 @@ Semgrep rule packs), so they're part of `just ci` (pre-push) but not the offline
   publishes to **GitHub Pages** on pushes to `main` that touch `docs/**` or the
   Ashes TextMate grammar. Pages must be enabled once in the repo settings
   (Settings → Pages → Source: *GitHub Actions*). `just docs` is the local build
-  gate for the same site (without the base path or deployment).
+  gate for the same site (without the base path or deployment). The Internals
+  API Reference pages (`docs/md/internals/api/*.md`) are generated, not
+  committed — `just docs` regenerates them via `tools/docs-api-gen` before
+  building; running `pnpm docs:dev`/`docs:build` directly (e.g. from
+  `docs/builder`) needs `dotnet run --project tools/docs-api-gen -- .` from
+  the repo root first, or those pages 404.
 
 ## Troubleshooting
 

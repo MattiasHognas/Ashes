@@ -95,6 +95,11 @@ dotnet_diagnostic.CS1591.severity = none
 [src/Ashes.Backend/Llvm/Interop/**.cs]
 dotnet_diagnostic.CS1591.severity = none
 
+# Docs tooling, not compiler code: the GitHub blob URL is the intentional, fixed source-link
+# base for generated API reference pages, not an environment-dependent path.
+[tools/docs-api-gen/**.cs]
+dotnet_diagnostic.S1075.severity = none
+
 [*.txt]
 insert_final_newline = false
 
