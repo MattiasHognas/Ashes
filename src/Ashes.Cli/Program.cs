@@ -169,7 +169,7 @@ static byte[] CompileToImage(
     var program = new Parser(source, diag).ParseProgram();
     diag.ThrowIfAny();
 
-    var lowering = new Lowering(diag, importedStdModules, moduleAliases);
+    var lowering = new Lowering(diag, importedStdModules, moduleAliases, sourceLayout?.ConstructorModules);
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);

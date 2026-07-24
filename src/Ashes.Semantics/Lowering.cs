@@ -120,6 +120,12 @@ public sealed partial class Lowering
 
     private readonly bool _hasAshesIO;
     private readonly IReadOnlyDictionary<string, string> _moduleAliases;
+    // Maps a module name to the ADT constructor names its own `type` declarations introduce, so a
+    // qualified reference (`alias.Ctor`) can be scoped to the module the alias actually resolves to.
+    // Constructors themselves stay in the single global `_constructorSymbols` registry (types are
+    // hoisted unqualified into the combined source); this only records which module a name may be
+    // qualified through.
+    private readonly IReadOnlyDictionary<string, IReadOnlySet<string>> _constructorModulesByName;
     private readonly List<string> _diagnosticContext = [];
     private readonly Stack<TextSpan> _diagnosticSpans = new();
     private readonly Stack<string> _diagnosticCodes = new();
@@ -577,11 +583,16 @@ public sealed partial class Lowering
     /// example, the unqualified <c>Ashes.IO</c> bindings); <paramref name="moduleAliases"/> maps import
     /// aliases to their target module names for qualified-reference resolution.
     /// </summary>
-    public Lowering(Diagnostics diag, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
+    public Lowering(
+        Diagnostics diag,
+        IReadOnlySet<string>? importedStdModules = null,
+        IReadOnlyDictionary<string, string>? moduleAliases = null,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null)
     {
         _diag = diag;
         _hasAshesIO = importedStdModules?.Contains("Ashes.IO") == true;
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        _constructorModulesByName = constructorModulesByName ?? new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
         var rootScope = new Dictionary<string, Binding>(StringComparer.Ordinal);
         // Create the `async` binding once (it allocates a generalized type var) and reuse the same
@@ -2554,12 +2565,7 @@ public sealed partial class Lowering
 
         if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
         {
-            if (ctorSym.Arity == 0)
-            {
-                return LowerNullaryConstructor(ctorSym);
-            }
-
-            return LowerExpr(BuildConstructorLambda(ctorSym));
+            return LowerConstructorReference(ctorSym);
         }
 
         if (_topLevelBindingNames.Contains(v.Name))
@@ -2583,6 +2589,20 @@ public sealed partial class Lowering
         }
 
         return ReturnNeverWithDummyTemp();
+    }
+
+    /// <summary>
+    /// Lowers a resolved data constructor reference used as a bare value (not immediately applied):
+    /// a nullary constructor lowers to its singleton runtime value, an arity &gt; 0 constructor
+    /// eta-expands to a curried lambda so it can be passed around like any other function. Shared by
+    /// an unqualified constructor name (<see cref="LowerVarUnbound"/>) and a qualified reference
+    /// through a module alias (<see cref="LowerQualifiedVar"/>) — both name the same runtime value.
+    /// </summary>
+    private (int, TypeRef) LowerConstructorReference(ConstructorSymbol ctorSym)
+    {
+        return ctorSym.Arity == 0
+            ? LowerNullaryConstructor(ctorSym)
+            : LowerExpr(BuildConstructorLambda(ctorSym));
     }
 
     private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
@@ -6778,6 +6798,16 @@ public sealed partial class Lowering
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(ctorSym, collectedArgs);
+        }
+
+        // Constructor application through a module alias: json.JsonInt(42) where `json` is
+        // `Ashes.Text.Json`. Resolved directly (rather than falling through to a generic closure
+        // call) so it compiles identically to the unqualified form.
+        if (rootExpr is Expr.QualifiedVar ctorQv
+            && !_capabilitySymbols.ContainsKey(ctorQv.Module)
+            && TryResolveQualifiedConstructor(ctorQv.Name, ResolveModuleAlias(ctorQv.Module), out var qualifiedCtorSym))
+        {
+            return LowerConstructorApplication(qualifiedCtorSym, collectedArgs);
         }
 
         // Capability operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.

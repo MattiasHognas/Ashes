@@ -84,14 +84,16 @@ public static partial class DocumentService
         int BodyStart,
         IReadOnlySet<string>? ImportedStdModules,
         IReadOnlyDictionary<string, string>? ModuleAliases,
-        IReadOnlyList<DiagnosticItem> Diagnostics);
+        IReadOnlyList<DiagnosticItem> Diagnostics,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null);
 
     private readonly record struct ProjectAnalysisContext(
         string CombinedSource,
         int EntryOffset,
         int BodyStart,
         IReadOnlySet<string> ImportedStdModules,
-        IReadOnlyDictionary<string, string>? ModuleAliases);
+        IReadOnlyDictionary<string, string>? ModuleAliases,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null);
 
     private readonly record struct DefinitionLocation(string? FilePath, TextSpan Span);
 
@@ -328,7 +330,8 @@ public static partial class DocumentService
             layout.EntryOffset,
             layout.BodyStart,
             plan.ImportedStdModules,
-            plan.MergedAliases.Count == 0 ? null : plan.MergedAliases);
+            plan.MergedAliases.Count == 0 ? null : plan.MergedAliases,
+            layout.ConstructorModules);
     }
 
     private static AnalysisContext PrepareAnalysisContext(string source, string? filePath)
@@ -362,7 +365,8 @@ public static partial class DocumentService
                     combined.Value.BodyStart,
                     combined.Value.ImportedStdModules,
                     combined.Value.ModuleAliases,
-                    []);
+                    [],
+                    combined.Value.ConstructorModules);
             }
         }
         catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidOperationException)
@@ -403,6 +407,7 @@ public static partial class DocumentService
         var analysisSource = header.StrippedSource;
         var entryOffset = 0;
         var bodyStart = 0;
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModules = null;
 
         if (standaloneImportDiagnostics.Count == 0
             && (header.Imports.Count > 0 || ProjectSupport.ContainsInlineModule(header.StrippedSource)))
@@ -413,6 +418,7 @@ public static partial class DocumentService
             analysisSource = layout.Source;
             entryOffset = layout.EntryOffset;
             bodyStart = layout.BodyStart;
+            constructorModules = layout.ConstructorModules;
         }
 
         return new AnalysisContext(
@@ -423,7 +429,8 @@ public static partial class DocumentService
             bodyStart,
             importedStdModules,
             BuildModuleAliases(header.Imports),
-            standaloneImportDiagnostics);
+            standaloneImportDiagnostics,
+            constructorModules);
     }
 
     private static IReadOnlyDictionary<string, string>? BuildModuleAliases(IReadOnlyList<ImportItem> imports)
@@ -511,7 +518,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        _ = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases).Lower(program);
+        _ = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules).Lower(program);
 
         return diag.StructuredErrors
             .Select(d => (Diagnostic: d, MappedSpan: MapToOriginalSpan(d.Start, d.End, context.EntryOffset, context.BodyStart, context.StrippedSource.Length)))
@@ -590,7 +597,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
         var typeNames = lowering.TypeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
@@ -688,7 +695,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
         var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
@@ -1171,7 +1178,7 @@ public static partial class DocumentService
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
-        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases);
+        var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
         var hover = lowering.GetTypeAtPosition(analysisPosition.Value);
