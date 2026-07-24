@@ -11,11 +11,14 @@ public sealed class GdbDebuggerBackend : DapClientDebuggerBackend
 {
     private const string DefaultAdapterBinary = "gdb";
 
+    /// <inheritdoc/>
     protected override string AdapterDisplayName => "gdb";
 
+    /// <inheritdoc/>
     protected override string InstallHint =>
         "Install GDB 14 or newer (its DAP interpreter requires a Python-enabled build) or set debuggerPath to the gdb binary.";
 
+    /// <inheritdoc/>
     protected override ProcessStartInfo CreateAdapterStartInfo(string? debuggerPath)
     {
         return CreateStartInfo(debuggerPath);
@@ -36,6 +39,7 @@ public sealed class GdbDebuggerBackend : DapClientDebuggerBackend
         return psi;
     }
 
+    /// <inheritdoc/>
     protected override object CreateLaunchArguments(string program, string? cwd, string[]? args, bool stopOnEntry)
     {
         return new

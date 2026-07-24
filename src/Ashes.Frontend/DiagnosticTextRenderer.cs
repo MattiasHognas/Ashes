@@ -2,13 +2,28 @@ using System.Text;
 
 namespace Ashes.Frontend;
 
+/// <summary>
+/// Renders structured compiler diagnostics into human-readable, rustc-style text with a
+/// <c>path:line:column</c> header and, when the source is available, a caret-underlined snippet of the
+/// offending line.
+/// </summary>
 public static class DiagnosticTextRenderer
 {
+    /// <summary>
+    /// Renders the diagnostics carried by <paramref name="exception"/> against
+    /// <paramref name="source"/>, labelling locations with <paramref name="displayPath"/>.
+    /// </summary>
     public static string RenderCompilerDiagnostics(CompileDiagnosticException exception, string? source, string displayPath)
     {
         return RenderCompilerDiagnostics(exception.StructuredErrors, source, displayPath);
     }
 
+    /// <summary>
+    /// Renders <paramref name="entries"/> sorted by position into text. When <paramref name="source"/>
+    /// is non-null each entry gets a caret-underlined source snippet; otherwise only the
+    /// <paramref name="displayPath"/> header and message are emitted. An empty list yields a generic
+    /// unknown-error message.
+    /// </summary>
     public static string RenderCompilerDiagnostics(IReadOnlyList<DiagnosticEntry> entries, string? source, string displayPath)
     {
         var orderedEntries = entries
@@ -85,6 +100,11 @@ public static class DiagnosticTextRenderer
         sb.AppendLine(entry.Message);
     }
 
+    /// <summary>
+    /// Renders a standalone failure not tied to a source span: a <paramref name="kind"/>-prefixed
+    /// <paramref name="message"/>, optionally followed by an <c>--&gt;</c> line naming
+    /// <paramref name="displayPath"/>.
+    /// </summary>
     public static string RenderFailure(string kind, string message, string? displayPath = null)
     {
         var sb = new StringBuilder();

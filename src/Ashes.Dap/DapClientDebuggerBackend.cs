@@ -37,8 +37,13 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
     private int _lastThreadId;
     private string _launchError = string.Empty;
 
+    /// <inheritdoc/>
     public event Action<string>? OnStopped;
+
+    /// <inheritdoc/>
     public event Action<int>? OnExited;
+
+    /// <inheritdoc/>
     public event Action<string>? OnOutput;
 
     /// <summary>Short name of the debug adapter used in error messages (e.g. "gdb", "lldb-dap").</summary>
@@ -62,6 +67,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         return string.Equals(scopeName, "Locals", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <inheritdoc/>
     public async Task StartAsync(string program, string? cwd, string[]? args, string? debuggerPath, bool stopOnEntry)
     {
         var startInfo = CreateAdapterStartInfo(debuggerPath);
@@ -109,6 +115,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         await WaitForInitializedEventAsync().ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task SetBreakpointAsync(string filePath, int line)
     {
         if (!_breakpointsByFile.TryGetValue(filePath, out var lines))
@@ -131,26 +138,31 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         }).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task ContinueAsync()
     {
         _ = await SendRequestAsync("continue", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task StepOverAsync()
     {
         _ = await SendRequestAsync("next", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task StepInAsync()
     {
         _ = await SendRequestAsync("stepIn", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task StepOutAsync()
     {
         _ = await SendRequestAsync("stepOut", new { threadId = _lastThreadId }).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
     public async Task RunAsync()
     {
         _ = await SendRequestAsync("configurationDone", new { }).ConfigureAwait(false);
@@ -161,6 +173,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         }
     }
 
+    /// <inheritdoc/>
     public async Task<DapStackFrame[]> GetStackTraceAsync()
     {
         var body = await SendRequestAsync("stackTrace", new
@@ -178,6 +191,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         return [.. frames.EnumerateArray().Select(ParseStackFrame)];
     }
 
+    /// <inheritdoc/>
     public async Task<DapVariable[]> GetLocalsAsync()
     {
         var (scopeReferences, frameId) = await GetVariableScopeReferencesAsync().ConfigureAwait(false);
@@ -219,6 +233,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         return [.. result];
     }
 
+    /// <inheritdoc/>
     public async Task TerminateAsync()
     {
         if (_adapter is not null && !_adapter.HasExited)
@@ -663,6 +678,7 @@ public abstract partial class DapClientDebuggerBackend : IDebuggerBackend
         return string.Empty;
     }
 
+    /// <inheritdoc/>
     public void Dispose()
     {
         foreach (var (_, tcs) in _pendingRequests)

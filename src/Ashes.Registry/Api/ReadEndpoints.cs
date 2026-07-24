@@ -6,6 +6,8 @@ namespace Ashes.Registry.Api;
 /// <summary>The unauthenticated, cacheable read surface.</summary>
 public static class ReadEndpoints
 {
+    /// <summary>Registers the health check plus the unauthenticated read routes (index, list, search,
+    /// package, version, source) on <paramref name="app"/> and returns it for chaining.</summary>
     public static IEndpointRouteBuilder MapReadEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);

@@ -10,11 +10,14 @@ public sealed class LldbDebuggerBackend : DapClientDebuggerBackend
 {
     private const string DefaultAdapterBinary = "lldb-dap";
 
+    /// <inheritdoc/>
     protected override string AdapterDisplayName => "lldb-dap";
 
+    /// <inheritdoc/>
     protected override string InstallHint =>
         "Install LLDB (which provides lldb-dap) or set debuggerPath to the lldb-dap binary.";
 
+    /// <inheritdoc/>
     protected override ProcessStartInfo CreateAdapterStartInfo(string? debuggerPath)
     {
         return CreateStartInfo(debuggerPath);
@@ -32,6 +35,7 @@ public sealed class LldbDebuggerBackend : DapClientDebuggerBackend
         };
     }
 
+    /// <inheritdoc/>
     protected override object CreateLaunchArguments(string program, string? cwd, string[]? args, bool stopOnEntry)
     {
         return new

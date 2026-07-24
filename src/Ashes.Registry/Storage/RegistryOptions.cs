@@ -16,6 +16,7 @@ public sealed class RegistryOptions
     /// </summary>
     public bool AllowOpenRegistration { get; set; } = true;
 
+    /// <summary>The publish-time size and abuse limits this registry enforces and advertises.</summary>
     public RegistryLimits Limits { get; init; } = new();
 }
 
@@ -25,9 +26,12 @@ public sealed class RegistryOptions
 /// </summary>
 public sealed class RegistryLimits
 {
+    /// <summary>Maximum size, in bytes, of any single file in an upload.</summary>
     public long MaxFileBytes { get; set; } = 1L * 1024 * 1024;          // 1 MiB per file
 
+    /// <summary>Maximum total uncompressed size, in bytes, of an upload's source tree.</summary>
     public long MaxTotalBytes { get; set; } = 10L * 1024 * 1024;        // 10 MiB uncompressed
 
+    /// <summary>Maximum number of files an upload may contain.</summary>
     public int MaxFileCount { get; set; } = 10_000;
 }

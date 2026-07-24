@@ -8,6 +8,10 @@ namespace Ashes.Dap;
 /// </summary>
 public static class Program
 {
+    /// <summary>
+    /// Process entry point. Handles <c>--version</c> and <c>--help</c>, otherwise runs the DAP
+    /// server on stdin/stdout until the client disconnects or the process is cancelled.
+    /// </summary>
     public static async Task<int> Main(string[] args)
     {
         if (args.Length > 0 && args[0] is "--version")

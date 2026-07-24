@@ -1609,14 +1609,6 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, statusSlot, "step_tls_connect_status");
     }
 
-    /// <summary>
-    /// Steps a TLS handshake leaf task. <paramref name="serverSide"/> selects which side's session
-    /// is created on first entry: the client side builds a connection from the client context and
-    /// the server name in IoArg1; the server side builds (and caches, process-wide) a server config
-    /// from the certificate-chain PEM in IoArg1 and the private-key PEM in WaitData1, then creates a
-    /// server connection. Everything after session creation — the write/read/process handshake loop,
-    /// the WaitTlsWantRead/Write parking, and completion — is identical for both sides.
-    /// </summary>
     // Slots and basic blocks shared across the TLS handshake step's phase helpers. Allocated once by
     // the prologue and threaded through the phases so each keeps its verbatim block body.
     private readonly record struct TlsHandshakeCtx(
@@ -1689,6 +1681,14 @@ internal static partial class LlvmCodegen
         return new TlsHandshakeCtx(initStatus, statusSlot, errorCodeSlot, errorStageSlot, createStatusSlot, connectionHandleSlot, initFailBlock, sessionCheckBlock, createBlock, storeSessionBlock, createSocketFailBlock, writeCheckBlock, writeBlock, writeRetryCheckBlock, readCheckBlock, readBlock, readRetryCheckBlock, processBlock, evaluateBlock, completeCheckBlock, incompleteCheckBlock, readPendingCheckBlock, pendingReadBlock, pendingWriteBlock, failBlock, successBlock, finishBlock);
     }
 
+    /// <summary>
+    /// Steps a TLS handshake leaf task. <paramref name="serverSide"/> selects which side's session
+    /// is created on first entry: the client side builds a connection from the client context and
+    /// the server name in IoArg1; the server side builds (and caches, process-wide) a server config
+    /// from the certificate-chain PEM in IoArg1 and the private-key PEM in WaitData1, then creates a
+    /// server connection. Everything after session creation — the write/read/process handshake loop,
+    /// the WaitTlsWantRead/Write parking, and completion — is identical for both sides.
+    /// </summary>
     private static LlvmValueHandle EmitStepTlsHandshakeTask(LlvmCodegenState state, LlvmValueHandle taskPtr, LinuxTlsGlobals globals, bool serverSide = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

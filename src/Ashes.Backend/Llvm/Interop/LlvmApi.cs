@@ -868,7 +868,7 @@ internal static partial class LlvmApi
     /// Run a pipeline of LLVM passes on the module.
     /// <paramref name="passes"/> is a comma-separated list of pass names,
     /// e.g. "default&lt;O2&gt;" or "instcombine,simplifycfg,mem2reg".
-    /// Returns 0 on success, non-zero on error (error message in <paramref name="errorMessage"/>).
+    /// Returns 0 on success, non-zero when the pipeline fails to build or run.
     /// </summary>
     [LibraryImport(Lib, EntryPoint = "LLVMRunPasses", StringMarshalling = StringMarshalling.Utf8)]
     public static partial int RunPasses(

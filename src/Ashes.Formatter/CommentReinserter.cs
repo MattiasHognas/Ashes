@@ -18,6 +18,12 @@ public static class CommentReinserter
 
     private readonly record struct SignificantLine(int Index, LineAnchor Anchor);
 
+    /// <summary>
+    /// Reinserts the standalone <c>//</c> comment lines of <paramref name="originalSource"/> into
+    /// <paramref name="formattedSource"/>, anchoring each to the significant lines around it and joining
+    /// with <paramref name="lineEnding"/>. Comments whose anchors no longer exist fall back to the
+    /// previous anchor, then to the top of the file, so no comment text is dropped.
+    /// </summary>
     public static string ReinsertStandaloneCommentLines(string originalSource, string formattedSource, string lineEnding)
     {
         var originalLines = SplitLines(originalSource);

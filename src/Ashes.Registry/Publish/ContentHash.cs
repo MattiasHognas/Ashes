@@ -11,8 +11,10 @@ namespace Ashes.Registry.Publish;
 /// </summary>
 public static class ContentHash
 {
+    /// <summary>The scheme prefix on every computed hash, identifying the version-1 algorithm.</summary>
     public const string Scheme = "ash1:";
 
+    /// <summary>Computes the canonical <see cref="Scheme"/>-prefixed content hash of <paramref name="files"/>.</summary>
     public static string Compute(IEnumerable<SourceFile> files)
     {
         ArgumentNullException.ThrowIfNull(files);

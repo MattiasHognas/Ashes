@@ -1150,7 +1150,7 @@ public sealed partial class Lowering
     /// self-recursive resource-bearing ADT and returns its label. The function takes (env, value):
     /// it switches on the constructor tag and drops each resource-bearing field — same-type fields via
     /// the self-closure at env[0] (runtime recursion), other fields via
-    /// <see cref="EmitResourceBearingDrop"/>. Returns null for a mutual-recursion cycle between
+    /// <see cref="EmitResourceBearingDrop(int, TypeRef)"/>. Returns null for a mutual-recursion cycle between
     /// distinct ADT types (caller falls back to the inline unfold). Tag-level, so it is independent of
     /// constructor scope at the call site.
     /// </summary>
@@ -1187,7 +1187,7 @@ public sealed partial class Lowering
     /// <summary>
     /// Emits the body of a synthesized ADT resource-dropper: read the constructor tag, switch to the
     /// live constructor's block, and drop each resource-bearing field — same-type fields via the
-    /// self-closure at env[0] (recursion), others via <see cref="EmitResourceBearingDrop"/>.
+    /// self-closure at env[0] (recursion), others via <see cref="EmitResourceBearingDrop(int, TypeRef)"/>.
     /// Constructors that carry no resource fall through to the end and return 0.
     /// </summary>
     private void EmitAdtResourceDropperBody(TypeRef.TNamedType named)
@@ -2312,7 +2312,7 @@ public sealed partial class Lowering
     /// no pointer back into the reclaimable region. Unlike <see cref="CanCopyOutAdt"/> (a flat memcpy,
     /// copy-type fields only) this permits pointer fields as long as every one is itself deep-copyable:
     /// a copy type, a String/Bytes, a List of deep-copyable-by-<see cref="EmitDeepCopy"/> elements, or
-    /// another non-resource deep-copyable ADT (recursion guarded by <paramref name="visited"/>).
+    /// another non-resource deep-copyable ADT (recursion guarded by <paramref name="path"/>).
     /// Excludes closures (env may share/own resources), BigInt (no ADT-field deep-copy path), and
     /// resource-bearing types (an fd must never be duplicated). Used to let a TCO loop threading a
     /// fixed-shape pointer-bearing accumulator (e.g. fannkuch's <c>State(perm, count)</c>) reset: the
