@@ -41,8 +41,8 @@ public sealed class ImportSelectorTests
     {
         var project = WriteProject(mainSource, modules);
         var plan = ProjectSupport.BuildCompilationPlan(project);
-        var source = ProjectSupport.BuildCompilationSource(plan);
-        return await CompileRunCaptureAsync(source, plan.ImportedStdModules, plan.MergedAliases).ConfigureAwait(false);
+        var layout = ProjectSupport.BuildCompilationLayout(plan);
+        return await CompileRunCaptureAsync(layout.Source, plan.ImportedStdModules, plan.MergedAliases, layout.ConstructorModules).ConfigureAwait(false);
     }
 
     [Test]
@@ -119,6 +119,70 @@ public sealed class ImportSelectorTests
             "let red : Color = Red in Ashes.IO.print(name(red))\n",
             ShapesModule).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("red");
+    }
+
+    private static readonly Dictionary<string, string> BoxModule = new(StringComparer.Ordinal)
+    {
+        ["Boxes"] =
+            "type Box = | Wrap(Int)\n" +
+            "let unwrap = given (b) -> match b with | Wrap(n) -> n\n",
+    };
+
+    [Test]
+    public async Task QualifiedConstructorCall_resolves_through_whole_module_alias()
+    {
+        // json.JsonInt(42)-shaped bug: a data constructor called through a whole-module alias
+        // (`import M as alias`, not a selector import) must resolve exactly like the unqualified
+        // form. Exercises both the nullary-arity-0-eta-expansion-free application (implicit here via
+        // Wrap's arity 1) and the qualified-alias resolution path in one combined-source pipeline.
+        var stdout = await RunAsync(
+            "import Boxes as box\n" +
+            "Ashes.IO.print(Ashes.Text.fromInt(box.unwrap(box.Wrap(42))))\n",
+            BoxModule).ConfigureAwait(false);
+        stdout.TrimEnd().ShouldBe("42");
+    }
+
+    [Test]
+    public async Task QualifiedConstructorCall_matches_unqualified_form()
+    {
+        var viaQualified = await RunAsync(
+            "import Boxes as box\n" +
+            "Ashes.IO.print(Ashes.Text.fromInt(box.unwrap(box.Wrap(7))))\n",
+            BoxModule).ConfigureAwait(false);
+        // `type` declarations are hoisted unqualified regardless of import style, so `Wrap` is
+        // already visible bare once `Boxes` is reachable at all; only the plain function `unwrap`
+        // needs a selector import to be usable unqualified.
+        var viaUnqualified = await RunAsync(
+            "import Boxes.unwrap\n" +
+            "Ashes.IO.print(Ashes.Text.fromInt(unwrap(Wrap(7))))\n",
+            BoxModule).ConfigureAwait(false);
+        viaQualified.ShouldBe(viaUnqualified);
+    }
+
+    [Test]
+    public async Task QualifiedNullaryConstructor_resolves_through_whole_module_alias()
+    {
+        var stdout = await RunAsync(
+            "import Shapes as sh\nimport Shapes.name\nAshes.IO.print(name(sh.Green))\n",
+            ShapesModule).ConfigureAwait(false);
+        stdout.TrimEnd().ShouldBe("green");
+    }
+
+    [Test]
+    public async Task QualifiedConstructor_through_unrelated_alias_is_a_compile_error()
+    {
+        // `box` aliases `Boxes`, which declares no `Red`/`Green` constructor — the alias must not
+        // fall back to the globally registered `Color` constructor declared by a different module.
+        // Correct scoping: `Boxes` genuinely doesn't export this name, so lowering must still fail.
+        var modules = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Boxes"] = BoxModule["Boxes"],
+            ["Shapes"] = ShapesModule["Shapes"],
+        };
+        var ex = await Should.ThrowAsync<Exception>(() => RunAsync(
+            "import Boxes as box\nimport Shapes.name\nAshes.IO.print(name(box.Green))\n",
+            modules)).ConfigureAwait(false);
+        ex.Message.ShouldContain("Unknown module 'box'");
     }
 
     [Test]
@@ -235,13 +299,14 @@ public sealed class ImportSelectorTests
     private static async Task<string> CompileRunCaptureAsync(
         string source,
         IReadOnlySet<string>? importedStdModules,
-        IReadOnlyDictionary<string, string>? moduleAliases)
+        IReadOnlyDictionary<string, string>? moduleAliases,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null)
     {
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(diag, importedStdModules, moduleAliases).Lower(program);
+        var ir = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName).Lower(program);
         diag.ThrowIfAny();
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-import-selector-tests");

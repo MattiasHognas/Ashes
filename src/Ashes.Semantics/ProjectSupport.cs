@@ -128,12 +128,14 @@ public readonly record struct ParsedImportHeader(
 /// <param name="BodyStart">Offset where the entry module's trailing body expression begins.</param>
 /// <param name="ModuleOffsets">Per-file spans within the combined source, for mapping offsets back to files.</param>
 /// <param name="EntryTypeDeclFragments">Spans of entry-module type declarations hoisted into the combined preamble, mapping combined offset to original offset and length; null when none were hoisted.</param>
+/// <param name="ConstructorModules">Maps each module name to the ADT constructor names its own <c>type</c> declarations introduce, so a qualified reference (<c>alias.Ctor</c>) can be scoped to the module the alias actually names.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
     int BodyStart,
     IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets,
-    IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null
+    IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null,
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null
 );
 
 /// <summary>
@@ -1611,6 +1613,8 @@ public static class ProjectSupport
 
         AppendHoistedTypeDeclarations(prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
 
+        var constructorModules = BuildConstructorModuleNames(orderedModules, entryModule, entrySourceOverride);
+
         var legacyBindingEmitted = AppendModuleBindingPrefixes(prefix, moduleOffsets, nonEntryModules, shapes, exportedNames);
 
         // A hoisted flat declaration (a flat `let` value, or a `provide` whose implementation is an
@@ -1627,7 +1631,36 @@ public static class ProjectSupport
         }
 
         var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
-        return ComposeEntryLayout(entryModule, entryShape, entryExpression, prefix, moduleOffsets);
+        return ComposeEntryLayout(entryModule, entryShape, entryExpression, prefix, moduleOffsets, constructorModules);
+    }
+
+    /// <summary>
+    /// Maps each module in <paramref name="orderedModules"/> to the ADT constructor names its own
+    /// <c>type</c> declarations introduce. Lowering uses this to scope a qualified constructor
+    /// reference (<c>alias.Ctor</c>) to the module the alias actually resolves to, rather than
+    /// resolving to any same-named constructor declared elsewhere — constructors themselves stay
+    /// globally registered (types are hoisted unqualified, per <see cref="AppendHoistedTypeDeclarations"/>),
+    /// this only records which module a name may be qualified through.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildConstructorModuleNames(
+        IReadOnlyList<ProjectModule> orderedModules,
+        ProjectModule entryModule,
+        string? entrySourceOverride)
+    {
+        var result = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        foreach (var module in orderedModules)
+        {
+            var source = string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase)
+                ? entrySourceOverride ?? module.Source
+                : module.Source;
+            CollectAllExportNames(source, out var ctorNames);
+            if (ctorNames.Count > 0)
+            {
+                result[module.ModuleName] = ctorNames;
+            }
+        }
+
+        return result;
     }
 
     private static void AppendHoistedTypeDeclarations(
@@ -1700,7 +1733,8 @@ public static class ProjectSupport
         ModuleSourceShape entryShape,
         string entryExpression,
         StringBuilder prefix,
-        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets)
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules)
     {
         var hasPrefixBeforeBody = prefix.Length > entryShape.TypeDeclarationsSource.Length;
         if (hasPrefixBeforeBody)
@@ -1726,13 +1760,13 @@ public static class ProjectSupport
             prefix.Append(entryExpression);
             prefix.Append(')');
             moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
-            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments);
+            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments, constructorModules);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
         {
             moduleOffsets.Add((entryModule.FilePath, 0, entryExpression.Length));
-            return new CombinedCompilationLayout(entryExpression, 0, 0, moduleOffsets);
+            return new CombinedCompilationLayout(entryExpression, 0, 0, moduleOffsets, ConstructorModules: constructorModules);
         }
 
         // Only the entry's own (hoisted) type declarations precede the body: append it bare — the
@@ -1741,7 +1775,7 @@ public static class ProjectSupport
         var offset = prefix.Length;
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
-        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments);
+        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments, constructorModules);
     }
 
     /// <summary>
@@ -1850,9 +1884,19 @@ public static class ProjectSupport
     /// <c>type</c> declarations, plus legacy pyramid bindings — used to validate selector imports
     /// (mirrors the built-in export tables). Returns an empty set for sources the parser rejects.
     /// </summary>
-    private static IReadOnlySet<string> CollectAllExportNames(string source)
+    private static IReadOnlySet<string> CollectAllExportNames(string source) => CollectAllExportNames(source, out _);
+
+    /// <summary>
+    /// As <see cref="CollectAllExportNames(string)"/>, additionally returning the ADT constructor
+    /// names introduced by the module's own <c>type</c> declarations (e.g. <c>Wrap</c> for
+    /// <c>type Box = | Wrap(Int)</c>) — used to scope a qualified constructor reference
+    /// (<c>alias.Ctor</c>) to the module that actually declares it.
+    /// </summary>
+    private static IReadOnlySet<string> CollectAllExportNames(string source, out IReadOnlySet<string> constructorNames)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var ctorNames = new HashSet<string>(StringComparer.Ordinal);
+        constructorNames = ctorNames;
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         if (diag.StructuredErrors.Count > 0)
@@ -1876,6 +1920,11 @@ public static class ProjectSupport
                     break;
                 case TopLevelItem.Type typeDecl:
                     names.Add(typeDecl.Decl.Name);
+                    foreach (var ctor in typeDecl.Decl.Constructors)
+                    {
+                        ctorNames.Add(ctor.Name);
+                    }
+
                     break;
             }
         }

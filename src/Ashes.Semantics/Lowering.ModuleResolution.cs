@@ -44,6 +44,19 @@ public sealed partial class Lowering
             return resolvedQualifiedBinding;
         }
 
+        // A data constructor declared by the aliased module (e.g. `json.JsonInt` where `json` is
+        // `Ashes.Text.Json`). Constructors are not module-prefixed like functions are — types are
+        // hoisted into the combined source unqualified and stay globally registered in
+        // `_constructorSymbols` — so this resolves the same way an unqualified reference to the
+        // constructor would, gated on `resolvedModule` actually declaring a constructor by this name
+        // (rather than resolving any alias to any same-named constructor from an unrelated module).
+        if (TryResolveQualifiedConstructor(qv.Name, resolvedModule, out var qualifiedCtorSym))
+        {
+            var resolvedCtorReference = LowerConstructorReference(qualifiedCtorSym);
+            RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedCtorReference.Item2);
+            return resolvedCtorReference;
+        }
+
         // User module: resolve to the sanitized module binding if it exists.
         var binding = Lookup(resolvedModule) ?? Lookup(sanitizedModuleName);
         if (binding is null)
@@ -53,6 +66,30 @@ public sealed partial class Lowering
         }
 
         return LowerRecordFieldAccessFallback(qv, binding);
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="name"/> as a data constructor declared by <paramref name="resolvedModule"/>
+    /// (an already alias-resolved module name). Constructors are globally registered by name in
+    /// <see cref="_constructorSymbols"/> — types are hoisted unqualified into the combined source, so
+    /// there is no per-module constructor registry to look them up in directly — so this additionally
+    /// checks <see cref="_constructorModulesByName"/> (which module's own `type` declarations actually
+    /// introduce this name) to scope the match: a qualified reference resolves only when the aliased
+    /// module really declares a constructor by that name, not to an unrelated same-named constructor
+    /// declared elsewhere.
+    /// </summary>
+    private bool TryResolveQualifiedConstructor(string name, string resolvedModule, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ConstructorSymbol? ctorSym)
+    {
+        if (_constructorSymbols.TryGetValue(name, out var candidate)
+            && _constructorModulesByName.TryGetValue(resolvedModule, out var declaredConstructorNames)
+            && declaredConstructorNames.Contains(name))
+        {
+            ctorSym = candidate;
+            return true;
+        }
+
+        ctorSym = null;
+        return false;
     }
 
     // A bare (uncalled) capability operation reference. Direct application is handled in
