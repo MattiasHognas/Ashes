@@ -174,6 +174,31 @@ public sealed partial class Lowering
         new(StringComparer.Ordinal);
     private readonly HashSet<string> _activeRuntimeManagedTcoPatternAliases = new(StringComparer.Ordinal);
 
+    // A value extracted (via any pattern, not just a list cons) from a TCO loop parameter, or
+    // transitively from another such extraction (a tuple field of a list element, a record field of
+    // a tuple field, ...), needs protecting from that parameter's own eventual drop (the recursive-call
+    // back-edge consume, or the function-exit drop) whenever the extracted value escapes — otherwise the
+    // parameter's drop can free memory a moved-out copy still references (a use-after-free). Recording
+    // this eagerly, at pattern-match time via TrackRuntimeManagedTcoListPatternAliases, is not possible
+    // in general: eligibility (is the root parameter actually runtime-managed at all) depends on its
+    // fully-resolved type, which for a parameter whose type comes from unification with later call sites
+    // is not yet known until the whole body has been lowered — see the comment on
+    // LowerLambdaCoreRefreshRuntimeManagedTcoParams. So every pattern-bound local extracted from another
+    // local is recorded here unconditionally (payload slot → (immediate parent slot, the instruction
+    // index right after its extraction was emitted, and the payload's own TypeRef)); once the body is
+    // fully lowered and the refresh pass has resolved real eligibility, ResolvePendingNestedTcoPatternAliasSites
+    // walks each entry's chain of parents back to a declared TCO parameter slot and, only for chains that
+    // bottom out at a slot the refresh pass confirmed runtime-managed, splices in a guarded protective
+    // dup at the recorded site — a retroactive fix-up, the same "record now, resolve and splice later"
+    // shape LowerLambdaCoreSpliceRuntimeManagedTcoParams already uses for the entry-normalization
+    // prologue. The payload's copy-type check (CanArenaReset) is deferred to that same resolution point
+    // rather than applied at record time for the same reason eligibility itself is deferred: a pattern
+    // binding's type can still be an unresolved type variable during the first pass (e.g. a tuple field
+    // whose element type only becomes concrete Int once the whole body's unification has run) — checking
+    // early can wrongly treat an about-to-be-Int binding as heap-managed, and dup'ing a scalar value as
+    // if it were a refcounted pointer is a segfault, not just a missed protection.
+    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType)> _pendingNestedTcoPatternAliasSites = new();
+
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
     // into the closure (a synthesized dropper stored at closure+24 closes them when the closure is
@@ -5121,10 +5146,118 @@ public sealed partial class Lowering
         int bodyTemp)
     {
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
+        ResolvePendingNestedTcoPatternAliasSites(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, tco, reuseInsertIndex);
         LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
         LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
+    }
+
+    /// <summary>
+    /// The retroactive half of the nested-TCO-pattern-alias fix-up (see the field comment on
+    /// <see cref="_pendingNestedTcoPatternAliasSites"/>): now that <see
+    /// cref="LowerLambdaCoreRefreshRuntimeManagedTcoParams"/> has resolved which TCO parameters are
+    /// actually runtime-managed, walk each recorded site's chain of parent slots back to a declared TCO
+    /// parameter. A chain that bottoms out at a slot the refresh pass confirmed runtime-managed gets a
+    /// guarded protective dup spliced in at its recorded site — any other chain (an ordinary local, a
+    /// parameter that turned out not to be runtime-managed) needs no protection and is left alone.
+    /// Insertions are applied in descending index order so an earlier splice never shifts a later one's
+    /// already-resolved target position — the same ordering <see
+    /// cref="LowerLambdaCoreSpliceRuntimeManagedTcoParams"/> and <see cref="PerceusLifetimePlacement"/>
+    /// use for the same reason.
+    /// </summary>
+    private void ResolvePendingNestedTcoPatternAliasSites(TcoContext? tco)
+    {
+        if (tco is null || _pendingNestedTcoPatternAliasSites.Count == 0)
+        {
+            _pendingNestedTcoPatternAliasSites.Clear();
+            return;
+        }
+
+        // A candidate whose immediate parent is itself a declared TCO parameter slot (pair, rest —
+        // bound directly off tbl) is a "direct" binding: TrackRuntimeManagedTcoListPatternAliases /
+        // LowerCallTcoTransferPatternAliases already protect these at their own (different) checkpoint
+        // — the recursive-call site, when the binding flows into the next iteration's arguments — so
+        // splicing an unconditional extra dup here too would double-protect it (every iteration, not
+        // just the ones that actually recurse), leaking a reference each time. Only a candidate whose
+        // parent is itself ANOTHER pending candidate (a chain at least two pattern levels deep — the
+        // gap this fix-up exists for) is new territory with no other protection, so only those are
+        // spliced; the direct ones stay recorded (unprotected) purely so a deeper chain can still walk
+        // through them to its TCO-parameter root.
+        // The copy-type filter is applied here rather than at record time for the same reason
+        // eligibility itself is: a pattern binding's type can still be an unresolved type variable
+        // during the first pass, so checking early can wrongly treat an about-to-be-Int (or -Float,
+        // -Bool, -UInt) binding as heap-managed — and dup'ing a scalar as if it were a refcounted
+        // pointer segfaults rather than merely over-protecting.
+        var accepted = _pendingNestedTcoPatternAliasSites
+            .Where(site => !CanArenaReset(Prune(site.Value.PayloadType))
+                && !tco.ParamSlots.Contains(site.Value.ParentSlot)
+                && IsChainRootRuntimeManaged(site.Value.ParentSlot, tco))
+            .OrderByDescending(site => site.Value.InsertIndex)
+            .ToList();
+        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _)) in accepted)
+        {
+            SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, insertIndex);
+        }
+
+        _pendingNestedTcoPatternAliasSites.Clear();
+    }
+
+    // Cycle-guarded: a slot chain can only grow shorter (each hop moves to a strictly earlier
+    // extraction), but a cycle would otherwise spin forever on malformed/adversarial input.
+    private bool IsChainRootRuntimeManaged(int slot, TcoContext tco)
+    {
+        var visited = new HashSet<int>();
+        int current = slot;
+        while (visited.Add(current))
+        {
+            if (tco.ParamSlots.Contains(current))
+            {
+                return tco.RuntimeManagedParamSlots.Contains(current);
+            }
+
+            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(current, out var entry))
+            {
+                return false;
+            }
+
+            current = entry.ParentSlot;
+        }
+
+        return false;
+    }
+
+    private void SpliceEagerNestedTcoPatternAliasProtection(int payloadSlot, int insertIndex)
+    {
+        int generatedStart = _inst.Count;
+        EmitEagerRuntimeManagedTcoNestedAliasProtection(payloadSlot);
+        int generatedCount = _inst.Count - generatedStart;
+        List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
+        _inst.RemoveRange(generatedStart, generatedCount);
+        _inst.InsertRange(insertIndex, generated);
+    }
+
+    /// <summary>
+    /// Protects a pattern binding nested below a TCO loop parameter (directly or transitively): dups
+    /// the just-extracted value in place, skipped when nil, so the parameter's own later drop (a
+    /// recursive-call-site consume, or the function-exit drop) sees a shared reference and decrements
+    /// instead of freeing — leaving an escaped copy of the value (e.g. embedded in the function's
+    /// result) valid.
+    /// </summary>
+    private void EmitEagerRuntimeManagedTcoNestedAliasProtection(int payloadSlot)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, payloadSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonNullTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
+        string duplicatedLabel = NewLabel("rc_tco_nested_alias_duplicated");
+        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(payloadSlot, duplicatedTemp));
+        Emit(new IrInst.Label(duplicatedLabel));
     }
 
     private void LowerLambdaCoreRefreshRuntimeManagedTcoParams(TcoContext? tco)
