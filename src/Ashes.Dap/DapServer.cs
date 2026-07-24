@@ -19,6 +19,10 @@ public sealed class DapServer : IDisposable
     private DapLaunchArguments? _launchArgs;
     private readonly Dictionary<string, List<int>> _pendingBreakpoints = [];
 
+    /// <summary>
+    /// Creates a DapServer that communicates over <paramref name="input"/>/<paramref name="output"/>
+    /// and selects a native debugger backend based on the launch request.
+    /// </summary>
     public DapServer(Stream input, Stream output)
         : this(input, output, CreateBackend)
     {
@@ -33,6 +37,10 @@ public sealed class DapServer : IDisposable
         _backendFactory = backendFactory;
     }
 
+    /// <summary>
+    /// Runs the server loop, reading DAP requests from the client and dispatching each until
+    /// the input stream reaches end-of-file or <paramref name="ct"/> is cancelled.
+    /// </summary>
     public async Task RunAsync(CancellationToken ct = default)
     {
         while (!ct.IsCancellationRequested)
@@ -159,6 +167,10 @@ public sealed class DapServer : IDisposable
         }
     }
 
+    /// <summary>
+    /// Default backend factory: returns an <see cref="LldbDebuggerBackend"/> when
+    /// <paramref name="debuggerType"/> is <c>"lldb"</c>, otherwise a <see cref="GdbDebuggerBackend"/>.
+    /// </summary>
     public static IDebuggerBackend CreateBackend(string? debuggerType)
     {
         return debuggerType?.ToLowerInvariant() switch
@@ -373,6 +385,7 @@ public sealed class DapServer : IDisposable
         _transport.SendResponse(request, success: true);
     }
 
+    /// <inheritdoc/>
     public void Dispose()
     {
         _debugger?.Dispose();

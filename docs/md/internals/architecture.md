@@ -36,6 +36,10 @@ flowchart LR
 | Code generation | Ashes.Backend | `LlvmCodegen` | LLVM IR → object file |
 | Linking | Ashes.Backend | `LlvmImageLinker` | Native executable bytes |
 
+Each pipeline project's public surface is documented directly from its `///` XML doc comments in
+the [Frontend](api/frontend.md), [Semantics](api/semantics.md), [Backend](api/backend.md), and
+[Formatter](api/formatter.md) API references.
+
 ---
 
 ## Project Dependency Graph

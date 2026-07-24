@@ -3,21 +3,40 @@ using System.Text;
 
 namespace Ashes.Frontend;
 
+/// <summary>
+/// Forward-only tokenizer that turns source text into a stream of <see cref="Token"/> values, one
+/// per <see cref="Next"/> call. It skips whitespace and <c>//</c> line comments, recognizes keywords,
+/// operators, and literals (integer, unsigned-suffixed, float, big-int, string), and reports lexical
+/// errors into a <see cref="Diagnostics"/> sink. <see cref="SavePosition"/> / <see cref="RestorePosition"/>
+/// give the parser bounded backtracking.
+/// </summary>
 public sealed class Lexer
 {
     private readonly string _text;
     private readonly Diagnostics _diag;
     private int _pos;
 
+    /// <summary>
+    /// Creates a lexer over <paramref name="text"/> (a null source is treated as empty), reporting
+    /// lexical errors into <paramref name="diag"/>.
+    /// </summary>
     public Lexer(string text, Diagnostics diag)
     {
         _text = text ?? "";
         _diag = diag;
     }
 
+    /// <summary>Captures the current byte offset so it can later be handed back to
+    /// <see cref="RestorePosition(int)"/> for bounded lookahead/backtracking.</summary>
     public int SavePosition() => _pos;
+
+    /// <summary>Rewinds the lexer to a position previously returned by <see cref="SavePosition"/>.</summary>
     public void RestorePosition(int pos) => _pos = pos;
 
+    /// <summary>
+    /// Scans and returns the next token, advancing past it. Whitespace and <c>//</c> line comments are
+    /// skipped first; at end of input a <see cref="TokenKind.EOF"/> token is returned.
+    /// </summary>
     public Token Next()
     {
         SkipWhite();

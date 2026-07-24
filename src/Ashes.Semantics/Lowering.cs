@@ -5,6 +5,11 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    /// <summary>The inferred type of a source span, recorded during lowering so the language server can
+    /// answer hover and type-at-position queries.</summary>
+    /// <param name="Span">The source range this type covers.</param>
+    /// <param name="Name">The bound name at the span, when the span is a named binding or reference; otherwise null.</param>
+    /// <param name="Type">The inferred type of the expression occupying the span.</param>
     public readonly record struct HoverTypeInfo(TextSpan Span, string? Name, TypeRef Type);
 
     private readonly Diagnostics _diag;
@@ -526,11 +531,20 @@ public sealed partial class Lowering
     private readonly HashSet<string> _externalOpaqueTypes = new(StringComparer.Ordinal);
     private readonly List<IrExternalFunction> _externalFunctions = new();
 
+    /// <summary>The type declarations registered during lowering, keyed by type name.</summary>
     public IReadOnlyDictionary<string, TypeSymbol> TypeSymbols => _typeSymbols;
+    /// <summary>The data constructors registered during lowering, keyed by constructor name.</summary>
     public IReadOnlyDictionary<string, ConstructorSymbol> ConstructorSymbols => _constructorSymbols;
+    /// <summary>The resolved named types encountered during lowering, keyed by type name.</summary>
     public IReadOnlyDictionary<string, TypeRef.TNamedType> ResolvedTypes => _resolvedTypes;
+    /// <summary>The inferred type of the most recently lowered expression, exposed for tooling queries.</summary>
     public TypeRef? LastLoweredType { get; private set; }
 
+    /// <summary>
+    /// Returns the narrowest recorded <see cref="HoverTypeInfo"/> whose span contains
+    /// <paramref name="position"/>, or null when no recorded type covers that offset. Used by the
+    /// language server for hover and type-at-cursor.
+    /// </summary>
     public HoverTypeInfo? GetTypeAtPosition(int position)
     {
         HoverTypeInfo? best = null;
@@ -551,11 +565,18 @@ public sealed partial class Lowering
         return best;
     }
 
+    /// <summary>Renders <paramref name="type"/> in the canonical human-readable form used for hovers and diagnostics.</summary>
     public string FormatType(TypeRef type)
     {
         return Pretty(type);
     }
 
+    /// <summary>
+    /// Creates a lowering pass. <paramref name="diag"/> collects diagnostics;
+    /// <paramref name="importedStdModules"/> names the standard-library modules in scope (gating, for
+    /// example, the unqualified <c>Ashes.IO</c> bindings); <paramref name="moduleAliases"/> maps import
+    /// aliases to their target module names for qualified-reference resolution.
+    /// </summary>
     public Lowering(Diagnostics diag, IReadOnlySet<string>? importedStdModules = null, IReadOnlyDictionary<string, string>? moduleAliases = null)
     {
         _diag = diag;
@@ -585,6 +606,11 @@ public sealed partial class Lowering
     // diagnostic into a forward-reference diagnostic (ASH014) when the name IS declared later.
     private readonly HashSet<string> _topLevelBindingNames = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Lowers a complete parsed <see cref="Program"/> (its declarations and trailing expression) into
+    /// the typed IR, running binding, Hindley-Milner inference, and ownership analysis. This is the
+    /// primary entry point for compiling a source unit.
+    /// </summary>
     public IrProgram Lower(Program program)
     {
         // Type, external, and capability declarations are registered upfront; their relative order among
@@ -748,6 +774,10 @@ public sealed partial class Lowering
 
 
 
+    /// <summary>
+    /// Lowers a bare trailing expression (a program with no top-level declarations) into the typed IR,
+    /// the single-expression counterpart to <see cref="Lower(Program)"/>.
+    /// </summary>
     public IrProgram Lower(Expr expr)
     {
         // Async syntax may occur after a pure helper in source order. Establish the program-wide
@@ -806,13 +836,6 @@ public sealed partial class Lowering
         return PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
     }
 
-    /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
-    /// block can be generated later (after inference resolves the argument types and all sibling
-    /// branches establish the final runtime-managed parameter set) at the exact
-    /// point marked by an <see cref="IrInst.TcoResetPending"/> placeholder. The
-    /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
-    /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
-    /// stable-accumulator) are evaluated eagerly, since the scope is gone by resolution time.</summary>
     /// <summary>
     /// True when a tail-call argument expression rebuilds its list THIS iteration: a call result
     /// (a function's list result is copied out of the callee's arena scope on return, so it is
@@ -831,6 +854,13 @@ public sealed partial class Lowering
             _ => false,
         };
 
+    /// <summary>Everything a TCO back-edge arena block needs, captured at the back edge so the
+    /// block can be generated later (after inference resolves the argument types and all sibling
+    /// branches establish the final runtime-managed parameter set) at the exact
+    /// point marked by an <see cref="IrInst.TcoResetPending"/> placeholder. The
+    /// <see cref="ArgTypes"/> are live inference references — pruning them at resolution time
+    /// yields the final types. The AST/scope-dependent facts (pass-through, single-fresh-cons,
+    /// stable-accumulator) are evaluated eagerly, since the scope is gone by resolution time.</summary>
     private sealed record PendingTcoReset(
         TcoContext Tco,
         int[] ArgTemps,

@@ -1329,15 +1329,6 @@ internal static partial class LlvmCodegen
         return afterRegisterBlock;
     }
 
-    /// <summary>
-    /// Cooperative sleep wait. Scans the pending task list for tasks parked on a sleep timer
-    /// (<c>WaitKind == WaitTimer</c>) — the remaining milliseconds live in the sleeping leaf's
-    /// <c>SleepDurationMs</c> (the task itself when it is a bare sleep leaf, or its <c>AwaitedTask</c>
-    /// when a coroutine is suspended on one). If any exist and nothing is immediately runnable, it
-    /// sleeps once (<see cref="EmitNanosleep"/>) until the earliest deadline, then decrements every
-    /// timer task's remaining by that amount so the elapsed ones complete on the next scheduler step
-    /// while the others keep counting down. All control-flow paths branch to <paramref name="continuation"/>.
-    /// </summary>
     // Up-front slots + basic blocks for EmitCooperativeTimerWait.
     private readonly record struct TimerWaitLayout(
         LlvmValueHandle MinSlot,
@@ -1373,6 +1364,15 @@ internal static partial class LlvmCodegen
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_dec_timer"));
     }
 
+    /// <summary>
+    /// Cooperative sleep wait. Scans the pending task list for tasks parked on a sleep timer
+    /// (<c>WaitKind == WaitTimer</c>) — the remaining milliseconds live in the sleeping leaf's
+    /// <c>SleepDurationMs</c> (the task itself when it is a bare sleep leaf, or its <c>AwaitedTask</c>
+    /// when a coroutine is suspended on one). If any exist and nothing is immediately runnable, it
+    /// sleeps once (<see cref="EmitNanosleep"/>) until the earliest deadline, then decrements every
+    /// timer task's remaining by that amount so the elapsed ones complete on the next scheduler step
+    /// while the others keep counting down. All control-flow paths branch to <paramref name="continuation"/>.
+    /// </summary>
     private static void EmitCooperativeTimerWait(
         LlvmCodegenState state,
         LlvmValueHandle taskListPtr,

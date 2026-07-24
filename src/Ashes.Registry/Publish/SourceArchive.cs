@@ -14,6 +14,9 @@ namespace Ashes.Registry.Publish;
 /// </summary>
 public static class SourceArchive
 {
+    /// <summary>Decompresses and unpacks the gzip tarball in <paramref name="gzip"/> into an in-memory
+    /// source set, enforcing <paramref name="limits"/> and the path-safety and source-only rules. Returns
+    /// the files on success, or a <c>limit_exceeded</c> error with nothing stored on any breach.</summary>
     public static async Task<(IReadOnlyList<SourceFile>? Files, PublishError? Error)> ExtractAsync(
         Stream gzip, RegistryLimits limits, CancellationToken ct)
     {

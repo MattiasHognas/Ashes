@@ -15,6 +15,12 @@ using Spectre.Console;
 
 namespace Ashes.TestRunner;
 
+/// <summary>
+/// Executes end-to-end <c>.ash</c> tests: it discovers test files, parses their leading directive
+/// block, compiles each program to a native executable, runs it (feeding stdin, materializing file
+/// fixtures, and hosting TCP/TLS loopback fixtures as directed), and compares stdout and exit code
+/// against the expectations. Pass/fail results are rendered to the console.
+/// </summary>
 public static class Runner
 {
     private const string TcpPortPlaceholder = "__TCP_PORT__";
@@ -42,25 +48,48 @@ public static class Runner
         set => _testProcessTimeout.Value = value;
     }
 
+    /// <summary>A file the test program expects to exist on disk, declared by a <c>// file:</c> or
+    /// <c>// file-bytes:</c> directive and materialized before the program runs.</summary>
+    /// <param name="RelativePath">Path of the fixture file relative to the program's working directory.</param>
+    /// <param name="Content">The raw bytes written to that path.</param>
     public sealed record TestFileFixture(string RelativePath, byte[] Content);
 
+    /// <summary>Whether a TLS fixture presents a certificate the client is configured to trust.</summary>
     public enum TlsFixtureTrustMode
     {
+        /// <summary>The fixture's certificate is trusted by the client (the handshake can succeed).</summary>
         Trusted,
+        /// <summary>The fixture's certificate is not trusted, exercising the rejection path.</summary>
         Untrusted,
     }
 
+    /// <summary>Whether a TLS fixture completes its handshake or deliberately fails it.</summary>
     public enum TlsFixtureHandshakeMode
     {
+        /// <summary>The fixture completes the TLS handshake normally.</summary>
         Success,
+        /// <summary>The fixture aborts the handshake to exercise the client's failure path.</summary>
         Failure,
     }
 
+    /// <summary>A loopback TCP server fixture the test program connects to, driven by the
+    /// <c>// tcp-server</c>, <c>// tcp-expect</c>, and <c>// tcp-send</c> directives.</summary>
+    /// <param name="Enabled">Whether a TCP fixture is active for this test.</param>
+    /// <param name="ExpectedText">Text the fixture asserts it receives from the program, or null to skip the check.</param>
+    /// <param name="SendText">Text the fixture sends to the program, or null to send nothing.</param>
     public sealed record TcpServerFixture(
         bool Enabled,
         string? ExpectedText,
         string? SendText);
 
+    /// <summary>A loopback TLS server fixture the test program connects to, extending
+    /// <see cref="TcpServerFixture"/> with certificate trust and handshake behavior.</summary>
+    /// <param name="Enabled">Whether a TLS fixture is active for this test.</param>
+    /// <param name="ExpectedText">Text the fixture asserts it receives from the program, or null to skip the check.</param>
+    /// <param name="SendText">Text the fixture sends to the program, or null to send nothing.</param>
+    /// <param name="TrustMode">Whether the fixture certificate is trusted by the client.</param>
+    /// <param name="HandshakeMode">Whether the fixture completes or aborts the handshake.</param>
+    /// <param name="CertificateHost">The host name the fixture certificate is issued for.</param>
     public sealed record TlsServerFixture(
         bool Enabled,
         string? ExpectedText,
@@ -69,6 +98,17 @@ public static class Runner
         TlsFixtureHandshakeMode HandshakeMode,
         string CertificateHost);
 
+    /// <summary>The parsed contents of a test file's leading <c>//</c> directive block: the expected
+    /// output, exit code, and every configured stdin, file, and network fixture.</summary>
+    /// <param name="Expected">The expected stdout, exactly (trailing whitespace trimmed).</param>
+    /// <param name="HasExpected">Whether an <c>// expect:</c> directive was present at all.</param>
+    /// <param name="ExpectedExitCode">The expected process exit code.</param>
+    /// <param name="IsCompileError">True when the test expects a compile error rather than a run.</param>
+    /// <param name="Stdin">Text fed to the program's stdin, or null for none.</param>
+    /// <param name="FileFixtures">Files to materialize before the program runs.</param>
+    /// <param name="TcpServer">The TCP loopback fixture configuration.</param>
+    /// <param name="TlsServer">The TLS loopback fixture configuration.</param>
+    /// <param name="SkipOnTargets">Target RIDs on which this test is skipped.</param>
     public sealed record TestDirectives(
         string Expected,
         bool HasExpected,
@@ -80,8 +120,25 @@ public static class Runner
         TlsServerFixture TlsServer,
         IReadOnlyList<string> SkipOnTargets);
 
+    /// <summary>The outcome of running one test file: whether it passed, plus the compared values for
+    /// reporting.</summary>
+    /// <param name="Path">The test file path.</param>
+    /// <param name="Passed">Whether the test passed.</param>
+    /// <param name="Expected">The expected stdout (or compile-error substring).</param>
+    /// <param name="Actual">The actual stdout (or compiler output) produced.</param>
+    /// <param name="ExitCode">The actual process exit code.</param>
+    /// <param name="ExpectedExitCode">The expected exit code.</param>
+    /// <param name="HasExpected">Whether the test declared an expected output.</param>
+    /// <param name="ElapsedMs">Wall-clock time the test took, in milliseconds.</param>
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
+    /// <summary>
+    /// Discovers and runs every <c>.ash</c> test under <paramref name="paths"/>, compiling for
+    /// <paramref name="targetId"/> (defaulting to the project target or the host target), renders the
+    /// per-test results to <paramref name="console"/>, and returns a process exit code that is zero
+    /// only when every test passed. <paramref name="project"/> supplies project-mode discovery and
+    /// <paramref name="backendOptions"/> overrides the backend compile settings.
+    /// </summary>
     public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null)
     {
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
@@ -341,6 +398,11 @@ public static class Runner
         }
     }
 
+    /// <summary>
+    /// Parses the leading <c>//</c> directive block of a test file's <paramref name="source"/> into a
+    /// <see cref="TestDirectives"/>, reading the expected output, exit code, stdin, file fixtures, and
+    /// TCP/TLS loopback fixture configuration.
+    /// </summary>
     public static TestDirectives ParseTestDirectives(string source)
     {
         var acc = new DirectiveAccumulator();
@@ -567,6 +629,11 @@ public static class Runner
         };
     }
 
+    /// <summary>
+    /// Writes each fixture in <paramref name="fixtures"/> to disk under <paramref name="rootDirectory"/>,
+    /// creating any intermediate directories, so the test program finds the files it expects when it
+    /// runs.
+    /// </summary>
     public static void MaterializeTestFixtures(string rootDirectory, IReadOnlyList<TestFileFixture> fixtures)
     {
         Directory.CreateDirectory(rootDirectory);
@@ -1067,6 +1134,8 @@ public static class Runner
         }
     }
 
+    /// <summary>Renders a duration of <paramref name="ms"/> milliseconds as a compact human-readable
+    /// string, scaling to <c>ms</c>, seconds, or minutes as appropriate.</summary>
     public static string FormatElapsed(long ms)
     {
         if (ms < 1000)
@@ -1467,6 +1536,8 @@ public static class Runner
         }
     }
 
+    /// <summary>Renders a byte count as a compact human-readable string, scaling to <c>B</c>, <c>KB</c>,
+    /// <c>MB</c>, or larger units as appropriate.</summary>
     public static string FormatSize(long bytes)
     {
         if (bytes < 1024)

@@ -17,6 +17,7 @@ namespace Ashes.Registry.Publish;
 /// </summary>
 public sealed class CompilerCapabilityExtractor : ICapabilityExtractor
 {
+    /// <inheritdoc/>
     public IReadOnlyList<string> PublicCapabilities(IReadOnlyList<SourceFile> files, string ns)
     {
         ArgumentNullException.ThrowIfNull(files);

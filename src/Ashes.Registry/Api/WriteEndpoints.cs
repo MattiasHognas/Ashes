@@ -5,16 +5,33 @@ using Ashes.Registry.Storage;
 namespace Ashes.Registry.Api;
 
 // Request/response DTOs for the write surface (camelCase via web defaults).
+/// <summary>Body of <c>POST /api/v1/tokens</c>: the account name to create or look up.</summary>
+/// <param name="Name">The account name to mint a token for.</param>
 public sealed record TokenRequest(string Name);
 
+/// <summary>Response to a token mint, carrying the one-time plaintext secret.</summary>
+/// <param name="Account">The account the token belongs to.</param>
+/// <param name="Token">The plaintext bearer secret, returned only at mint time.</param>
 public sealed record TokenResponse(string Account, string Token);
 
+/// <summary>Body identifying the account to add or remove as a namespace owner.</summary>
+/// <param name="Name">The target account's name.</param>
 public sealed record OwnerRequest(string Name);
 
+/// <summary>The current owner set of a namespace, returned by the owner endpoints.</summary>
+/// <param name="Owners">Names of the accounts that own the namespace.</param>
 public sealed record OwnersResponse(IReadOnlyList<string> Owners);
 
+/// <summary>The client-declared metadata part of a multipart publish upload.</summary>
+/// <param name="Description">Free-text package description, if provided.</param>
+/// <param name="Keywords">Discovery keywords, if provided.</param>
+/// <param name="Dependencies">Declared dependency edges, if provided.</param>
+/// <param name="Hash">The client-computed <c>ash1:</c> content hash, verified against the server's.</param>
 public sealed record PublishMetadataDto(string? Description, string[]? Keywords, DependencyDto[]? Dependencies, string? Hash);
 
+/// <summary>A dependency edge in the publish metadata payload.</summary>
+/// <param name="Namespace">The depended-on package's namespace.</param>
+/// <param name="Req">The SemVer requirement string.</param>
 public sealed record DependencyDto(string Namespace, string Req);
 
 /// <summary>The authenticated write surface: token minting, publish, yank/unyank, owner management.</summary>
@@ -22,6 +39,8 @@ public static class WriteEndpoints
 {
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Registers the authenticated write routes (tokens, publish, yank/unyank, owners) under
+    /// <c>/api/v1</c> on <paramref name="app"/> and returns it for chaining.</summary>
     public static IEndpointRouteBuilder MapWriteEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);

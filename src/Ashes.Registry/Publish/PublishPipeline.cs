@@ -16,6 +16,10 @@ public sealed class PublishPipeline(
     ICapabilityExtractor capabilities,
     IOptions<RegistryOptions> options)
 {
+    /// <summary>Runs the ordered publish stages for <paramref name="request"/> — unpack and limit-check,
+    /// namespace authorization, SemVer and immutability checks, namespace lint, hash verification,
+    /// capability extraction, and the atomic blob/package/version store — returning the stored version or a
+    /// typed failure. An identical re-publish of an existing version is an idempotent success.</summary>
     public async Task<PublishResult> RunAsync(PublishRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);

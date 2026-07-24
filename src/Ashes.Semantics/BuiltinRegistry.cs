@@ -2,6 +2,12 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
+/// <summary>
+/// Static catalogue of the language's built-in modules, intrinsic value members, and built-in
+/// types. Binding and lowering consult it to resolve qualified <c>Ashes.*</c> references, decide
+/// which module members are compiler intrinsics versus stdlib source, classify types for the
+/// memory model (copy / owned / resource), and validate selector imports against built-in modules.
+/// </summary>
 public static class BuiltinRegistry
 {
     private static readonly HashSet<string> PrimitiveTypeNames = new(StringComparer.Ordinal)
@@ -10,155 +16,310 @@ public static class BuiltinRegistry
         "Bytes"
     };
 
+    /// <summary>
+    /// Identifies a specific compiler intrinsic reachable as a built-in module member. Each member
+    /// names one primitive operation that lowering recognizes and emits directly, rather than
+    /// calling into embedded Ashes source.
+    /// </summary>
     public enum BuiltinValueKind
     {
+        /// <summary>Prints a value's rendering to standard output.</summary>
         Print,
+        /// <summary>Aborts the program with a message.</summary>
         Panic,
+        /// <summary>The program's command-line arguments.</summary>
         Args,
+        /// <summary>Writes text to standard output without a trailing newline.</summary>
         Write,
+        /// <summary>Writes text to standard output followed by a newline.</summary>
         WriteLine,
+        /// <summary>Reads one line from standard input.</summary>
         ReadLine,
+        /// <summary>Reads a file's entire contents as text.</summary>
         FileReadText,
+        /// <summary>Reads a file's entire contents as raw bytes.</summary>
         FileReadAllBytes,
+        /// <summary>Memory-maps a file for zero-copy reads.</summary>
         FileMmap,
+        /// <summary>Writes text to a file, replacing its contents.</summary>
         FileWriteText,
+        /// <summary>Tests whether a file exists.</summary>
         FileExists,
+        /// <summary>Opens a file, returning a <c>FileHandle</c> resource.</summary>
         FileOpen,
+        /// <summary>Reads a fixed-size chunk of bytes from an open file handle.</summary>
         FileReadChunk,
+        /// <summary>Reads one line from an open file handle.</summary>
         FileReadLine,
+        /// <summary>Closes an open file handle.</summary>
         FileClose,
+        /// <summary>Produces an independent deep copy of a value; identity for immutable data.</summary>
         InternalDeepCopy,
+        /// <summary>Runs two thunks in parallel and returns both results.</summary>
         ParallelBoth,
+        /// <summary>Runs a thunk with an overridden worker count in effect.</summary>
         ParallelWithWorkers,
+        /// <summary>Splits text into its first character and the remaining tail.</summary>
         TextUncons,
+        /// <summary>Parses text into an integer.</summary>
         TextParseInt,
+        /// <summary>Parses text into a floating-point number.</summary>
         TextParseFloat,
+        /// <summary>Renders an integer as text.</summary>
         TextFromInt,
+        /// <summary>Renders a floating-point number as text.</summary>
         TextFromFloat,
+        /// <summary>Renders a floating-point number as text with a given precision.</summary>
         TextFormatFloat,
+        /// <summary>Renders bytes or an integer as a hexadecimal string.</summary>
         TextToHex,
+        /// <summary>Uppercases the ASCII letters of a string.</summary>
         TextAsciiUpper,
+        /// <summary>Lowercases the ASCII letters of a string.</summary>
         TextAsciiLower,
+        /// <summary>Builds a big integer from a machine integer.</summary>
         BigIntFromInt,
+        /// <summary>Renders a big integer as a decimal string.</summary>
         BigIntToString,
+        /// <summary>Narrows a big integer to a machine integer.</summary>
         BigIntToInt,
+        /// <summary>Parses a decimal string into a big integer.</summary>
         BigIntFromString,
+        /// <summary>Adds two big integers.</summary>
         BigIntAdd,
+        /// <summary>Subtracts one big integer from another.</summary>
         BigIntSub,
+        /// <summary>Multiplies two big integers.</summary>
         BigIntMul,
+        /// <summary>Divides one big integer by another.</summary>
         BigIntDiv,
+        /// <summary>Computes the remainder of big-integer division.</summary>
         BigIntMod,
+        /// <summary>Orders two big integers.</summary>
         BigIntCompare,
+        /// <summary>Performs an HTTP GET request.</summary>
         HttpGet,
+        /// <summary>Performs an HTTP POST request with a body.</summary>
         HttpPost,
+        /// <summary>Opens a TCP connection to a host and port.</summary>
         NetTcpConnect,
+        /// <summary>Sends bytes over a TCP socket.</summary>
         NetTcpSend,
+        /// <summary>Receives bytes from a TCP socket.</summary>
         NetTcpReceive,
+        /// <summary>Closes a TCP socket.</summary>
         NetTcpClose,
+        /// <summary>Binds and listens on a TCP port for incoming connections.</summary>
         NetTcpListen,
+        /// <summary>Accepts the next incoming connection on a listening socket.</summary>
         NetTcpAccept,
+        /// <summary>Forks a pool of worker processes sharing a listening socket.</summary>
         NetTcpForkWorkers,
+        /// <summary>Sets the connection-drain timeout for graceful server shutdown.</summary>
         NetTcpSetDrainTimeout,
+        /// <summary>Opens a TLS client connection to a host and port.</summary>
         NetTlsConnect,
+        /// <summary>Sends bytes over a TLS socket.</summary>
         NetTlsSend,
+        /// <summary>Receives bytes from a TLS socket.</summary>
         NetTlsReceive,
+        /// <summary>Closes a TLS socket.</summary>
         NetTlsClose,
+        /// <summary>Performs the server-side TLS handshake on an accepted connection.</summary>
         NetTlsServerHandshake,
+        /// <summary>Runs an asynchronous task to completion, driving the scheduler.</summary>
         AsyncRun,
+        /// <summary>Wraps a thunk as a deferred asynchronous task.</summary>
         AsyncTask,
+        /// <summary>Lifts an already-computed value into a completed task.</summary>
         AsyncFromResult,
+        /// <summary>Suspends the current task for a duration.</summary>
         AsyncSleep,
+        /// <summary>Awaits a list of tasks and collects all their results.</summary>
         AsyncAll,
+        /// <summary>Schedules a task to run concurrently without awaiting it.</summary>
         AsyncSpawn,
+        /// <summary>Awaits several tasks and yields the first to complete.</summary>
         AsyncRace,
+        /// <summary>The empty byte sequence.</summary>
         BytesEmpty,
+        /// <summary>A single-byte sequence.</summary>
         BytesSingleton,
+        /// <summary>The length of a byte sequence.</summary>
         BytesLength,
+        /// <summary>Reads the byte at an index.</summary>
         BytesGet,
+        /// <summary>Finds the first index of a byte pattern within a range.</summary>
         BytesIndexOf,
+        /// <summary>Lexicographically orders two byte sequences.</summary>
         BytesCompare,
+        /// <summary>Computes a rolling hash over a byte range.</summary>
         BytesScanHash,
+        /// <summary>Decodes a byte range into text (copying).</summary>
         BytesSubText,
+        /// <summary>Takes a byte range as a view without copying.</summary>
         BytesSubView,
+        /// <summary>Concatenates two byte sequences.</summary>
         BytesAppend,
+        /// <summary>Appends a single byte to a sequence.</summary>
         BytesAppendByte,
+        /// <summary>Builds a byte sequence from a list of byte values.</summary>
         BytesFromList,
+        /// <summary>Encodes text as its UTF-8 byte sequence.</summary>
         BytesFromText,
+        /// <summary>Hashes a byte sequence.</summary>
         BytesHash,
+        /// <summary>Encodes a 16-bit value as little-endian bytes.</summary>
         BytesU16Le,
+        /// <summary>Encodes a 32-bit value as little-endian bytes.</summary>
         BytesU32Le,
+        /// <summary>Encodes a 64-bit value as little-endian bytes.</summary>
         BytesU64Le,
+        /// <summary>Reads a little-endian 16-bit value at an offset.</summary>
         BytesGetU16Le,
+        /// <summary>Reads a little-endian 32-bit value at an offset.</summary>
         BytesGetU32Le,
+        /// <summary>Reads a little-endian 64-bit value at an offset.</summary>
         BytesGetU64Le,
+        /// <summary>Reinterprets an unsigned integer as a signed machine integer.</summary>
         UIntToInt,
+        /// <summary>Reinterprets a signed machine integer as unsigned.</summary>
         UIntFromInt,
+        /// <summary>Converts an integer to a floating-point number.</summary>
         MathToFloat,
+        /// <summary>Square root.</summary>
         MathSqrt,
+        /// <summary>Rounds toward negative infinity.</summary>
         MathFloor,
+        /// <summary>Rounds toward positive infinity.</summary>
         MathCeil,
+        /// <summary>Rounds to the nearest integer value.</summary>
         MathRound,
+        /// <summary>Truncates toward zero.</summary>
         MathTrunc,
+        /// <summary>Floors and converts to an integer.</summary>
         MathFloorToInt,
+        /// <summary>Rounds and converts to an integer.</summary>
         MathRoundToInt,
+        /// <summary>Truncates and converts to an integer.</summary>
         MathTruncToInt,
+        /// <summary>Sine.</summary>
         MathSin,
+        /// <summary>Cosine.</summary>
         MathCos,
+        /// <summary>Tangent.</summary>
         MathTan,
+        /// <summary>Arcsine.</summary>
         MathAsin,
+        /// <summary>Arccosine.</summary>
         MathAcos,
+        /// <summary>Arctangent.</summary>
         MathAtan,
+        /// <summary>Hyperbolic sine.</summary>
         MathSinh,
+        /// <summary>Hyperbolic cosine.</summary>
         MathCosh,
+        /// <summary>Hyperbolic tangent.</summary>
         MathTanh,
+        /// <summary>Exponential (e raised to the argument).</summary>
         MathExp,
+        /// <summary>Computes <c>exp(x) - 1</c> accurately for small arguments.</summary>
         MathExpm1,
+        /// <summary>Natural logarithm.</summary>
         MathLn,
+        /// <summary>Base-2 logarithm.</summary>
         MathLog2,
+        /// <summary>Base-10 logarithm.</summary>
         MathLog10,
+        /// <summary>Computes <c>ln(1 + x)</c> accurately for small arguments.</summary>
         MathLog1p,
+        /// <summary>Cube root.</summary>
         MathCbrt,
+        /// <summary>Raises a floating-point base to a floating-point exponent.</summary>
         MathPowF,
+        /// <summary>Two-argument arctangent that respects the quadrant.</summary>
         MathAtan2,
+        /// <summary>Euclidean distance, computed without intermediate overflow.</summary>
         MathHypot,
+        /// <summary>Floating-point remainder.</summary>
         MathFmod,
+        /// <summary>Compiles a regular-expression pattern into a handle.</summary>
         RegexCompile,
+        /// <summary>Retrieves the compile-error message for an invalid pattern.</summary>
         RegexCompileError,
+        /// <summary>Finds the next match of a compiled pattern from an offset.</summary>
         RegexFind,
+        /// <summary>Extracts the capture groups of a match from an offset.</summary>
         RegexCaptures,
+        /// <summary>Replaces all matches of a compiled pattern in a subject.</summary>
         RegexSubstitute,
+        /// <summary>Writes raw bytes to a file, replacing its contents.</summary>
         FileWriteBytes,
+        /// <summary>Writes raw bytes to standard output.</summary>
         IoWriteBytes,
+        /// <summary>Reads exactly a requested number of bytes from standard input.</summary>
         IoReadExact,
+        /// <summary>Puts the terminal into raw (unbuffered, unechoed) input mode.</summary>
         ConsoleEnableRaw,
+        /// <summary>Restores the terminal to its previous input mode.</summary>
         ConsoleRestore,
+        /// <summary>Polls for an available input event without blocking.</summary>
         ConsolePoll,
+        /// <summary>Reads a monotonic millisecond clock.</summary>
         ConsoleMonotonicMillis,
+        /// <summary>The byte length of a string's UTF-8 encoding.</summary>
         TextByteLength,
+        /// <summary>Spawns an external child process.</summary>
         SpawnProcess,
+        /// <summary>Writes bytes to a child process's standard input.</summary>
         ProcessWriteStdin,
+        /// <summary>Reads a line from a child process's standard output.</summary>
         ProcessReadStdoutLine,
+        /// <summary>Reads a line from a child process's standard error.</summary>
         ProcessReadStderrLine,
+        /// <summary>Waits for a child process to exit and returns its status.</summary>
         ProcessWaitForExit,
+        /// <summary>Terminates a child process.</summary>
         ProcessKill
     }
 
+    /// <summary>A single intrinsic member exported by a built-in module.</summary>
+    /// <param name="Name">The member's unqualified name as written in source (e.g. <c>print</c>).</param>
+    /// <param name="Kind">Which compiler intrinsic this member lowers to.</param>
+    /// <param name="IsCallable">True when the member is a function invoked with arguments; false for a value member such as <c>args</c>.</param>
+    /// <param name="Arity">Number of arguments the intrinsic expects when callable.</param>
     public sealed record BuiltinModuleMember(
         string Name,
         BuiltinValueKind Kind,
         bool IsCallable,
         int Arity);
 
+    /// <summary>
+    /// A built-in module: either a pure intrinsic module whose members are compiler primitives, or a
+    /// stdlib module backed by embedded Ashes source, or a hybrid of both.
+    /// </summary>
+    /// <param name="Name">The fully qualified module name (e.g. <c>Ashes.Text</c>).</param>
+    /// <param name="ResourceName">The embedded-resource name of the module's <c>.ash</c> source, or null for a pure-intrinsic module.</param>
+    /// <param name="Members">The module's intrinsic members keyed by unqualified name; empty when the module is entirely stdlib source.</param>
     public sealed record BuiltinModule(
         string Name,
         string? ResourceName,
         IReadOnlyDictionary<string, BuiltinModuleMember> Members);
 
+    /// <summary>A data constructor of a built-in ADT, mirroring a user-declared <see cref="ConstructorSymbol"/>.</summary>
+    /// <param name="Name">The constructor's name (e.g. <c>Some</c>).</param>
+    /// <param name="ParameterTypes">The types of the constructor's fields, using <see cref="TypeRef.TTypeParam"/> for the owning type's parameters.</param>
+    /// <param name="DeclaringSyntax">The synthesized AST constructor node this descriptor was built from.</param>
     public sealed record BuiltinConstructor(
         string Name,
         IReadOnlyList<TypeRef> ParameterTypes,
         TypeConstructor DeclaringSyntax);
 
+    /// <summary>A built-in type such as <c>List</c>, <c>Maybe</c>, or a resource type, exposed to binding as if user-declared.</summary>
+    /// <param name="Name">The type's name.</param>
+    /// <param name="TypeParameters">The type's generic parameters, in order.</param>
+    /// <param name="Constructors">The type's data constructors; empty for opaque or resource types.</param>
+    /// <param name="DeclaringSyntax">The synthesized AST type declaration this descriptor was built from.</param>
     public sealed record BuiltinType(
         string Name,
         IReadOnlyList<TypeParameterSymbol> TypeParameters,
@@ -490,8 +651,10 @@ public static class BuiltinRegistry
     private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlySet<string>>> ModuleExportsByName =
         new(BuildModuleExports);
 
+    /// <summary>The fully qualified names of every built-in module the compiler recognizes.</summary>
     public static IReadOnlyCollection<string> StandardModuleNames => ModulesByName.Keys.ToArray();
 
+    /// <summary>Every built-in type descriptor, seeded into scope so binding treats them as declared.</summary>
     public static IReadOnlyCollection<BuiltinType> Types => TypesByName.Values.ToArray();
 
     /// <summary>
@@ -528,6 +691,10 @@ public static class BuiltinRegistry
             or TypeRef.TNamedType;
     }
 
+    /// <summary>
+    /// Looks up a built-in module by its fully qualified name, returning true and its descriptor in
+    /// <paramref name="module"/> when found, false otherwise.
+    /// </summary>
     public static bool TryGetModule(string moduleName, out BuiltinModule module)
     {
         if (ModulesByName.TryGetValue(moduleName, out BuiltinModule? resolved))
@@ -568,6 +735,10 @@ public static class BuiltinRegistry
             && exports.Contains(name);
     }
 
+    /// <summary>
+    /// Looks up a built-in type by name, returning true and its descriptor in <paramref name="type"/>
+    /// when found, false otherwise.
+    /// </summary>
     public static bool TryGetType(string typeName, out BuiltinType type)
     {
         if (TypesByName.TryGetValue(typeName, out BuiltinType? resolved))
@@ -580,17 +751,26 @@ public static class BuiltinRegistry
         return false;
     }
 
+    /// <summary>Returns true when <paramref name="moduleName"/> names one of the compiler's built-in modules.</summary>
     public static bool IsBuiltinModule(string moduleName)
     {
         return ModulesByName.ContainsKey(moduleName);
     }
 
+    /// <summary>
+    /// Returns true when <paramref name="moduleName"/> falls under the reserved <c>Ashes</c> namespace,
+    /// so user code may not declare a module there.
+    /// </summary>
     public static bool IsReservedModuleNamespace(string moduleName)
     {
         return string.Equals(moduleName, "Ashes", StringComparison.Ordinal)
             || moduleName.StartsWith("Ashes.", StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Returns true when <paramref name="typeName"/> is reserved by the compiler (the <c>Ashes</c>
+    /// name, a built-in type, or a built-in primitive), so user code may not redeclare it.
+    /// </summary>
     public static bool IsReservedTypeName(string typeName)
     {
         return string.Equals(typeName, "Ashes", StringComparison.Ordinal)
@@ -598,6 +778,10 @@ public static class BuiltinRegistry
             || PrimitiveTypeNames.Contains(typeName);
     }
 
+    /// <summary>
+    /// Resolves a built-in primitive type name (<c>Float</c> or <c>Bytes</c>) to its <see cref="TypeRef"/>,
+    /// returning true and the type in <paramref name="type"/> when recognized, false otherwise.
+    /// </summary>
     public static bool TryGetPrimitiveType(string typeName, out TypeRef type)
     {
         if (string.Equals(typeName, "Float", StringComparison.Ordinal))

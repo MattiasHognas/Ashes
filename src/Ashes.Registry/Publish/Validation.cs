@@ -7,8 +7,10 @@ namespace Ashes.Registry.Publish;
 /// <summary>Outcome of the namespace lint: valid, or invalid with a reason.</summary>
 public sealed record ValidationResult(bool Ok, string? Message)
 {
+    /// <summary>The shared success result carrying no message.</summary>
     public static ValidationResult Valid { get; } = new(true, null);
 
+    /// <summary>Builds a failure result carrying the given rejection <paramref name="message"/>.</summary>
     public static ValidationResult Invalid(string message) => new(false, message);
 }
 
@@ -17,6 +19,8 @@ public sealed record ValidationResult(bool Ok, string? Message)
 /// (structural check now; compiler-front-end reuse later).</summary>
 public interface IManifestValidator
 {
+    /// <summary>Checks that every exported module in <paramref name="files"/> lives under namespace
+    /// <paramref name="ns"/>, returning a pass or a typed rejection.</summary>
     ValidationResult Validate(IReadOnlyList<SourceFile> files, string ns);
 }
 
@@ -24,6 +28,8 @@ public interface IManifestValidator
 /// as <see cref="IManifestValidator"/>.</summary>
 public interface ICapabilityExtractor
 {
+    /// <summary>Returns the capability rows exposed by the public API of the package <paramref name="ns"/>
+    /// as reconstructed from its <paramref name="files"/>.</summary>
     IReadOnlyList<string> PublicCapabilities(IReadOnlyList<SourceFile> files, string ns);
 }
 
@@ -37,6 +43,7 @@ public interface ICapabilityExtractor
 /// </summary>
 public sealed class SemanticManifestValidator : IManifestValidator
 {
+    /// <inheritdoc/>
     public ValidationResult Validate(IReadOnlyList<SourceFile> files, string ns)
     {
         ArgumentNullException.ThrowIfNull(files);
@@ -153,5 +160,6 @@ public sealed class SemanticManifestValidator : IManifestValidator
 /// </summary>
 public sealed class EmptyCapabilityExtractor : ICapabilityExtractor
 {
+    /// <inheritdoc/>
     public IReadOnlyList<string> PublicCapabilities(IReadOnlyList<SourceFile> files, string ns) => [];
 }

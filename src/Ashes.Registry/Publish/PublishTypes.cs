@@ -24,9 +24,13 @@ public sealed record PublishError(string Code, string Message);
 /// <summary>The pipeline outcome: either the stored version or a typed error (never both).</summary>
 public sealed record PublishResult(VersionInfo? Version, PublishError? Error)
 {
+    /// <summary>Whether the publish succeeded, i.e. carries a version and no error.</summary>
     public bool Succeeded => Error is null;
 
+    /// <summary>Builds a success result carrying the stored <paramref name="version"/>.</summary>
     public static PublishResult Ok(VersionInfo version) => new(version, null);
 
+    /// <summary>Builds a failure result carrying an error with the given <paramref name="code"/> and
+    /// <paramref name="message"/>.</summary>
     public static PublishResult Fail(string code, string message) => new(null, new PublishError(code, message));
 }

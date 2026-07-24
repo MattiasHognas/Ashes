@@ -1,5 +1,11 @@
 namespace Ashes.Frontend;
 
+/// <summary>
+/// Recursive-descent parser that turns a source string into an AST. It drives a forward-only
+/// <see cref="Lexer"/>, reports recoverable errors into a <see cref="Diagnostics"/> sink rather than
+/// throwing, and produces either a full <see cref="Program"/> (<see cref="ParseProgram"/>) or a
+/// single <see cref="Expr"/> (<see cref="ParseExpression"/>).
+/// </summary>
 public sealed class Parser
 {
     private readonly Lexer _lexer;
@@ -29,6 +35,11 @@ public sealed class Parser
     // application *within* an expression body is indented past this column and is preserved.
     private int _topLevelDeclColumn = -1;
 
+    /// <summary>
+    /// Creates a parser over <paramref name="text"/>, priming the first token. Recoverable errors are
+    /// reported into <paramref name="diag"/> as parsing proceeds; the constructor never throws on
+    /// malformed input.
+    /// </summary>
     public Parser(string text, Diagnostics diag)
     {
         _diag = diag;
@@ -46,6 +57,10 @@ public sealed class Parser
         return lineStart < 0 ? pos : pos - lineStart - 1;
     }
 
+    /// <summary>
+    /// Parses the input as a single expression and verifies that no tokens remain afterward. Used for
+    /// contexts that expect one expression rather than a whole compilation unit (e.g. the REPL).
+    /// </summary>
     public Expr ParseExpression()
     {
         var expr = ParseExpressionCore();
@@ -53,6 +68,11 @@ public sealed class Parser
         return expr;
     }
 
+    /// <summary>
+    /// Parses a whole compilation unit — an ordered sequence of top-level declarations followed by an
+    /// optional trailing expression (<c>declaration* expr?</c>) — into a <see cref="Program"/>. Imports
+    /// are assumed stripped upstream. A file with no declarations must be a single expression.
+    /// </summary>
     public Program ParseProgram()
     {
         // A file is `declaration* expr?` (imports are stripped upstream). Declarations are `type`,

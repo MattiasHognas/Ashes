@@ -30,6 +30,12 @@ public static class IrCompileTimeEval
     // comfortably, so the logical depth cap is always hit before any native stack overflow.
     private const int EvalStackBytes = 512 * 1024 * 1024;
 
+    /// <summary>
+    /// Folds pure, constant-argument calls in <paramref name="program"/> to their computed results by
+    /// interpreting the IR at compile time, returning the rewritten program. Evaluation is bounded by
+    /// step and depth budgets and fails open: when a computation exceeds its budget or cannot be folded,
+    /// the original runtime code is retained. Setting <c>ASHES_NO_COMPILE_TIME_EVAL</c> disables the pass.
+    /// </summary>
     public static IrProgram Evaluate(IrProgram program)
     {
         if (System.Environment.GetEnvironmentVariable("ASHES_NO_COMPILE_TIME_EVAL") is not null)

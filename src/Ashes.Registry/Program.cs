@@ -83,8 +83,12 @@ app.MapWriteEndpoints();
 await app.RunAsync();
 
 // Exposed so the test project's WebApplicationFactory<Program> can boot the real app in-memory.
+
+/// <summary>The registry web application's entry-point class, made public so the test host can boot the
+/// real app in-memory via <c>WebApplicationFactory&lt;Program&gt;</c>.</summary>
 public partial class Program
 {
+    /// <summary>Prevents external instantiation; the class exists only as a test-host type marker.</summary>
     protected Program()
     {
     }

@@ -5,6 +5,20 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
+/// <summary>
+/// A loaded <c>ashes.json</c> project: its entry point, source roots, output settings, and resolved
+/// dependencies. Produced by <see cref="ProjectSupport.LoadProject(string)"/> and consumed by
+/// <see cref="ProjectSupport.BuildCompilationPlan(AshesProject)"/>.
+/// </summary>
+/// <param name="ProjectFilePath">Absolute path to the <c>ashes.json</c> file.</param>
+/// <param name="ProjectDirectory">Absolute path to the directory containing the project file.</param>
+/// <param name="EntryPath">Absolute path to the project's entry <c>.ash</c> source file.</param>
+/// <param name="EntryModuleName">The module name derived from the entry file's path.</param>
+/// <param name="Name">The project's declared name, or null when unspecified.</param>
+/// <param name="SourceRoots">Directories searched for module sources, in priority order.</param>
+/// <param name="Include">Explicit source-file include globs from the project file.</param>
+/// <param name="OutDir">Directory into which build artifacts are written.</param>
+/// <param name="Target">The declared build target RID, or null to use the host default.</param>
 public sealed record AshesProject(
     string ProjectFilePath,
     string ProjectDirectory,
@@ -39,6 +53,16 @@ public sealed record ResolvedDependency(
     public string? EntryFile { get; init; }
 }
 
+/// <summary>
+/// One source module participating in a compilation plan, with its imports already parsed out of the
+/// source. Both file-backed modules and lifted inline modules are represented uniformly here.
+/// </summary>
+/// <param name="ModuleName">The module's fully qualified path-derived name.</param>
+/// <param name="FilePath">The source file this module was loaded from (a synthetic <c>path#Name</c> for inline modules).</param>
+/// <param name="Source">The module's source text with its import header stripped.</param>
+/// <param name="Imports">The whole-module names this module imports.</param>
+/// <param name="Aliases">Import aliases (<c>import M as X</c>) mapping alias to module name.</param>
+/// <param name="Selectors">Selector imports (<c>import M.name</c>) that bring single exports in unqualified.</param>
 public sealed record ProjectModule(
     string ModuleName,
     string FilePath,
@@ -61,6 +85,16 @@ public readonly record struct ImportSelector(
     string LocalName
 );
 
+/// <summary>
+/// A fully resolved build plan: the modules to compile in dependency order, the designated entry
+/// module, and the merged import surface. Produced by
+/// <see cref="ProjectSupport.BuildCompilationPlan(AshesProject)"/>.
+/// </summary>
+/// <param name="Project">The project this plan was built for.</param>
+/// <param name="OrderedModules">All modules to compile, topologically ordered so dependencies precede dependents.</param>
+/// <param name="EntryModule">The module holding the program's entry point.</param>
+/// <param name="ImportedStdModules">The set of standard-library modules transitively imported by the plan.</param>
+/// <param name="MergedAliases">Import aliases visible across the combined compilation, mapping alias to module name.</param>
 public sealed record ProjectCompilationPlan(
     AshesProject Project,
     IReadOnlyList<ProjectModule> OrderedModules,
@@ -69,6 +103,15 @@ public sealed record ProjectCompilationPlan(
     IReadOnlyDictionary<string, string> MergedAliases
 );
 
+/// <summary>
+/// The result of splitting a module's import header from its body:
+/// <see cref="ProjectSupport.ParseImportHeader(string, string)"/> returns the imported names, the
+/// body source with the header removed, and the alias and selector import tables.
+/// </summary>
+/// <param name="ImportNames">The whole-module names imported by the header.</param>
+/// <param name="SourceWithoutImports">The module source with the import header lines removed.</param>
+/// <param name="ImportAliases">Alias imports mapping alias to module name.</param>
+/// <param name="ImportSelectors">Selector imports parsed from the header.</param>
 public readonly record struct ParsedImportHeader(
     IReadOnlyList<string> ImportNames,
     string SourceWithoutImports,
@@ -76,6 +119,15 @@ public readonly record struct ParsedImportHeader(
     IReadOnlyList<ImportSelector> ImportSelectors
 );
 
+/// <summary>
+/// The combined single-source view stitched together from all plan modules, together with the offset
+/// maps needed to translate diagnostics on the combined text back to their originating files.
+/// </summary>
+/// <param name="Source">The concatenated source text handed to the frontend as one unit.</param>
+/// <param name="EntryOffset">Offset in <paramref name="Source"/> where the entry module's content begins.</param>
+/// <param name="BodyStart">Offset where the entry module's trailing body expression begins.</param>
+/// <param name="ModuleOffsets">Per-file spans within the combined source, for mapping offsets back to files.</param>
+/// <param name="EntryTypeDeclFragments">Spans of entry-module type declarations hoisted into the combined preamble, mapping combined offset to original offset and length; null when none were hoisted.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
@@ -84,6 +136,11 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null
 );
 
+/// <summary>
+/// Multi-file project support: discovers and loads <c>ashes.json</c> projects, parses import
+/// headers, resolves the standard library and inline modules, orders modules by dependency, and
+/// stitches them into a single combined compilation unit for the frontend.
+/// </summary>
 public static class ProjectSupport
 {
     // Inline modules (LANGUAGE_SPEC §13.1)
@@ -93,7 +150,7 @@ public static class ProjectSupport
     // rest of the pipeline (mangling, qualified-reference resolution, cross-file imports) then treats
     // exactly like a separate `File/Name.ash` file — so inline ↔ file promotion is transparent.
 
-    /// <summary>A header line <c>module Name =</c> at column <see cref="Indent"/>; the block body is the run of lines indented past it. A trailing line comment after the <c>=</c> is permitted (and dropped), matching where comments are ignored elsewhere.</summary>
+    /// <summary>A header line <c>module Name =</c> at the column captured by the <c>indent</c> group; the block body is the run of lines indented past it. A trailing line comment after the <c>=</c> is permitted (and dropped), matching where comments are ignored elsewhere.</summary>
     private static readonly Regex InlineModuleHeader = new(
         @"^(?<indent>[ \t]*)module[ \t]+(?<name>[A-Z][A-Za-z0-9_]*)[ \t]*=[ \t]*(//[^\n]*)?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant,
@@ -142,6 +199,10 @@ public static class ProjectSupport
         // combined source map back to exact original offsets.
         IReadOnlyList<(int FragmentStart, int OriginalStart, int Length)>? TypeDeclFragments = null);
 
+    /// <summary>
+    /// Regex matching a single <c>import</c> line: a dotted module path, an optional selector leaf,
+    /// and an optional <c>as</c> alias. Exposed so other phases match import syntax identically.
+    /// </summary>
     public const string ImportModulePattern = @"^\s*import\s+([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)(?:\.([a-z_][A-Za-z0-9_]*))?(?:\s+as\s+([A-Za-z][A-Za-z0-9_]*))?\s*$";
 
     /// <summary>Message for <c>ASH016</c>: two unqualified selectors collide on the same name.</summary>
@@ -176,8 +237,13 @@ public static class ProjectSupport
         "capability", "needs", "perform", "handle"
     };
 
+    /// <summary>The names of every standard-library module recognized when resolving imports.</summary>
     public static IReadOnlyCollection<string> KnownStandardLibraryModules => KnownStdModules;
 
+    /// <summary>
+    /// Walks upward from <paramref name="startDirectory"/> looking for an <c>ashes.json</c> file,
+    /// returning its path when found or null when no project file exists in any ancestor directory.
+    /// </summary>
     public static string? DiscoverProjectFile(string startDirectory)
     {
         var current = new DirectoryInfo(Path.GetFullPath(startDirectory));
@@ -195,6 +261,11 @@ public static class ProjectSupport
         return null;
     }
 
+    /// <summary>
+    /// Parses the <c>ashes.json</c> at <paramref name="projectPath"/> into an <see cref="AshesProject"/>,
+    /// resolving its entry file, source roots, and output settings. Throws when the file is missing or
+    /// not a valid project object.
+    /// </summary>
     public static AshesProject LoadProject(string projectPath)
     {
         var fullProjectPath = Path.GetFullPath(projectPath);
@@ -503,6 +574,11 @@ public static class ProjectSupport
         return withoutExtension.Replace(Path.DirectorySeparatorChar, '.').Replace('/', '.');
     }
 
+    /// <summary>
+    /// Splits <paramref name="source"/> into its leading import header and remaining body, returning
+    /// the imported module names, alias table, selector imports, and the body with the header removed.
+    /// <paramref name="displayPath"/> names the file in any diagnostics raised for malformed imports.
+    /// </summary>
     public static ParsedImportHeader ParseImportHeader(string source, string displayPath)
     {
         var imports = new List<string>();
@@ -653,6 +729,11 @@ public static class ProjectSupport
         return null;
     }
 
+    /// <summary>
+    /// Resolves all modules reachable from <paramref name="project"/>'s entry file, validates their
+    /// imports, orders them so dependencies precede dependents, and returns the
+    /// <see cref="ProjectCompilationPlan"/> the combined-source builders consume.
+    /// </summary>
     public static ProjectCompilationPlan BuildCompilationPlan(AshesProject project)
     {
         if (BuiltinRegistry.IsReservedModuleNamespace(project.EntryModuleName))
@@ -1122,16 +1203,27 @@ public static class ProjectSupport
         }
     }
 
+    /// <summary>Returns true when <paramref name="moduleName"/> names a standard-library module.</summary>
     public static bool IsStdModule(string moduleName)
     {
         return KnownStdModules.Contains(moduleName);
     }
 
+    /// <summary>
+    /// Convenience wrapper over <see cref="BuildCompilationLayout(ProjectCompilationPlan, string)"/>
+    /// that returns only the stitched combined source text for <paramref name="plan"/>.
+    /// </summary>
     public static string BuildCompilationSource(ProjectCompilationPlan plan)
     {
         return BuildCompilationLayout(plan).Source;
     }
 
+    /// <summary>
+    /// Stitches every module of <paramref name="plan"/> into one combined compilation unit, lifting any
+    /// inline modules in the entry source, and returns the source together with the offset maps that
+    /// translate diagnostics back to their originating files. <paramref name="entrySourceOverride"/>
+    /// substitutes replacement text for the entry module when provided (e.g. for the language server).
+    /// </summary>
     public static CombinedCompilationLayout BuildCompilationLayout(ProjectCompilationPlan plan, string? entrySourceOverride = null)
     {
         if (entrySourceOverride is null || !ContainsInlineModule(entrySourceOverride))
@@ -1183,6 +1275,13 @@ public static class ProjectSupport
         return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
     }
 
+    /// <summary>
+    /// Builds a combined compilation layout for a single standalone file (no <c>ashes.json</c>),
+    /// pulling in only the standard-library modules named by <paramref name="importNames"/>.
+    /// <paramref name="sourceWithoutImports"/> is the file body with its import header already removed,
+    /// <paramref name="entryFilePath"/> labels it in diagnostics, and <paramref name="selectors"/>
+    /// carries any selector imports to apply.
+    /// </summary>
     public static CombinedCompilationLayout BuildStandaloneCompilationLayout(
         string sourceWithoutImports,
         IReadOnlyList<string> importNames,
@@ -1447,11 +1546,20 @@ public static class ProjectSupport
         return Math.Clamp(lineStart + column - 1, lineStart, Math.Max(lineEnd, lineStart));
     }
 
+    /// <summary>
+    /// Turns a dotted module name into an identifier-safe binding name by replacing each <c>.</c> with
+    /// an underscore, so a module can be referenced as a single mangled symbol.
+    /// </summary>
     public static string SanitizeModuleBindingName(string moduleName)
     {
         return moduleName.Replace('.', '_');
     }
 
+    /// <summary>
+    /// Infers the single name a module exports by inspecting its trailing expression: a
+    /// <c>let x = ... in x</c> / <c>let recursive x = ... in x</c> spine or a bare <c>x</c> yields
+    /// <c>x</c>. Returns null when the source fails to parse or has no single inferable export.
+    /// </summary>
     public static string? TryInferExportName(string source)
     {
         var diag = new Diagnostics();

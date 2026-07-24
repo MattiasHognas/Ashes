@@ -541,6 +541,11 @@ public sealed partial class Lowering
         return result;
     }
 
+    /// <summary>
+    /// Resolves a written type name and optional type arguments to a <see cref="TypeRef"/>, handling
+    /// built-in primitives, declared and built-in named types, and type parameters. Reports a
+    /// diagnostic and yields <see cref="TypeRef.TNever"/> on arity mismatch or an unknown name.
+    /// </summary>
     public TypeRef ResolveTypeName(string name, IReadOnlyList<TypeRef>? typeArgs = null)
     {
         typeArgs ??= [];

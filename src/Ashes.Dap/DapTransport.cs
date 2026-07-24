@@ -20,12 +20,17 @@ public sealed class DapTransport
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
+    /// <summary>Creates a transport reading requests from <paramref name="input"/> and writing responses and events to <paramref name="output"/>.</summary>
     public DapTransport(Stream input, Stream output)
     {
         _input = input;
         _output = output;
     }
 
+    /// <summary>
+    /// Reads the next framed DAP request from the input stream, returning null on end-of-stream
+    /// or when the message cannot be parsed as a request.
+    /// </summary>
     public async Task<DapRequest?> ReadRequestAsync(CancellationToken ct = default)
     {
         var json = await ReadMessageAsync(ct).ConfigureAwait(false);
@@ -44,6 +49,10 @@ public sealed class DapTransport
         }
     }
 
+    /// <summary>
+    /// Writes a response to <paramref name="request"/>, reporting <paramref name="success"/> with an
+    /// optional result <paramref name="body"/> or failure <paramref name="message"/>.
+    /// </summary>
     public void SendResponse(DapRequest request, bool success, object? body = null, string? message = null)
     {
         var response = new DapResponse
@@ -58,6 +67,7 @@ public sealed class DapTransport
         WriteMessage(response);
     }
 
+    /// <summary>Writes an event named <paramref name="eventName"/> to the client, with an optional <paramref name="body"/>.</summary>
     public void SendEvent(string eventName, object? body = null)
     {
         var evt = new DapEvent

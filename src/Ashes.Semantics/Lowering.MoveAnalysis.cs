@@ -128,7 +128,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
-    /// <see cref="IsReuseAccumulatorMoveSafe"/> over the fully desugared program expression (which
+    /// <see cref="IsParamMoveSafe"/> over the fully desugared program expression (which
     /// contains the stitched stdlib bindings, the user's top-level declarations, and the trailing
     /// expression as one nested let chain). Idempotent.
     /// </summary>

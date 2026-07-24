@@ -13,6 +13,11 @@ namespace Ashes.Semantics;
 // behaviour). A wrongly-permitted borrow of a CONSUMING op would double-close, so the borrow-read set
 // below is exactly the ops proven to read without consuming; close/handshake and (conservatively)
 // Process.waitForExit / Process.kill are excluded.
+/// <summary>
+/// Lowers the parsed AST to typed IR: binding and scope resolution, Hindley-Milner type inference,
+/// and the ownership and borrowing analysis that drives deterministic destruction. Implemented across
+/// the <c>Lowering.*</c> partial files; this one holds borrow inference for resource arguments.
+/// </summary>
 public sealed partial class Lowering
 {
     // Built-in ops that take a resource as their first curried argument and only read it (no close,

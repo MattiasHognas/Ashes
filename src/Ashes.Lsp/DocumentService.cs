@@ -6,25 +6,56 @@ using Ashes.Semantics;
 
 namespace Ashes.Lsp;
 
+/// <summary>
+/// The compiler-backed core of the language server: it runs the frontend and semantic phases over an
+/// editor's source and projects the results into the plain, protocol-agnostic items the LSP layer
+/// serves (diagnostics, hover, go-to-definition, semantic tokens, formatting). It never performs
+/// codegen — the Lsp project is a consumer of compiler logic, not an implementer.
+/// </summary>
 public static partial class DocumentService
 {
+    /// <summary>A diagnostic to surface in the editor, spanning <paramref name="Start"/> to
+    /// <paramref name="End"/> in the document.</summary>
+    /// <param name="Start">Inclusive start offset of the diagnostic span.</param>
+    /// <param name="End">Exclusive end offset of the diagnostic span.</param>
+    /// <param name="Message">Human-readable diagnostic text.</param>
+    /// <param name="Code">Optional diagnostic code (e.g. <c>ASH016</c>), or null when uncoded.</param>
     public readonly record struct DiagnosticItem(int Start, int End, string Message, string? Code = null)
     {
+        /// <summary>The document offset where the diagnostic begins, an alias for <see cref="Start"/>.</summary>
         public int Position => Start;
 
+        /// <summary>The diagnostic's span as a <see cref="TextSpan"/> from <see cref="Start"/> to <see cref="End"/>.</summary>
         public TextSpan Span => TextSpan.FromBounds(Start, End);
     }
 
+    /// <summary>Hover content to show for the range <paramref name="Start"/> to <paramref name="End"/>.</summary>
+    /// <param name="Start">Inclusive start offset of the hovered range.</param>
+    /// <param name="End">Exclusive end offset of the hovered range.</param>
+    /// <param name="Contents">The hover text (typically the inferred type or signature).</param>
     public readonly record struct HoverItem(int Start, int End, string Contents)
     {
+        /// <summary>The hovered range as a <see cref="TextSpan"/> from <see cref="Start"/> to <see cref="End"/>.</summary>
         public TextSpan Span => TextSpan.FromBounds(Start, End);
     }
 
+    /// <summary>The resolved location a go-to-definition request points at.</summary>
+    /// <param name="FilePath">The file containing the definition, or null when it is the current document.</param>
+    /// <param name="Start">Inclusive start offset of the definition span.</param>
+    /// <param name="End">Exclusive end offset of the definition span.</param>
     public readonly record struct DefinitionItem(string? FilePath, int Start, int End)
     {
+        /// <summary>The definition's span as a <see cref="TextSpan"/> from <see cref="Start"/> to <see cref="End"/>.</summary>
         public TextSpan Span => TextSpan.FromBounds(Start, End);
     }
 
+    /// <summary>One semantic-highlighting token, positioned by zero-based <paramref name="Line"/> and
+    /// <paramref name="Character"/> and classified by <paramref name="TokenType"/>.</summary>
+    /// <param name="Line">Zero-based line of the token.</param>
+    /// <param name="Character">Zero-based start column of the token.</param>
+    /// <param name="Length">Length of the token in characters.</param>
+    /// <param name="TokenType">Token-type index into <see cref="SemanticTokenTypes"/>.</param>
+    /// <param name="TokenModifiers">Bitset of token modifiers applied to the token.</param>
     public readonly record struct SemanticTokenItem(int Line, int Character, int Length, int TokenType, int TokenModifiers);
 
     private readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Selector, string? Alias)
@@ -68,10 +99,15 @@ public static partial class DocumentService
     private const string ConflictingImportSelectorsCode = "ASH016";
 
     // Token type indices matching SemanticTokenTypes legend order
+    /// <summary>Semantic token type index for a type name; indexes <see cref="SemanticTokenTypes"/>.</summary>
     public const int TokenTypeType = 0;
+    /// <summary>Semantic token type index for a type parameter; indexes <see cref="SemanticTokenTypes"/>.</summary>
     public const int TokenTypeTypeParameter = 1;
+    /// <summary>Semantic token type index for an enum/constructor member; indexes <see cref="SemanticTokenTypes"/>.</summary>
     public const int TokenTypeEnumMember = 2;
 
+    /// <summary>The semantic-token type legend, in the index order the <c>TokenType*</c> constants
+    /// reference and the client is registered with.</summary>
     public static IReadOnlyList<string> SemanticTokenTypes { get; } = ["type", "typeParameter", "enumMember"];
 
     [GeneratedRegex(@"'([^']+)'", RegexOptions.Compiled)]
@@ -460,6 +496,11 @@ public static partial class DocumentService
         return new DiagnosticItem(0, 0, ex.Message);
     }
 
+    /// <summary>
+    /// Parses and lowers <paramref name="source"/> and returns the resulting compiler diagnostics as
+    /// <see cref="DiagnosticItem"/>s, with spans mapped back onto the original document (accounting for
+    /// the stripped import header). <paramref name="filePath"/> supplies project context when present.
+    /// </summary>
     public static IReadOnlyList<DiagnosticItem> Analyze(string source, string? filePath = null)
     {
         var context = PrepareAnalysisContext(source, filePath);
@@ -483,6 +524,13 @@ public static partial class DocumentService
             .ToArray();
     }
 
+    /// <summary>
+    /// Canonically formats <paramref name="source"/> and returns the result, or null when the source
+    /// has a syntax error and cannot be formatted. The import header is preserved and normalized around
+    /// the formatted body, and standalone comments are reinserted. <paramref name="options"/> overrides
+    /// the whitespace conventions; otherwise they are resolved from <paramref name="filePath"/>'s
+    /// <c>.editorconfig</c> chain when a path is given.
+    /// </summary>
     public static string? Format(string source, string? filePath = null, global::Ashes.Formatter.FormattingOptions? options = null)
     {
         var header = StripImportHeader(source);
@@ -527,6 +575,11 @@ public static partial class DocumentService
         return headerLines + formattingOptions.NewLine + formattedBody;
     }
 
+    /// <summary>
+    /// Returns the semantic-highlighting tokens for <paramref name="source"/> (types, type parameters,
+    /// and enum/constructor members), or an empty list when the source cannot be analyzed.
+    /// <paramref name="filePath"/> supplies project context when present.
+    /// </summary>
     public static IReadOnlyList<SemanticTokenItem> GetSemanticTokens(string source, string? filePath = null)
     {
         var context = PrepareAnalysisContext(source, filePath);
@@ -606,11 +659,19 @@ public static partial class DocumentService
         return tokens;
     }
 
+    /// <summary>Returns completion candidates for <paramref name="source"/> without a cursor position,
+    /// yielding the full in-scope name set. <paramref name="filePath"/> supplies project context.</summary>
     public static IReadOnlyList<string> GetCompletions(string source, string? filePath = null)
     {
         return GetCompletions(source, position: null, filePath);
     }
 
+    /// <summary>
+    /// Returns completion candidates for <paramref name="source"/> at <paramref name="position"/>. When
+    /// the position sits after a module-qualifying dot, the candidates are that module's exports;
+    /// otherwise the in-scope names are returned. A null position yields the full in-scope set.
+    /// <paramref name="filePath"/> supplies project context when present.
+    /// </summary>
     public static IReadOnlyList<string> GetCompletions(string source, int? position, string? filePath = null)
     {
         var header = StripImportHeader(source);
@@ -1089,6 +1150,11 @@ public static partial class DocumentService
         return items.ToArray();
     }
 
+    /// <summary>
+    /// Returns the hover for the token at <paramref name="position"/> in <paramref name="source"/> — the
+    /// inferred type, prefixed with the name when available — or null when nothing resolves there.
+    /// <paramref name="filePath"/> supplies project context when present.
+    /// </summary>
     public static HoverItem? GetHover(string source, int position, string? filePath = null)
     {
         var context = PrepareAnalysisContext(source, filePath);
@@ -1135,6 +1201,11 @@ public static partial class DocumentService
             displayText);
     }
 
+    /// <summary>
+    /// Resolves the definition of the symbol at <paramref name="position"/> in <paramref name="source"/>
+    /// and returns its location, or null when nothing resolves there. The location may point into
+    /// another file (an imported module). <paramref name="filePath"/> supplies project context.
+    /// </summary>
     public static DefinitionItem? GetDefinition(string source, int position, string? filePath = null)
     {
         var header = StripImportHeader(source);

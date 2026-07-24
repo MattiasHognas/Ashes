@@ -78,9 +78,27 @@ dotnet_diagnostic.S3881.severity = suggestion   # IDisposable pattern
 dotnet_diagnostic.S6608.severity = suggestion   # indexing over First/Last (test code)
 dotnet_diagnostic.MA0084.severity = suggestion  # local hides outer symbol
 
-# Generated EF Core migrations are machine-written; exempt from method-length limits.
+# Generated EF Core migrations are machine-written; exempt from method-length limits
+# and from doc-coverage enforcement.
 [src/Ashes.Registry/Storage/Migrations/*.cs]
 dotnet_diagnostic.MA0051.severity = none
+dotnet_diagnostic.CS1591.severity = none
+
+# Test projects: public test classes are a framework requirement, not a documented API.
+[src/Ashes.Tests/**.cs]
+dotnet_diagnostic.CS1591.severity = none
+
+[src/Ashes.*.Tests/**.cs]
+dotnet_diagnostic.CS1591.severity = none
+
+# LLVM interop mirrors the LLVM C API one-to-one; a file-level summary covers the shape.
+[src/Ashes.Backend/Llvm/Interop/**.cs]
+dotnet_diagnostic.CS1591.severity = none
+
+# Docs tooling, not compiler code: the GitHub blob URL is the intentional, fixed source-link
+# base for generated API reference pages, not an environment-dependent path.
+[tools/docs-api-gen/**.cs]
+dotnet_diagnostic.S1075.severity = none
 
 [*.txt]
 insert_final_newline = false

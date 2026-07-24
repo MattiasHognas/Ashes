@@ -165,6 +165,10 @@ export default defineConfig({
           page("Compiler Architecture", "/internals/architecture"),
           page("IR Reference", "/internals/ir"),
           page("Compiler Changelog", "/internals/changelog"),
+          page("Frontend API Reference", "/internals/api/frontend"),
+          page("Semantics API Reference", "/internals/api/semantics"),
+          page("Backend API Reference", "/internals/api/backend"),
+          page("Formatter API Reference", "/internals/api/formatter"),
         ],
       },
       {

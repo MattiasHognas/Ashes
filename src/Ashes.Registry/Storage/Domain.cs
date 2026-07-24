@@ -38,7 +38,12 @@ public sealed record ResultPage(IReadOnlyList<PackageSummary> Results, string? N
 /// <summary>Ordering for the browse endpoint.</summary>
 public enum SortOrder
 {
+    /// <summary>Most recently updated packages first.</summary>
     Recent,
+
+    /// <summary>Alphabetical by namespace.</summary>
     Name,
+
+    /// <summary>Most downloaded packages first.</summary>
     Downloads,
 }

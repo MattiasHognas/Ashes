@@ -2,8 +2,18 @@ using System.Text.RegularExpressions;
 
 namespace Ashes.Formatter;
 
+/// <summary>
+/// Derives <see cref="FormattingOptions"/> for a file by reading the <c>.editorconfig</c> chain above
+/// it, honoring <c>indent_style</c>, <c>indent_size</c>, <c>tab_width</c>, and <c>end_of_line</c>.
+/// </summary>
 public static class EditorConfigFormattingOptionsResolver
 {
+    /// <summary>
+    /// Resolves the effective <see cref="FormattingOptions"/> for <paramref name="filePath"/> by
+    /// walking every <c>.editorconfig</c> from its directory up to the root-most one, with nearer
+    /// files overriding. <paramref name="fallback"/> (or the defaults) supplies any value no config
+    /// declares; a null or blank path returns the fallback unchanged.
+    /// </summary>
     public static FormattingOptions ResolveForPath(string? filePath, FormattingOptions? fallback = null)
     {
         var options = (fallback ?? new FormattingOptions()).Normalize();

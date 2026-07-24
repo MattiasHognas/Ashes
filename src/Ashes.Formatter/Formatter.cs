@@ -4,6 +4,11 @@ using System.Text;
 
 namespace Ashes.Formatter;
 
+/// <summary>
+/// The canonical source formatter: renders a parsed <see cref="Program"/> or <see cref="Expr"/> back
+/// to Ashes source text in the one canonical layout. Because the AST carries no trivia, standalone
+/// comments are reattached separately by <see cref="CommentReinserter"/>.
+/// </summary>
 public static class Formatter
 {
     // Precedence: larger = binds tighter
@@ -21,16 +26,25 @@ public static class Formatter
     private const int PrecUnary = 12;
     private const int PrecCall = 13;
 
+    /// <summary>Formats a whole <paramref name="program"/> with default options and no pipeline
+    /// rewriting.</summary>
     public static string Format(Program program)
     {
         return Format(program, preferPipelines: false, options: null);
     }
 
+    /// <summary>Formats a whole <paramref name="program"/> using the given whitespace
+    /// <paramref name="options"/>, with no pipeline rewriting.</summary>
     public static string Format(Program program, FormattingOptions options)
     {
         return Format(program, preferPipelines: false, options);
     }
 
+    /// <summary>
+    /// Formats a whole <paramref name="program"/>. When <paramref name="preferPipelines"/> is true,
+    /// eligible call/pipe chains render as multiline <c>|&gt;</c> pipelines. <paramref name="options"/>
+    /// selects the whitespace conventions; null uses the defaults.
+    /// </summary>
     public static string Format(Program program, bool preferPipelines, FormattingOptions? options = null)
     {
         var formattingOptions = (options ?? new FormattingOptions()).Normalize();
@@ -69,16 +83,25 @@ public static class Formatter
         return FinishOutput(sb, formattingOptions);
     }
 
+    /// <summary>Formats a single <paramref name="expr"/> with default options and no pipeline
+    /// rewriting.</summary>
     public static string Format(Expr expr)
     {
         return Format(expr, preferPipelines: false, options: null);
     }
 
+    /// <summary>Formats a single <paramref name="expr"/> using the given whitespace
+    /// <paramref name="options"/>, with no pipeline rewriting.</summary>
     public static string Format(Expr expr, FormattingOptions options)
     {
         return Format(expr, preferPipelines: false, options);
     }
 
+    /// <summary>
+    /// Formats a single <paramref name="expr"/>. When <paramref name="preferPipelines"/> is true,
+    /// eligible call/pipe chains render as multiline <c>|&gt;</c> pipelines. <paramref name="options"/>
+    /// selects the whitespace conventions; null uses the defaults.
+    /// </summary>
     public static string Format(Expr expr, bool preferPipelines, FormattingOptions? options = null)
     {
         var formattingOptions = (options ?? new FormattingOptions()).Normalize();
