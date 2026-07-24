@@ -934,6 +934,7 @@ public sealed partial class Lowering
         }
 
         TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
+        RecordPendingNestedTcoPatternAliasCandidates(matchValue, patternBindings);
 
         string? ownerName = null;
         if (matchValue is Expr.Var variable
@@ -1005,6 +1006,39 @@ public sealed partial class Lowering
                 Prune(valueType),
                 payload.Slot,
                 payloadType);
+        }
+    }
+
+    /// <summary>
+    /// Records every pattern binding of this match as a candidate for the retroactive nested-TCO-
+    /// pattern-alias fix-up (see the field comment on <c>_pendingNestedTcoPatternAliasSites</c>), keyed
+    /// by the binding's own local slot with its immediate parent's slot, the instruction index right
+    /// after <c>EmitPattern</c> extracted it, and the binding's own (possibly still-unresolved) type.
+    /// Unconditional — both eligibility and the copy-type filter are resolved later, once the whole body
+    /// has been lowered and types are fully settled — except for the two structural preconditions that
+    /// never depend on either: the match must be on a plain bound local (a computed scrutinee has no
+    /// stable parent slot to chain through), and we must be inside some TCO loop (only a TCO loop
+    /// parameter's own later drop is what a chain needs protecting from).
+    /// </summary>
+    private void RecordPendingNestedTcoPatternAliasCandidates(
+        Expr matchValue,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        if (_tcoCtx is null
+            || matchValue is not Expr.Var variable
+            || Lookup(variable.Name) is not Binding.Local parent)
+        {
+            return;
+        }
+
+        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        {
+            if (Lookup(bindingName) is not Binding.Local payload)
+            {
+                continue;
+            }
+
+            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType);
         }
     }
 
