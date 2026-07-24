@@ -122,10 +122,10 @@ This repository contains the full toolchain:
 ### Inspirations
 
 - **ML / OCaml / F#** - algebraic data types, pattern matching, type inference
-- **Elm** - simplicity and explicit data modeling
+- **Elm** - simplicity and an opinionated, minimal surface — no null, one obvious way
 - **Haskell** - purity and type-driven design
 - **Koka** - Perceus reference counting and reuse analysis for precise, non-tracing memory management
-- **Rust** - deterministic memory management without a GC
+- **Rust** - deterministic memory management without a garbage collector
 
 ---
 
