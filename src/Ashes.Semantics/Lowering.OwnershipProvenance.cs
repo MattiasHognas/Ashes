@@ -165,6 +165,18 @@ public sealed partial class Lowering
             return true;
         }
 
+        // A bare nullary constructor reference (e.g. `Empty`) is an Expr.Var, not an Expr.Call — mirror
+        // ResultReachVar's own treatment: confined (and so RC-eligible) only when it is the SOLE nullary
+        // constructor of its type, matching the sound "no-op-safe tag cell" reasoning used throughout
+        // this file (a non-sole nullary may be a shared static singleton, not a fresh allocation).
+        if (body is Expr.Var nullary
+            && _constructorSymbols.TryGetValue(nullary.Name, out ConstructorSymbol? nullaryConstructor)
+            && nullaryConstructor is not null
+            && nullaryConstructor.Arity == 0)
+        {
+            return IsSoleNullaryConstructor(nullaryConstructor);
+        }
+
         if (body is not Expr.Call)
         {
             return false;
