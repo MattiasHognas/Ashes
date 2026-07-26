@@ -97,32 +97,15 @@ public sealed partial class Lowering
             return new FunctionResultProvenance(true, null);
         }
 
-        // A parameter this function itself CONSUMES (per the same ParamUsedOnlyAsBorrowRead check
-        // CreateOwnershipSummary uses for ParameterOwnership) is safe to fold into a fresh construction
-        // one level down (see IsFreshConstructionArgument) — ownership transfers from the parameter into
-        // the new cell, so there is no aliasing hazard the way a pattern-matched sub-structure (e.g. a
-        // Cons tail) has. letBindings doubles as the shadow guard: if a local let later REBINDS a
-        // parameter's name, a bare reference to that name inside a construction argument must not be
-        // trusted as the original (consumed) parameter — see the check at the bottom of this file.
-        var consumedParams = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string param in info.Params)
-        {
-            if (!ParamUsedOnlyAsBorrowRead(info.Body, param))
-            {
-                consumedParams.Add(param);
-            }
-        }
-
         var letBindings = new Dictionary<string, Expr>(StringComparer.Ordinal);
         var arms = new List<Expr>();
         CollectResultProvenanceTerminalArms(info.Body, arms, letBindings);
-        return ClassifyFunctionResultProvenanceFromArms(function, arms, consumedParams, letBindings);
+        return ClassifyFunctionResultProvenanceFromArms(function, arms, letBindings);
     }
 
     private FunctionResultProvenance ClassifyFunctionResultProvenanceFromArms(
         string function,
         List<Expr> arms,
-        HashSet<string> consumedParams,
         Dictionary<string, Expr> letBindings)
     {
         bool allEligible = true;
@@ -139,7 +122,7 @@ public sealed partial class Lowering
             }
 
             consideredArms++;
-            var armProvenance = ClassifyExpressionProvenance(arm, consumedParams, letBindings);
+            var armProvenance = ClassifyExpressionProvenance(arm, letBindings);
             if (!armProvenance.RcEligible)
             {
                 allEligible = false;
@@ -236,10 +219,9 @@ public sealed partial class Lowering
     /// </summary>
     private FunctionResultProvenance ClassifyExpressionProvenance(
         Expr expression,
-        HashSet<string> consumedParams,
         Dictionary<string, Expr> letBindings)
     {
-        if (IsDirectRcConstruction(expression, consumedParams, letBindings)
+        if (IsDirectRcConstruction(expression, letBindings)
             || IsRuntimeRcFreshBuiltinProducer(expression)
             || expression is Expr.Add)
         {
@@ -281,9 +263,9 @@ public sealed partial class Lowering
     /// literal is fresh only when EVERY argument/field is itself independently fresh
     /// (<see cref="IsFreshConstructionArgument"/>) — the same reasoning applied one level down, since a
     /// tuple/record/ADT cell that merely POINTS AT an aliased heap value is exactly as unsound to treat
-    /// as wholly, independently owned. <paramref name="consumedParams"/>/<paramref name="letBindings"/>
-    /// are threaded through to <see cref="IsFreshConstructionArgument"/> — see that method's doc for why
-    /// a bare variable argument is not automatically rejected.
+    /// as wholly, independently owned. <paramref name="letBindings"/> is threaded through to
+    /// <see cref="IsFreshConstructionArgument"/> so a terminal bare-Var argument can still resolve
+    /// through a local let binding (see <see cref="CollectResultProvenanceTerminalArms"/>'s own doc).
     ///
     /// Deliberately does NOT recognize a bare <see cref="Expr.Lambda"/> as fresh construction, even
     /// though evaluating one always allocates a new closure object: WHETHER that closure ends up RC- or
@@ -300,7 +282,7 @@ public sealed partial class Lowering
     /// IsConcretelyRuntimeManageableResultType's own TFun case for why that fallback is what actually
     /// matters for a closure result today).
     /// </summary>
-    private bool IsDirectRcConstruction(Expr body, HashSet<string> consumedParams, Dictionary<string, Expr> letBindings)
+    private bool IsDirectRcConstruction(Expr body, Dictionary<string, Expr> letBindings)
     {
         if (body is Expr.Cons or Expr.ListLit)
         {
@@ -309,12 +291,12 @@ public sealed partial class Lowering
 
         if (body is Expr.TupleLit tupleLit)
         {
-            return tupleLit.Elements.All(element => IsFreshConstructionArgument(element, consumedParams, letBindings));
+            return tupleLit.Elements.All(element => IsFreshConstructionArgument(element, letBindings));
         }
 
         if (body is Expr.RecordLit recordLit)
         {
-            return recordLit.Fields.All(field => IsFreshConstructionArgument(field.Value, consumedParams, letBindings));
+            return recordLit.Fields.All(field => IsFreshConstructionArgument(field.Value, letBindings));
         }
 
         // A bare nullary constructor reference (e.g. `Empty`) is an Expr.Var, not an Expr.Call — mirror
@@ -340,7 +322,7 @@ public sealed partial class Lowering
             && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? constructor)
             && constructor is not null
             && arguments.Count == constructor.Arity
-            && arguments.All(argument => IsFreshConstructionArgument(argument, consumedParams, letBindings));
+            && arguments.All(argument => IsFreshConstructionArgument(argument, letBindings));
     }
 
     /// <summary>
@@ -368,13 +350,13 @@ public sealed partial class Lowering
     /// direction: a genuinely fresh forwarding-call argument is missed (falls to false), never the
     /// reverse.
     /// </summary>
-    private bool IsFreshConstructionArgument(Expr argument, HashSet<string> consumedParams, Dictionary<string, Expr> letBindings)
+    private bool IsFreshConstructionArgument(Expr argument, Dictionary<string, Expr> letBindings)
     {
         return argument switch
         {
             Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit or Expr.BigIntLit or Expr.StrLit => true,
             Expr.Add => true,
-            _ => IsDirectRcConstruction(argument, consumedParams, letBindings) || IsRuntimeRcFreshBuiltinProducer(argument),
+            _ => IsDirectRcConstruction(argument, letBindings) || IsRuntimeRcFreshBuiltinProducer(argument),
         };
     }
 
