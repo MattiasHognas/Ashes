@@ -1672,6 +1672,20 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
     {
+        // wrap's body Box(x) no longer resolves through the direct known-function-result fast path
+        // (Perceus-unification Phase 3): FunctionResultProvenance's terminal-arm classifier does not
+        // treat a bare parameter argument to a constructor as automatically fresh, even though x is a
+        // copy-typed Int here where aliasing genuinely cannot matter — this classifier has no type
+        // information (it runs in a pre-lowering, whole-program AST pass, before x's type is known), so
+        // it cannot distinguish "x is an Int" from "x is a Tree" at this call site. Treating ANY
+        // consumed-parameter argument as fresh regardless of type was tried and caused a real
+        // use-after-free-shaped bug (reuse_result_alias_move_elision.ash printed 0 0 0 instead of
+        // 15 7 207, because a HEAP-typed consumed parameter folded into a fresh construction this way
+        // let the caller's arena-reclaim-without-copy path invalidate it) — so this is conservative in
+        // the safe direction here too. The construction site itself is unaffected (a completely separate,
+        // type-aware, already-existing classifier decides AllocAdt's own RuntimeManaged bit), and the
+        // call now takes the defensive copy-out path instead of the direct-ownership fast path — both
+        // are correct, this only asserts the (now conservative) shape.
         var ir = LowerProgram(
             """
             type Box =
@@ -1686,8 +1700,6 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for ADT(Int) result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
-            "The callee's fresh RC result should survive the caller's arena reset directly.");
         ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
             instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
     }

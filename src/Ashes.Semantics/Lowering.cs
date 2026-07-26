@@ -466,11 +466,29 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
-    // Function labels whose return value is proven to be runtime-managed. A statically traced,
-    // saturated call rooted at an empty-environment top-level function may restore its arena window
-    // without copying the result out: the returned RC allocation is independent of the reclaimed arena.
-    // This is intentionally label-based and does not infer ownership through higher-order calls.
-    private readonly HashSet<string> _runtimeManagedFunctionResultLabels = new(StringComparer.Ordinal);
+    // Reverse lookup from a top-level function's own declaration-site label back to its registered
+    // source name (the same name FunctionOwnershipSummary/GetOwnershipSummary is keyed by). Populated
+    // wherever _topLevelFunctionRefs (or an empty-env-only equivalent, for a capturing top-level let) is
+    // written, so a label resolved via TryResolveKnownFunctionLabel's existing slot/env alias chase can
+    // be mapped back to the function identity the Perceus-unification ownership analysis reasons about,
+    // without re-deriving that identity a second way.
+    private readonly Dictionary<string, string> _functionNameByLabel = new(StringComparer.Ordinal);
+    // Whether a lambda's OWN compiled body (keyed by its own label) was proven, by inspecting the actual
+    // emitted instructions (IsRuntimeManagedResultTemp), to produce a RuntimeManaged result — populated
+    // once per LowerLambdaCore invocation, for EVERY lambda (named or anonymous), not just registered
+    // top-level functions. This is deliberately NOT derived from FunctionOwnershipSummary.ResultProvenance:
+    // ResultProvenance classifies from AST shape alone, before lowering, so it cannot see a result that
+    // ends up RuntimeManaged only because of a lowering-time representation decision outside its model
+    // (a TCO loop's own accumulator-representation analysis promoting a parameter to RC; a closure's own
+    // capture analysis choosing RC for its environment) — exactly the gap that caused
+    // Linux_backend_llvm_runtime_rc_unreturned_TCO_parameter_memory_should_plateau to leak linearly with
+    // iteration count when this table was first replaced by a ResultProvenance-based guess: a function
+    // whose TCO accumulator is actually RC, but whose AST shape isn't one ClassifyExpressionProvenance
+    // recognizes, would get RcEligible=false — treated as "verified not RC", when it is actually RC via a
+    // path this pre-lowering classifier cannot see; LowerVarUnbound/LowerVarBound's Binding.Self case
+    // reconstruct a closure reference to this already-compiled function from a different scope and must
+    // bake in this SAME, accurate fact, not a possibly-wrong AST-shape guess.
+    private readonly Dictionary<string, bool> _bodyRuntimeManagedByLabel = new(StringComparer.Ordinal);
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
@@ -2604,7 +2622,7 @@ public sealed partial class Lowering
                 envTemp,
                 0,
                 ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
-                    && _runtimeManagedFunctionResultLabels.Contains(topRef.Label)));
+                    && _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
@@ -2677,7 +2695,7 @@ public sealed partial class Lowering
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
                     ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
-                        && _runtimeManagedFunctionResultLabels.Contains(self.FuncLabel)));
+                        && _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
 
@@ -2848,25 +2866,7 @@ public sealed partial class Lowering
         var scheme = Generalize(Prune(valueType));
         RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
 
-        // Register a top-level, empty-env function so reuse specializations can call it by label. The
-        // guard (exactly one depth-0 lambda lowered while lowering this value) means the value is this
-        // function's own outer lambda — not a stale label from a sibling or a non-lambda value.
-        if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1 && _lastLoweredLambdaEmptyEnv)
-        {
-            _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
-            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
-        }
-        else if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1)
-        {
-            // A capturing top-level let is not callable as a global label because it still needs its
-            // environment, but the closure in this exact local slot has a statically known code label.
-            // Preserve that provenance so a later closure capture can retain its result-ownership fact.
-            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
-        }
-        else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
-        {
-            _knownFunctionLabelsBySlot[slot] = aliasedFunctionLabel;
-        }
+        LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
@@ -2886,6 +2886,31 @@ public sealed partial class Lowering
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
+    }
+
+    // Registers a top-level, empty-env function so reuse specializations can call it by label. The
+    // guard (exactly one depth-0 lambda lowered while lowering this value) means the value is this
+    // function's own outer lambda — not a stale label from a sibling or a non-lambda value.
+    private void LowerLetRegisterKnownFunctionIdentity(Expr.Let let, int slot, TypeScheme scheme, int depth0Before)
+    {
+        if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1 && _lastLoweredLambdaEmptyEnv)
+        {
+            _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+            _functionNameByLabel[_lastLoweredLambdaLabel] = let.Name;
+        }
+        else if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1)
+        {
+            // A capturing top-level let is not callable as a global label because it still needs its
+            // environment, but the closure in this exact local slot has a statically known code label.
+            // Preserve that provenance so a later closure capture can retain its result-ownership fact.
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+            _functionNameByLabel[_lastLoweredLambdaLabel] = let.Name;
+        }
+        else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
+        {
+            _knownFunctionLabelsBySlot[slot] = aliasedFunctionLabel;
+        }
     }
 
     private (int Temp, TypeRef Type) LowerEscapingResult(Expr body, bool normalizeStaticString = false)
@@ -5058,6 +5083,7 @@ public sealed partial class Lowering
             var helperScheme = FreshenScheme(Generalize(Prune(recursiveType)));
             _scopes.Push(selfScope);
             _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
+            _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
         }
     }
 
@@ -5201,19 +5227,8 @@ public sealed partial class Lowering
         RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
         LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
 
-        // TCO: for the innermost lambda in a recursive chain, create local copies of captured params
-        // and emit a loop start label so tail self-calls can jump back (see the loop-entry helper).
-        bool wasDescendingChain = _tcoCtx?.DescendingChain ?? false;
-        bool isChainLambda = wasDescendingChain;
-        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
-        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
-        var directReuseSlots = new HashSet<int>();
-        var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
-        int reuseInsertIndex = -1;
-        if (isInnermostTco)
-        {
-            reuseInsertIndex = LowerLambdaCoreEnterTcoLoop(lam, label, captures, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
-        }
+        var (isChainLambda, isInnermostTco, reuseDefensiveCopy, directReuseSlots, specElidedAccs, reuseInsertIndex) =
+            LowerLambdaCoreSetupTco(lam, label, captures);
 
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
@@ -5224,18 +5239,45 @@ public sealed partial class Lowering
             lam, reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
 
         _tcoCtx = outerTcoCtx;
-        if (isChainLambda) _tcoCtx!.DescendingChain = wasDescendingChain;
+        if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
         Unify(bodyType, retTy);
-        RecordFunctionResultProvenance(label, bodyTemp);
+        RecordReturnedClosureLabel(label, bodyTemp);
+        // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
+        // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
+        // lambda's own MakeClosure call below (read before RestoreFrame clears _runtimeManagedResultTemps)
+        // and persisted by label for LowerVarUnbound/Binding.Self, which reconstruct a reference to this
+        // same already-compiled function from a different scope later.
+        bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
+        _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
         LowerLambdaCoreFinishFunction(label);
         LowerLambdaCoreRestoreFrame(savedFrame);
 
-        int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure);
+        int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged);
         return (closureTemp, funTy);
+    }
+
+    // TCO: for the innermost lambda in a recursive chain, create local copies of captured params and
+    // emit a loop start label so tail self-calls can jump back (see LowerLambdaCoreEnterTcoLoop).
+    private (bool IsChainLambda, bool IsInnermostTco, List<(int Slot, TypeRef TypeRef)> ReuseDefensiveCopy,
+        HashSet<int> DirectReuseSlots, HashSet<string> SpecElidedAccs, int ReuseInsertIndex)
+        LowerLambdaCoreSetupTco(Expr.Lambda lam, string label, IReadOnlyList<string> captures)
+    {
+        bool isChainLambda = _tcoCtx?.DescendingChain ?? false;
+        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
+        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
+        var directReuseSlots = new HashSet<int>();
+        var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
+        int reuseInsertIndex = -1;
+        if (isInnermostTco)
+        {
+            reuseInsertIndex = LowerLambdaCoreEnterTcoLoop(lam, label, captures, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
+        }
+
+        return (isChainLambda, isInnermostTco, reuseDefensiveCopy, directReuseSlots, specElidedAccs, reuseInsertIndex);
     }
 
     private void LowerLambdaCoreFinalizeTcoOwnership(
@@ -5573,15 +5615,10 @@ public sealed partial class Lowering
         LowerLambdaCoreSpliceRuntimeManagedTcoParams(tco, insertIndex);
     }
 
-    private void RecordFunctionResultProvenance(string label, int bodyTemp)
-    {
-        RecordReturnedClosureLabel(label, bodyTemp);
-        if (IsRuntimeManagedResultTemp(bodyTemp))
-        {
-            _runtimeManagedFunctionResultLabels.Add(label);
-        }
-    }
-
+    // Curried functions return the next lambda as a closure. This records THAT chain only (consumed
+    // solely by IsKnownRuntimeNormalizedFunctionArgument's TCO-argument-normalization question) —
+    // result-ownership resolution now goes through GetOwnershipSummary(name).ResultProvenance instead
+    // (see LowerLambdaCore's caller of this method for the per-body freshness fact used there).
     private void RecordReturnedClosureLabel(string label, int bodyTemp)
     {
         string? returnedLabel = _inst.LastOrDefault(instruction => instruction switch
@@ -6790,13 +6827,13 @@ public sealed partial class Lowering
         foreach (var kv in frame.KnownFunctionLabelsByEnvIndex) _knownFunctionLabelsByEnvIndex[kv.Key] = kv.Value;
     }
 
-    private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure)
+    private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure, bool bodyRuntimeManaged)
     {
         // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
         bool returnsRuntimeManaged = !_usesAsync && !_programHasDynamicCapabilityDispatch
-            && _runtimeManagedFunctionResultLabels.Contains(label);
+            && bodyRuntimeManaged;
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
             closureTemp,
@@ -8127,10 +8164,11 @@ public sealed partial class Lowering
 
         var callResultType = Prune(currentType);
         LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
-        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count);
+        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
         CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
+        runtimeManagedResult = ResolveUncopyableResultRuntimeManaged(rootExpr, collectedArgs.Count, callResultType, callResultCopyKind, runtimeManagedResult);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
             && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
@@ -8149,6 +8187,69 @@ public sealed partial class Lowering
         return (currentTemp, currentType);
     }
 
+    /// <summary>
+    /// A result with no legal arena copy-out strategy (<see cref="CopyOutKind.None"/>) that also isn't a
+    /// plain copy type can ONLY ever safely escape a call's reclaimed arena window by being RC —
+    /// <see cref="LowerCallRestoreArena"/>'s own <c>ck==None</c> fallback does not restore or reclaim the
+    /// arena watermark AT ALL (written to be reached only for values already known RC, where no action
+    /// is needed because the result lives outside this window). Trusting a definite "false" here when
+    /// the actual compiled representation is RC would silently skip all arena reclamation for the call,
+    /// leaking its entire intermediate allocation window every time it runs (caught empirically —
+    /// Linux_backend_llvm_runtime_rc_unreturned_TCO_parameter_memory_should_plateau,
+    /// Linux_backend_llvm_runtime_rc_owned_head_list_TCO_memory_should_plateau's consumed-tuple-head
+    /// scenario — both are TCO loops directly returning a bare accumulator parameter, a shape
+    /// FunctionResultProvenance's AST-only classifier cannot recognize as fresh, but whose ACTUAL
+    /// compiled accumulator representation the TCO machinery promotes to RC for exactly this reason).
+    ///
+    /// But blindly forcing <c>true</c> here (tried first) is exactly as unsound in the other direction:
+    /// it crashed Curried_add (an ordinary, non-TCO, genuinely arena-eligible closure reaching this same
+    /// <c>ck==None</c> path, where forcing "true" wrongly reclaims the arena the closure itself still
+    /// lives in) and Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale (exit code 245) even
+    /// when narrowed to TList results only. There is no sound AST-shape-only rule for this question in
+    /// either direction — it depends on the ACTUAL, lowering-time representation decision, which is
+    /// exactly what <see cref="_bodyRuntimeManagedByLabel"/> records (see its own doc). So: when
+    /// <see cref="TryResolveKnownFunctionResultOwnership"/> did not resolve (the common case for a bare
+    /// accumulator passthrough, since FunctionResultProvenance never proves those fresh) AND this result
+    /// type cannot be arena-copied out, fall back to the OLD backward-scan's own resolution strategy —
+    /// walk the curried label chain <paramref name="argumentCount"/> hops via
+    /// <see cref="_functionReturnedClosureLabels"/> (populated by <see cref="RecordReturnedClosureLabel"/>,
+    /// unrelated to and unaffected by this phase) to the innermost curry level actually compiled for this
+    /// call, and read that level's OWN accurate <see cref="_bodyRuntimeManagedByLabel"/> fact directly —
+    /// exactly what the retired <c>_runtimeManagedFunctionResultLabels</c> mechanism did for this exact
+    /// question, before Phase 3. If the hop chain itself does not resolve (e.g. the callee is not a
+    /// statically known label at all), there is no accurate fact available either way, so this
+    /// conservatively leaves <paramref name="runtimeManagedResult"/> as computed (matching this
+    /// predicate's own always-conservative-on-failure convention).
+    /// </summary>
+    private bool ResolveUncopyableResultRuntimeManaged(
+        Expr rootExpr,
+        int argumentCount,
+        TypeRef callResultType,
+        CopyOutKind callResultCopyKind,
+        bool runtimeManagedResult)
+    {
+        if (runtimeManagedResult
+            || callResultCopyKind != CopyOutKind.None
+            || CanArenaReset(callResultType)
+            || argumentCount == 0
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel))
+        {
+            return runtimeManagedResult;
+        }
+
+        for (int i = 1; i < argumentCount; i++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
+            {
+                return runtimeManagedResult;
+            }
+
+            resultLabel = nextLabel;
+        }
+
+        return _bodyRuntimeManagedByLabel.GetValueOrDefault(resultLabel, runtimeManagedResult);
+    }
+
     private bool IsSpecializationSelfReuseCall(Expr rootExpr)
         => _inSpecialization
             && _specializingReuseLabel is not null
@@ -8164,43 +8265,97 @@ public sealed partial class Lowering
         }
     }
 
-    private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount)
+    private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount, TypeRef callResultType)
     {
         return TryResolveKnownFunctionResultOwnership(
                 rootExpr,
                 argumentCount,
+                callResultType,
                 out bool runtimeManaged)
             && runtimeManaged;
     }
 
+    /// <summary>
+    /// Resolves whether a saturated call rooted at <paramref name="rootExpr"/> (applied to exactly
+    /// <paramref name="argumentCount"/> arguments, with concrete post-unification result type
+    /// <paramref name="callResultType"/>) is statically KNOWN to produce an RC-eligible result, via the
+    /// Perceus-unification ownership analysis (<see cref="FunctionOwnershipSummary.ResultProvenance"/>,
+    /// Phase 3 — see docs/md/future/PERCEUS_UNIFICATION.md). <paramref name="rootExpr"/> resolves to a
+    /// label exactly as before (<see cref="TryResolveKnownFunctionLabel(Expr, out string)"/>'s existing
+    /// slot/env/top-level alias chase, unchanged) — the label is then mapped back to the registered
+    /// function name via <see cref="_functionNameByLabel"/>.
+    ///
+    /// CRITICAL SOUNDNESS NOTE — this method only ever returns <c>true</c> (resolved), never
+    /// <c>true</c> with <paramref name="runtimeManaged"/> <c>false</c>. This is deliberate and is NOT
+    /// equivalent to the old backward-scan mechanism this replaced, which returned <c>true</c> (with
+    /// <c>runtimeManaged=false</c>) whenever a function's ACTUAL COMPILED result temp was proven, by
+    /// inspecting the real emitted instructions, not to carry a RuntimeManaged-tagged allocation — a
+    /// fact derived from the real generated code, equally trustworthy whether true or false.
+    /// ResultProvenance, by contrast, is classified from AST shape ALONE, before lowering — it has no
+    /// visibility into representation decisions made only at lowering time from information the AST
+    /// doesn't carry (a TCO loop's own accumulator-representation analysis choosing to carry a
+    /// parameter as RC; a returned closure's capture analysis choosing RC for its env). A function
+    /// whose actual compiled result IS RC through one of those paths, but whose AST shape isn't one this
+    /// classifier recognizes, gets ResultProvenance.RcEligible=false — a merely-unproven "false", not a
+    /// verified one. Callers of this method feed a bare `false` here DIRECTLY into skipping the escaping
+    /// arena copy-out path (LowerCallRestoreArena treats it as "prove this is arena, safe to deep-copy
+    /// and abandon the original") — if the true, actual representation is RC, that unconditional copy-out
+    /// silently duplicates the value and never releases the original RC allocation: a real, reproducible,
+    /// linear-in-iterations memory leak, not merely a missed optimization (caught empirically by
+    /// Linux_backend_llvm_runtime_rc_unreturned_TCO_parameter_memory_should_plateau — a `given n ->
+    /// given returned -> given discarded -> ...` TCO loop returning `returned`, where the OLD mechanism
+    /// resolved runtime-managed=true, by inspecting the actual compiled TCO accumulator representation).
+    /// So: treat a `false` RcEligible answer as UNRESOLVED (fall through to the untouched, unrelated,
+    /// still-correct dynamic ownership-bit check at the call site, which reads the ACTUAL representation
+    /// from the real closure object at runtime) — never as a verified negative. Only a positive
+    /// (RcEligible=true) answer, which this phase's own construction proves sound (a recognized
+    /// constructor/tuple/list/builtin-producer shape, gated by
+    /// <see cref="IsConcretelyRuntimeManageableResultType"/> against the call's concrete type), is ever
+    /// trusted through this static fast path.
+    ///
+    /// A partial application (fewer arguments than the function declares), an unregistered function
+    /// (e.g. a mutual-recursion group member, or a name colliding with another top-level binding and
+    /// marked ambiguous), a call resolving to an intermediate curried label with no registered name, a
+    /// result type the drop machinery cannot walk, or (per the above) a negative RcEligible answer all
+    /// conservatively return false (unresolved) — the same "fall back to the dynamic ownership check"
+    /// behavior this predicate has always had on failure, so none of those shapes regress past what an
+    /// unresolved call already did.
+    /// </summary>
     private bool TryResolveKnownFunctionResultOwnership(
         Expr rootExpr,
         int argumentCount,
+        TypeRef callResultType,
         out bool runtimeManaged)
     {
         runtimeManaged = false;
-        if (argumentCount == 0
-            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel))
+        // FunctionResultProvenance is computed once, at a whole-program AST pass that precedes
+        // lowering entirely — it has no notion of _usesAsync/_inCoroutineBody/
+        // _programHasDynamicCapabilityDispatch, the three whole-program gates that force EVERY value in
+        // EVERY function to arena regardless of any per-value classifier's answer (see
+        // docs/md/future/PERCEUS_UNIFICATION.md §2). Every real construction-site classifier
+        // (IsDirectRcConstruction's own predecessors, IsRuntimeRcStringProducer, etc.) checks these gates
+        // before ever emitting a RuntimeManaged:true instruction, which is exactly why the retired
+        // backward-scan mechanism (IsRuntimeManagedResultTemp) never found one to report under these
+        // gates — a fact this AST-only analysis cannot see for itself. Without this same guard here, a
+        // program using async/dynamic-capability-dispatch could have RcEligible=true trusted even though
+        // its ACTUAL compiled result is always arena, letting the caller's arena-reclaim-without-copy
+        // path silently invalidate the result — caught empirically by readme_showcase.ash (an async
+        // order-pricing pipeline), which printed empty strings instead of "Price: 12.50, Count: 6".
+        if (_usesAsync
+            || _inCoroutineBody
+            || _programHasDynamicCapabilityDispatch
+            || argumentCount == 0
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
+            || !_functionNameByLabel.TryGetValue(resultLabel, out string? function)
+            || GetOwnershipSummary(function) is not { } summary
+            || argumentCount != summary.Parameters.Count
+            || !summary.ResultProvenance.RcEligible
+            || !IsConcretelyRuntimeManageableResultType(callResultType))
         {
             return false;
         }
 
-        for (int i = 1; i < argumentCount; i++)
-        {
-            if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
-            {
-                return false;
-            }
-
-            resultLabel = nextLabel;
-        }
-
-        runtimeManaged = _runtimeManagedFunctionResultLabels.Contains(resultLabel);
-        if (rootExpr is Expr.Var rootVariable)
-        {
-            ShadowCompareResultProvenance(rootVariable.Name, argumentCount, runtimeManaged);
-        }
-
+        runtimeManaged = true;
         return true;
     }
 
@@ -8308,7 +8463,7 @@ public sealed partial class Lowering
                     && !_inCoroutineBody
                     && !_programHasDynamicCapabilityDispatch
                     && i == collectedArgs.Count - 1
-                    && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, out _)
+                    && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
                     && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
                 currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
