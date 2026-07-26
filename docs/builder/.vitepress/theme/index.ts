@@ -1,8 +1,6 @@
 import type { Theme } from "vitepress";
 import DefaultTheme from "vitepress/theme";
 import Mermaid from "./Mermaid.vue";
-// Catppuccin for VitePress: Latte in light mode, Mocha in dark mode.
-// import "@catppuccin/vitepress/theme/mocha/mauve.css";
 import "./ashes.css";
 
 export default {

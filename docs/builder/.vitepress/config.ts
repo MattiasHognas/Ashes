@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { slugify } from "@mdit-vue/shared";
 import { defineConfig, type DefaultTheme } from "vitepress";
 import ashesGrammar from "../../../vscode-extension/syntaxes/ashes.tmLanguage.json";
+import {
+  ashesDarkTheme,
+  ashesLightTheme,
+} from "./ashes-shiki-themes";
 
 const require = createRequire(import.meta.url);
 
@@ -66,8 +70,9 @@ export default defineConfig({
   description:
     "A pure functional ML-family language compiled to standalone native executables",
   head: [["link", { rel: "icon", type: "image/png", href: `${base}logo.png` }]],
-  // Default to the dark (Catppuccin Mocha) look; the toggle stays available.
-  appearance: "dark",
+  // Follow the OS until the visitor chooses a mode, then remember that choice.
+  // Browsers without a dark-mode preference naturally fall back to light.
+  appearance: true,
 
   // The content lives outside the builder root (../md), so Vue imports generated
   // for each page cannot be resolved by walking up from the .md files — pin them
@@ -104,10 +109,10 @@ export default defineConfig({
         aliases: ["ash"],
       },
     ],
-    // theme: {
-    //   light: "github-light",
-    //   dark: "github-dark",
-    // },
+    theme: {
+      light: ashesLightTheme,
+      dark: ashesDarkTheme,
+    },
     // Render ```mermaid fences through the <Mermaid> theme component
     // (client-side, theme-aware) instead of highlighting them as code.
     config: (md) => {

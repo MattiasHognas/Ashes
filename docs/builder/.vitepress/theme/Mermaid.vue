@@ -12,9 +12,55 @@ let renderSeq = 0;
 
 async function render() {
   const mermaid = (await import("mermaid")).default;
+  const themeVariables = isDark.value
+    ? {
+        background: "#171614",
+        primaryColor: "#2a1f18",
+        primaryTextColor: "#f4f0e9",
+        primaryBorderColor: "#efa66a",
+        secondaryColor: "#1d1b18",
+        secondaryTextColor: "#aaa49c",
+        secondaryBorderColor: "#77716a",
+        tertiaryColor: "#131210",
+        tertiaryTextColor: "#f4f0e9",
+        tertiaryBorderColor: "#b96632",
+        lineColor: "#99938b",
+        textColor: "#f4f0e9",
+        mainBkg: "#171614",
+        nodeBorder: "#b96632",
+        clusterBkg: "#131210",
+        clusterBorder: "#4c4640",
+        titleColor: "#ffc48f",
+        edgeLabelBackground: "#0e0d0c",
+      }
+    : {
+        background: "#fbf8f3",
+        primaryColor: "#f4e0d1",
+        primaryTextColor: "#28231f",
+        primaryBorderColor: "#b65f2d",
+        secondaryColor: "#f3ede5",
+        secondaryTextColor: "#665f58",
+        secondaryBorderColor: "#8b8278",
+        tertiaryColor: "#ffffff",
+        tertiaryTextColor: "#28231f",
+        tertiaryBorderColor: "#d67c42",
+        lineColor: "#665f58",
+        textColor: "#28231f",
+        mainBkg: "#ffffff",
+        nodeBorder: "#b65f2d",
+        clusterBkg: "#f3ede5",
+        clusterBorder: "#c9bbae",
+        titleColor: "#87431f",
+        edgeLabelBackground: "#fbf8f3",
+      };
   mermaid.initialize({
     startOnLoad: false,
-    theme: isDark.value ? "dark" : "default",
+    theme: "base",
+    themeVariables: {
+      ...themeVariables,
+      fontFamily:
+        'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    },
   });
   const id = `mermaid-${Date.now()}-${renderSeq++}`;
   const { svg } = await mermaid.render(id, decodeURIComponent(props.code));

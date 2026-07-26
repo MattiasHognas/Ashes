@@ -44,12 +44,14 @@ public sealed record VersionResponse(
 /// <param name="Description">Free-text package description.</param>
 /// <param name="Keywords">Discovery keywords.</param>
 /// <param name="Owners">Names of the accounts that own the namespace.</param>
+/// <param name="Latest">The highest non-yanked release by SemVer, or null when none is active.</param>
 /// <param name="Versions">Every published version of the package.</param>
 public sealed record PackageResponse(
     string Namespace,
     string Description,
     IReadOnlyList<string> Keywords,
     IReadOnlyList<string> Owners,
+    string? Latest,
     IReadOnlyList<VersionResponse> Versions);
 
 /// <summary>A single hit in a <c>GET /api/v1/search</c> result page.</summary>
@@ -92,7 +94,7 @@ internal static class Responses
 
     public static PackageResponse ToResponse(
         PackageInfo p, IReadOnlyList<VersionInfo> versions, IReadOnlyList<string> owners) => new(
-        p.Namespace, p.Description, p.Keywords, owners, versions.Select(ToResponse).ToList());
+        p.Namespace, p.Description, p.Keywords, owners, SemVer.Latest(versions), versions.Select(ToResponse).ToList());
 
     public static SearchResponse ToSearch(ResultPage page) => new(
         page.Results.Select(r => new SearchResultResponse(r.Namespace, r.Description, r.Latest, r.Downloads, r.Score)).ToList(),

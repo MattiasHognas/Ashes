@@ -9,6 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- The registry is not part of the compiler's published artifacts; it deploys on its own. -->
     <IsPackable>false</IsPackable>
+    <RegistryWebRoot>$(MSBuildProjectDirectory)/Web</RegistryWebRoot>
+    <BuildRegistryWeb Condition="'$(BuildRegistryWeb)' == ''">true</BuildRegistryWeb>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,5 +35,31 @@
     <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
+
+  <ItemGroup>
+    <RegistryWebSource Include="$(RegistryWebRoot)/src/**/*;$(RegistryWebRoot)/index.html;$(RegistryWebRoot)/package.json;$(RegistryWebRoot)/pnpm-lock.yaml;$(RegistryWebRoot)/pnpm-workspace.yaml;$(RegistryWebRoot)/tsconfig.json;$(RegistryWebRoot)/vite.config.ts" />
+  </ItemGroup>
+
+  <Target Name="BuildRegistryWeb"
+          BeforeTargets="Build"
+          Condition="'$(BuildRegistryWeb)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(RegistryWebSource)"
+          Outputs="$(RegistryWebRoot)/dist/index.html">
+    <Exec WorkingDirectory="$(RegistryWebRoot)" Command="pnpm install --frozen-lockfile --prefer-offline" />
+    <Exec WorkingDirectory="$(RegistryWebRoot)" Command="pnpm run build" />
+  </Target>
+
+  <Target Name="PublishRegistryWeb"
+          AfterTargets="ComputeFilesToPublish"
+          Condition="'$(BuildRegistryWeb)' == 'true'">
+    <ItemGroup>
+      <RegistryWebDist Include="$(RegistryWebRoot)/dist/**/*" />
+      <ResolvedFileToPublish Include="@(RegistryWebDist->'%(FullPath)')">
+        <RelativePath>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
 </Project>
