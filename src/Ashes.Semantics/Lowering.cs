@@ -2954,16 +2954,88 @@ public sealed partial class Lowering
     // arm, not as the whole body. Detecting it here marks the result an escaping runtime-managed ADT,
     // so the Ok survives the arena reset AND (via LowerEscapingRuntimeManagedResult's tuple broadening)
     // the tuple's string fields are materialized out of the reused arena.
+    //
+    // A self-recursive ADT's arms are not independent, though: a base-case arm that is a trivially
+    // "fresh" nullary constructor (e.g. `Leaf`) does not make the WHOLE function's result fresh when a
+    // sibling arm builds a DIFFERENT constructor of the same type from non-fresh children (e.g.
+    // `Node(make(d - 1))(make(d - 1))`, whose fields are ordinary calls, not nested constructor
+    // literals). Flagging only the trivial arm's constructor as runtime-managed would let a single
+    // function return a MIX of RC cells (the fresh arm) and arena cells (the non-fresh sibling) for the
+    // very same type. Since an arena cell's drop is a no-op that never walks into its children, any RC
+    // cell reachable through an arena-managed parent then leaks forever once the arena resets. Collect
+    // every terminal arm reachable through this traversal and, for each candidate "fresh" arm, refuse it
+    // when any OTHER arm also constructs the same parent type but is not independently fresh — a
+    // genuinely funneling sibling (a recursive call, not a construction of this type) never conflicts.
     private bool ProducesFreshRuntimeManageableAdt(Expr body)
-        => body switch
+    {
+        var arms = new List<Expr>();
+        CollectFreshAdtEscapeArms(body, arms);
+
+        foreach (Expr arm in arms)
         {
-            Expr.If iff => ProducesFreshRuntimeManageableAdt(iff.Then) || ProducesFreshRuntimeManageableAdt(iff.Else),
-            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshRuntimeManageableAdt(matchCase.Body)),
-            Expr.Let let => ProducesFreshRuntimeManageableAdt(let.Body),
-            Expr.LetResult letResult => ProducesFreshRuntimeManageableAdt(letResult.Body),
-            Expr.LetRecursive letRecursive => ProducesFreshRuntimeManageableAdt(letRecursive.Body),
-            _ => IsFreshRuntimeManageableAdtExpression(body),
-        };
+            if (!IsFreshRuntimeManageableAdtExpression(arm)
+                || !TryDescribeConstructorExpression(arm, out ConstructorSymbol? armConstructor, out _, out _)
+                || armConstructor is null)
+            {
+                continue;
+            }
+
+            bool consistent = true;
+            foreach (Expr other in arms)
+            {
+                if (ReferenceEquals(other, arm))
+                {
+                    continue;
+                }
+
+                if (TryDescribeConstructorExpression(other, out ConstructorSymbol? otherConstructor, out _, out _)
+                    && otherConstructor is not null
+                    && string.Equals(otherConstructor.ParentType, armConstructor.ParentType, StringComparison.Ordinal)
+                    && !IsFreshRuntimeManageableAdtExpression(other))
+                {
+                    consistent = false;
+                    break;
+                }
+            }
+
+            if (consistent)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void CollectFreshAdtEscapeArms(Expr body, List<Expr> arms)
+    {
+        switch (body)
+        {
+            case Expr.If iff:
+                CollectFreshAdtEscapeArms(iff.Then, arms);
+                CollectFreshAdtEscapeArms(iff.Else, arms);
+                break;
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    CollectFreshAdtEscapeArms(matchCase.Body, arms);
+                }
+
+                break;
+            case Expr.Let let:
+                CollectFreshAdtEscapeArms(let.Body, arms);
+                break;
+            case Expr.LetResult letResult:
+                CollectFreshAdtEscapeArms(letResult.Body, arms);
+                break;
+            case Expr.LetRecursive letRecursive:
+                CollectFreshAdtEscapeArms(letRecursive.Body, arms);
+                break;
+            default:
+                arms.Add(body);
+                break;
+        }
+    }
 
     private (int Temp, TypeRef Type) LowerEscapingRuntimeManagedResult(
         Expr body,
