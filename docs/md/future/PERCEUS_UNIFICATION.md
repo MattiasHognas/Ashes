@@ -1,8 +1,12 @@
 # Perceus Ownership Unification — Design Document
 
-Status: audit complete, design proposed, no implementation started. Produced from four parallel
-code audits (core data types; closures & loop-carried/TCO values; async/task-frame values;
-capability/handler & request-local values), synthesized here.
+Status: implementation in progress. Produced from four parallel code audits (core data types;
+closures & loop-carried/TCO values; async/task-frame values; capability/handler & request-local
+values), synthesized here. Phase 1 (Strings/Bytes/BigInt builtin-freshness metadata, `#302`) and
+Phase 2 (capability RC-eligibility gate narrowing, `#301`) have landed on `main`. Phase 0 (extending
+`FunctionOwnershipSummary` with expression-level freshness and closure-forwarding provenance,
+shadow-compared against the existing classifiers with zero behavior change) is in progress. Phases
+3-7 are not yet started.
 
 ## 0. Objective (restated)
 
