@@ -1418,7 +1418,7 @@ public sealed partial class Lowering
         int copyDest = NewTemp();
         bool normalizeToRuntimeOwnership = !_usesAsync
             && !_inCoroutineBody
-            && CapabilityGlobalCount == 0
+            && !_programHasDynamicCapabilityDispatch
             && copyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         EmitScopeCopyOutInstruction(
             copyOutKind,
