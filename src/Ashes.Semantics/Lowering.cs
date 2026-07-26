@@ -2591,7 +2591,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Borrow(borrowTemp, result.Temp));
             ownerInfo.ActiveBorrows++;
             result = (borrowTemp, result.Type);
-            if (transfersRuntimeReference)
+            if (runtimeManagedResult)
             {
                 _runtimeManagedResultTemps.Add(borrowTemp);
             }
