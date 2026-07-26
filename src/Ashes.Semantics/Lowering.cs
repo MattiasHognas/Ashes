@@ -3937,6 +3937,18 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Whether <paramref name="expression"/> is a fully applied call to a builtin declared (in
+    /// <see cref="BuiltinRegistry"/>) to always produce a fresh, uniquely owned value of any kind —
+    /// the overload taking an explicit <see cref="BuiltinRegistry.FreshRcResultKind"/> specializes to
+    /// one specific expected kind; the ownership-provenance terminal-arm classifier uses this any-kind
+    /// overload to recognize a builtin producer as fresh construction regardless of which value kind
+    /// it produces.
+    /// </summary>
+    private bool IsRuntimeRcFreshBuiltinProducer(Expr expression)
+        => TryGetFreshRcBuiltinProducerKind(expression, out var kind)
+            && kind != BuiltinRegistry.FreshRcResultKind.None;
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a fully applied call to a builtin declared (in
     /// <see cref="BuiltinRegistry"/>) to always produce a fresh, uniquely owned value of
     /// <paramref name="expectedKind"/> — the single lookup <see cref="IsRuntimeRcStringProducer"/>,
     /// <see cref="IsRuntimeRcBytesProducer"/>, and <see cref="IsRuntimeRcBigIntProducer"/> each
@@ -3944,7 +3956,18 @@ public sealed partial class Lowering
     /// matches over the call site's qualified name.
     /// </summary>
     private bool IsRuntimeRcFreshBuiltinProducer(Expr expression, BuiltinRegistry.FreshRcResultKind expectedKind)
+        => TryGetFreshRcBuiltinProducerKind(expression, out var kind) && kind == expectedKind;
+
+    /// <summary>
+    /// The shared lookup behind both <see cref="IsRuntimeRcFreshBuiltinProducer(Expr)"/> overloads:
+    /// resolves <paramref name="expression"/> to a fully applied builtin call and reports the
+    /// declared <see cref="BuiltinRegistry.FreshRcResultKind"/> of its result, or
+    /// <see cref="BuiltinRegistry.FreshRcResultKind.None"/> when it is not a recognized, fully
+    /// applied, fresh-RC-producing builtin call.
+    /// </summary>
+    private bool TryGetFreshRcBuiltinProducerKind(Expr expression, out BuiltinRegistry.FreshRcResultKind kind)
     {
+        kind = BuiltinRegistry.FreshRcResultKind.None;
         if (!TryExtractFullyAppliedQualifiedCall(expression, out Expr.QualifiedVar? qualified, out int argumentCount))
         {
             return false;
@@ -3952,12 +3975,14 @@ public sealed partial class Lowering
 
         string moduleName = ResolveModuleAlias(qualified.Module);
         if (!BuiltinRegistry.TryGetModule(moduleName, out BuiltinRegistry.BuiltinModule module)
-            || !module.Members.TryGetValue(qualified.Name, out var member))
+            || !module.Members.TryGetValue(qualified.Name, out var member)
+            || member.Arity != argumentCount)
         {
             return false;
         }
 
-        return member.Arity == argumentCount && member.ProducesFreshRcResult == expectedKind;
+        kind = member.ProducesFreshRcResult;
+        return kind != BuiltinRegistry.FreshRcResultKind.None;
     }
 
     private bool IsRuntimeRcStringProducer(Expr expression)

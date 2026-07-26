@@ -126,13 +126,23 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Classifies one terminal arm expression in isolation: a saturated data-constructor application or
-    /// aggregate literal is direct RC-eligible construction; a call to another registered function is
-    /// forwarding, resolved transitively; anything else (a bare parameter passthrough, a call to an
-    /// unregistered/foreign/builtin function, an unmodeled node) is the conservative default.
+    /// aggregate literal is direct RC-eligible construction; a fully applied call to a builtin declared
+    /// fresh-RC-producing (<see cref="BuiltinRegistry.FreshRcResultKind"/>, e.g. <c>Ashes.Text.fromInt</c>)
+    /// is likewise direct RC-eligible construction — a call INTO the builtin is itself the fresh-result-
+    /// producing expression, exactly like a constructor application; an <see cref="Expr.Add"/> node is
+    /// also treated as fresh construction, matching <c>IsRuntimeRcStringProducer</c>'s own unconditional
+    /// treatment of it (string `+` always allocates a fresh concatenated result — when the node's
+    /// resolved type turns out to be a copy type like Int/Float instead, marking it RC-eligible here is
+    /// inert, since only heap-shaped results ever consult this fact downstream); a call to another
+    /// registered function is forwarding, resolved transitively; anything else (a bare parameter
+    /// passthrough, a call to an unregistered/foreign function, an unmodeled node) is the conservative
+    /// default.
     /// </summary>
     private FunctionResultProvenance ClassifyExpressionProvenance(Expr expression)
     {
-        if (IsDirectRcConstruction(expression))
+        if (IsDirectRcConstruction(expression)
+            || IsRuntimeRcFreshBuiltinProducer(expression)
+            || expression is Expr.Add)
         {
             return new FunctionResultProvenance(true, null);
         }
