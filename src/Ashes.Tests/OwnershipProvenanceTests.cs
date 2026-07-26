@@ -193,8 +193,12 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
-    public void Call_to_an_unregistered_builtin_is_conservatively_not_rc_eligible()
+    public void Call_to_a_fresh_rc_producing_builtin_is_rc_eligible()
     {
+        // Ashes.Text.fromInt is declared ProducesFreshRcResult: FreshRcResultKind.String in
+        // BuiltinRegistry — a fully applied call into it is itself fresh construction, exactly like a
+        // constructor application (this is the paradigm case Perceus-unification Phase 3's
+        // builtin-producer gap fix targets; see PERCEUS_UNIFICATION.md's Phase 0 follow-up).
         const string source =
             """
             let describe n = Ashes.Text.fromInt(n)
@@ -202,6 +206,24 @@ public sealed class OwnershipProvenanceTests
             """;
 
         var summary = LowerProgram(source).GetOwnershipSummary("describe");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Call_to_a_non_producing_builtin_is_conservatively_not_rc_eligible()
+    {
+        // Ashes.Text.parseBigInt is NOT declared ProducesFreshRcResult (unlike its sibling fromBigInt) —
+        // it returns a Result-wrapped value, not a bare fresh BigInt — so it must stay conservative.
+        const string source =
+            """
+            let parse n = Ashes.Text.parseBigInt(n)
+            in parse("0")
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("parse");
 
         summary.ShouldNotBeNull();
         summary.ResultProvenance.RcEligible.ShouldBeFalse();
