@@ -2988,6 +2988,13 @@ public sealed partial class Lowering
     // genuinely funneling sibling (a recursive call, not a construction of this type) never conflicts.
     private bool ProducesFreshRuntimeManageableAdt(Expr body)
     {
+        bool result = ProducesFreshRuntimeManageableAdtCore(body);
+        ShadowCompareExpressionFreshness("ProducesFreshRuntimeManageableAdt", body, result);
+        return result;
+    }
+
+    private bool ProducesFreshRuntimeManageableAdtCore(Expr body)
+    {
         var arms = new List<Expr>();
         CollectFreshAdtEscapeArms(body, arms);
 
@@ -4093,6 +4100,13 @@ public sealed partial class Lowering
     }
 
     private bool IsFreshRuntimeManageableAdtExpression(Expr expression)
+    {
+        bool result = IsFreshRuntimeManageableAdtExpressionCore(expression);
+        ShadowCompareExpressionFreshness("IsFreshRuntimeManageableAdtExpression", expression, result);
+        return result;
+    }
+
+    private bool IsFreshRuntimeManageableAdtExpressionCore(Expr expression)
     {
         return TryDescribeConstructorExpression(expression, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
             && directConstructor is not null
@@ -8157,6 +8171,11 @@ public sealed partial class Lowering
         }
 
         runtimeManaged = _runtimeManagedFunctionResultLabels.Contains(resultLabel);
+        if (rootExpr is Expr.Var rootVariable)
+        {
+            ShadowCompareResultProvenance(rootVariable.Name, argumentCount, runtimeManaged);
+        }
+
         return true;
     }
 

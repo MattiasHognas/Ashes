@@ -2218,6 +2218,13 @@ public sealed partial class Lowering
 
     private bool IsFreshConstructorTree(Expr expression, TypeSymbol expectedType)
     {
+        bool result = IsFreshConstructorTreeCore(expression, expectedType);
+        ShadowCompareExpressionFreshness("IsFreshConstructorTree", expression, result);
+        return result;
+    }
+
+    private bool IsFreshConstructorTreeCore(Expr expression, TypeSymbol expectedType)
+    {
         var arguments = new List<Expr>();
         if (expression is Expr.Var nullary
             && _constructorSymbols.TryGetValue(nullary.Name, out ConstructorSymbol? nullaryConstructor)

@@ -89,6 +89,12 @@ public sealed partial class Lowering
     private readonly Dictionary<string, FunctionOwnershipSummary> _ownershipSummaries =
         new(StringComparer.Ordinal);
 
+    // Flat merge of every registered function's ExpressionFreshness map (see AnalyzeReuseCopyElision),
+    // keyed by reference identity like the per-function maps it merges. Lets a shadow-compare hook
+    // elsewhere in the lowering pass (see Lowering.OwnershipShadowCompare.cs) look up an arbitrary
+    // expression's freshness fact without first having to determine which function's body it belongs to.
+    private readonly Dictionary<Expr, bool> _maExpressionFreshnessAll = new(ReferenceEqualityComparer.Instance);
+
     // Recording sink for ExpressionFreshness (see RecordExpressionFreshness): non-null only during the
     // dedicated post-fixpoint recording pass for the function currently being (re-)walked in
     // ComputeExpressionFreshness, null (a no-op) during the hot while-changed fixpoint loop in
@@ -152,6 +158,7 @@ public sealed partial class Lowering
         _maResultReach.Clear();
         _maNestedRecursive.Clear();
         _ownershipSummaries.Clear();
+        _maExpressionFreshnessAll.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody);
@@ -170,7 +177,17 @@ public sealed partial class Lowering
         _maAnalyzed = true;
         foreach (var function in _maFuncs.Keys.OrderBy(name => name, StringComparer.Ordinal))
         {
-            _ownershipSummaries[function] = CreateOwnershipSummary(function, _maFuncs[function]);
+            var summary = CreateOwnershipSummary(function, _maFuncs[function]);
+            _ownershipSummaries[function] = summary;
+
+            // Every Expr node is reference-unique across the whole desugared program (each function's
+            // body is a distinct subtree), so merging every function's ExpressionFreshness map into one
+            // flat table is unambiguous and gives shadow-compare hooks elsewhere in the lowering pass an
+            // O(1) lookup that does not require knowing which function currently owns a given node.
+            foreach (var (expr, fresh) in summary.ExpressionFreshness)
+            {
+                _maExpressionFreshnessAll.TryAdd(expr, fresh);
+            }
         }
 
         string? explainSelection = Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP");
@@ -524,7 +541,13 @@ public sealed partial class Lowering
                 : summary.ResultFresh
                     ? "fresh"
                     : $"reaches{{{string.Join(",", summary.ResultReach.Keys.OrderBy(name => name, StringComparer.Ordinal))}}}";
-            lines.Add($"[ownership] {summary.Function}({parameters}) unique={{{unique}}} captures={{{captures}}} result={result}");
+            int freshExpressions = summary.ExpressionFreshness.Values.Count(fresh => fresh);
+            string provenance = $"rc-eligible:{summary.ResultProvenance.RcEligible.ToString().ToLowerInvariant()} "
+                + $"forwards-to:{summary.ResultProvenance.ForwardsTo ?? "none"}";
+            lines.Add(
+                $"[ownership] {summary.Function}({parameters}) unique={{{unique}}} captures={{{captures}}} "
+                    + $"result={result} expr-fresh={freshExpressions}/{summary.ExpressionFreshness.Count} "
+                    + $"provenance={{{provenance}}}");
         }
 
         return lines;
