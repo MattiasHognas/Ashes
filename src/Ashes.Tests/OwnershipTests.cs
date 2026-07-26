@@ -1512,6 +1512,85 @@ public sealed class OwnershipTests
         runtimeManagedFlags.Count.ShouldBe(1);
     }
 
+    // Perceus unification Phase 4 (docs/md/future/PERCEUS_UNIFICATION.md): CO-38's per-arm
+    // reconciliation is now implemented by the shared AnyArmConsistentlyFresh engine
+    // (Lowering.TopCellFreshness.cs) instead of a bespoke ProducesFreshRuntimeManageableAdt loop. This
+    // pins the same invariant against a THREE-constructor sum type (the original bug and its fix were
+    // only ever exercised with two constructors) to confirm the generalized reconciliation groups
+    // arbitrarily many sibling arms by parent type name, not just a binary if/else pair.
+    [Test]
+    public void Self_recursive_adt_three_constructor_arms_share_runtime_managed_flag()
+    {
+        var ir = LowerProgram(
+            """
+            type Tree =
+                | Leaf
+                | Single(Tree)
+                | Node(Tree, Tree)
+
+            let recursive make depth =
+                match depth with
+                    | 0 -> Leaf
+                    | 1 -> Single(make(depth - 1))
+                    | _ -> Node(make(depth - 1))(make(depth - 1))
+
+            make(3)
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1,
+            "Leaf/Single/Node must share one representation across all three sibling arms -- the " +
+            "reconciliation must generalize past the original bug's binary if/else shape.");
+    }
+
+    // Adversarial false-positive guard (mirrors Phase 3's "rewrapping a match-extracted field" test):
+    // `Node(l)(Leaf)` LOOKS top-cell-fresh syntactically (its root is a direct constructor
+    // application), but `l` is a match-extracted field of an incoming (not provably fresh) tree, not a
+    // literal constructor application -- the outer Node cell must not be treated as part of a fresh,
+    // independently-RC-manageable recursive constructor tree on the strength of syntactic shape alone.
+    // IsFreshConstructorTree correctly rejects it (the recursion into `l` fails, since a bare Var that
+    // is not itself a constructor application is never top-cell-fresh), so this must resolve
+    // conservative (uniform, non-mixed) exactly like the CO-38 cases above -- confirming the new
+    // engine cannot be tricked into a false positive by a syntactically-constructor-shaped rewrap of an
+    // aliased, non-fresh child.
+    [Test]
+    public void Self_recursive_adt_rewrapped_match_extracted_child_stays_conservative()
+    {
+        var ir = LowerProgram(
+            """
+            type Tree =
+                | Leaf
+                | Node(Tree, Tree)
+
+            let rebuildLeftOnly tree =
+                match tree with
+                    | Leaf -> Leaf
+                    | Node(l, r) -> Node(l)(Leaf)
+
+            rebuildLeftOnly(Node(Leaf)(Leaf))
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1,
+            "a rewrap of a match-extracted (aliased, not provably fresh) child must not be treated as " +
+            "an independently fresh constructor tree just because its own root syntactically looks " +
+            "like a direct constructor application.");
+    }
+
     // --- Fresh-RC-producer whitelist: BuiltinRegistry-driven lookup replaces AST pattern matching ---
 
     // The exact call-site shapes the pre-refactor `IsRuntimeRcStringProducer` / `IsRuntimeRcBytesProducer`
