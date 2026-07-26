@@ -2327,28 +2327,25 @@ public sealed partial class Lowering
         return result;
     }
 
+    // Perceus unification Phase 4: routed through the shared IsTopCellFreshAdtConstruction terminal
+    // check (Lowering.TopCellFreshness.cs) instead of an independent CollectCallArgs walk, so this and
+    // IsFreshRuntimeManageableAdtExpression/ProducesFreshRuntimeManageableAdt can never drift apart on
+    // what counts as a direct constructor application. No control-flow transparency here by design (a
+    // field is only a fresh constructor tree if it is DIRECTLY a construction, not an if/match — a
+    // caller that needs the escape-position transparency uses CollectFreshEscapeTerminals first): the
+    // recursion below only descends into a matched constructor's own non-arena-resettable fields of the
+    // SAME expected (self-recursive) type.
     private bool IsFreshConstructorTreeCore(Expr expression, TypeSymbol expectedType)
     {
-        var arguments = new List<Expr>();
-        if (expression is Expr.Var nullary
-            && _constructorSymbols.TryGetValue(nullary.Name, out ConstructorSymbol? nullaryConstructor)
-            && nullaryConstructor is not null
-            && nullaryConstructor.Arity == 0)
-        {
-            return string.Equals(nullaryConstructor.ParentType, expectedType.Name, StringComparison.Ordinal);
-        }
-
-        Expr root = CollectCallArgs(expression, arguments);
-        if (root is not Expr.Var constructorVariable
-            || !_constructorSymbols.TryGetValue(constructorVariable.Name, out ConstructorSymbol? constructor)
+        if (!IsTopCellFreshAdtConstruction(expression, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? resultType)
             || constructor is null
-            || !string.Equals(constructor.ParentType, expectedType.Name, StringComparison.Ordinal)
-            || arguments.Count != constructor.Arity)
+            || arguments is null
+            || resultType is null
+            || !string.Equals(constructor.ParentType, expectedType.Name, StringComparison.Ordinal))
         {
             return false;
         }
 
-        TypeRef.TNamedType resultType = InstantiateAdtType(constructor);
         for (int i = 0; i < constructor.Arity; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));

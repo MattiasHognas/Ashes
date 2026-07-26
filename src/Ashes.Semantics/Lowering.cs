@@ -2967,34 +2967,59 @@ public sealed partial class Lowering
     }
 
     // True when the escaping result IS a tuple (directly, or through the arms of a match/if or the
-    // body of a let). A tuple built in a match arm otherwise stays arena-managed, so a function like
-    // `readWord acc text = ... -> (acc, rest)` returns a tuple whose runtime-managed string field
-    // lives in the callee's arena; the next call reuses that arena and overwrites it. Marking the
-    // result a fresh tuple sets _runtimeRcTupleAllocationRequested, so LowerTupleLit allocates the
-    // tuple in the RC heap (only when its elements are themselves runtime-manageable — a scalar tuple
-    // stays arena), keeping it alive across calls.
+    // body of a let, walked via the shared CollectFreshEscapeTerminals engine — see
+    // Lowering.TopCellFreshness.cs). A tuple built in a match arm otherwise stays arena-managed, so a
+    // function like `readWord acc text = ... -> (acc, rest)` returns a tuple whose runtime-managed
+    // string field lives in the callee's arena; the next call reuses that arena and overwrites it.
+    // Marking the result a fresh tuple sets _runtimeRcTupleAllocationRequested, so LowerTupleLit
+    // allocates the tuple in the RC heap (only when its elements are themselves runtime-manageable — a
+    // scalar tuple stays arena), keeping it alive across calls.
+    //
+    // This is an existence check (OR across terminal arms), not the AND-style same-parent-type
+    // reconciliation ADTs need (AnyArmConsistentlyFresh): a design-time hypothesis that tuples share the
+    // ADT CO-38 hazard (PR #299) turned out NOT to hold, and an AND-based attempt here broke two live
+    // regression tests (Tco_loop_string_accumulator_returned_in_(adt_wrapped_)tuple_survives_next_call —
+    // a funneling recursive-call sibling arm was wrongly treated as part of the same reconciliation
+    // group, forcing the classification to false and leaving the returned tuple's string field pointing
+    // into a since-reset TCO arena). The reason tuples genuinely differ from ADTs: the ambient
+    // _runtimeRcTupleAllocationRequested flag this predicate feeds ONLY affects literal TupleLit
+    // allocations actually lowered while this specific escaping body is lowered — it never changes an
+    // existing binding's already-fixed representation (a bare Var/funneling-call arm doesn't allocate
+    // anything new here regardless of the flag), and IsRuntimeManageableTupleElement/
+    // IsRuntimeManagedResultTemp independently re-verify each element's actual representation at every
+    // tuple Alloc site before trusting it as RC. So there is no cross-arm mixing to protect against: an
+    // existence check is sound. ADTs are different because their ambient flag feeds
+    // IsRuntimeManagedConstructorCandidate at EVERY sibling constructor application of the SAME type
+    // reached while lowering the body, not just literal ones already independently re-verified per site.
     private bool ProducesFreshTuple(Expr body)
-        => body switch
+    {
+        var terminals = new List<Expr>();
+        CollectFreshEscapeTerminals(body, terminals);
+        return terminals.Any(IsTopCellFreshTupleTerminal);
+    }
+
+    // A tuple literal is always top-cell-fresh at this position; a tuple wrapped in an ADT constructor
+    // (e.g. `Ok((acc, tail))` from a JSON parser) carries the same dangling-string hazard: its string
+    // fields live in the callee's arena. Recurse into the constructor's arguments (via the same
+    // control-flow-transparent walk) so the flag is set and LowerTupleLit materializes them. Only real
+    // constructor applications, not ordinary function calls (whose tuple argument is consumed, not
+    // returned).
+    private bool IsTopCellFreshTupleTerminal(Expr terminal)
+    {
+        if (terminal is Expr.TupleLit)
         {
-            Expr.TupleLit => true,
-            Expr.If iff => ProducesFreshTuple(iff.Then) || ProducesFreshTuple(iff.Else),
-            Expr.Match match => match.Cases.Any(matchCase => ProducesFreshTuple(matchCase.Body)),
-            Expr.Let let => ProducesFreshTuple(let.Body),
-            Expr.LetResult letResult => ProducesFreshTuple(letResult.Body),
-            Expr.LetRecursive letRecursive => ProducesFreshTuple(letRecursive.Body),
-            // A tuple wrapped in an ADT constructor (e.g. `Ok((acc, tail))` from a JSON parser) carries
-            // the same dangling-string hazard: its string fields live in the callee's arena. Recurse
-            // into the constructor's arguments so the flag is set and LowerTupleLit materializes them.
-            // Only real constructor applications, not ordinary function calls (whose tuple argument is
-            // consumed, not returned).
-            _ when TryDescribeConstructorExpression(body, out _, out var ctorArgs, out _) && ctorArgs is not null
-                => ctorArgs.Any(ProducesFreshTuple),
-            _ => false,
-        };
+            return true;
+        }
+
+        return IsTopCellFreshAdtConstruction(terminal, out _, out List<Expr>? ctorArgs, out _)
+            && ctorArgs is not null
+            && ctorArgs.Any(ProducesFreshTuple);
+    }
 
     // Like IsFreshRuntimeManageableAdtExpression but recurses through the arms of a match/if and the
-    // body of a let (mirroring ProducesFreshTuple). A tail-recursive parser like `parseStringBody acc
-    // text = match uncons(text) with ... | Some((h,t)) -> if h == "\"" then Ok((acc, tail)) else
+    // body of a let (via the shared CollectFreshEscapeTerminals walk — see
+    // Lowering.TopCellFreshness.cs). A tail-recursive parser like `parseStringBody acc text = match
+    // uncons(text) with ... | Some((h,t)) -> if h == "\"" then Ok((acc, tail)) else
     // parseStringBody(acc + head)(tail)` returns its fresh `Ok((acc, tail))` from a nested match/if
     // arm, not as the whole body. Detecting it here marks the result an escaping runtime-managed ADT,
     // so the Ok survives the arena reset AND (via LowerEscapingRuntimeManagedResult's tuple broadening)
@@ -3007,10 +3032,11 @@ public sealed partial class Lowering
     // literals). Flagging only the trivial arm's constructor as runtime-managed would let a single
     // function return a MIX of RC cells (the fresh arm) and arena cells (the non-fresh sibling) for the
     // very same type. Since an arena cell's drop is a no-op that never walks into its children, any RC
-    // cell reachable through an arena-managed parent then leaks forever once the arena resets. Collect
-    // every terminal arm reachable through this traversal and, for each candidate "fresh" arm, refuse it
-    // when any OTHER arm also constructs the same parent type but is not independently fresh — a
-    // genuinely funneling sibling (a recursive call, not a construction of this type) never conflicts.
+    // cell reachable through an arena-managed parent then leaks forever once the arena resets.
+    // AnyArmConsistentlyFresh (grouped by parent type name) enforces exactly that: a candidate "fresh"
+    // arm is refused when any OTHER arm also constructs the same parent type but is not independently
+    // fresh — a genuinely funneling sibling (a recursive call, not a construction of this type) never
+    // conflicts, since it has no group key.
     private bool ProducesFreshRuntimeManageableAdt(Expr body)
     {
         bool result = ProducesFreshRuntimeManageableAdtCore(body);
@@ -3020,74 +3046,19 @@ public sealed partial class Lowering
 
     private bool ProducesFreshRuntimeManageableAdtCore(Expr body)
     {
-        var arms = new List<Expr>();
-        CollectFreshAdtEscapeArms(body, arms);
-
-        foreach (Expr arm in arms)
-        {
-            if (!IsFreshRuntimeManageableAdtExpression(arm)
-                || !TryDescribeConstructorExpression(arm, out ConstructorSymbol? armConstructor, out _, out _)
-                || armConstructor is null)
-            {
-                continue;
-            }
-
-            bool consistent = true;
-            foreach (Expr other in arms)
-            {
-                if (ReferenceEquals(other, arm))
-                {
-                    continue;
-                }
-
-                if (TryDescribeConstructorExpression(other, out ConstructorSymbol? otherConstructor, out _, out _)
-                    && otherConstructor is not null
-                    && string.Equals(otherConstructor.ParentType, armConstructor.ParentType, StringComparison.Ordinal)
-                    && !IsFreshRuntimeManageableAdtExpression(other))
-                {
-                    consistent = false;
-                    break;
-                }
-            }
-
-            if (consistent)
-            {
-                return true;
-            }
-        }
-
-        return false;
+        var terminals = new List<Expr>();
+        CollectFreshEscapeTerminals(body, terminals);
+        return AnyArmConsistentlyFresh(terminals, IsFreshRuntimeManageableAdtExpression, AdtConstructorGroupKey);
     }
 
-    private void CollectFreshAdtEscapeArms(Expr body, List<Expr> arms)
-    {
-        switch (body)
-        {
-            case Expr.If iff:
-                CollectFreshAdtEscapeArms(iff.Then, arms);
-                CollectFreshAdtEscapeArms(iff.Else, arms);
-                break;
-            case Expr.Match match:
-                foreach (MatchCase matchCase in match.Cases)
-                {
-                    CollectFreshAdtEscapeArms(matchCase.Body, arms);
-                }
-
-                break;
-            case Expr.Let let:
-                CollectFreshAdtEscapeArms(let.Body, arms);
-                break;
-            case Expr.LetResult letResult:
-                CollectFreshAdtEscapeArms(letResult.Body, arms);
-                break;
-            case Expr.LetRecursive letRecursive:
-                CollectFreshAdtEscapeArms(letRecursive.Body, arms);
-                break;
-            default:
-                arms.Add(body);
-                break;
-        }
-    }
+    // The reconciliation group key for an ADT terminal arm: the parent type name of the constructor it
+    // directly applies, or null when the arm does not directly construct anything at this position (a
+    // funneling call/passthrough, which never conflicts with a sibling's freshness verdict).
+    private string? AdtConstructorGroupKey(Expr arm)
+        => IsTopCellFreshAdtConstruction(arm, out ConstructorSymbol? constructor, out _, out _)
+            && constructor is not null
+                ? constructor.ParentType
+                : null;
 
     private (int Temp, TypeRef Type) LowerEscapingRuntimeManagedResult(
         Expr body,
@@ -4158,7 +4129,7 @@ public sealed partial class Lowering
 
     private bool IsFreshRuntimeManageableAdtExpressionCore(Expr expression)
     {
-        return TryDescribeConstructorExpression(expression, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
+        return IsTopCellFreshAdtConstruction(expression, out ConstructorSymbol? directConstructor, out List<Expr>? directArguments, out TypeRef.TNamedType? resultType)
             && directConstructor is not null
             && directArguments is not null
             && resultType is not null
