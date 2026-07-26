@@ -1670,8 +1670,72 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Let_bound_call_result_forwarded_through_borrow_into_constructor_avoids_redundant_copy_out()
+    {
+        // Regression test for the real closed blind spot this benchmark's own investigation
+        // traced fannkuch-redux's dominant remaining leak to: the exact shape here (a helper call's
+        // result bound via `let`, then read once more to build a curried-constructor argument, inside
+        // a TCO loop's non-base-case branch) is a scaled-down version of fannkuch-redux's own
+        // `let count2 = setAt(r)(cr)(count) in Continue(S(perm2)(count2))(r)`.
+        //
+        // LowerVar's Borrow branch recorded the pre-borrow temp as runtime-managed under the full
+        // `runtimeManagedResult` condition (ownerInfo.RuntimeManaged, TCO param slots, or TCO pattern
+        // aliases) but only recorded the POST-borrow temp — the one actually used from that point on —
+        // under the much narrower `transfersRuntimeReference` (TCO-pattern-alias-only) condition. A
+        // let-bound call result that is genuinely runtime-managed (via ownerInfo, not a TCO alias) lost
+        // that fact the moment it was read again through a Borrow, so the call-argument lowering at the
+        // constructor site could not see it was already safely RC-managed and took the defensive
+        // CopyOutList path instead of reusing it directly.
+        //
+        // Verified via git stash that this assertion fails without the fix (2 RuntimeManaged
+        // CopyOutList instructions instead of 1) and that the full fannkuch-redux N=11 benchmark's
+        // measured peak RSS drops from ~46.1 GB to ~27.4 GB with this exact fix, correctness
+        // (checksum/Pfannkuchen output) unchanged.
+        var ir = LowerProgram(
+            """
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+            type Step =
+                | Done
+                | Continue(List(Int), Int)
+            let recursive loop r count =
+                if r == 0
+                then Done
+                else
+                    let count2 = setAt(r)(r)(count)
+                    in Continue(count2)(r)
+            in loop(3)([0, 0, 0, 0])
+            """);
+        var all = ir.Functions.SelectMany(f => f.Instructions).ToList();
+        int copyOutManaged = all.Count(i => i is IrInst.CopyOutList { RuntimeManaged: true });
+        copyOutManaged.ShouldBe(1,
+            "The let-bound setAt(...) result forwarded through a Borrow into Continue's constructor "
+                + "argument should be recognized as already runtime-managed and reused directly, not "
+                + "defensively copied out a second time.");
+    }
+
+    [Test]
     public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
     {
+        // wrap's body Box(x) no longer resolves through the direct known-function-result fast path
+        // (Perceus-unification Phase 3): FunctionResultProvenance's terminal-arm classifier does not
+        // treat a bare parameter argument to a constructor as automatically fresh, even though x is a
+        // copy-typed Int here where aliasing genuinely cannot matter — this classifier has no type
+        // information (it runs in a pre-lowering, whole-program AST pass, before x's type is known), so
+        // it cannot distinguish "x is an Int" from "x is a Tree" at this call site. Treating ANY
+        // consumed-parameter argument as fresh regardless of type was tried and caused a real
+        // use-after-free-shaped bug (reuse_result_alias_move_elision.ash printed 0 0 0 instead of
+        // 15 7 207, because a HEAP-typed consumed parameter folded into a fresh construction this way
+        // let the caller's arena-reclaim-without-copy path invalidate it) — so this is conservative in
+        // the safe direction here too. The construction site itself is unaffected (a completely separate,
+        // type-aware, already-existing classifier decides AllocAdt's own RuntimeManaged bit), and the
+        // call now takes the defensive copy-out path instead of the direct-ownership fast path — both
+        // are correct, this only asserts the (now conservative) shape.
         var ir = LowerProgram(
             """
             type Box =
@@ -1686,8 +1750,6 @@ public sealed class ArenaDeallocationTests
         var afterCall = instructions.Skip(lastCallIdx + 1).ToList();
         afterCall.Any(i => i is IrInst.RestoreArenaState).ShouldBeTrue(
             "RestoreArenaState should appear after CallClosure for ADT(Int) result.");
-        afterCall.Any(i => i is IrInst.CopyOutArena).ShouldBeFalse(
-            "The callee's fresh RC result should survive the caller's arena reset directly.");
         ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
             instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
     }

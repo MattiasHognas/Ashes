@@ -2199,10 +2199,18 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
+        // No longer probes for a direct RcDrop{TypeName=Step} here (Perceus-unification Phase 3):
+        // `build`'s result (Hit(updated), where `updated` is itself the result of a forwarding call to
+        // setAt) is a let-bound argument to a constructor application one level down from build's own
+        // terminal arm — FunctionResultProvenance conservatively does not resolve that shape (setAt's
+        // own result is, correctly, not proven fresh — its base-case tail can share structure with an
+        // aliased input list, exactly the hazard fixed in
+        // Tco_adt_with_shared_tail_list_children_survives_across_iterations), so `build(0)`'s call no
+        // longer resolves through the static known-function-result fast path. The value is still
+        // released correctly — the memory-growth assertion below (which actually runs and measures the
+        // compiled binary, unlike this probe) continues to pass — this is a missed optimization, not a
+        // correctness regression.
         IrProgram aggregateProbe = LowerProgram(BuildRuntimeRcNormalizedListAdtResultMemoryProgram(1));
-        AllInstructions(aggregateProbe).Any(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true }).ShouldBeTrue(
-                "An anonymous RC aggregate call result must be dropped after its scalar match result is formed.");
         IrProgram knownArenaCallProbe = LowerProgram(BuildRuntimeRcKnownArenaListCallMemoryProgram(1));
         AllInstructions(knownArenaCallProbe).Any(instruction =>
             instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeTrue(
@@ -2257,9 +2265,16 @@ public sealed class LinuxBackendCoverageTests
         IrProgram probe = LowerProgram(BuildRuntimeRcEscapingClosureMemoryProgram(1));
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
-        AllInstructions(probe).Any(instruction =>
-            instruction is IrInst.RcDrop { TypeName: "Function", RuntimeManaged: true }).ShouldBeTrue();
 
+        // No longer asserts a direct RcDrop{TypeName=Function} for `measure` here (Perceus-unification
+        // Phase 3): FunctionResultProvenance deliberately never classifies a function whose result is
+        // itself a returned closure (see IsDirectRcConstruction's own doc for why — whether a closure is
+        // RC- or arena-represented depends on capture-time ownership state that does not exist during
+        // the pre-lowering AST pass), so `measure = make(n)` now falls back to the arena
+        // (CleanupResource/RestoreArenaState) path instead of the direct RC-drop fast path. This is a
+        // missed optimization, not a correctness regression — the arena watermark reset below still
+        // reclaims `measure`'s allocation every iteration, which is exactly what AssertMemoryPlateaus
+        // verifies.
         List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcEscapingClosureMemoryProgram,
             outputPerIteration: 7).ConfigureAwait(false);

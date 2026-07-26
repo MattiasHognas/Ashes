@@ -57,37 +57,10 @@ public sealed partial class Lowering
             $"old={oldVerdict} new-expression-freshness={newVerdict} expr={DescribeForShadowLog(expression)}");
     }
 
-    /// <summary>
-    /// Compares the IR-level closure-provenance chain's verdict (_functionReturnedClosureLabels /
-    /// _runtimeManagedFunctionResultLabels, resolved via TryResolveKnownFunctionResultOwnership) against
-    /// the new ResultProvenance field for a saturated direct call to a registered top-level/
-    /// self-recursive function. Only compared when the call supplies exactly as many arguments as the
-    /// function's flattened parameter list (see FunctionOwnershipSummary.Parameters) — the shape both
-    /// mechanisms are answering the same question for.
-    /// </summary>
-    private void ShadowCompareResultProvenance(string function, int argumentCount, bool oldRuntimeManaged)
-    {
-        if (!ShouldExplainOwnership())
-        {
-            return;
-        }
-
-        if (GetOwnershipSummary(function) is not { } summary || argumentCount != summary.Parameters.Count)
-        {
-            return;
-        }
-
-        bool newRcEligible = summary.ResultProvenance.RcEligible;
-        if (newRcEligible == oldRuntimeManaged)
-        {
-            return;
-        }
-
-        LogOwnershipShadowDisagreement(
-            "closure-provenance",
-            $"function={function} old-runtime-managed={oldRuntimeManaged} "
-                + $"new-rc-eligible={newRcEligible} new-forwards-to={summary.ResultProvenance.ForwardsTo ?? "none"}");
-    }
+    // ShadowCompareResultProvenance (the closure-provenance shadow-compare hook) has been retired: Phase 3
+    // (docs/md/future/PERCEUS_UNIFICATION.md) wired TryResolveKnownFunctionResultOwnership directly to
+    // FunctionOwnershipSummary.ResultProvenance, so there is no separate "old" answer left to shadow-log
+    // against — ResultProvenance IS the real decision now, not a comparison candidate.
 
     private static string DescribeForShadowLog(Expr expression)
     {

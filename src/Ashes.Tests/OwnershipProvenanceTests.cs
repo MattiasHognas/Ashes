@@ -89,12 +89,20 @@ public sealed class OwnershipProvenanceTests
         // The exact shape the IR-level backward-scan mechanism (RecordReturnedClosureLabel,
         // _functionReturnedClosureLabels) cannot see: the result is computed by CALLING another named
         // function, not by a literal MakeClosure/MakeClosureStack instruction on the body temp.
+        // helper's own body deliberately does NOT fold its parameter into the construction
+        // (Full(Empty), not Full(x)): a bare parameter argument to a constructor is never trusted as
+        // fresh, even when consumed, since this pre-lowering classifier has no type information and
+        // cannot rule out the parameter being a heap value aliased elsewhere (see IsDirectRcConstruction's
+        // own doc — treating a consumed parameter as automatically fresh regardless of type was tried and
+        // caused a real bug, reuse_result_alias_move_elision.ash printing 0 0 0 instead of 15 7 207). This
+        // test is about the FORWARDING chain (caller -> helper), not about parameter-folding, so helper's
+        // body is written to be safely provable fresh on its own terms.
         const string source =
             """
             type Box =
                 | Empty
                 | Full(Box)
-            let helper x = Full(x)
+            let helper x = Full(Empty)
             let caller x = helper(x)
             in caller(Empty)
             """;
@@ -144,13 +152,16 @@ public sealed class OwnershipProvenanceTests
         // "a capturing top-level recursive function calling a sibling helper"): a match whose base case
         // is a fresh construction and whose recursive case forwards to a sibling helper, not a literal
         // closure. A single-node inspection of the body (rather than recursing to terminal arms) would
-        // see only the outermost Match node and default this to conservative-false.
+        // see only the outermost Match node and default this to conservative-false. helper's own body is
+        // Succ(Zero), not Succ(x) — this test is about the forwarding chain (loop -> helper), not about
+        // folding a parameter into a constructor argument (never trusted regardless of type; see
+        // Body_that_calls_a_sibling_helper_forwards_and_inherits_its_eligibility's own doc).
         const string source =
             """
             type Nat =
                 | Zero
                 | Succ(Nat)
-            let helper x = Succ(x)
+            let helper x = Succ(Zero)
             let recursive loop n =
                 match n with
                     | 0 -> Zero
@@ -168,13 +179,17 @@ public sealed class OwnershipProvenanceTests
     [Test]
     public void Disagreeing_forward_targets_across_arms_report_no_single_forward_hop()
     {
+        // helperA/helperB's own bodies are Succ(Zero)/Succ(Succ(Zero)), not Succ(x)/Succ(Succ(x)) — this
+        // test is about disagreeing forward targets across choose's two arms, not about folding a
+        // parameter into a constructor argument (never trusted regardless of type; see
+        // Body_that_calls_a_sibling_helper_forwards_and_inherits_its_eligibility's own doc).
         const string source =
             """
             type Nat =
                 | Zero
                 | Succ(Nat)
-            let helperA x = Succ(x)
-            let helperB x = Succ(Succ(x))
+            let helperA x = Succ(Zero)
+            let helperB x = Succ(Succ(Zero))
             let choose n =
                 match n with
                     | Zero -> helperA(n)
@@ -193,8 +208,12 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
-    public void Call_to_an_unregistered_builtin_is_conservatively_not_rc_eligible()
+    public void Call_to_a_fresh_rc_producing_builtin_is_rc_eligible()
     {
+        // Ashes.Text.fromInt is declared ProducesFreshRcResult: FreshRcResultKind.String in
+        // BuiltinRegistry — a fully applied call into it is itself fresh construction, exactly like a
+        // constructor application (this is the paradigm case Perceus-unification Phase 3's
+        // builtin-producer gap fix targets; see PERCEUS_UNIFICATION.md's Phase 0 follow-up).
         const string source =
             """
             let describe n = Ashes.Text.fromInt(n)
@@ -202,6 +221,64 @@ public sealed class OwnershipProvenanceTests
             """;
 
         var summary = LowerProgram(source).GetOwnershipSummary("describe");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Call_to_a_non_producing_builtin_is_conservatively_not_rc_eligible()
+    {
+        // Ashes.Text.parseBigInt is NOT declared ProducesFreshRcResult (unlike its sibling fromBigInt) —
+        // it returns a Result-wrapped value, not a bare fresh BigInt — so it must stay conservative.
+        const string source =
+            """
+            let parse n = Ashes.Text.parseBigInt(n)
+            in parse("0")
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("parse");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Rewrapping_a_match_extracted_field_is_never_treated_as_fresh()
+    {
+        // Adversarial false-positive guard, added deliberately (not discovered via an organic e2e
+        // regression like the other tests in this file): `extract` LOOKS fresh at a glance — its only
+        // terminal arm is a brand-new W(...) constructor application — but its argument, `inner`, is a
+        // field extracted from the caller-supplied `w` via pattern match, not a freshly built value.
+        // Rewrapping an aliased field in a new outer cell does NOT make the field itself fresh: if `w`
+        // (and therefore `inner`) is aliased elsewhere, treating `extract`'s result as "fully fresh,
+        // safe to arena-reset without a defensive copy" would let that reset invalidate memory the
+        // alias still reads from - a real use-after-free, not just a missed optimization. This is
+        // structurally the same hazard as the Cons-tail-aliasing and consumed-parameter bugs this phase
+        // found and fixed (see IsFreshConstructionArgument's own doc), and is also exactly the shape of
+        // the explicitly out-of-scope "third gap" (match-extracted-field provenance in
+        // Lowering.Patterns.cs's GetAdtField) - this test asserts that, absent that separate piece of
+        // work, the classifier stays conservative here rather than guessing.
+        //
+        // IsFreshConstructionArgument's case list (literals, Add, a nested direct-RC construction, or a
+        // fresh-RC-producing builtin) does not include a bare Var under any circumstance - so `inner`,
+        // a plain Expr.Var naming a match-bound pattern variable, correctly falls through to "not
+        // proven fresh" and the whole W(inner) construction is correctly rejected.
+        const string source =
+            """
+            type Box =
+                | B(Int)
+            type Wrap =
+                | W(Box)
+            let extract w =
+                match w with
+                    | W(inner) -> W(inner)
+            in extract(W(B(1)))
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("extract");
 
         summary.ShouldNotBeNull();
         summary.ResultProvenance.RcEligible.ShouldBeFalse();

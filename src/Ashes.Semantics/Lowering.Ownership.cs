@@ -1490,6 +1490,110 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Whether a call's concrete (post-unification) result type is one the runtime-managed drop/copy
+    /// machinery (EmitRuntimeManagedChildDrop and friends) can actually walk without crashing — i.e. it
+    /// bottoms out, at every level of List/Tuple/ADT nesting, in a type CanArenaReset already treats as
+    /// needing no drop, or a heap type the drop switch explicitly recognizes (Str/Bytes/BigInt directly;
+    /// List only over a copy-type element, matching CanRuntimeManageOwnedTupleType's own conservative
+    /// List handling; Tuple/ADT recursively via CanRuntimeManageOwnedTupleType/CanRuntimeManageAdt).
+    /// <see cref="FunctionResultProvenance"/> classifies purely from AST SHAPE at a pre-lowering,
+    /// type-agnostic pass (see Lowering.OwnershipProvenance.cs) — a bare constructor/tuple/list literal
+    /// arm is always "fresh," regardless of what its field types resolve to — so it cannot itself
+    /// distinguish a concretely-typed tuple/list from one still parameterized by an unresolved type
+    /// variable (e.g. a generic stdlib helper never called with a concrete element type anywhere in this
+    /// program) or by an otherwise-unsupported field type (e.g. a bare function value). This is the
+    /// type-aware gate every real consumer of <c>ResultProvenance.RcEligible</c> must run against the
+    /// call's actual, unified type before trusting it — the drop machinery has no fallback for a type
+    /// shape it does not recognize; it throws.
+    /// </summary>
+    private bool IsConcretelyRuntimeManageableResultType(TypeRef type)
+    {
+        var pruned = Prune(type);
+        if (CanArenaReset(pruned))
+        {
+            return true;
+        }
+
+        return pruned switch
+        {
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+            TypeRef.TNamedType named => IsConcretelyRuntimeManageableAdt(named, null),
+            // A closure (TFun) result is deliberately NEVER trusted through this static path, even
+            // though a closure is generally safely RC-droppable on its own (its generated __rc_cdrop
+            // dropper recursively releases whatever it captured) — FunctionResultProvenance's terminal-
+            // arm classifier (ClassifyExpressionProvenance/IsDirectRcConstruction) has no notion of "this
+            // function's body IS a fresh lambda expression" (it only recognizes constructor/tuple/list/
+            // record literals and builtin-producer calls), so a function whose result is itself a
+            // returned closure (e.g. `make n = let text = ... in given ignored -> ...`) always
+            // classifies RcEligible=false here — a false negative that, left alone, would only cost the
+            // fast static path. But TryResolveKnownFunctionResultOwnership resolving definitively
+            // (RcEligible=false, not "unresolved") SUPPRESSES the pre-existing, unrelated, and already-
+            // correct dynamic fallback (LowerAppliedClosureCall's needsResultOwnership / runtime
+            // ReturnsRuntimeManaged-bit check) at the call site, which is what actually determines
+            // ownership for a closure result today. Returning false here keeps every TFun-typed call
+            // "unresolved," preserving that untouched, working mechanism exactly as it behaved before
+            // this phase (caught by Linux_backend_llvm_runtime_rc_escaping_closure_memory_should_plateau).
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Whether every constructor field of ADT <paramref name="named"/> (recursively, through any
+    /// nested Tuple/List/ADT field) is a type <see cref="EmitRuntimeManagedAdtDrop"/>'s general per-field
+    /// walk can actually drop — deliberately NOT <see cref="CanRuntimeManageAdt"/>, which additionally
+    /// requires a single named-field constructor (a narrower, unrelated construction-time-optimization
+    /// requirement) and would wrongly reject an ordinary multi-constructor or positional ADT (e.g. a
+    /// plain <c>type Pair = | Pair(Int, Int)</c>) that the general drop path handles fine. A resource-
+    /// bearing field (a <c>File</c>/<c>Socket</c>/<c>Process</c> handle, checked via
+    /// <see cref="IsResourceBearing(TypeRef)"/>) is never supported — those need explicit close semantics, not an
+    /// RC drop. <paramref name="path"/> guards a self-referential ADT (e.g. <c>Tree = Node(Tree, Tree)</c>)
+    /// against infinite recursion; a cycle is assumed sound for the recursive occurrence itself (the drop
+    /// machinery's own recursive-copy paths handle these), so only non-recursive fields are re-verified.
+    /// </summary>
+    private bool IsConcretelyRuntimeManageableAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path)
+    {
+        if (IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        path ??= [];
+        if (!path.Add(named.Symbol))
+        {
+            return true;
+        }
+
+        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
+        {
+            for (int i = 0; i < constructor.Arity; i++)
+            {
+                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
+                if (CanArenaReset(fieldType))
+                {
+                    continue;
+                }
+
+                bool supported = fieldType switch
+                {
+                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                    TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
+                    TypeRef.TNamedType child => IsConcretelyRuntimeManageableAdt(child, path),
+                    _ => false,
+                };
+                if (!supported)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// True if the type is a resource handle (FileHandle, Socket, Process, …). These are represented
     /// as a scalar i64 fd/HANDLE with no heap payload, so a value of this type survives a TCO
     /// back-edge arena reset trivially (nothing to copy out) and the reset never Drops it — Drop
