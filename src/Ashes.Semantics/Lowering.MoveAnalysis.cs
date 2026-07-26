@@ -89,6 +89,14 @@ public sealed partial class Lowering
     private readonly Dictionary<string, FunctionOwnershipSummary> _ownershipSummaries =
         new(StringComparer.Ordinal);
 
+    // Recording sink for ExpressionFreshness (see RecordExpressionFreshness): non-null only during the
+    // dedicated post-fixpoint recording pass for the function currently being (re-)walked in
+    // ComputeExpressionFreshness, null (a no-op) during the hot while-changed fixpoint loop in
+    // ComputeResultReach. Expr is a C# record (structural equality), so this — like every other
+    // Expr-keyed table in this compiler (e.g. Lowering.cs's _inPlaceReuseCallExprs) — must key by
+    // reference identity, not structural equality.
+    private Dictionary<Expr, bool>? _maExpressionFreshness;
+
     // Reach multiplicity cap: any count reaching this is folded into the poison flag (internal sharing).
     private const int ReachCap = 2;
 
@@ -471,6 +479,9 @@ public sealed partial class Lowering
             ? reach
             : (new Dictionary<string, int>(StringComparer.Ordinal), false);
 
+        var expressionFreshness = ComputeExpressionFreshness(function, info);
+        var provenance = ResolveFunctionResultProvenance(function);
+
         return new FunctionOwnershipSummary(
             function,
             info.Params.ToList(),
@@ -478,7 +489,9 @@ public sealed partial class Lowering
             unique,
             captures,
             new Dictionary<string, int>(counts, StringComparer.Ordinal),
-            poison);
+            poison,
+            expressionFreshness,
+            provenance);
     }
 
     /// <summary>
@@ -970,6 +983,34 @@ public sealed partial class Lowering
         }
     }
 
+    /// <summary>
+    /// Expression-level freshness for every sub-expression <see cref="ResultReach"/> visits while
+    /// walking <paramref name="function"/>'s body, keyed by node identity. Must run only after
+    /// <see cref="ComputeResultReach"/> has converged (<c>_maResultReach</c> stable for every function):
+    /// this re-walks the body exactly once more with the same env-construction rules, now with
+    /// recording turned on, so it reproduces the converged pass's per-node verdicts rather than an
+    /// earlier, not-yet-stable iteration's.
+    /// </summary>
+    private Dictionary<Expr, bool> ComputeExpressionFreshness(string function, (List<string> Params, Expr Body) info)
+    {
+        var env = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+        foreach (var p in info.Params)
+        {
+            env[p] = (new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 }, false);
+        }
+
+        var map = new Dictionary<Expr, bool>(ReferenceEqualityComparer.Instance);
+        _maExpressionFreshness = map;
+        _maReachToken = 0;
+        _maSelfRecursive = _maNestedRecursive.TryGetValue(function, out var nr)
+            ? (function, nr.RecursiveName, nr.Outer, nr.Acc)
+            : null;
+        ResultReach(info.Body, env);
+        _maSelfRecursive = null;
+        _maExpressionFreshness = null;
+        return map;
+    }
+
     private static (Dictionary<string, int> Counts, bool Poison) ReachBottom()
         => (new Dictionary<string, int>(StringComparer.Ordinal), false);
 
@@ -1165,6 +1206,31 @@ public sealed partial class Lowering
     /// poisons; the conservative default is poison, so an unproven shape never over-claims confinement.
     /// </summary>
     private (Dictionary<string, int> Counts, bool Poison) ResultReach(
+        Expr e,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+    {
+        var result = ResultReachCore(e, env);
+        RecordExpressionFreshness(e, result);
+        return result;
+    }
+
+    // Every node ResultReach visits is, by construction, exactly the set of sub-expressions whose
+    // freshness matters below the whole-function-result level (see ExpressionFreshness on
+    // FunctionOwnershipSummary): a let/let-result value and body, an if/match arm, a match scrutinee,
+    // an aggregate literal's elements, a call's arguments. Recording each one's verdict here — rather
+    // than forking a parallel traversal — guarantees the expression-level fact can never drift from the
+    // already-audited whole-function fixpoint it generalizes. Only active during the dedicated
+    // post-fixpoint recording pass (see ComputeExpressionFreshness); a null map during the hot
+    // while-changed fixpoint loop makes this a no-op there, so recording cannot affect convergence.
+    private void RecordExpressionFreshness(Expr e, (Dictionary<string, int> Counts, bool Poison) result)
+    {
+        if (_maExpressionFreshness is { } map)
+        {
+            map[e] = result is { Poison: false, Counts.Count: 0 };
+        }
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) ResultReachCore(
         Expr e,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
