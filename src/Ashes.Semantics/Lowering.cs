@@ -105,6 +105,22 @@ public sealed partial class Lowering
     // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
     private bool _inCoroutineBody;
 
+    // Whether the whole program contains at least one `handle` expression, computed once by
+    // DetectDynamicCapabilityDispatch right after capability/provider registration. A capability op
+    // call resolves either statically (a `provide`, no handler evidence at all) or dynamically
+    // (handler evidence, and — for a one-shot resumptive arm — a pending "post" tracked by
+    // LivePostsIndex). LivePostsIndex can only ever become non-zero once some `handle` has installed
+    // a frame, so a program with none can never have a pending post: ordinary values need no arena
+    // exception for that hazard's sake. Unlike `_inCoroutineBody`, this is whole-program rather than
+    // per-lambda-scoped — a plain helper with no lexical `handle` in sight can still run inside
+    // another function's `handle` dynamic extent, so only "no `handle` anywhere in the program" is a
+    // sound (if coarser) signal without a real call-graph reachability analysis. See
+    // Lowering.Capabilities.cs for where this is computed and Lowering.Ownership.cs /
+    // Lowering.Patterns.cs for the RC-eligibility sites it now gates instead of the old
+    // whole-program `CapabilityGlobalCount > 0` (which fired the moment ANY capability was declared,
+    // even one resolved entirely by static `provide`).
+    private bool _programHasDynamicCapabilityDispatch;
+
     // The `async` intrinsic binding, created once at root-scope setup and re-seeded into every lambda
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
@@ -660,6 +676,10 @@ public sealed partial class Lowering
         // operation becomes a hidden parameter. Runs after capability/provider registration and
         // before value collection so the rest of the pipeline sees ordinary functions.
         program = RegisterAndTransformDictionaryFunctions(program);
+
+        // Whether ordinary values need the capability arena exception at all: only when the program
+        // can actually reach dynamic dispatch (see DetectDynamicCapabilityDispatch).
+        _programHasDynamicCapabilityDispatch = DetectDynamicCapabilityDispatch(program);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
@@ -2583,7 +2603,7 @@ public sealed partial class Lowering
                 topRef.Label,
                 envTemp,
                 0,
-                ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
                     && _runtimeManagedFunctionResultLabels.Contains(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
@@ -2656,7 +2676,7 @@ public sealed partial class Lowering
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
-                    ReturnsRuntimeManaged: !_usesAsync && CapabilityGlobalCount == 0
+                    ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
                         && _runtimeManagedFunctionResultLabels.Contains(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
@@ -2899,7 +2919,7 @@ public sealed partial class Lowering
         bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
         bool runtimeManagedClosure = !_usesAsync
             && !_inCoroutineBody
-            && CapabilityGlobalCount == 0
+            && !_programHasDynamicCapabilityDispatch
             && IsRuntimeRcCopyClosureProducer(body);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
@@ -3515,7 +3535,7 @@ public sealed partial class Lowering
     {
         if (_usesAsync
             || _inCoroutineBody
-            || CapabilityGlobalCount > 0
+            || _programHasDynamicCapabilityDispatch
             || !IsRuntimeRcCopyClosureProducer(let.Value))
         {
             lowered = default;
@@ -3877,83 +3897,71 @@ public sealed partial class Lowering
         return FreeVars(lambda.Body, bound).Contains(bindingName);
     }
 
-    private bool IsRuntimeRcStringProducer(Expr expression)
+    /// <summary>
+    /// Peels a fully applied qualified call — <c>Module.name(a)(b)...</c>, parsed as left-nested
+    /// <see cref="Expr.Call"/> around a <see cref="Expr.QualifiedVar"/> callee — down to that callee
+    /// and the number of arguments applied. Returns false when <paramref name="expression"/> is not
+    /// shaped as a direct qualified call (e.g. the callee is a variable holding a partially applied
+    /// function), matching how the pre-refactor whitelist predicates only recognized syntactically
+    /// direct calls to a builtin.
+    /// </summary>
+    private static bool TryExtractFullyAppliedQualifiedCall(
+        Expr expression,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Expr.QualifiedVar? qualified,
+        out int argumentCount)
     {
-        if (expression is Expr.Add)
+        argumentCount = 0;
+        Expr current = expression;
+        while (current is Expr.Call call)
         {
+            argumentCount++;
+            current = call.Func;
+        }
+
+        if (current is Expr.QualifiedVar qualifiedVar)
+        {
+            qualified = qualifiedVar;
             return true;
         }
 
-        if (expression is Expr.Call(Expr.QualifiedVar textProducer, _)
-            && string.Equals(ResolveModuleAlias(textProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && (string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal)
-                || string.Equals(textProducer.Name, "toHex", StringComparison.Ordinal)))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar floatProducer, _)
-            && string.Equals(ResolveModuleAlias(floatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(floatProducer.Name, "fromFloat", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(
-                Expr.Call(Expr.QualifiedVar formatProducer, _),
-                _)
-            && string.Equals(ResolveModuleAlias(formatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(formatProducer.Name, "formatFloat", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar caseProducer, _)
-            && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
-                || string.Equals(caseProducer.Name, "asciiLower", StringComparison.Ordinal)))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar bigIntProducer, _)
-            && string.Equals(ResolveModuleAlias(bigIntProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(bigIntProducer.Name, "fromBigInt", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return expression is Expr.Call(
-                Expr.Call(
-                    Expr.Call(Expr.QualifiedVar qualified, _),
-                    _),
-                _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "subText", StringComparison.Ordinal);
+        qualified = null;
+        return false;
     }
 
-    private bool IsRuntimeRcBytesProducer(Expr expression)
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a fully applied call to a builtin declared (in
+    /// <see cref="BuiltinRegistry"/>) to always produce a fresh, uniquely owned value of
+    /// <paramref name="expectedKind"/> — the single lookup <see cref="IsRuntimeRcStringProducer"/>,
+    /// <see cref="IsRuntimeRcBytesProducer"/>, and <see cref="IsRuntimeRcBigIntProducer"/> each
+    /// specialize to their own result kind, replacing what used to be independent AST pattern
+    /// matches over the call site's qualified name.
+    /// </summary>
+    private bool IsRuntimeRcFreshBuiltinProducer(Expr expression, BuiltinRegistry.FreshRcResultKind expectedKind)
     {
-        Expr.QualifiedVar? qualified = expression switch
-        {
-            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
-            Expr.Call(Expr.QualifiedVar unary, _) => unary,
-            _ => null,
-        };
-        if (qualified is null
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
+        if (!TryExtractFullyAppliedQualifiedCall(expression, out Expr.QualifiedVar? qualified, out int argumentCount))
         {
             return false;
         }
 
-        return string.Equals(qualified.Name, "append", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+        string moduleName = ResolveModuleAlias(qualified.Module);
+        if (!BuiltinRegistry.TryGetModule(moduleName, out BuiltinRegistry.BuiltinModule module)
+            || !module.Members.TryGetValue(qualified.Name, out var member))
+        {
+            return false;
+        }
+
+        return member.Arity == argumentCount && member.ProducesFreshRcResult == expectedKind;
+    }
+
+    private bool IsRuntimeRcStringProducer(Expr expression)
+    {
+        return expression is Expr.Add
+            || IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.String);
+    }
+
+    private bool IsRuntimeRcBytesProducer(Expr expression)
+    {
+        return IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.Bytes);
     }
 
     private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
@@ -4017,24 +4025,7 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcBigIntProducer(Expr expression)
     {
-        Expr.QualifiedVar? qualified = expression switch
-        {
-            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
-            Expr.Call(Expr.QualifiedVar unary, _) => unary,
-            _ => null,
-        };
-        if (qualified is null
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "add", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "sub", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "mul", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "div", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "mod", StringComparison.Ordinal);
+        return IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.BigInt);
     }
 
     private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
@@ -5995,7 +5986,7 @@ public sealed partial class Lowering
         bool includeFreshClosures = true,
         IReadOnlySet<int>? excludedSlots = null)
     {
-        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        if (_usesAsync || _inCoroutineBody || _programHasDynamicCapabilityDispatch)
         {
             return;
         }
@@ -6359,7 +6350,7 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = !_usesAsync && CapabilityGlobalCount == 0
+        var (bodyTemp, bodyType) = !_usesAsync && !_programHasDynamicCapabilityDispatch
             ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
             : LowerExpr(lam.Body);
         _ambientRow = savedAmbientRow;
@@ -6765,7 +6756,7 @@ public sealed partial class Lowering
         // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        bool returnsRuntimeManaged = !_usesAsync && CapabilityGlobalCount == 0
+        bool returnsRuntimeManaged = !_usesAsync && !_programHasDynamicCapabilityDispatch
             && _runtimeManagedFunctionResultLabels.Contains(label);
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
@@ -7382,7 +7373,7 @@ public sealed partial class Lowering
 
     private void LowerCallTcoPromoteResolvedRuntimeParams(TcoContext tco, TypeRef[] argTypes)
     {
-        if (_usesAsync || _inCoroutineBody || CapabilityGlobalCount > 0)
+        if (_usesAsync || _inCoroutineBody || _programHasDynamicCapabilityDispatch)
         {
             return;
         }
@@ -7586,7 +7577,7 @@ public sealed partial class Lowering
         constructorArguments = null;
         return !_usesAsync
             && !_inCoroutineBody
-            && CapabilityGlobalCount == 0
+            && !_programHasDynamicCapabilityDispatch
             && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
     }
 
@@ -8271,7 +8262,7 @@ public sealed partial class Lowering
                 rootExpr, collectedArgs[i], i,
                 !_usesAsync
                     && !_inCoroutineBody
-                    && CapabilityGlobalCount == 0
+                    && !_programHasDynamicCapabilityDispatch
                     && i == collectedArgs.Count - 1
                     && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, out _)
                     && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
@@ -8639,7 +8630,7 @@ public sealed partial class Lowering
         int copyDest = NewTemp();
         bool normalizeToRuntimeOwnership = !_usesAsync
             && !_inCoroutineBody
-            && CapabilityGlobalCount == 0
+            && !_programHasDynamicCapabilityDispatch
             && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         switch (callCopyOutKind)
         {
