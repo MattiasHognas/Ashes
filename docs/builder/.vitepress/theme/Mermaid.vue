@@ -3,14 +3,17 @@
 // rule in config.ts emits this component). Rendering happens on mount and
 // re-runs when the color scheme flips, so diagrams match the active theme.
 import { useData } from "vitepress";
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref, useId, watch } from "vue";
 
 const props = defineProps<{ code: string }>();
 const { isDark } = useData();
 const container = ref<HTMLElement>();
+const componentId = useId().replace(/[^A-Za-z0-9_-]/g, "");
 let renderSeq = 0;
+let latestRender = 0;
 
 async function render() {
+  const requestedRender = ++latestRender;
   const mermaid = (await import("mermaid")).default;
   const themeVariables = isDark.value
     ? {
@@ -58,13 +61,14 @@ async function render() {
     theme: "base",
     themeVariables: {
       ...themeVariables,
+      darkMode: isDark.value,
       fontFamily:
         'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     },
   });
-  const id = `mermaid-${Date.now()}-${renderSeq++}`;
+  const id = `mermaid-${componentId}-${renderSeq++}`;
   const { svg } = await mermaid.render(id, decodeURIComponent(props.code));
-  if (container.value) {
+  if (container.value && requestedRender === latestRender) {
     container.value.innerHTML = svg;
   }
 }

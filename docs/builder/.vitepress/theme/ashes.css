@@ -555,6 +555,42 @@ html:not(.dark) .VPButton.brand:hover {
   background: color-mix(in srgb, var(--ashes-panel) 72%, transparent);
 }
 
+.mermaid-diagram svg {
+  color: var(--ashes-ink) !important;
+}
+
+.mermaid-diagram .node rect,
+.mermaid-diagram .node circle,
+.mermaid-diagram .node ellipse,
+.mermaid-diagram .node polygon,
+.mermaid-diagram .node path {
+  stroke: var(--ashes-ember) !important;
+  fill: var(--ashes-panel-soft) !important;
+}
+
+.mermaid-diagram .label,
+.mermaid-diagram .nodeLabel,
+.mermaid-diagram text,
+.mermaid-diagram foreignObject div,
+.mermaid-diagram foreignObject span,
+.mermaid-diagram foreignObject p {
+  color: var(--ashes-ink) !important;
+  fill: var(--ashes-ink) !important;
+}
+
+.mermaid-diagram .edgePath path,
+.mermaid-diagram .flowchart-link,
+.mermaid-diagram .messageLine0,
+.mermaid-diagram .messageLine1 {
+  stroke: var(--ashes-muted) !important;
+}
+
+.mermaid-diagram marker path,
+.mermaid-diagram .arrowheadPath {
+  stroke: var(--ashes-muted) !important;
+  fill: var(--ashes-muted) !important;
+}
+
 @media (max-width: 960px) {
   .VPHomeHero {
     padding-top: 104px !important;
