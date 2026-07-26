@@ -3,15 +3,34 @@ using Ashes.Registry.Publish;
 using Ashes.Registry.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// `dotnet build` produces the Vite SPA under Web/dist. A published registry carries those same files
+// under wwwroot, so both local and deployed hosts serve the UI from the same ASP.NET Core process.
+var localSpaRoot = Path.Combine(builder.Environment.ContentRootPath, "Web", "dist");
+var hasLocalSpa = Directory.Exists(localSpaRoot);
+IFileProvider spaFileProvider;
+if (hasLocalSpa)
+{
+    PhysicalFileProvider localSpaFileProvider = new(localSpaRoot);
+    builder.Environment.WebRootPath = localSpaRoot;
+    builder.Environment.WebRootFileProvider = localSpaFileProvider;
+    spaFileProvider = localSpaFileProvider;
+}
+else
+{
+    spaFileProvider = builder.Environment.WebRootFileProvider;
+}
+var spaIndexPath = Path.Combine(hasLocalSpa ? localSpaRoot : builder.Environment.WebRootPath, "index.html");
+
 // Resolve the --data directory (also honoured as Registry:DataDir) and make it the home for both the
 // SQLite metadata database and the content-addressed blob tree.
 var dataDir = Path.GetFullPath(
-    builder.Configuration["Registry:DataDir"]
-    ?? builder.Configuration["data"]
+    builder.Configuration["data"]
+    ?? builder.Configuration["Registry:DataDir"]
     ?? "data");
 Directory.CreateDirectory(dataDir);
 
@@ -77,8 +96,35 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
+app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = spaFileProvider });
+app.UseStaticFiles(new StaticFileOptions { FileProvider = spaFileProvider });
+app.UseRouting();
+
 app.MapReadEndpoints();
 app.MapWriteEndpoints();
+// Do not use the conventional `nonfile` constraint here: SemVer routes contain dots (for example
+// `/packages/Json/1.2.0`) and must still reach the client router.
+app.MapGet("/{*path}", async context =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/api", StringComparison.Ordinal) ||
+        path.StartsWithSegments("/healthz", StringComparison.Ordinal) ||
+        path.StartsWithSegments("/openapi", StringComparison.Ordinal) ||
+        path.StartsWithSegments("/scalar", StringComparison.Ordinal))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    if (!File.Exists(spaIndexPath))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(spaIndexPath, context.RequestAborted);
+});
 
 await app.RunAsync();
 

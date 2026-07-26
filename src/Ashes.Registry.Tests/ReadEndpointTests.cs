@@ -10,6 +10,45 @@ namespace Ashes.Registry.Tests;
 public sealed class ReadEndpointTests
 {
     [Test]
+    public async Task Root_serves_the_registry_spa()
+    {
+        using var factory = new RegistryAppFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/", UriKind.Relative));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("text/html");
+        (await response.Content.ReadAsStringAsync()).ShouldContain("<div id=\"app\"></div>");
+    }
+
+    [Test]
+    public async Task Spa_assets_are_served_as_static_files()
+    {
+        using var factory = new RegistryAppFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/logo.png", UriKind.Relative));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("image/png");
+        (await response.Content.ReadAsByteArrayAsync()).Length.ShouldBeGreaterThan(1000);
+    }
+
+    [Test]
+    public async Task Semver_package_route_falls_back_to_the_spa()
+    {
+        using var factory = new RegistryAppFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/packages/Json/1.2.0", UriKind.Relative));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("text/html");
+        (await response.Content.ReadAsStringAsync()).ShouldContain("<div id=\"app\"></div>");
+    }
+
+    [Test]
     public async Task Healthz_reports_ok()
     {
         using var factory = new RegistryAppFactory();
@@ -64,6 +103,7 @@ public sealed class ReadEndpointTests
         pkg.ShouldNotBeNull();
         pkg.Namespace.ShouldBe("Json");
         pkg.Owners.ShouldBe(["alice"]);
+        pkg.Latest.ShouldBe("1.2.0");
         pkg.Versions.Count.ShouldBe(1);
         pkg.Versions[0].Version.ShouldBe("1.2.0");
     }
@@ -103,6 +143,45 @@ public sealed class ReadEndpointTests
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         response.Content.Headers.ContentType!.MediaType.ShouldBe("application/gzip");
         (await response.Content.ReadAsByteArrayAsync()).ShouldBe(source);
+    }
+
+    [Test]
+    public async Task Readme_endpoint_extracts_the_root_readme()
+    {
+        using var factory = new RegistryAppFactory();
+        var source = TestArchives.Tarball(
+            ("README.md", Encoding.UTF8.GetBytes("# Json\n\nFast, typed JSON.")),
+            ("src/Json.ash", Encoding.UTF8.GetBytes("let value = 1 in value")));
+        await TestData.SeedAsync(
+            factory,
+            TestData.Package("Json"),
+            TestData.Version("Json", "1.2.0", "ash1:feed1234", size: source.Length),
+            source);
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/api/v1/packages/Json/1.2.0/readme", UriKind.Relative));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("text/markdown");
+        (await response.Content.ReadAsStringAsync()).ShouldContain("Fast, typed JSON.");
+    }
+
+    [Test]
+    public async Task Readme_endpoint_returns_no_content_when_the_archive_has_none()
+    {
+        using var factory = new RegistryAppFactory();
+        var source = TestArchives.Tarball(
+            ("src/Json.ash", Encoding.UTF8.GetBytes("let value = 1 in value")));
+        await TestData.SeedAsync(
+            factory,
+            TestData.Package("Json"),
+            TestData.Version("Json", "1.2.0", "ash1:bead1234", size: source.Length),
+            source);
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri("/api/v1/packages/Json/1.2.0/readme", UriKind.Relative));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
     [Test]

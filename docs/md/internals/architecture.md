@@ -192,6 +192,7 @@ identical trees deduplicate and a download verifies by re-hashing regardless of 
 | GET | `/api/v1/packages`, `/api/v1/search?q=` | Browse (paginated); search (FTS5-ranked) |
 | GET | `/api/v1/packages/{ns}`, `/api/v1/packages/{ns}/{version}` | Package metadata + versions; one version |
 | GET | `/api/v1/packages/{ns}/{version}/source` | Download the source tarball (`application/gzip`) |
+| GET | `/api/v1/packages/{ns}/{version}/readme` | Extract the root README as Markdown, or `204` when absent |
 | POST | `/api/v1/tokens` | Mint an API token |
 | PUT | `/api/v1/packages/{ns}/{version}` | Publish (multipart: `metadata` JSON + `source` tarball) |
 | POST | `/api/v1/packages/{ns}/{version}/yank`, `/unyank` | Yank / reverse a yank (owner-only) |
@@ -201,6 +202,15 @@ Errors use a uniform envelope `{ "error": { "code", "message" } }` with stable c
 `unauthorized`, `namespace_owned_by_another`, `version_exists`, `version_yanked`, `limit_exceeded`,
 `namespace_lint`, `invalid_version`, `hash_mismatch`. The generated OpenAPI document and its Scalar
 reference are mapped in the Development environment only.
+
+**Web UI.** `Ashes.Registry/Web` is a Vue 3 / TypeScript single-page application built by Vite. The
+registry project runs its locked `pnpm` build automatically, publishes the generated assets under
+`wwwroot`, and serves them from the same ASP.NET Core host. Non-API paths fall back to the SPA entry
+point, so package URLs are directly shareable while `/api/v1`, `/healthz`, and development-only API
+documentation remain ordinary server routes. The SPA consumes only the public API rather than reaching
+into EF storage. It provides package search/browse, version selection, README rendering, capability and
+dependency inspection, source downloads, and the copyable `ashes add <namespace>` command. Published
+Markdown is sanitized in the client before insertion; embedded images and active HTML are removed.
 
 **Publish pipeline.** `PUT` runs an ordered pipeline that writes nothing until every stage passes:
 authenticate → unpack the tarball under the per-file/total/count and decompressed-ceiling limits and the
