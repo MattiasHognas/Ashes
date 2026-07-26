@@ -2936,7 +2936,7 @@ public sealed partial class Lowering
 
         bool runtimeManagedString = IsRuntimeRcStringProducer(body);
         bool runtimeManagedAdt = ProducesFreshRuntimeManageableAdt(body);
-        bool runtimeManagedList = IsFreshListConstructionExpression(body);
+        bool runtimeManagedList = ProducesFreshRuntimeManageableList(body);
         bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
             && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
         bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
@@ -4176,11 +4176,18 @@ public sealed partial class Lowering
         }
     }
 
-    private static bool IsFreshListConstructionExpression(Expr expression)
+    private bool IsFreshListConstructionExpression(Expr expression)
+    {
+        bool result = IsFreshListConstructionExpressionCore(expression);
+        ShadowCompareExpressionFreshness("IsFreshListConstructionExpression", expression, result);
+        return result;
+    }
+
+    private static bool IsFreshListConstructionExpressionCore(Expr expression)
         => expression switch
         {
             Expr.ListLit => true,
-            Expr.Cons cons => IsFreshListConstructionExpression(cons.Tail),
+            Expr.Cons cons => IsFreshListConstructionExpressionCore(cons.Tail),
             _ => false,
         };
 

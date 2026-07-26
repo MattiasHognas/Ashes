@@ -81,6 +81,46 @@ public sealed partial class Lowering
         => TryDescribeConstructorExpression(expression, out constructor, out arguments, out resultType);
 
     /// <summary>
+    /// Perceus unification Phase 5 (PERCEUS_UNIFICATION.md §6, Phase 5): the escaping-result-boundary
+    /// counterpart of <see cref="IsFreshListConstructionExpression"/> for Lists, giving it the same
+    /// control-flow transparency <c>ProducesFreshRuntimeManageableAdt</c>/<c>ProducesFreshTuple</c> got
+    /// in Phase 4 — a list literal returned from a match/if arm (e.g.
+    /// <c>if empty then [] else x :: rest</c>) is now recognized as top-cell fresh at a function's
+    /// escaping result, not just when the whole body IS the construction directly.
+    ///
+    /// This deliberately does NOT touch <see cref="IsFreshListConstructionExpression"/>'s terminal
+    /// case set (still only <c>ListLit</c>, or a <c>Cons</c> chain bottoming out in one — never
+    /// <c>Var</c> or <c>Call</c>). That narrower set is exactly what makes a threaded/shared-tail list
+    /// (a bare accumulator var, a pattern-derived tail, a cons onto an existing list) NEVER classify as
+    /// fresh here: widening it to accept a call result (the way the arena/TCO-side
+    /// <see cref="IsFreshListRebuildExpr"/> deliberately does, for a different risk profile — CO-32's
+    /// whole-list-clone-cost question, not this RC-promotion question) would let a shared-tail list get
+    /// promoted to RC, silently aliasing the previous iteration's cells. Preserving the exact terminal
+    /// set across both engines is the tail-sharing safeguard for this phase: a list that is not
+    /// syntactically a fresh literal/cons-chain both here and at IsFreshListConstructionExpression's
+    /// direct-position call sites is always treated as shared/threaded (the existing, conservative
+    /// default), independent of which call site asks.
+    ///
+    /// This is an existence check (OR across terminal arms), the same as ProducesFreshTuple and NOT the
+    /// AND-style same-parent-type reconciliation ADTs need: unlike an ADT (whose sibling arms can
+    /// construct genuinely different constructors of the same declared type, which is exactly the
+    /// CO-38/PR #299 mixing hazard AnyArmConsistentlyFresh exists to police), every terminal here
+    /// produces the same single list "shape" — there is no sibling-constructor identity to group by, so
+    /// there is no coherent group key an AND-style reconciliation could even be keyed on. As with Phase
+    /// 4's tuple finding, the ambient <c>_runtimeRcListAllocationRequested</c> flag this predicate
+    /// ultimately feeds only gates literal Cons/ListLit allocations actually lowered while this specific
+    /// escaping body is lowered (never an existing binding's already-fixed representation), and every
+    /// element is independently re-verified by IsRuntimeManageableListElement/IsRuntimeManagedResultTemp
+    /// at its own cons-cell site — so there is no cross-arm mixing for an OR to protect against here.
+    /// </summary>
+    private bool ProducesFreshRuntimeManageableList(Expr body)
+    {
+        var terminals = new List<Expr>();
+        CollectFreshEscapeTerminals(body, terminals);
+        return terminals.Any(IsFreshListConstructionExpression);
+    }
+
+    /// <summary>
     /// Reconciles a set of terminal arms (collected by <see cref="CollectFreshEscapeTerminals"/>) against
     /// a per-arm freshness predicate and a per-arm grouping key, preserving the CO-38/PR #299 invariant:
     /// a candidate arm is only accepted as making the WHOLE escape fresh when every OTHER arm sharing its
