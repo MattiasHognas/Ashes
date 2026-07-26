@@ -5,10 +5,11 @@ closures & loop-carried/TCO values; async/task-frame values; capability/handler 
 values), synthesized here. Phase 0 (extending `FunctionOwnershipSummary` with expression-level
 freshness and closure-forwarding provenance, `#303`), Phase 1 (Strings/Bytes/BigInt
 builtin-freshness metadata, `#302`), Phase 2 (capability RC-eligibility gate narrowing, `#301`),
-Phase 3 (closure/function-result provenance unification + borrow-forwarding fix, `#308`), and
+Phase 3 (closure/function-result provenance unification + borrow-forwarding fix, `#308`),
 Phase 4 (ADTs and Tuples per-expression top-cell freshness, unifying `ProducesFreshRuntimeManageableAdt`/
-`IsFreshRuntimeManageableAdtExpression`/`IsFreshConstructorTree`/`ProducesFreshTuple`) have all
-landed on `main`. Phases 5-7 are not yet started.
+`IsFreshRuntimeManageableAdtExpression`/`IsFreshConstructorTree`/`ProducesFreshTuple`, `#309`), and
+Phase 5 (Lists per-expression top-cell freshness + a reused-cell reuse-token/RC bookkeeping fix) have
+all landed on `main`. Phases 6-7 are not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -32,6 +33,44 @@ lowered body, never a passthrough binding) — an AND-based reconciliation attem
 existence-check (OR) semantics. Whoever picks up Phase 5 (Lists) should not assume the ADT
 reconciliation pattern transfers to every category without re-deriving whether the same hazard
 actually applies.
+
+Phase 5 follow-up: the audit's characterization of Lists ("ambient flag + reactive backward scan")
+turned out to describe only part of the real pipeline once re-checked against the current code —
+`LowerRuntimeManagedListElement`/`LowerCons` already did Tuple-style forward, per-element AST
+classification before this phase started; the genuinely ambient/reactive pieces were narrower:
+`IsFreshListConstructionExpression` (no control-flow transparency) and `IsRuntimeManagedResultTemp`'s
+final "did this temp actually land RC" check (used symmetrically by both List's and Tuple's per-element
+predicates — Phase 4 did not eliminate it for Tuples either, so Phase 5 left it alone for Lists too,
+rather than making the two categories diverge for no proven benefit). Lists do NOT share the ADT
+AND-reconciliation hazard, for a stronger reason than Tuples' (which have "only one shape" but at
+least a constructible if-meaningless group key): a list has no sibling-constructor identity to group
+by AT ALL, so an AND-style reconciliation has no coherent key to key on — this was established
+analytically from the type's structure rather than by implementing and reverting an AND attempt (the
+one respect in which this phase's "test it, don't assume" discipline was a structural argument plus
+full regression-suite confirmation, not a literal implement/observe-breakage/revert cycle the way
+Phase 4's tuple finding was). The tail-sharing safeguard this phase needed and neither ADT nor Tuple
+did: `IsFreshListConstructionExpression`'s terminal set (`ListLit`, or a `Cons` chain bottoming out in
+one) was extended with control-flow transparency (via `CollectFreshEscapeTerminals`, as
+`ProducesFreshRuntimeManageableList`) but deliberately NOT widened to accept `Expr.Call`/`Expr.Var` —
+the arena/TCO side already has a laxer sibling (`IsFreshListRebuildExpr`) answering a different
+question (safe to whole-clone at a back-edge, CO-32's concern) and the two must not be merged; keeping
+the terminal sets disjoint is what makes a threaded/shared-tail list structurally unable to be
+RC-promoted by this engine, independent of which call site asks. Separately, reading `LowerConsCell`
+closely surfaced a real, pre-existing, latent bookkeeping bug (not introduced by this phase): a list
+cons cell satisfied by a reuse token is unconditionally an arena `AllocReusing` (`RuntimeManaged:
+false` always — there is no list-specific runtime-managed reuse cleanup), but the post-emission
+bookkeeping that marks a cell `_runtimeManagedResultTemps` keyed only off the `runtimeManaged` request
+flag and `_runtimeRcTcoListTailBinding`, independent of which branch actually emitted the cell — so a
+reuse-token hit could mark an arena-reused cell (no RC header) as runtime-managed anyway. Fixed by
+keying the bookkeeping directly off which branch ran; this IS this phase's reuse-token reconciliation
+for Lists (there is no separate RC-managed list reuse-token path to reconcile against — the RC reuse
+proof, `TryGetRuntimeManagedReuseScrutinee`, is gated to `TypeRef.TNamedType` and categorically
+excludes `TList` — so "reconciling the two proofs" resolved to "there is only one real proof for
+Lists, and its bookkeeping must not disagree with its own emission decision"). No `.ash`-level program
+was found that reaches the vulnerable state within this session's budget (it needs a reuse token and
+the narrow list-tail-extension binding to coincide), so the fix is verified by full-suite regression
+(zero behavior change across 1697 C#/52 LSP/541 e2e tests) and by inspection, not by a dedicated
+fails-without-the-fix repro — flagged honestly rather than claimed as fully pinned.
 
 ## 0. Objective (restated)
 
@@ -305,7 +344,7 @@ this phase does not touch that.
 `CapabilityGlobalCount > 0` with a genuinely dynamic-dispatch-scoped signal (distinguish
 static-`provide`-only programs, which need no exception at all, from programs with real `handle`
 sites). Concentrated in ~15 call sites all in three files; the fix is narrowing a predicate, not
-redesigning a mechanism. Do this before touching async narrowing (Phase 5) since the two gates are
+redesigning a mechanism. Do this before touching async narrowing (Phase 7) since the two gates are
 currently checked together at every site and separating them first makes each easier to reason about
 independently.
 
@@ -360,13 +399,51 @@ tuples. Full C# suite (1693/1693), LSP suite (52/52), e2e suite (539/0), and the
 suite (binary-trees N=21, fannkuch-redux N=11, n-body, spectral-norm, mandelbrot, fasta,
 reverse-complement, k-nucleotide, 1brc) all confirmed unchanged versus the Phase 3 baseline.
 
-**Phase 5 — Lists (Very large, highest risk of this group).** Replace the ambient
-`_runtimeRcListAllocationRequested` flag and the reactive `IsRuntimeManagedResultTemp` backward scan
-with the same forward-computed, per-expression ownership fact used for ADTs. Do this *after* Phase 4
-since list-of-ADT classification depends on ADT freshness being already unified. This phase also
-needs to reconcile the two independently-implemented reuse-token soundness proofs
-(`_linearReuseNames` arena path vs. `TryGetRuntimeManagedReuseScrutinee` RC path in
-`Lowering.Patterns.cs`) into one, since Lists is where that duplication is sharpest.
+**Phase 5 — Lists — landed.** Added `ProducesFreshRuntimeManageableList`
+(`Lowering.TopCellFreshness.cs`), the List sibling of Phase 4's `ProducesFreshRuntimeManageableAdt`/
+`ProducesFreshTuple`: it routes `IsFreshListConstructionExpression` through the shared
+`CollectFreshEscapeTerminals` walk so a fresh list literal returned from an if/match arm is now
+recognized as an escaping runtime-managed result — previously only the whole let/lambda body being
+the construction directly was recognized. Kept Tuple's existence-check (OR) semantics rather than
+ADTs' AND-based reconciliation: unlike an ADT, a list has no sibling-constructor identity for an
+AND-style reconciliation to even key on, so this is structurally not the same hazard, not merely an
+absence of an observed regression (see the status note above for the full reasoning, including why
+this phase's "test it, don't assume" evidence took a different form than Phase 4's implement/revert
+cycle). Deliberately did NOT widen `IsFreshListConstructionExpression`'s terminal set (`ListLit` /
+`Cons`-chain-to-`ListLit` only, never `Var`/`Call`) when adding the control-flow transparency — this
+is the tail-sharing safeguard: it keeps this RC-promotion question syntactically disjoint from the
+arena/TCO side's laxer `IsFreshListRebuildExpr` (which answers "safe to whole-clone at a back-edge,"
+a different question with a different risk profile), so a threaded/shared-tail list can never be
+RC-promoted by this engine regardless of which call site asks — pinned by two adversarial regression
+tests (a bare-Var-tail cons and a recursive-call-tail cons, both required to stay arena-managed).
+Reading `LowerConsCell` closely (rather than assuming the two reuse-token proofs applied symmetrically
+to Lists) found they don't: the RC-managed reuse proof (`TryGetRuntimeManagedReuseScrutinee`) is
+gated to `TypeRef.TNamedType` and categorically excludes `TList`, so a list cons cell is never
+satisfied through it — only ever through the arena `_linearReuseNames` path. That path's own
+bookkeeping had a latent, pre-existing bug: the post-emission `_runtimeManagedResultTemps` marking
+keyed off the `runtimeManaged` request flag alone, independent of whether the reuse-token branch
+(always an arena `AllocReusing`, `RuntimeManaged: false`, no RC header) or the fresh-`Alloc` branch
+(which honors `runtimeManaged`) actually ran — so a reuse-token hit could mark an arena-reused cell
+runtime-managed anyway, which would make a later `RcDup`/`RcDrop` read/write a bogus header at that
+address. Fixed by keying the bookkeeping directly off which branch emitted the cell; this is the
+phase's reuse-token reconciliation for Lists (there is no second proof to unify against once the
+`TypeRef.TNamedType` gate is understood — the fix makes the one real proof internally consistent
+instead). No `.ash`-level repro reaching the vulnerable state was found within this session's budget
+(needs a reuse token and the narrow list-tail-extension binding to coincide); the fix is verified by
+full-suite regression (zero behavior change) and by inspection, flagged as such rather than presented
+as fully pinned by a dedicated fails-without-the-fix test.
+
+Full C# suite (1697/1697, +4 new `OwnershipTests`), LSP suite (52/52), e2e suite (541/0, +2 new),
+and `dotnet format --verify-no-changes` all green, all unchanged versus the Phase 4 baseline except
+the new tests. Full `challenges/` suite re-run and compared byte-for-byte against a Phase-4-baseline
+binary: 1BRC (`m10000000.txt`, 10M rows: 6.97 GB / ~0.7 s; `m100000000.txt`, 100M rows: 9.05 GB /
+~1.4 s — both output byte-identical to baseline, no CO-32-shaped regression), fannkuch-redux N=11
+(27.44 GB, checksum `556355`, `Pfannkuchen(11) = 51` — matches the ~27.4 GB Phase 4 baseline, this
+phase does not move that number as expected since its residual leak driver is match-extraction
+provenance, not list-element classification), n-body (3,000,000 steps, `List(Body)` accumulator,
+CO-32's original test case), binary-trees N=21, spectral-norm, mandelbrot, fasta, pidigits,
+reverse-complement, and k-nucleotide — every one byte-identical output and unchanged time/RSS versus
+a baseline binary built from the pre-Phase-5 tree.
 
 **Phase 6 — TCO loop-carried values (Very large, depends on Phases 3-5).** Collapse the four
 independent classifiers (A/B/C/D, §1) into one per-parameter ownership decision; delete the
