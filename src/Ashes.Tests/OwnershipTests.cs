@@ -1,3 +1,4 @@
+using System.Reflection;
 using Ashes.Frontend;
 using Ashes.Semantics;
 using Shouldly;
@@ -1509,6 +1510,100 @@ public sealed class OwnershipTests
             .ToList();
 
         runtimeManagedFlags.Count.ShouldBe(1);
+    }
+
+    // --- Fresh-RC-producer whitelist: BuiltinRegistry-driven lookup replaces AST pattern matching ---
+
+    // The exact call-site shapes the pre-refactor `IsRuntimeRcStringProducer` / `IsRuntimeRcBytesProducer`
+    // / `IsRuntimeRcBigIntProducer` recognized via hardcoded qualified-name string comparisons, now
+    // declared as `BuiltinRegistry.BuiltinModuleMember.ProducesFreshRcResult` metadata instead. This is
+    // the regression guard for the refactor: every one of these must still be recognized by the
+    // BuiltinRegistry-driven predicates, and nothing outside this set (see
+    // `NonWhitelistedFreshRcProducerControls` below) must newly be recognized.
+    private static readonly (string Predicate, string Module, string Member, int Arity)[] FreshRcProducerWhitelist =
+    [
+        // String producers -- Ashes.Text.* value-rendering intrinsics, plus Ashes.Byte.subText (a
+        // decoding call that always copies into a fresh Str).
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "fromInt", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "toHex", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "fromFloat", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "formatFloat", 2),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "asciiUpper", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "asciiLower", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "fromBigInt", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Byte", "subText", 3),
+
+        // Bytes producers -- Ashes.Byte.* buffer-building intrinsics; deliberately never subView,
+        // which returns a borrowed view rather than a fresh owned buffer (see the negative control).
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "append", 2),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "appendByte", 2),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "fromList", 1),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "singleton", 1),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "empty", 1),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "u16Le", 1),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "u32Le", 1),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "u64Le", 1),
+
+        // BigInt producers -- Ashes.Number.BigInt.* construction/arithmetic (never a view: BigInt has
+        // no borrowed/sub-view representation, unlike Bytes).
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "fromInt", 1),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "add", 2),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "sub", 2),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "mul", 2),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "div", 2),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "mod", 2),
+    ];
+
+    // Calls with the same syntactic shape as a whitelist entry but naming a member outside it -- either
+    // a genuinely unrelated intrinsic, or (the subView rows) the borrowed-view sibling of a whitelisted
+    // buffer-building call, which must stay excluded because it is not a fresh owned allocation.
+    private static readonly (string Predicate, string Module, string Member, int Arity)[] NonWhitelistedFreshRcProducerControls =
+    [
+        ("IsRuntimeRcStringProducer", "Ashes.Text", "parseInt", 1),
+        ("IsRuntimeRcStringProducer", "Ashes.Byte", "subView", 3),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "get", 2),
+        ("IsRuntimeRcBytesProducer", "Ashes.Byte", "subView", 3),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "compare", 2),
+        ("IsRuntimeRcBigIntProducer", "Ashes.Number.BigInt", "toInt", 1),
+    ];
+
+    [Test]
+    public void Every_whitelisted_intrinsic_is_recognized_via_the_builtin_registry_driven_path()
+    {
+        foreach (var (predicate, module, member, arity) in FreshRcProducerWhitelist)
+        {
+            InvokeProducerPredicate(predicate, BuildQualifiedCall(module, member, arity))
+                .ShouldBeTrue($"{predicate} should recognize {module}.{member} (arity {arity}) via BuiltinRegistry metadata.");
+        }
+    }
+
+    [Test]
+    public void Non_whitelisted_intrinsics_and_the_borrowed_bytes_view_are_never_recognized()
+    {
+        foreach (var (predicate, module, member, arity) in NonWhitelistedFreshRcProducerControls)
+        {
+            InvokeProducerPredicate(predicate, BuildQualifiedCall(module, member, arity))
+                .ShouldBeFalse($"{predicate} must not recognize {module}.{member} (arity {arity}) -- outside the pre-refactor whitelist.");
+        }
+    }
+
+    private static Expr BuildQualifiedCall(string module, string member, int arity)
+    {
+        Expr call = new Expr.QualifiedVar(module, member);
+        for (int i = 0; i < arity; i++)
+        {
+            call = new Expr.Call(call, new Expr.IntLit(0));
+        }
+
+        return call;
+    }
+
+    private static bool InvokeProducerPredicate(string predicateName, Expr expression)
+    {
+        var lowering = new Lowering(new Diagnostics());
+        MethodInfo method = typeof(Lowering).GetMethod(predicateName, BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Method '{predicateName}' not found via reflection.");
+        return (bool)method.Invoke(lowering, [expression])!;
     }
 
     // --- Helpers ---

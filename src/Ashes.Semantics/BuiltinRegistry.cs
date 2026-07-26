@@ -283,16 +283,43 @@ public static class BuiltinRegistry
         ProcessKill
     }
 
+    /// <summary>
+    /// Classifies which runtime-RC-managed value type a builtin's result is guaranteed to be a
+    /// fresh, uniquely owned allocation of — as opposed to e.g. an aliased/borrowed view over
+    /// existing storage. Ownership lowering (<c>Lowering.cs</c>) consults this to decide whether a
+    /// call expression is eligible for RC treatment, keyed by builtin identity instead of
+    /// pattern-matching the call site's qualified name. <c>None</c> means the member is not a
+    /// producer this phase considers (most builtins); it is not a statement that the member's
+    /// result is unowned in general, only that it is outside the whitelist this field encodes.
+    /// </summary>
+    public enum FreshRcResultKind
+    {
+        /// <summary>Not a fresh-RC-result producer tracked here.</summary>
+        None,
+        /// <summary>Produces a fresh, uniquely owned <c>Str</c>.</summary>
+        String,
+        /// <summary>Produces a fresh, uniquely owned <c>Bytes</c> buffer — never a borrowed view.</summary>
+        Bytes,
+        /// <summary>Produces a fresh, uniquely owned <c>BigInt</c>.</summary>
+        BigInt
+    }
+
     /// <summary>A single intrinsic member exported by a built-in module.</summary>
     /// <param name="Name">The member's unqualified name as written in source (e.g. <c>print</c>).</param>
     /// <param name="Kind">Which compiler intrinsic this member lowers to.</param>
     /// <param name="IsCallable">True when the member is a function invoked with arguments; false for a value member such as <c>args</c>.</param>
     /// <param name="Arity">Number of arguments the intrinsic expects when callable.</param>
+    /// <param name="ProducesFreshRcResult">
+    /// When not <see cref="FreshRcResultKind.None"/>, a fully applied call to this member always
+    /// yields a fresh, uniquely owned value of the named kind, making it eligible for runtime RC
+    /// treatment at its use site.
+    /// </param>
     public sealed record BuiltinModuleMember(
         string Name,
         BuiltinValueKind Kind,
         bool IsCallable,
-        int Arity);
+        int Arity,
+        FreshRcResultKind ProducesFreshRcResult = FreshRcResultKind.None);
 
     /// <summary>
     /// A built-in module: either a pure intrinsic module whose members are compiler primitives, or a
@@ -459,28 +486,28 @@ public static class BuiltinRegistry
                     ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
                     ["parseInt"] = new("parseInt", BuiltinValueKind.TextParseInt, IsCallable: true, Arity: 1),
                     ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
-                    ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1),
-                    ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1),
-                    ["formatFloat"] = new("formatFloat", BuiltinValueKind.TextFormatFloat, IsCallable: true, Arity: 2),
-                    ["fromBigInt"] = new("fromBigInt", BuiltinValueKind.BigIntToString, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
+                    ["fromFloat"] = new("fromFloat", BuiltinValueKind.TextFromFloat, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
+                    ["formatFloat"] = new("formatFloat", BuiltinValueKind.TextFormatFloat, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.String),
+                    ["fromBigInt"] = new("fromBigInt", BuiltinValueKind.BigIntToString, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["parseBigInt"] = new("parseBigInt", BuiltinValueKind.BigIntFromString, IsCallable: true, Arity: 1),
-                    ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1),
+                    ["toHex"] = new("toHex", BuiltinValueKind.TextToHex, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1),
-                    ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1),
-                    ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1)
+                    ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
+                    ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String)
                 }),
             ["Ashes.Number.BigInt"] = new(
                 "Ashes.Number.BigInt",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["fromInt"] = new("fromInt", BuiltinValueKind.BigIntFromInt, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.BigIntFromInt, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.BigInt),
                     ["toInt"] = new("toInt", BuiltinValueKind.BigIntToInt, IsCallable: true, Arity: 1),
-                    ["add"] = new("add", BuiltinValueKind.BigIntAdd, IsCallable: true, Arity: 2),
-                    ["sub"] = new("sub", BuiltinValueKind.BigIntSub, IsCallable: true, Arity: 2),
-                    ["mul"] = new("mul", BuiltinValueKind.BigIntMul, IsCallable: true, Arity: 2),
-                    ["div"] = new("div", BuiltinValueKind.BigIntDiv, IsCallable: true, Arity: 2),
-                    ["mod"] = new("mod", BuiltinValueKind.BigIntMod, IsCallable: true, Arity: 2),
+                    ["add"] = new("add", BuiltinValueKind.BigIntAdd, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.BigInt),
+                    ["sub"] = new("sub", BuiltinValueKind.BigIntSub, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.BigInt),
+                    ["mul"] = new("mul", BuiltinValueKind.BigIntMul, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.BigInt),
+                    ["div"] = new("div", BuiltinValueKind.BigIntDiv, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.BigInt),
+                    ["mod"] = new("mod", BuiltinValueKind.BigIntMod, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.BigInt),
                     ["compare"] = new("compare", BuiltinValueKind.BigIntCompare, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Byte"] = new(
@@ -488,23 +515,26 @@ public static class BuiltinRegistry
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["empty"] = new("empty", BuiltinValueKind.BytesEmpty, IsCallable: true, Arity: 1),
-                    ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1),
+                    ["empty"] = new("empty", BuiltinValueKind.BytesEmpty, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
                     ["length"] = new("length", BuiltinValueKind.BytesLength, IsCallable: true, Arity: 1),
                     ["get"] = new("get", BuiltinValueKind.BytesGet, IsCallable: true, Arity: 2),
                     ["indexOf"] = new("indexOf", BuiltinValueKind.BytesIndexOf, IsCallable: true, Arity: 3),
                     ["compare"] = new("compare", BuiltinValueKind.BytesCompare, IsCallable: true, Arity: 2),
                     ["scanHash"] = new("scanHash", BuiltinValueKind.BytesScanHash, IsCallable: true, Arity: 3),
-                    ["subText"] = new("subText", BuiltinValueKind.BytesSubText, IsCallable: true, Arity: 3),
+                    ["subText"] = new("subText", BuiltinValueKind.BytesSubText, IsCallable: true, Arity: 3, ProducesFreshRcResult: FreshRcResultKind.String),
+                    // subView returns a borrowed, non-copying view into existing storage (never a
+                    // fresh owned buffer) — deliberately excluded from ProducesFreshRcResult; see
+                    // LowerBytesSubView / IrInst.BytesSubView.
                     ["subView"] = new("subView", BuiltinValueKind.BytesSubView, IsCallable: true, Arity: 3),
-                    ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2),
-                    ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2),
-                    ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1),
+                    ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
                     ["fromText"] = new("fromText", BuiltinValueKind.BytesFromText, IsCallable: true, Arity: 1),
                     ["hash"] = new("hash", BuiltinValueKind.BytesHash, IsCallable: true, Arity: 1),
-                    ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1),
-                    ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1),
-                    ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1),
+                    ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
                     ["getU16Le"] = new("getU16Le", BuiltinValueKind.BytesGetU16Le, IsCallable: true, Arity: 2),
                     ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
                     ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)

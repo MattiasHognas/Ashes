@@ -3877,83 +3877,71 @@ public sealed partial class Lowering
         return FreeVars(lambda.Body, bound).Contains(bindingName);
     }
 
-    private bool IsRuntimeRcStringProducer(Expr expression)
+    /// <summary>
+    /// Peels a fully applied qualified call — <c>Module.name(a)(b)...</c>, parsed as left-nested
+    /// <see cref="Expr.Call"/> around a <see cref="Expr.QualifiedVar"/> callee — down to that callee
+    /// and the number of arguments applied. Returns false when <paramref name="expression"/> is not
+    /// shaped as a direct qualified call (e.g. the callee is a variable holding a partially applied
+    /// function), matching how the pre-refactor whitelist predicates only recognized syntactically
+    /// direct calls to a builtin.
+    /// </summary>
+    private static bool TryExtractFullyAppliedQualifiedCall(
+        Expr expression,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Expr.QualifiedVar? qualified,
+        out int argumentCount)
     {
-        if (expression is Expr.Add)
+        argumentCount = 0;
+        Expr current = expression;
+        while (current is Expr.Call call)
         {
+            argumentCount++;
+            current = call.Func;
+        }
+
+        if (current is Expr.QualifiedVar qualifiedVar)
+        {
+            qualified = qualifiedVar;
             return true;
         }
 
-        if (expression is Expr.Call(Expr.QualifiedVar textProducer, _)
-            && string.Equals(ResolveModuleAlias(textProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && (string.Equals(textProducer.Name, "fromInt", StringComparison.Ordinal)
-                || string.Equals(textProducer.Name, "toHex", StringComparison.Ordinal)))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar floatProducer, _)
-            && string.Equals(ResolveModuleAlias(floatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(floatProducer.Name, "fromFloat", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(
-                Expr.Call(Expr.QualifiedVar formatProducer, _),
-                _)
-            && string.Equals(ResolveModuleAlias(formatProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(formatProducer.Name, "formatFloat", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar caseProducer, _)
-            && string.Equals(ResolveModuleAlias(caseProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && (string.Equals(caseProducer.Name, "asciiUpper", StringComparison.Ordinal)
-                || string.Equals(caseProducer.Name, "asciiLower", StringComparison.Ordinal)))
-        {
-            return true;
-        }
-
-        if (expression is Expr.Call(Expr.QualifiedVar bigIntProducer, _)
-            && string.Equals(ResolveModuleAlias(bigIntProducer.Module), "Ashes.Text", StringComparison.Ordinal)
-            && string.Equals(bigIntProducer.Name, "fromBigInt", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return expression is Expr.Call(
-                Expr.Call(
-                    Expr.Call(Expr.QualifiedVar qualified, _),
-                    _),
-                _)
-            && string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal)
-            && string.Equals(qualified.Name, "subText", StringComparison.Ordinal);
+        qualified = null;
+        return false;
     }
 
-    private bool IsRuntimeRcBytesProducer(Expr expression)
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a fully applied call to a builtin declared (in
+    /// <see cref="BuiltinRegistry"/>) to always produce a fresh, uniquely owned value of
+    /// <paramref name="expectedKind"/> — the single lookup <see cref="IsRuntimeRcStringProducer"/>,
+    /// <see cref="IsRuntimeRcBytesProducer"/>, and <see cref="IsRuntimeRcBigIntProducer"/> each
+    /// specialize to their own result kind, replacing what used to be independent AST pattern
+    /// matches over the call site's qualified name.
+    /// </summary>
+    private bool IsRuntimeRcFreshBuiltinProducer(Expr expression, BuiltinRegistry.FreshRcResultKind expectedKind)
     {
-        Expr.QualifiedVar? qualified = expression switch
-        {
-            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
-            Expr.Call(Expr.QualifiedVar unary, _) => unary,
-            _ => null,
-        };
-        if (qualified is null
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
+        if (!TryExtractFullyAppliedQualifiedCall(expression, out Expr.QualifiedVar? qualified, out int argumentCount))
         {
             return false;
         }
 
-        return string.Equals(qualified.Name, "append", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "appendByte", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+        string moduleName = ResolveModuleAlias(qualified.Module);
+        if (!BuiltinRegistry.TryGetModule(moduleName, out BuiltinRegistry.BuiltinModule module)
+            || !module.Members.TryGetValue(qualified.Name, out var member))
+        {
+            return false;
+        }
+
+        return member.Arity == argumentCount && member.ProducesFreshRcResult == expectedKind;
+    }
+
+    private bool IsRuntimeRcStringProducer(Expr expression)
+    {
+        return expression is Expr.Add
+            || IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.String);
+    }
+
+    private bool IsRuntimeRcBytesProducer(Expr expression)
+    {
+        return IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.Bytes);
     }
 
     private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
@@ -4017,24 +4005,7 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcBigIntProducer(Expr expression)
     {
-        Expr.QualifiedVar? qualified = expression switch
-        {
-            Expr.Call(Expr.Call(Expr.QualifiedVar binary, _), _) => binary,
-            Expr.Call(Expr.QualifiedVar unary, _) => unary,
-            _ => null,
-        };
-        if (qualified is null
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Number.BigInt", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return string.Equals(qualified.Name, "fromInt", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "add", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "sub", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "mul", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "div", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "mod", StringComparison.Ordinal);
+        return IsRuntimeRcFreshBuiltinProducer(expression, BuiltinRegistry.FreshRcResultKind.BigInt);
     }
 
     private bool IsImmediateRuntimeBigIntUse(Expr body, string bindingName)
