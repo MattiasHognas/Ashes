@@ -2,11 +2,20 @@
 
 Status: implementation in progress. Produced from four parallel code audits (core data types;
 closures & loop-carried/TCO values; async/task-frame values; capability/handler & request-local
-values), synthesized here. Phase 1 (Strings/Bytes/BigInt builtin-freshness metadata, `#302`) and
-Phase 2 (capability RC-eligibility gate narrowing, `#301`) have landed on `main`. Phase 0 (extending
-`FunctionOwnershipSummary` with expression-level freshness and closure-forwarding provenance,
-shadow-compared against the existing classifiers with zero behavior change) is in progress. Phases
-3-7 are not yet started.
+values), synthesized here. Phase 0 (extending `FunctionOwnershipSummary` with expression-level
+freshness and closure-forwarding provenance, `#303`), Phase 1 (Strings/Bytes/BigInt
+builtin-freshness metadata, `#302`), and Phase 2 (capability RC-eligibility gate narrowing, `#301`)
+have all landed on `main`. Phases 3-7 are not yet started.
+
+Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
+`challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
+teaching `FunctionResultProvenance` to consult Phase 1's `BuiltinRegistry.ProducesFreshRcResult`
+metadata so a function forwarding to a builtin string/bytes/bigint producer is also recognized as
+RC-eligible (currently under-recognized — a real, understood, not-yet-closed gap, not a defect); and
+documenting, for whoever picks up Phase 4, that `ExpressionFreshness`'s "no aliasing anywhere in the
+value" is a different property than the old ADT classifiers' "this specific cell was freshly
+allocated" (e.g. `Full(x)` is old-fresh/new-not-fresh) — Phase 4 will likely need a second, narrower
+"top-cell fresh" notion alongside this one, not a replacement of it.
 
 ## 0. Objective (restated)
 
