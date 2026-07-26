@@ -292,6 +292,55 @@ still an unresolved type variable at the reuse decision. Recovers `challenges/fa
 N=3, segfaulted at N≥4 at every optimization level). Regression:
 `EndToEndNativeBackendTests.Tco_positional_product_with_list_child_survives_back_edge_reset`.
 
+**Self-recursive ADT mixed arena/RC representation (CO-38).** A later full-suite challenge rerun
+(long after the phases above shipped and every exit gate was green) found `binary-trees` regressed
+from 192 MB to 7.3 GB peak RSS at N=21 and `fannkuch-redux` from 0.2 MB to 47 GB at N=11 — both
+previously-clean benchmarks, on a build with 0/0 failing tests. Root cause (binary-trees):
+`ProducesFreshRuntimeManageableAdt` (used by `LowerEscapingResult` to decide whether a function's
+returned ADT should be promoted from the arena to an RC cell so it survives the callee's own arena
+reset) recurses through a function body's `if`/`match` arms and treats the whole expression as
+"escaping-fresh" if **any** arm independently satisfies `IsFreshRuntimeManageableAdtExpression` —
+sound for a tail-recursive funnel (an arm that fails the check but is itself a self-call eventually
+reaches the same fresh arm), but unsound for a genuinely branching self-recursive ADT: `binary-trees`'
+`make depth = if depth == 0 then Leaf else Node(make(depth - 1))(make(depth - 1))` has a trivially
+"fresh" nullary base case (`Leaf`, no fields to check) on one arm and a recursive case whose fields
+are ordinary calls — not nested constructor literals — on the other, so `Node` independently fails
+freshness. The OR let `Leaf`'s triviality alone flag the function, promoting every `Leaf` cell to RC
+while every `Node` cell stayed arena. An arena cell's drop is a no-op (arena reclamation is scope-exit
+watermark reset, not per-cell), so it never walks into RC-managed children — every `Leaf` reachable
+through a tree discarded by the arena reset leaked its RC cell forever (`check(make(depth))` in a
+loop leaks `2^depth` RC cells per iteration). Fix: `ProducesFreshRuntimeManageableAdt` now collects
+every terminal arm reachable through the same `if`/`match`/`let` traversal and, for each candidate
+"fresh" arm, requires that no *other* arm constructing the **same parent type** fails freshness
+independently (a funneling self-call arm, which builds nothing, never conflicts) — so `Leaf` and
+`Node` are now uniformly arena-managed, both reclaimed by the ordinary watermark reset. Verified via
+a minimal repro (`let t = make(14) in loop(...)`, an otherwise-unused binding inside a TCO loop) that
+went from 57 GB to 512 KB at 200,000 iterations, and the full benchmark: `binary-trees` N=21 back to
+1.51 s / 196 MB (matching the 1.41 s / 192 MB pre-migration control). Regression:
+`OwnershipTests.Self_recursive_adt_nullary_and_recursive_arms_share_runtime_managed_flag` (asserts
+every `AllocAdt` for a shared self-recursive type carries the same `RuntimeManaged` flag) and
+`tests/ownership_self_recursive_adt_build_discard.ash`.
+
+`fannkuch-redux`'s regression is **confirmed unrelated** — the CO-38 fix leaves its numbers
+byte-for-byte unchanged (still 44.3 s / 47 GB at N=11) — and remains **unresolved**. Its `loop`
+(threading a `State(List(Int), List(Int))` accumulator through `nextPerm`) leaks RC-managed `List`
+cons cells built by the TCO-loop escaping-result normalization (`CopyOutList` /
+`IrInst.CopyOutPurpose.RcNormalization`), not through the CO-38 mechanism (`State` has one
+constructor, no nullary/recursive split). Direct investigation (refcount reads and a hardware
+watchpoint on the runtime's per-size free-list bin, `LlvmCodegenMemory.cs`'s
+`EmitAcquireRuntimeRcBlock`/`EmitRuntimeRcFreeListBinSlot`/`EmitRuntimeRcDrop`) confirmed: every list
+cell's refcount is 1 at drop time (the "unique, walk and free children" branch is taken, not the
+"shared" branch); the freed cells are genuinely pushed onto the free-list's size-32 bin (the push is
+visible live via the watchpoint); the SAME free-list mechanism demonstrably recycles a size-40 block
+(the `State` ADT shell itself pointer-pongs between exactly two addresses across iterations) in the
+very same program — yet the size-32 bin is read as empty by the next same-size allocation every
+single time, so list cells accumulate at fresh, ever-increasing addresses instead of being reused,
+an unbounded per-iteration leak. The asymmetry between the two block sizes in the same free-list
+table, from the same running program, was not resolved to an exact defective line within a
+responsible investigation budget — this is exactly the class of change the reuse/lifetime code
+warrants stopping and reporting rather than guessing on (see Roadmap → Deferred). Left as an open
+item; see `challenges/README.md`'s fannkuch-redux row.
+
 The paper comparison found no unresolved blocker inside the declared Ashes
 memory model. The scope is intentionally hybrid:
 
@@ -332,12 +381,15 @@ were eliminated (flat 32-active timeline, parallel merge, sub-second tails), and
 reduction was investigated and falsified (CO-27 — the fold is bound by the per-row dependent-load
 chain's latency, not by footprint).
 
-**No active roadmap items remain** — every task with a demonstrated payoff has shipped (the
-in-place-reuse cluster CO-15/16/22, the 1BRC scheduling arc CO-24/25/26/27, the debug tooling
-CO-20/21, and the parallel-chunking ergonomics CO-18). The two items below are **deferred**: each
-is a genuine capability gap, but neither has a workload that exercises it and both sit on the
-highest-risk code in the compiler (the reuse / lifetime analyses, where the CO-8/CO-9
-use-after-frees lived). Implement either one only when a concrete program demands it — that program
+**No active feature/perf roadmap items remain** — every task with a demonstrated payoff has shipped
+(the in-place-reuse cluster CO-15/16/22, the 1BRC scheduling arc CO-24/25/26/27, the debug tooling
+CO-20/21, and the parallel-chunking ergonomics CO-18). One item below is different in kind: the
+`fannkuch-redux` RC free-list row (CO-38's still-open half) is a live **unbounded-memory-leak
+regression**, not a capability gap — see it and CO-38 in Completed Work before touching the shared
+RC allocator. The remaining items below are **deferred** capability gaps: none has a workload that
+exercises it and all sit on the highest-risk code in the compiler (the reuse / lifetime analyses,
+where the CO-8/CO-9 use-after-frees lived). Implement any of them only when a concrete program demands
+it — that program
 then serves as the required UAF/allocation regression test. They are kept here (not deleted) so the
 design analysis is not lost.
 
@@ -351,3 +403,4 @@ design analysis is not lost.
 | **CO-19** *(deferred)* | **Multi-parameter inner `go` in the reuse specialization** | **Deferred — the motivation is obsolete and the performance premise was falsified.** The wide-trie endpoint that drove this shipped WITHOUT it (`Ashes.HashTrie` node-carried shifts keep the rebuild worker `go` single-parameter), and CO-27 then showed the ~11.9 s 1BRC wall is contention-bound (per-row dependent-load latency), not structure-bound — so the "beats AVL ≥2×, 1e9 < 10 s" endpoint below is moot regardless of `go`'s arity. Nothing shipped needs it: every multi-parameter inner `go` in the stdlib/challenges is a *reader* (`foldLeft`'s `go acc t`) or a *driver* (`fromList`'s `go entries map`, whose reuse fires at the inner `set` call) — the only *rebuild* workers (Map.set, HashTrie) are single-parameter. The genuine remaining gap — a fold whose rebuild worker threads extra per-recursion state alongside the accumulator (`go extra… acc`) can't be reuse-specialized and would leak — has no known workload; most such state is better expressed node-carried, captured as an outer loop-invariant param, or recomputed. Revisit only when a real multi-param-rebuild fold shows up and leaks (that program is then the UAF regression test). *Original analysis:* | Profiling after the 24.7 s arc shows the remaining per-row cost is dominated by the AVL descent's ~17 *dependent cache misses*: 41k nodes × 48 B + the key blob ≈ 3 MB per worker map, and 32 workers × 3 MB ≈ 96 MB — far beyond the LLC, so most node hops are DRAM round-trips (parallel per-row CPU 0.70 µs vs 0.39 µs sequential). The structural fix is a **16-ary hash trie** (depth ~4 at 41k keys — 4–5 dependent misses instead of 17, an estimated 2–3× per-row win, taking 1e9 rows from ~25 s to single digits). **Blocker:** a trie descent must thread the shifted/remaining hash alongside the tree, i.e. an inner `let recursive go shifted map = …`, but `TryGetNestedRecReturn` only accepts a **single-parameter** `go` (`recValue.Body is not Expr.Lambda`), so such a fold can never be reuse-specialized and leaks. **Approach:** generalize the nested-recursive-return detection and `GetOrCreateReuseSpecialization` to accept `go extra… acc` with the accumulator as the LAST parameter — the linearity/`IsFullyReusing`/reset-safety analyses stay keyed to that last parameter; the TCO machinery already handles multi-param loops (see CO-9's parameter-order fix). Then either add an `Ashes.HashTrie` stdlib module (16-way `Node16` + at-leaf `Bytes.compare` collision handling, end-sorted output via `toList` + a sort) or prove the shape in `challenges/` first. **Code:** `Lowering.cs` — `TryGetNestedRecReturn`, `GetOrCreateReuseSpecialization`, `CollectSpecializableCallArgs`, `LowerReuseSpecializedCall`. **Endpoint:** a hash-trie 1BRC fold is constant-memory per worker and beats the AVL ≥2× per row; 1e9 rows < 10 s on the 32-thread reference box. **Risk: HIGH** — the reuse analysis is the most UAF-prone code (CO-8/CO-9); needs growing-key UAF stress tests at every step. |
 | **List-of-small-`Str` representation constant** *(deferred)* | **Shrink the ~96 B/element cost of a list of single-character strings** | Surfaced by the challenge sweep (reverse-complement). Growing accumulators already scale linearly in time and memory (CO-34/CO-35/CO-36); this is the remaining *constant*: a list of single-character `Str` values costs about 96 bytes per element — each element is a separate length-prefixed heap string plus a cons cell — producing about 1 GB peak resident set for a 10 MB input. Reducing it needs **in-place cons-cell reuse**, an ownership/linearity feature rather than a point fix (same machinery as the affine string growth, CO-36). It also gates the standard 25M-base reverse-complement workload, which extrapolates to ~24 GB. **Risk: MEDIUM** — the reuse/uniqueness analysis, but a narrower case than the general escape analysis. |
 | **Line-oriented output buffering** *(deferred)* | **Confirm, and if needed buffer, `Ashes.IO.write`** | It is not yet confirmed whether `Ashes.IO.write` buffers output or issues one `write` syscall per call. Fasta and reverse-complement emit one write per 60-character line — over two million syscalls at benchmark scale. If the path is unbuffered, the throughput cost should be measured and, if material, addressed with a line/block buffer (flushed on close and on explicit flush). **Risk: LOW** — an isolated IO-path change with a clear before/after benchmark; the only subtlety is preserving flush ordering with process exit and interleaved stderr. |
+| **`fannkuch-redux` RC free-list size-32 bin never reused** *(deferred, open bug — not a capability gap)* | **Find why RC-managed `List` cons cells pushed onto the runtime free-list are never popped back out** | Unlike every other row in this table, this is a **regression with an unbounded per-iteration memory leak**, not a performance/capability gap — see CO-38 in Completed Work for the full investigation. `fannkuch-redux`'s `loop`/`nextPerm` (a `State(List(Int), List(Int))` TCO accumulator normalized to RC at the loop's escaping-result boundary) leaks ~47 GB at the standard N=11 workload (was 0.2 MB). Confirmed facts: every leaked list cell's refcount is 1 at drop time (the recursive "walk and free children" branch fires, not "shared"); the freed cells are genuinely pushed onto the free-list's size-32 bin (`LlvmCodegenMemory.cs`'s `EmitRuntimeRcDrop` → `EmitRuntimeRcFreeListBinSlot`, verified live via a hardware watchpoint on the bin's table slot); the SAME free-list mechanism demonstrably recycles a size-40 block (the `State` ADT shell pointer-pongs between exactly two addresses across iterations) in the very same program — yet the size-32 bin reads empty at the next same-size allocation (`EmitAcquireRuntimeRcBlock`'s `candidateIsNull` check), every single iteration, so cells accumulate at ever-increasing fresh addresses. The asymmetry is specific to the size-32 (2-word list cons cell) block class interacting with this exact "TCO-loop escaping-result normalization then old-accumulator drop" pattern — a bare `List(Int)` TCO accumulator (no ADT wrapper) does NOT leak, and the CO-38 fix (a Lowering-level classification bug, unrelated) does not change this at all. **Approach:** instrument `EmitAcquireRuntimeRcBlock`/`EmitRuntimeRcFreeListBinSlot` directly (a counted diff of push vs. pop events per size class, or an LLVM IR diff between the size-32 and size-40 call sites) to find why one recycles and the other does not, before touching the shared free-list allocator that every RC-managed String/Bytes/BigInt/tuple/closure/ADT/list allocation depends on. **Risk: HIGH** — this is the same shared runtime allocator every RC-managed heap value goes through; a wrong fix risks a silent correctness regression (double-free or premature reuse) across all of them, not just lists. |

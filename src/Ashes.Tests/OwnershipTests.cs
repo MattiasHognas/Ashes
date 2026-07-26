@@ -1440,6 +1440,77 @@ public sealed class OwnershipTests
         drop.TypeName.ShouldBe("Function");
     }
 
+    // --- Self-recursive ADT: uniform arena-vs-RC representation across sibling constructors ---
+
+    // Regression for the binary-trees RC Perceus migration leak (CO-38): a self-recursive ADT's
+    // base-case arm (a bare nullary constructor like `Leaf`) must not be promoted to an RC cell while
+    // a sibling arm (`Node`, built from recursive calls rather than nested constructor literals) stays
+    // arena-managed. A mixed representation lets an arena-managed parent's no-op drop skip over its
+    // RC-managed children forever. ProducesFreshRuntimeManageableAdt must require every sibling arm
+    // that also constructs the same type to be independently fresh before treating any one arm as
+    // escaping-fresh.
+    [Test]
+    public void Self_recursive_adt_nullary_and_recursive_arms_share_runtime_managed_flag()
+    {
+        var ir = LowerProgram(
+            """
+            type Tree =
+                | Leaf
+                | Node(Tree, Tree)
+
+            let recursive make depth =
+                if depth == 0
+                then Leaf
+                else Node(make(depth - 1))(make(depth - 1))
+
+            make(3)
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1,
+            "Leaf (nullary) and Node (recursive) must share one representation -- a mix leaks the " +
+            "RC-managed constructor's cells forever once the arena-managed sibling's no-op drop " +
+            "discards the parent without ever walking into it.");
+    }
+
+    [Test]
+    public void Self_recursive_adt_sibling_arm_with_fresh_recursive_children_still_escapes()
+    {
+        // A recursive arm built from LITERAL nested constructor applications (not function calls) is
+        // genuinely a fresh constructor tree, so both arms may still be promoted together -- this must
+        // remain true after the consistency fix (it is not a regression target, just a control).
+        var ir = LowerProgram(
+            """
+            type Tree =
+                | Leaf
+                | Node(Tree, Tree)
+
+            let build depth =
+                if depth == 0
+                then Leaf
+                else Node(Leaf)(Leaf)
+
+            build(1)
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1);
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
