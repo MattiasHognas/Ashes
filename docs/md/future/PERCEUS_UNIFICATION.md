@@ -293,13 +293,38 @@ redesigning a mechanism. Do this before touching async narrowing (Phase 5) since
 currently checked together at every site and separating them first makes each easier to reason about
 independently.
 
-**Phase 3 — Closure result/argument provenance unification (Medium complexity, directly fixes a live
-bug).** Fold `_functionReturnedClosureLabels`/`_runtimeManagedFunctionResultLabels`/
-`_knownFunctionLabelsBySlot` into the extended summary (§5 item 3). This is the exact mechanism this
-session's own investigation traced the fannkuch-redux regression's dominant remaining leak to
-(closure/function-result provenance not tracked through a curried/forwarding call chain) — landing
-this phase should be verified against that specific benchmark as a concrete regression/fix pair, in
-addition to the standard full-suite gate.
+**Phase 3 — Closure result/argument provenance unification (Medium complexity) — landed.** Fold
+`_functionReturnedClosureLabels`/`_runtimeManagedFunctionResultLabels`/`_knownFunctionLabelsBySlot`
+into the extended summary (§5 item 3). **This phase bundles two mechanistically distinct fixes —
+keep them distinguished, both here and in any future retelling:**
+
+1. The `FunctionResultProvenance`/closure-forwarding mechanism itself (the phase's originally-scoped
+   work). Measured effect on fannkuch-redux N=11 in isolation: small, ~45 GB → ~44 GB (~2%).
+   `FunctionResultProvenance`'s "forwards to another function" classification answers "does the
+   *whole result* forward," not "is *this constructor argument* fresh when it comes from calling
+   another user function" — the latter is a genuinely different, inter-procedural question
+   (`IsFreshConstructionArgument`'s domain) needing each callee's own provenance resolved recursively
+   through a call cycle (`rotateFirst`/`setAt`/`insertAt`/`nextPerm` all call each other in the
+   fannkuch accumulator chain) — real, separate work, adjacent to Phase 6/`GetAdtField` territory,
+   correctly declined rather than chased under this phase's scope.
+2. A second, narrower fix folded into the same phase: broadening `LowerVar`'s `Borrow`-path
+   condition (registering a borrowed alias as "already RC-safe" under the same general condition
+   already used for the pre-borrow temp, instead of only the narrow TCO-alias case) — a different
+   code path than `FunctionResultProvenance` entirely. **This fix alone reproduces the full
+   47 GB → 27.4 GB fannkuch-redux improvement**, verified twice for reproducibility, output unchanged
+   (checksum `556355`, `Pfannkuchen(11) = 51`), and confirmed via manual revert-and-rebuild that a
+   regression test genuinely depends on it.
+
+fannkuch-redux N=11 after Phase 3: **~27.4 GB**, down from the ~47 GB regression baseline — a real,
+substantial, verified improvement, but **not the whole story**: 27.4 GB is still far above the
+pre-regression historical baseline (~3.8 MB). **fannkuch-redux's remaining dominant leak driver is
+confirmed to be a separate, third gap**: `GetAdtField`/match-extracted-field provenance in
+`Lowering.Patterns.cs` (a `match st with | S(perm, count) -> ...`-shaped extraction question, not a
+closure-forwarding question) — this remains unfixed and is not part of Phase 3, 4, or 5 as currently
+scoped; whoever tackles it next should treat it as its own investigation, likely adjacent to Phase 6,
+and should start from Phase 3's own `ASHES_EXPLAIN_OWNERSHIP=all` trace of
+`nextPerm`/`rotateFirst`/`setAt`/`insertAt`/`loop` against the real
+`challenges/fannkuch-redux/fannkuch-redux.ash` rather than re-deriving the diagnosis from scratch.
 
 **Phase 4 — ADTs and Tuples per-expression freshness (Very large / Medium).** Generalize the
 summary to expression-level (§5 item 1); replace `ProducesFreshRuntimeManageableAdt`'s per-arm OR
@@ -368,24 +393,29 @@ Every phase above touches code with a specific, named historical incident:
 
 | Phase | Historical precedent(s) | Failure mode |
 |---|---|---|
-| 3 (closures) | fannkuch-redux (this session) | Silent leak from unrecognized-already-RC value |
+| 3 (closures) | fannkuch-redux investigation (this session) | Silent leak from unrecognized-already-RC value — the borrow-path half of this phase closes the 47GB->27.4GB regression; the closure-forwarding half alone would not have (see §7) |
 | 4 (ADTs/Tuples) | PR #299 / CO-38 | Silent leak from mixed arena/RC sibling representations |
 | 5 (Lists) | CO-32's Phase A/B overlap ("readme_showcase priced 41.00 instead of 12.50") | Silent **wrong value**, not just leak — masked by optimized builds |
 | 6 (TCO) | CO-8, CO-9, CO-28/29/32/34/35, PR #298 | Use-after-free / segfault / silent leak, six distinct historical incidents in this one subsystem |
 | 7 (async) | (none yet — currently masked by over-conservatism, see §4) | Use-after-free if narrowed before the CFG-blindness fix lands |
 
-**One open discrepancy the synthesis could not resolve and flags rather than guesses at**: PR #299's
-own commit message attributes fannkuch-redux's regression to "a different, still-open bug in the RC
-allocator's free-list reuse for list cons cells." This session's own separate investigation (resumed
-agent, verified against the real benchmark) found and partially fixed a **different** root cause —
-the closure/function-result provenance gap (Phase 3) — and measured a real 47GB→27.4GB improvement
-from it, with a third, structurally identical, still-open gap (match-extracted-field provenance)
-identified as the dominant remaining cost. Both explanations may be simultaneously true (compounding
-independent bugs); the free-list theory has **not** been independently re-verified since the
-provenance-gap fix landed partially. Whoever executes Phase 3 should re-run the free-list-specific
-diagnostic from PR #299's investigation *after* Phase 3 lands, to determine whether it is a real,
-separate residual bug or was itself an artifact of the same provenance gap manifesting as apparent
-allocator misbehavior.
+**Discrepancy resolved (was open, now fully settled by Phase 3's actual measurement)**: PR #299's own
+commit message attributed fannkuch-redux's regression to "a different, still-open bug in the RC
+allocator's free-list reuse for list cons cells." A separate, earlier, never-landed experimental fix
+(discarded diff) had instead pointed at two things together — the closure/function-result provenance
+gap and a `LowerVar` `Borrow`-path condition — and measured a 47GB→27.4GB improvement from the
+combination. Phase 3's formal, safety-reviewed re-implementation isolated the two: the
+closure-forwarding mechanism alone gives only ~2%; the `Borrow`-path fix alone reproduces the full
+47GB→27.4GB figure. **The free-list theory is now considered settled as incorrect** — the real
+mechanism was the `Borrow`-path condition the whole time, confirmed via manual revert-and-rebuild
+against the real benchmark. What remains unresolved is *only* the residual ~27.4GB — confirmed by
+direct `FunctionResultProvenance`/`GetAdtField` inspection against the real fannkuch program to be
+the match-extracted-field provenance gap (`GetAdtField` in `Lowering.Patterns.cs`) — a
+`match`-destructuring question, distinct from both the closure-forwarding and `Borrow`-path
+mechanisms already fixed. This remains unfixed. Whoever picks it up next should start from Phase 3's
+PR discussion (direct `ASHES_EXPLAIN_OWNERSHIP=all` trace of
+`nextPerm`/`rotateFirst`/`setAt`/`insertAt`/`loop` on the real
+`challenges/fannkuch-redux/fannkuch-redux.ash`) rather than re-deriving the diagnosis from scratch.
 
 **General mitigation for every phase**: this project's established discipline — "growing-key UAF
 stress tests at every step," soak testing at 2K/10K/50K+ workload scales, verifying every new test
@@ -396,10 +426,12 @@ should apply to every phase here, not just the self-hosting track.
 ## 8. Recommended implementation order
 
 As enumerated in §6: **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7**, with Phase 7 gated on its own two
-sub-parts landing together (never (a) without (b)), and with the PR #299 free-list re-verification
-folded into Phase 3's exit criteria. Phases 1-3 are the highest-value, lowest-risk starting point:
-mechanical, narrow blast radius, and Phase 3 directly resolves a currently-open, already-measured
-regression (fannkuch-redux). Phases 4-6 are where the bulk of the risk and effort live, and should
+sub-parts landing together (never (a) without (b)). Phases 1-3 are the highest-value, lowest-risk
+starting point: mechanical, narrow blast radius, and each gives a real measured improvement while
+proving the "unified ownership fact, consulted not re-derived" pattern — Phase 3 in particular
+resolves the fannkuch-redux regression from ~47GB to ~27.4GB. fannkuch-redux's remaining residual
+leak (~27.4GB, still far above the pre-regression ~3.8MB baseline) is now confirmed to be a separate,
+unscoped gap (§7) — Phases 4-6 are where the bulk of the risk and effort live, and should
 not start until 1-3 have proven the "unified ownership fact, consulted not re-derived" pattern works
 in production on real benchmarks. Phase 7 is deliberately last: it requires new test infrastructure
 that doesn't exist yet, touches the one subsystem where the audits found a currently-*masked* bug
