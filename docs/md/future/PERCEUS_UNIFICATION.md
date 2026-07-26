@@ -4,18 +4,34 @@ Status: implementation in progress. Produced from four parallel code audits (cor
 closures & loop-carried/TCO values; async/task-frame values; capability/handler & request-local
 values), synthesized here. Phase 0 (extending `FunctionOwnershipSummary` with expression-level
 freshness and closure-forwarding provenance, `#303`), Phase 1 (Strings/Bytes/BigInt
-builtin-freshness metadata, `#302`), and Phase 2 (capability RC-eligibility gate narrowing, `#301`)
-have all landed on `main`. Phases 3-7 are not yet started.
+builtin-freshness metadata, `#302`), Phase 2 (capability RC-eligibility gate narrowing, `#301`),
+Phase 3 (closure/function-result provenance unification + borrow-forwarding fix, `#308`), and
+Phase 4 (ADTs and Tuples per-expression top-cell freshness, unifying `ProducesFreshRuntimeManageableAdt`/
+`IsFreshRuntimeManageableAdtExpression`/`IsFreshConstructorTree`/`ProducesFreshTuple`) have all
+landed on `main`. Phases 5-7 are not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
 teaching `FunctionResultProvenance` to consult Phase 1's `BuiltinRegistry.ProducesFreshRcResult`
 metadata so a function forwarding to a builtin string/bytes/bigint producer is also recognized as
-RC-eligible (currently under-recognized — a real, understood, not-yet-closed gap, not a defect); and
-documenting, for whoever picks up Phase 4, that `ExpressionFreshness`'s "no aliasing anywhere in the
-value" is a different property than the old ADT classifiers' "this specific cell was freshly
-allocated" (e.g. `Full(x)` is old-fresh/new-not-fresh) — Phase 4 will likely need a second, narrower
-"top-cell fresh" notion alongside this one, not a replacement of it.
+RC-eligible (currently under-recognized — a real, understood, not-yet-closed gap, not a defect).
+
+Phase 4 follow-up: the "top-cell fresh" notion this session's own checkpoint anticipated (a
+narrower sibling of Phase 0's `ExpressionFreshness` — "was this specific outer cell freshly
+allocated" rather than "does nothing anywhere in this value alias a parameter") turned out to be
+purely syntactic (no interprocedural alias reasoning needed to answer "is this expression literally
+a constructor/tuple application"), so it is implemented as a standalone recursive query
+(`Lowering.TopCellFreshness.cs`) rather than folded into the `ResultReach` fixpoint — routing it
+through that fixpoint would have narrowed its domain to only `_maFuncs`-registered functions, a
+regression versus the ad hoc classifiers it replaces. One design assumption from this phase's own
+checkpoint was tried and found wrong during implementation, not just proposed: tuples do NOT share
+the ADT CO-38/PR #299 same-parent-type reconciliation hazard (a tuple type has exactly one shape, and
+the ambient RC-tuple flag only ever gates literal `TupleLit` allocations actually present in the
+lowered body, never a passthrough binding) — an AND-based reconciliation attempt for
+`ProducesFreshTuple` broke two live regression tests before being reverted to its original
+existence-check (OR) semantics. Whoever picks up Phase 5 (Lists) should not assume the ADT
+reconciliation pattern transfers to every category without re-deriving whether the same hazard
+actually applies.
 
 ## 0. Objective (restated)
 
@@ -326,12 +342,23 @@ and should start from Phase 3's own `ASHES_EXPLAIN_OWNERSHIP=all` trace of
 `nextPerm`/`rotateFirst`/`setAt`/`insertAt`/`loop` against the real
 `challenges/fannkuch-redux/fannkuch-redux.ash` rather than re-deriving the diagnosis from scratch.
 
-**Phase 4 — ADTs and Tuples per-expression freshness (Very large / Medium).** Generalize the
-summary to expression-level (§5 item 1); replace `ProducesFreshRuntimeManageableAdt`'s per-arm OR
-logic (the exact CO-38/PR #299 bug shape) with a query against the unified analysis; delete the
-duplicated tuple-specific predicates in favor of the same generic field-freshness query used for ADT
-constructor arguments. Do ADTs and Tuples together since Tuples' classifiers are literally
-copy-pasted from the ADT ones.
+**Phase 4 — ADTs and Tuples per-expression freshness — landed.** Added a standalone "top-cell
+fresh" query (`Lowering.TopCellFreshness.cs`) — a syntactic sibling of Phase 0's
+`ExpressionFreshness`, not folded into its interprocedural fixpoint (see the status note above for
+why). `ProducesFreshRuntimeManageableAdt`/`IsFreshRuntimeManageableAdtExpression`/
+`IsFreshConstructorTree` now route through it, and its `AnyArmConsistentlyFresh` helper generalizes
+the CO-38/PR #299 per-arm reconciliation (every terminal arm building the same parent type must
+independently agree, never an OR across disagreeing siblings) to an arbitrary number of sibling
+constructors, not just the original bug's binary if/else. Of the audit's 3 tuple-specific
+predicates, only `ProducesFreshTuple` was genuinely a duplicated freshness classifier (moved onto
+the same shared control-flow walk, `CollectFreshEscapeTerminals`); `CanRuntimeManageFreshTupleExpression`
+and `CanRuntimeManageOwnedTupleType` turned out to be type-shape/per-field-producer-acceptance gates
+analogous to the 7 orthogonal ADT predicates, not freshness classifiers, and were left alone.
+`ProducesFreshTuple` keeps its original existence-check (OR) semantics rather than adopting the
+ADT's AND-based reconciliation — see the status note above for why that turned out not to apply to
+tuples. Full C# suite (1693/1693), LSP suite (52/52), e2e suite (539/0), and the full `challenges/`
+suite (binary-trees N=21, fannkuch-redux N=11, n-body, spectral-norm, mandelbrot, fasta,
+reverse-complement, k-nucleotide, 1brc) all confirmed unchanged versus the Phase 3 baseline.
 
 **Phase 5 — Lists (Very large, highest risk of this group).** Replace the ambient
 `_runtimeRcListAllocationRequested` flag and the reactive `IsRuntimeManagedResultTemp` backward scan
