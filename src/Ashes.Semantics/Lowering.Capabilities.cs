@@ -364,6 +364,131 @@ public sealed partial class Lowering
     private int CapabilityGlobalCount => _capabilitySymbols.Count;
 
     /// <summary>
+    /// Whether the program contains a `handle` expression anywhere at all — the whole-program
+    /// signal that gates the capability arena exception at the RC-eligibility sites in
+    /// Lowering.cs/Lowering.Ownership.cs/Lowering.Patterns.cs, replacing the old
+    /// <c>CapabilityGlobalCount &gt; 0</c> check there (which fired the moment any capability was
+    /// declared, regardless of whether it was ever dynamically dispatched). A capability op call
+    /// resolves statically (a matching, un-shadowed `provide`, no handler evidence touched at all —
+    /// see <see cref="EmitStaticProviderCall"/>) or dynamically (<see cref="EmitPerform"/>, handler
+    /// evidence globals, and — for a one-shot resumptive arm — a pending post tracked by
+    /// <see cref="LivePostsIndex"/>). The evidence globals, and therefore <c>LivePostsIndex</c>, can
+    /// only ever be written by <see cref="LowerHandleInstallFrames"/>, which only runs while lowering
+    /// an actual <c>handle</c> expression — so a program with none can never have a pending post, and
+    /// ordinary values need no arena exception on that hazard's account. This is necessarily
+    /// whole-program rather than scoped to the current function: an ordinary helper with no lexical
+    /// `handle` in sight can still execute inside another function's `handle` dynamic extent (Ashes
+    /// capabilities are lexically-injected but dynamically-scoped), so "no `handle` anywhere in the
+    /// program" is the coarsest sound question that needs no call-graph reachability analysis to
+    /// answer. Computed once, in <see cref="Lower(Program)"/>, right after capability/provider
+    /// registration (and the dictionary-passing AST rewrite, which doesn't add or remove `handle`
+    /// nodes) — before any function body is lowered, so every RC-eligibility decision sees the same
+    /// answer regardless of lowering order.
+    /// </summary>
+    private static bool DetectDynamicCapabilityDispatch(Program program)
+    {
+        if (ProgramExprsContainHandle(program.Body))
+        {
+            return true;
+        }
+
+        foreach (var item in program.Items)
+        {
+            bool found = item switch
+            {
+                TopLevelItem.LetDecl letDecl => ProgramExprsContainHandle(letDecl.Value),
+                TopLevelItem.RecursiveGroup group => group.Bindings.Any(b => ProgramExprsContainHandle(b.Value)),
+                TopLevelItem.Provide provide => provide.Decl.Bindings.Any(b => ProgramExprsContainHandle(b.Implementation)),
+                _ => false,
+            };
+
+            if (found)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether an expression tree contains an <see cref="Expr.Handle"/> node anywhere within it.
+    /// Walks records (Expr/Pattern/MatchCase/HandlerArm) and their collections reflectively,
+    /// mirroring <see cref="BodyPerformsProvidedParameterizedCapabilityVisit"/>'s traversal.
+    /// </summary>
+    private static bool ProgramExprsContainHandle(object? node)
+    {
+        if (node is null or string)
+        {
+            return false;
+        }
+
+        if (node is Expr.Handle)
+        {
+            return true;
+        }
+
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                if (ProgramExprsContainHandle(tuple[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
+            {
+                if (ProgramExprsContainHandle(item))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (node is not (Expr or Pattern or MatchCase or HandlerArm))
+        {
+            return false;
+        }
+
+        return ProgramExprsContainHandleInProperties(node);
+    }
+
+    private static bool ProgramExprsContainHandleInProperties(object node)
+    {
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || typeof(HandlerArm).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                if (ProgramExprsContainHandle(prop.GetValue(node)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Index of the pending-post register: one extra global (after the per-capability evidence slots)
     /// through which a one-shot resumptive arm hands its post-resume continuation closure back to
     /// the perform site. Invariant: 0 except between the arm's store and the perform site's
