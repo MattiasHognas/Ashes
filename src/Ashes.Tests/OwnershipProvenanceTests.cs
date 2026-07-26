@@ -244,4 +244,44 @@ public sealed class OwnershipProvenanceTests
         summary.ResultProvenance.RcEligible.ShouldBeFalse();
         summary.ResultProvenance.ForwardsTo.ShouldBeNull();
     }
+
+    [Test]
+    public void Rewrapping_a_match_extracted_field_is_never_treated_as_fresh()
+    {
+        // Adversarial false-positive guard, added deliberately (not discovered via an organic e2e
+        // regression like the other tests in this file): `extract` LOOKS fresh at a glance — its only
+        // terminal arm is a brand-new W(...) constructor application — but its argument, `inner`, is a
+        // field extracted from the caller-supplied `w` via pattern match, not a freshly built value.
+        // Rewrapping an aliased field in a new outer cell does NOT make the field itself fresh: if `w`
+        // (and therefore `inner`) is aliased elsewhere, treating `extract`'s result as "fully fresh,
+        // safe to arena-reset without a defensive copy" would let that reset invalidate memory the
+        // alias still reads from - a real use-after-free, not just a missed optimization. This is
+        // structurally the same hazard as the Cons-tail-aliasing and consumed-parameter bugs this phase
+        // found and fixed (see IsFreshConstructionArgument's own doc), and is also exactly the shape of
+        // the explicitly out-of-scope "third gap" (match-extracted-field provenance in
+        // Lowering.Patterns.cs's GetAdtField) - this test asserts that, absent that separate piece of
+        // work, the classifier stays conservative here rather than guessing.
+        //
+        // IsFreshConstructionArgument's case list (literals, Add, a nested direct-RC construction, or a
+        // fresh-RC-producing builtin) does not include a bare Var under any circumstance - so `inner`,
+        // a plain Expr.Var naming a match-bound pattern variable, correctly falls through to "not
+        // proven fresh" and the whole W(inner) construction is correctly rejected.
+        const string source =
+            """
+            type Box =
+                | B(Int)
+            type Wrap =
+                | W(Box)
+            let extract w =
+                match w with
+                    | W(inner) -> W(inner)
+            in extract(W(B(1)))
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("extract");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
 }
