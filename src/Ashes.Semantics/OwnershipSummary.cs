@@ -16,30 +16,30 @@ internal enum ParameterOwnership
 /// <summary>
 /// The provenance of a registered function's fully-saturated result, as classified from its innermost
 /// body shape (see <c>Lowering.OwnershipProvenance.cs</c>). This is the AST-level, interprocedural
-/// generalization of the IR-level backward-scan mechanism
-/// (<c>_functionReturnedClosureLabels</c>/<c>_runtimeManagedFunctionResultLabels</c> in
-/// <c>Lowering.cs</c>): that mechanism only recognizes a returned closure when a function's body temp
-/// was produced by a literal <c>MakeClosure</c>/<c>MakeClosureStack</c> instruction found by scanning
-/// backward through already-emitted IR, so it cannot see a result that is computed by CALLING another
-/// named function (a sibling helper) rather than directly constructing a value. This record is built
-/// by classifying the function's body once, resolving through <see cref="ForwardsTo"/> chains
-/// transitively (memoized, cycle-guarded), so it sees through arbitrarily deep sibling-helper
+/// generalization of — and, per Perceus-unification Phase 3
+/// (docs/md/future/PERCEUS_UNIFICATION.md), the real decision behind —
+/// <c>TryResolveKnownFunctionResultOwnership</c>/<c>IsDirectRuntimeManagedFunctionCall</c> in
+/// <c>Lowering.cs</c>. The IR-level mechanism this replaced only recognized a returned closure when a
+/// function's body temp was produced by a literal <c>MakeClosure</c>/<c>MakeClosureStack</c> instruction
+/// found by scanning backward through already-emitted IR, so it could not see a result computed by
+/// CALLING another named function (a sibling helper) rather than directly constructing a value. This
+/// record is built by classifying the function's body once, resolving through <see cref="ForwardsTo"/>
+/// chains transitively (memoized, cycle-guarded), so it sees through arbitrarily deep sibling-helper
 /// forwarding, not just one hop.
 /// </summary>
 /// <param name="RcEligible">
 /// True when the function's fully-saturated result is provably an ordinary heap allocation eligible
-/// for RC management (a constructor application, list/tuple/record literal, or a forwarding call whose
-/// own ultimate target is itself RC-eligible) rather than a copy-typed scalar, a bare parameter
-/// passthrough, or an unresolved/foreign value. This does not by itself decide RC-vs-arena
-/// representation (a downstream, escape-driven choice) — it only answers "is this an RC-*eligible*
-/// ordinary heap value at all."
+/// for RC management (a constructor application, list/tuple/record literal, a fully applied call to a
+/// declared fresh-RC-producing builtin, an <c>Expr.Add</c> node, or a forwarding call whose own
+/// ultimate target is itself RC-eligible) rather than a copy-typed scalar, a bare parameter passthrough,
+/// or an unresolved/foreign value. This does not by itself decide RC-vs-arena representation (a
+/// downstream, escape-driven choice) — it only answers "is this an RC-*eligible* ordinary heap value at
+/// all."
 /// </param>
 /// <param name="ForwardsTo">
 /// When the function's body is itself a call to another registered top-level/self-recursive function,
 /// the immediate (one-hop) target's name; null when the body is a direct construction, a parameter
-/// passthrough, or unresolved. <see cref="RcEligible"/> is already resolved transitively through this
-/// chain — <see cref="ForwardsTo"/> is exposed separately so a consumer can walk the same hops the old
-/// <c>_functionReturnedClosureLabels</c> table recorded, for direct comparison.
+/// passthrough, or unresolved.
 /// </param>
 internal sealed record FunctionResultProvenance(bool RcEligible, string? ForwardsTo);
 

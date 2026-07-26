@@ -89,12 +89,20 @@ public sealed class OwnershipProvenanceTests
         // The exact shape the IR-level backward-scan mechanism (RecordReturnedClosureLabel,
         // _functionReturnedClosureLabels) cannot see: the result is computed by CALLING another named
         // function, not by a literal MakeClosure/MakeClosureStack instruction on the body temp.
+        // helper's own body deliberately does NOT fold its parameter into the construction
+        // (Full(Empty), not Full(x)): a bare parameter argument to a constructor is never trusted as
+        // fresh, even when consumed, since this pre-lowering classifier has no type information and
+        // cannot rule out the parameter being a heap value aliased elsewhere (see IsDirectRcConstruction's
+        // own doc — treating a consumed parameter as automatically fresh regardless of type was tried and
+        // caused a real bug, reuse_result_alias_move_elision.ash printing 0 0 0 instead of 15 7 207). This
+        // test is about the FORWARDING chain (caller -> helper), not about parameter-folding, so helper's
+        // body is written to be safely provable fresh on its own terms.
         const string source =
             """
             type Box =
                 | Empty
                 | Full(Box)
-            let helper x = Full(x)
+            let helper x = Full(Empty)
             let caller x = helper(x)
             in caller(Empty)
             """;
@@ -144,13 +152,16 @@ public sealed class OwnershipProvenanceTests
         // "a capturing top-level recursive function calling a sibling helper"): a match whose base case
         // is a fresh construction and whose recursive case forwards to a sibling helper, not a literal
         // closure. A single-node inspection of the body (rather than recursing to terminal arms) would
-        // see only the outermost Match node and default this to conservative-false.
+        // see only the outermost Match node and default this to conservative-false. helper's own body is
+        // Succ(Zero), not Succ(x) — this test is about the forwarding chain (loop -> helper), not about
+        // folding a parameter into a constructor argument (never trusted regardless of type; see
+        // Body_that_calls_a_sibling_helper_forwards_and_inherits_its_eligibility's own doc).
         const string source =
             """
             type Nat =
                 | Zero
                 | Succ(Nat)
-            let helper x = Succ(x)
+            let helper x = Succ(Zero)
             let recursive loop n =
                 match n with
                     | 0 -> Zero
@@ -168,13 +179,17 @@ public sealed class OwnershipProvenanceTests
     [Test]
     public void Disagreeing_forward_targets_across_arms_report_no_single_forward_hop()
     {
+        // helperA/helperB's own bodies are Succ(Zero)/Succ(Succ(Zero)), not Succ(x)/Succ(Succ(x)) — this
+        // test is about disagreeing forward targets across choose's two arms, not about folding a
+        // parameter into a constructor argument (never trusted regardless of type; see
+        // Body_that_calls_a_sibling_helper_forwards_and_inherits_its_eligibility's own doc).
         const string source =
             """
             type Nat =
                 | Zero
                 | Succ(Nat)
-            let helperA x = Succ(x)
-            let helperB x = Succ(Succ(x))
+            let helperA x = Succ(Zero)
+            let helperB x = Succ(Succ(Zero))
             let choose n =
                 match n with
                     | Zero -> helperA(n)
