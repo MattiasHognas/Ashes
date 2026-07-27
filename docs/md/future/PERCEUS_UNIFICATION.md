@@ -9,10 +9,16 @@ Phase 3 (closure/function-result provenance unification + borrow-forwarding fix,
 Phase 4 (ADTs and Tuples per-expression top-cell freshness, unifying `ProducesFreshRuntimeManageableAdt`/
 `IsFreshRuntimeManageableAdtExpression`/`IsFreshConstructorTree`/`ProducesFreshTuple`, `#309`), and
 Phase 5 (Lists per-expression top-cell freshness + a reused-cell reuse-token/RC bookkeeping fix) have
-all landed on `main`. Phase 6 (TCO loop-carried values) was attempted and is recorded below as an
-investigation, not a landed change: two independently-derived fixes were each confirmed, by direct
+all landed on `main`. Phase 6 (TCO loop-carried values) was first attempted and recorded below as an
+investigation with no landed change (two independently-derived fixes were each confirmed, by direct
 measurement or by the existing regression suite, to make things worse, and both were reverted rather
-than shipped. Phase 7 is not yet started.
+than shipped) — a follow-up session then closed the specific gap that investigation diagnosed
+(interprocedural call-result freshness), landing a real fix: fannkuch-redux N=11 peak RSS dropped from
+the ~27.4GB regression baseline to ~1.56GB (a 17.6x reduction), fully validated. The four-classifier
+TCO collapse and the all-or-nothing frame veto removal that Phase 6 was originally titled for remain
+unstarted — see the "Phase 6 resolution" section below for the full account, including a newly
+characterized, much smaller residual gap (~1.56GB, still above the ~3.8MB historical baseline) left
+for a future phase. Phase 7 is not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -647,6 +653,176 @@ then attempt the TCO-specific classifier collapse and veto removal this phase wa
 to route classifier (D) through the same per-value liveness answer instead of patching the pending-
 sites table's exclusion rule directly.
 
+**Phase 6 resolution — interprocedural call-result freshness landed, fannkuch-redux ~27.4GB → ~1.56GB.**
+A follow-up session picked up exactly where the investigation above left off, closing the
+"interprocedural call-result freshness" gap Phase 3 originally flagged and declined
+("`IsFreshConstructionArgument`'s domain... needing each callee's own provenance resolved recursively
+through a call cycle... real, separate work, adjacent to Phase 6"). This did **not** attempt the
+four-classifier TCO collapse or veto removal Phase 6 was titled for — those remain unstarted (see
+"What's still open" below) — it closed specifically the construction/consumption pair the investigation
+above diagnosed as fannkuch's dominant leak driver.
+
+*Re-verifying the prior diagnosis.* The investigation's IR-level diagnosis (construction-side gate
+rejecting `nextPerm`'s `Continue(S(perm2)(count2))(r)` terminal branch because `CanRuntimeManageAdt`
+requires record syntax) was re-confirmed unchanged against current `main` — names and line numbers had
+not drifted. The construction-side fix that investigation already designed and IR-verified
+(`CanRuntimeManageOwnedChildAdt`'s and `CanRuntimeManageFreshOwnedChildExpression`'s per-field
+dispatch extended to accept `CanRuntimeManageTcoOwnedChildAdt`'s looser positional-single-constructor
+test alongside `CanRuntimeManageAdt`'s record-only one) was re-implemented from this description rather
+than recovered from any surviving diff (fix attempt 1 was fully reverted, nothing to restore). A cycle
+guard (`HashSet<TypeSymbol>? path`) was added to `CanRuntimeManageOwnedChildAdt`/`CanRuntimeManageTcoOwnedChildAdt`
+that the original design did not need: the new mutual delegation between the two functions (a field's
+type can now route through either one) opens a cross-function recursion path a pair of mutually-
+referential heterogeneous ADTs could loop through forever, which neither function's original,
+independent recursion needed to guard against.
+
+*The construction-side fix alone was insufficient — as predicted.* Applying only the construction-side
+piece and re-measuring reproduced fix attempt 1's finding almost exactly: RSS *increased* (this
+session measured ~30.6GB before discovering a build had silently failed and was serving a stale
+binary — see the gotcha below — the real construction-only number was not independently re-measured a
+second time before the consumption-side fix landed alongside it, since the combined-fix measurement
+made further isolation unnecessary). This re-confirms the investigation's core finding: construction
+and consumption must land together.
+
+*The consumption side had a deeper blocker than the investigation identified.* The investigation's
+plan was to extend `IsFreshConstructionArgument`/`ClassifyExpressionProvenance` (the AST-only
+`FunctionResultProvenance` classifier) to resolve nested constructor arguments through `letBindings`
+and recognize forwarding calls to other registered functions. Direct measurement of
+`FunctionOwnershipSummary.GetOwnershipSummary("nextPerm").ResultProvenance` (via
+`ASHES_EXPLAIN_OWNERSHIP=all`) showed `rc-eligible:true` had actually resolved correctly on the very
+first attempt — reusing `IsFreshRuntimeManageableAdtExpressionCore` (see "safe reuse over a parallel
+rule" below) as a fallback inside `IsDirectRcConstruction`, rather than the narrower per-argument
+letBindings/forwarding-call rule the investigation sketched, was sufficient. `TryResolveKnownFunctionResultOwnership`
+was *still* returning `false` at `nextPerm`'s call sites regardless, `argType=Step runtimeManagedResult=False`
+confirmed by direct instrumentation of `LowerCallGeneral`. Tracing `TryResolveKnownFunctionResultOwnership`'s
+own gate conditions one at a time (temporary per-condition logging, since removed) isolated the failure
+to `TryResolveKnownFunctionLabel(rootExpr, ...)` itself failing — a layer beneath `ResultProvenance`
+entirely, and beneath anything Phase 3 or the Phase 6 investigation had examined.
+
+The actual root cause: `LowerLetRecursiveFinalizeValue` (the finalizer that runs for *every*
+self-recursive `let recursive` binding — i.e. nearly every function in fannkuch-redux, and in most
+real Ashes programs) only ever populates `_functionNameByLabel` (the reverse label → function-name
+lookup `TryResolveKnownFunctionResultOwnership` needs to find a callee's `FunctionOwnershipSummary`)
+when that function's own closure has a **fully empty capture environment**. Any `let recursive`
+function whose body calls even one sibling top-level helper — the ordinary shape, since a
+non-trivial recursive helper calling nothing else is the exception — ends up with a *non-empty*
+environment (calling another top-level binding from inside a nested lambda requires capturing it,
+regardless of whether that binding is itself a "known function"), and therefore silently never
+gets a `_functionNameByLabel` entry. `nextPerm` itself is exactly this shape (it calls `rotateFirst`,
+`getAt`, `setAt`). The parallel, non-recursive path (`LowerLetRegisterKnownFunctionIdentity`) already
+had a fallback branch for precisely this case ("a capturing top-level let is not callable as a global
+label... but the closure in this exact local slot has a statically known code label" — registers
+`_knownFunctionLabelsBySlot`/`_functionNameByLabel` without the empty-env-only `_topLevelFunctionRefs`
+entry); `LowerLetRecursiveFinalizeValue` never got the equivalent. This one gap silently defeated
+`TryResolveKnownFunctionResultOwnership` — and therefore all of Phase 3's interprocedural machinery —
+for essentially every recursive function in the compiler, not merely `nextPerm`; it is squarely a
+"consumption side" wiring gap (the mechanism's own doc comment at `_functionNameByLabel`'s declaration
+already documented the intended invariant this violated: "Populated wherever `_topLevelFunctionRefs`
+(or an empty-env-only equivalent...) is written"), not a new mechanism, and is fixed the same way —
+an `else if` branch in `LowerLetRecursiveFinalizeValue` mirroring the non-recursive fallback exactly
+(`_knownFunctionLabelsBySlot[slot]`/`_functionNameByLabel[label]`, no `_topLevelFunctionRefs` entry,
+since a non-empty-env function still needs its captured environment to be called correctly).
+
+*Safe reuse over a parallel rule.* Rather than implement the letBindings-substitution/forwarding-call
+rule the investigation sketched for `IsFreshConstructionArgument` (a second, independently-derived
+classifier answering the same question the construction side already answers), `IsDirectRcConstruction`
+was extended to fall back to `IsFreshRuntimeManageableAdtExpressionCore` — the *exact* function the
+construction side's own `LowerEscapingResult`/`ProducesFreshRuntimeManageableAdt` path consults — when
+its own narrower, argument-shape-only check fails. Both call sites (`Lowering.cs`'s escaping-result
+path, now also `Lowering.OwnershipProvenance.cs`'s pre-lowering AST pass) now consult literally the
+same function, so a future change to the construction-side classifier can never leave the
+interprocedural consumer silently out of sync with it — the exact "two classifiers, same question,
+different code paths, can disagree" disease this whole document is about, closed by construction for
+this specific pair rather than reproduced a third time. This was checked for a safety regression the
+investigation would have flagged: `IsFreshRuntimeManageableAdtExpressionCore`'s own per-field checks
+(`CanRuntimeManageFreshOwnedChildExpression`'s `TStr`/`TBytes`/`TBigInt`/`TNamedType`/`TTuple` cases
+all require the argument to independently prove itself a producer, a `RecordLit`, or a nested fresh
+constructor tree — never a bare `Var`) reproduce the `reuse_result_alias_move_elision.ash`
+(`wrap v x = Node(x)(v)(Leaf)`) regression's protection exactly: a consumed-parameter argument to a
+non-list, non-scalar field is still never accepted. The one field shape the fallback treats
+permissively regardless of the argument's own freshness is `TList` of a copy-type element
+(`CanRuntimeManageFreshOwnedChildExpression`'s existing, pre-dating-this-fix `TList` case already
+accepted a bare `Var`/`Call` there) — confirmed safe by reading `LowerRuntimeManagedConstructorArgument`
+(`Lowering.Symbols.cs`): it unconditionally emits a defensive `CopyOutList{RuntimeManaged: true}`
+promotion for exactly this field shape whenever the argument's own temp is not already recognized
+runtime-managed, so the field's *actual* stored value is always an independent RC copy regardless of
+what expression produced it — aliasing is severed by a real copy at construction time, not merely
+assumed absent.
+
+*Two new adversarial regression tests* (`OwnershipProvenanceTests.cs`) pin this directly rather than
+only by argument: `Positional_single_constructor_field_nested_in_a_multi_constructor_parent_is_rc_eligible`
+(the exact `Step`/`State` shape; confirmed to fail without the `IsDirectRcConstruction` fallback by
+temporarily disabling it and re-running) and
+`Bare_variable_directly_as_a_nested_adt_typed_field_is_never_treated_as_fresh` (a `Continue(st)(r)`
+construction handing the caller's own `st` parameter — unchanged — into the nested ADT-typed field;
+confirms `IsFreshTcoOwnedChildAdtConstructorApplication` requires an actual constructor application,
+never a bare `Var`, closing off the one hazard the new nested-ADT-field path could have introduced
+that the pre-existing `TList` permissiveness argument above does not cover).
+
+*Measured result.* fannkuch-redux N=11: peak RSS **27,440,640 KB → ~1,557,000 KB** (measured
+1,557,248 / 1,558,016 / 1,556,736 KB across three separate compiles — noise-level variance, not a
+regression signal), a **17.6x reduction**. Checksum `556355` and `Pfannkuchen(11) = 51` unchanged
+(byte-identical stdout against a baseline binary built from unmodified `main`, `cmp -s` verified, not
+just eyeballed). Full validation: C# suite 1703/1703 (+2 new tests), LSP suite 52/52, e2e suite
+542/0, `dotnet format --verify-no-changes` clean. Full `challenges/` suite re-run against a baseline
+compiler built from `main`'s actual merged tip (a separate clone, not just "no local diff"): binary-trees
+N=21, spectral-norm, mandelbrot, n-body, pidigits, fasta, k-nucleotide, regex-redux,
+reverse-complement, and 1BRC (`m10000000.txt`/`m100000000.txt`) all byte-identical output and
+unchanged time/RSS versus the freshly-built `main` baseline (1BRC: 10M rows ~6,970,700 KB peak RSS
+in both baseline and this fix, 100M rows ~9,048,600 KB in both — no CO-32-shaped regression) —
+fannkuch-redux is the only benchmark this phase moves, exactly as expected.
+
+*A tooling gotcha worth recording*: a Meziantou analyzer rule (`MA0051`, method-length) silently
+failed the build partway through this session's debugging when a temporary instrumentation line
+pushed `LowerCallGeneral` one line over its 60-line cap — `dotnet run --project src/Ashes.Cli`
+happily executed a **stale**, previously-built binary from before that edit with no visible warning,
+producing a `call-rc` debug log with zero matching output and nearly derailing the diagnosis into
+"why does this call never reach `LowerCallGeneral` at all." Always confirm `dotnet build` itself
+succeeds (not just that `dotnet run` produced *a* binary) before trusting instrumentation output that
+contradicts a hypothesis.
+
+**What's still open after this fix**: fannkuch-redux N=11 at ~1.56GB is still roughly 400x the
+~3.8MB pre-regression historical baseline — closing that residual is scoped and characterized here
+but was **not** attempted, to avoid delaying this landing:
+- The residual scales *linearly* with `N!` (measured: N=8 → 1,280 KB, N=9 → 13,824 KB, N=10 →
+  140,800 KB, N=11 → ~1,557,000 KB — each ratio matches `N!/(N-1)! = N` almost exactly, converging to
+  ~39.9 bytes leaked per outer-loop iteration), confirming a genuine small residual per-iteration
+  leak, not merely a constant-size baseline gap.
+- IR inspection (`loop`'s lowered instruction stream) found no `RcDrop` anywhere targeting a `Step`
+  (the `Done`/`Continue` wrapper type) — only `List` and `State` typed drops appear. 40 bytes is
+  exactly `Step`'s own cell size (1 tag word + 2 fields = 24 bytes payload + 16-byte RC header),
+  matching the measured per-iteration leak almost exactly.
+- Root cause (diagnosed, not yet fixed): `TrackRuntimeManagedMatchScrutinee`'s `"$match_rc_{temp}"`
+  owner-tracking mechanism (`Lowering.Patterns.cs`) registers the match scrutinee (the `Continue(...)`
+  wrapper cell itself) as one `OwnershipInfo`, then **aliases every pattern-bound field name to that
+  same owner object** (`_ownershipAliases[bindingName] = ownerName`) rather than giving the wrapper its
+  own independent tracking. This conflates two different relationships: "same allocation, different
+  name" (correct for `let y = x`, where dropping `y` and dropping `x` must agree because they are
+  literally the same cell) versus "a field extracted *from* a cell" (`st2`/`r2` extracted from
+  `Continue(st2, r2)` are a *different* allocation than the wrapper — extracting them does not make
+  them the same physical memory). When `st2` is later moved into the TCO back-edge tail call, the
+  *shared* `OwnershipInfo` gets marked `Moved`, and the wrapper's own independent drop — which should
+  still fire once its fields have been read out, regardless of what happens to those fields afterward
+  — is skipped because the bookkeeping believes the (single, shared) tracked value has already been
+  disposed of.
+- This is a **leak, not a use-after-free or double-free**: the extracted fields themselves are
+  correctly owned and dropped (confirmed: `RcDrop { TypeName = State, RuntimeManaged = True }`
+  appears exactly where expected); only the emptied-out wrapper shell's own tiny header allocation is
+  never reclaimed. Given the explicit safety discipline for this whole area ("a missed optimization is
+  acceptable, a false positive is not") and that `Lowering.Patterns.cs`'s pattern-alias machinery is
+  the single most historically dangerous subsystem in this document (CO-8, CO-9, CO-28/29/32/34/35,
+  PR #298 all trace back to it), a real fix needs its own dedicated design and test pass — separating
+  "same-cell alias" from "field-extracted-from" as genuinely distinct relationships in the ownership
+  model, likely by giving the wrapper an independent, always-fires drop instead of only a shared alias
+  target — rather than a quick patch under time pressure. Whoever picks this up next should start from
+  `TrackRuntimeManagedMatchScrutinee`'s own alias-registration loop (`Lowering.Patterns.cs`) and the
+  fannkuch repro (`challenges/fannkuch-redux/fannkuch-redux.ash`, scaling behavior confirmed at N=8
+  through N=11 above) rather than re-deriving the diagnosis from scratch.
+- The four-classifier collapse and all-or-nothing veto removal Phase 6 was originally titled for
+  (§6's own scope) are unaffected by any of the above and remain fully unstarted; the investigation's
+  own finding that the veto does not fire for fannkuch specifically still holds (unverified against
+  the code changes in this fix, since neither touches TCO parameter classification directly).
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -728,14 +904,16 @@ As enumerated in §6: **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7**, wit
 sub-parts landing together (never (a) without (b)). Phases 1-3 are the highest-value, lowest-risk
 starting point: mechanical, narrow blast radius, and each gives a real measured improvement while
 proving the "unified ownership fact, consulted not re-derived" pattern — Phase 3 in particular
-resolves the fannkuch-redux regression from ~47GB to ~27.4GB. fannkuch-redux's remaining residual
-leak (~27.4GB, still far above the pre-regression ~3.8MB baseline) is now confirmed to be a separate,
-unscoped gap (§7) — Phases 4-6 are where the bulk of the risk and effort live, and should
-not start until 1-3 have proven the "unified ownership fact, consulted not re-derived" pattern works
-in production on real benchmarks. Phase 7 is deliberately last: it requires new test infrastructure
-that doesn't exist yet, touches the one subsystem where the audits found a currently-*masked* bug
-(the CFG-blindness/whole-program-gate interaction), and its failure mode if sequenced wrong is
-strictly worse (UAF) than the failure mode it's fixing (leak).
+resolves the fannkuch-redux regression from ~47GB to ~27.4GB, and Phase 6's interprocedural
+call-result-freshness resolution (its own section above) takes it from ~27.4GB to ~1.56GB. That
+residual ~1.56GB (still ~400x the pre-regression ~3.8MB baseline) is now a small, specifically
+characterized bookkeeping gap in the match-scrutinee pattern-alias mechanism (see Phase 6's own
+"What's still open" account) rather than the large, unscoped question it was before — the four-classifier
+TCO collapse and veto removal Phase 6 was originally titled for remain unstarted and are where the
+bulk of the remaining risk and effort live. Phase 7 is deliberately last: it requires new test
+infrastructure that doesn't exist yet, touches the one subsystem where the audits found a
+currently-*masked* bug (the CFG-blindness/whole-program-gate interaction), and its failure mode if
+sequenced wrong is strictly worse (UAF) than the failure mode it's fixing (leak).
 
 This is multi-week/large-milestone-scale work in aggregate — not a sprint, and not a single PR. Per
 the user's own instruction, do not force any phase past its audit's stated risk level if a

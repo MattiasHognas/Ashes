@@ -2090,17 +2090,37 @@ public sealed partial class Lowering
                     || expression is Expr.Var or Expr.Call),
             TypeRef.TTuple tuple => expression is Expr.TupleLit tupleExpression
                 && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
-            TypeRef.TNamedType => expression is Expr.RecordLit
-                && IsFreshRuntimeManageableRecordTree(expression),
+            TypeRef.TNamedType named => (expression is Expr.RecordLit
+                    && IsFreshRuntimeManageableRecordTree(expression))
+                || IsFreshTcoOwnedChildAdtConstructorApplication(expression, named),
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a fresh constructor application of the positional,
+    /// single-constructor accumulator shape <see cref="CanRuntimeManageTcoOwnedChildAdt"/> recognizes
+    /// (a TCO loop's own state record, or any other type with the same shape) — the non-record-syntax
+    /// sibling of <see cref="IsFreshRuntimeManageableRecordTree"/>'s record-literal check just above.
+    /// Delegates the per-field freshness proof to <see cref="CanRuntimeManageTcoOwnedChildAdtConstructorApplication"/>
+    /// rather than re-deriving it, so this and the TCO parameter's own eligibility check can never
+    /// disagree on the same constructor application.
+    /// </summary>
+    private bool IsFreshTcoOwnedChildAdtConstructorApplication(Expr expression, TypeRef.TNamedType named)
+    {
+        return IsTopCellFreshAdtConstruction(expression, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? resultType)
+            && constructor is not null
+            && arguments is not null
+            && resultType is not null
+            && string.Equals(resultType.Symbol.Name, named.Symbol.Name, StringComparison.Ordinal)
+            && CanRuntimeManageTcoOwnedChildAdtConstructorApplication(constructor, arguments, resultType);
     }
 
     /// <summary>
     /// A heterogeneous ADT boundary: monomorphic variants may own fresh children supported by the
     /// type-directed runtime dropper. Recursive variants and generic payloads use separate gates.
     /// </summary>
-    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named)
+    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
     {
         TypeSymbol symbol = named.Symbol;
         if (symbol.IsBuiltin
@@ -2108,6 +2128,16 @@ public sealed partial class Lowering
             || symbol.Constructors.Count < 2
             || BuiltinRegistry.IsResourceTypeName(symbol.Name)
             || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        // CanRuntimeManageTcoOwnedChildAdt's own delegation back to this method (below) means a
+        // nested named-type field can now re-enter this method for a DIFFERENT type — guard against a
+        // mutually-referential pair of heterogeneous ADTs (A has a field of type B, B has a field of
+        // type A) looping forever, the same way CanRuntimeManageAdt already guards its own recursion.
+        path ??= [];
+        if (!path.Add(symbol))
         {
             return false;
         }
@@ -2128,11 +2158,19 @@ public sealed partial class Lowering
                     TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
                     TypeRef.TList list => CanArenaReset(Prune(list.Element)),
                     TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-                    TypeRef.TNamedType child => CanRuntimeManageAdt(child),
+                    // A nested named-type field only qualifies via CanRuntimeManageAdt's own
+                    // record-syntax requirement OR (the shape a single-constructor, positional
+                    // accumulator type like a TCO loop's own state record actually has)
+                    // CanRuntimeManageTcoOwnedChildAdt's looser positional-constructor-fields test —
+                    // record-vs-positional syntax is not itself an ownership-relevant distinction, so a
+                    // heterogeneous ADT's child field should not be rejected just because the child
+                    // happens to use positional fields.
+                    TypeRef.TNamedType child => CanRuntimeManageAdt(child) || CanRuntimeManageTcoOwnedChildAdt(child, path),
                     _ => false,
                 };
                 if (!supported)
                 {
+                    path.Remove(symbol);
                     return false;
                 }
 
@@ -2140,16 +2178,17 @@ public sealed partial class Lowering
             }
         }
 
+        path.Remove(symbol);
         return hasOwnedChild;
     }
 
-    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named)
+    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
     {
         TypeSymbol symbol = named.Symbol;
         if (symbol.Constructors.Count != 1
             || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
         {
-            return CanRuntimeManageOwnedChildAdt(named);
+            return CanRuntimeManageOwnedChildAdt(named, path);
         }
 
         return CanRuntimeManageTcoOwnedChildAdtConstructorFields(named);

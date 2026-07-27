@@ -317,11 +317,27 @@ public sealed partial class Lowering
 
         var arguments = new List<Expr>();
         Expr head = CollectCallArgs(body, arguments);
-        return head is Expr.Var variable
+        if (head is Expr.Var variable
             && _constructorSymbols.TryGetValue(variable.Name, out ConstructorSymbol? constructor)
             && constructor is not null
             && arguments.Count == constructor.Arity
-            && arguments.All(argument => IsFreshConstructionArgument(argument, letBindings));
+            && arguments.All(argument => IsFreshConstructionArgument(argument, letBindings)))
+        {
+            return true;
+        }
+
+        // The check above requires every argument to independently look fresh by this file's own
+        // narrower, argument-shape-only rules — sound, but blind to a constructor field the runtime
+        // dropper handles safely regardless of the argument expression's own shape (e.g. a List field
+        // of copy-type elements, which the construction-time lowering always defensively normalizes to
+        // an independent RC copy before it is ever stored, whatever expression produced it — see
+        // LowerRuntimeManagedConstructorArgument's own CopyOutList fallback). Falling back to the exact
+        // same top-cell-freshness query the construction-time lowering itself consults
+        // (IsFreshRuntimeManageableAdtExpressionCore, which now also recognizes the positional
+        // single-constructor accumulator shape via CanRuntimeManageTcoOwnedChildAdt) means this
+        // pre-lowering classification can never claim a construction fresh that the real lowering
+        // decision would not also independently treat as runtime-managed for the same reason.
+        return IsFreshRuntimeManageableAdtExpressionCore(body);
     }
 
     /// <summary>
