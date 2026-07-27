@@ -3,9 +3,8 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
-// Result-provenance classification for FunctionOwnershipSummary (Perceus-unification Phase 3, see
-// docs/md/future/PERCEUS_UNIFICATION.md §5 item 3 / §6). This generalizes and strictly subsumes what
-// Lowering.cs's old IR-level backward-scan mechanism (_functionReturnedClosureLabels /
+// Result-provenance classification for FunctionOwnershipSummary. This generalizes and strictly
+// subsumes what Lowering.cs's old IR-level backward-scan mechanism (_functionReturnedClosureLabels /
 // _runtimeManagedFunctionResultLabels, populated by RecordFunctionResultProvenance /
 // RecordReturnedClosureLabel) used to track: that mechanism only recognized a returned closure when a
 // function's body temp was produced by a literal MakeClosure/MakeClosureStack instruction found by

@@ -2,12 +2,11 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
-// Perceus unification Phase 0 (docs/md/future/PERCEUS_UNIFICATION.md §6, Phase 0): shadow-compare
-// logging for the two new FunctionOwnershipSummary fields (ExpressionFreshness, ResultProvenance)
-// against the ~40 ad hoc classifiers they are eventually meant to replace. Every hook here only LOGS a
-// disagreement — it never changes which answer the compiler acts on. This reuses the project's
-// existing ASHES_EXPLAIN_OWNERSHIP mechanism (FormatOwnershipSummaries, PerceusLifetimePlacement's
-// ShouldExplain) rather than a second debug channel, per docs/md/guide/development.md.
+// Shadow-compare logging for the FunctionOwnershipSummary fields (ExpressionFreshness,
+// ResultProvenance) against the ad hoc classifiers they are eventually meant to replace. Every hook
+// here only LOGS a disagreement — it never changes which answer the compiler acts on. This reuses the
+// project's existing ASHES_EXPLAIN_OWNERSHIP mechanism (FormatOwnershipSummaries,
+// PerceusLifetimePlacement's ShouldExplain) rather than a second debug channel.
 public sealed partial class Lowering
 {
     private static bool ShouldExplainOwnership()
@@ -57,10 +56,10 @@ public sealed partial class Lowering
             $"old={oldVerdict} new-expression-freshness={newVerdict} expr={DescribeForShadowLog(expression)}");
     }
 
-    // ShadowCompareResultProvenance (the closure-provenance shadow-compare hook) has been retired: Phase 3
-    // (docs/md/future/PERCEUS_UNIFICATION.md) wired TryResolveKnownFunctionResultOwnership directly to
-    // FunctionOwnershipSummary.ResultProvenance, so there is no separate "old" answer left to shadow-log
-    // against — ResultProvenance IS the real decision now, not a comparison candidate.
+    // ShadowCompareResultProvenance (the closure-provenance shadow-compare hook) has been retired:
+    // TryResolveKnownFunctionResultOwnership reads FunctionOwnershipSummary.ResultProvenance directly,
+    // so there is no separate "old" answer left to shadow-log against — ResultProvenance IS the real
+    // decision now, not a comparison candidate.
 
     private static string DescribeForShadowLog(Expr expression)
     {

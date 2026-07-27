@@ -1178,7 +1178,7 @@ public sealed partial class Lowering
         int nodeTemp = NewTemp();
         bool runtimeManaged = _runtimeRcListAllocationRequested
             && IsRuntimeManageableListElement(headType, headTemp);
-        // Reconciled reuse-token rule (Perceus unification Phase 5, PERCEUS_UNIFICATION.md §6): a list
+        // Reconciled reuse-token rule: a list
         // cons cell satisfied by ANY reuse token — arena or (hypothetically) runtime-managed — is
         // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
         // the assert below), so `runtimeManaged` only ever governs the FRESH-allocation branch; it must

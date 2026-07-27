@@ -470,8 +470,8 @@ public sealed partial class Lowering
     // source name (the same name FunctionOwnershipSummary/GetOwnershipSummary is keyed by). Populated
     // wherever _topLevelFunctionRefs (or an empty-env-only equivalent, for a capturing top-level let) is
     // written, so a label resolved via TryResolveKnownFunctionLabel's existing slot/env alias chase can
-    // be mapped back to the function identity the Perceus-unification ownership analysis reasons about,
-    // without re-deriving that identity a second way.
+    // be mapped back to the function identity FunctionOwnershipSummary/GetOwnershipSummary reasons
+    // about, without re-deriving that identity a second way.
     private readonly Dictionary<string, string> _functionNameByLabel = new(StringComparer.Ordinal);
     // Whether a lambda's OWN compiled body (keyed by its own label) was proven, by inspecting the actual
     // emitted instructions (IsRuntimeManagedResultTemp), to produce a RuntimeManaged result — populated
@@ -8301,8 +8301,8 @@ public sealed partial class Lowering
     /// Resolves whether a saturated call rooted at <paramref name="rootExpr"/> (applied to exactly
     /// <paramref name="argumentCount"/> arguments, with concrete post-unification result type
     /// <paramref name="callResultType"/>) is statically KNOWN to produce an RC-eligible result, via the
-    /// Perceus-unification ownership analysis (<see cref="FunctionOwnershipSummary.ResultProvenance"/>,
-    /// Phase 3 — see docs/md/future/PERCEUS_UNIFICATION.md). <paramref name="rootExpr"/> resolves to a
+    /// ownership analysis (<see cref="FunctionOwnershipSummary.ResultProvenance"/>).
+    /// <paramref name="rootExpr"/> resolves to a
     /// label exactly as before (<see cref="TryResolveKnownFunctionLabel(Expr, out string)"/>'s existing
     /// slot/env/top-level alias chase, unchanged) — the label is then mapped back to the registered
     /// function name via <see cref="_functionNameByLabel"/>.
@@ -8353,8 +8353,8 @@ public sealed partial class Lowering
         // FunctionResultProvenance is computed once, at a whole-program AST pass that precedes
         // lowering entirely — it has no notion of _usesAsync/_inCoroutineBody/
         // _programHasDynamicCapabilityDispatch, the three whole-program gates that force EVERY value in
-        // EVERY function to arena regardless of any per-value classifier's answer (see
-        // docs/md/future/PERCEUS_UNIFICATION.md §2). Every real construction-site classifier
+        // EVERY function to arena regardless of any per-value classifier's answer. Every real
+        // construction-site classifier
         // (IsDirectRcConstruction's own predecessors, IsRuntimeRcStringProducer, etc.) checks these gates
         // before ever emitting a RuntimeManaged:true instruction, which is exactly why the retired
         // backward-scan mechanism (IsRuntimeManagedResultTemp) never found one to report under these

@@ -4,9 +4,7 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
-// Perceus unification Phase 0 (docs/md/future/PERCEUS_UNIFICATION.md §5 items 1 and 3): the two new
-// FunctionOwnershipSummary fields, ExpressionFreshness and ResultProvenance. Nothing yet consults
-// either field for a lowering decision (this phase is behaviour-preserving); these tests pin the
+// FunctionOwnershipSummary's ExpressionFreshness and ResultProvenance fields. These tests pin the
 // fields' own correctness on hand-built shapes, independent of any consumer.
 public sealed class OwnershipProvenanceTests
 {
@@ -212,8 +210,7 @@ public sealed class OwnershipProvenanceTests
     {
         // Ashes.Text.fromInt is declared ProducesFreshRcResult: FreshRcResultKind.String in
         // BuiltinRegistry — a fully applied call into it is itself fresh construction, exactly like a
-        // constructor application (this is the paradigm case Perceus-unification Phase 3's
-        // builtin-producer gap fix targets; see PERCEUS_UNIFICATION.md's Phase 0 follow-up).
+        // constructor application.
         const string source =
             """
             let describe n = Ashes.Text.fromInt(n)

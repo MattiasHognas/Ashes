@@ -1722,9 +1722,9 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Call_returning_fresh_adt_uses_direct_runtime_ownership()
     {
-        // wrap's body Box(x) no longer resolves through the direct known-function-result fast path
-        // (Perceus-unification Phase 3): FunctionResultProvenance's terminal-arm classifier does not
-        // treat a bare parameter argument to a constructor as automatically fresh, even though x is a
+        // wrap's body Box(x) no longer resolves through the direct known-function-result fast path:
+        // FunctionResultProvenance's terminal-arm classifier does not treat a bare parameter argument
+        // to a constructor as automatically fresh, even though x is a
         // copy-typed Int here where aliasing genuinely cannot matter — this classifier has no type
         // information (it runs in a pre-lowering, whole-program AST pass, before x's type is known), so
         // it cannot distinguish "x is an Int" from "x is a Tree" at this call site. Treating ANY

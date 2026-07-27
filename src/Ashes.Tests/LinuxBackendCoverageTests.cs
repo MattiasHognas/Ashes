@@ -2199,7 +2199,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        // No longer probes for a direct RcDrop{TypeName=Step} here (Perceus-unification Phase 3):
+        // No longer probes for a direct RcDrop{TypeName=Step} here:
         // `build`'s result (Hit(updated), where `updated` is itself the result of a forwarding call to
         // setAt) is a let-bound argument to a constructor application one level down from build's own
         // terminal arm — FunctionResultProvenance conservatively does not resolve that shape (setAt's
@@ -2266,8 +2266,8 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.MakeClosure { RuntimeManaged: true }).ShouldBeTrue();
 
-        // No longer asserts a direct RcDrop{TypeName=Function} for `measure` here (Perceus-unification
-        // Phase 3): FunctionResultProvenance deliberately never classifies a function whose result is
+        // No longer asserts a direct RcDrop{TypeName=Function} for `measure` here:
+        // FunctionResultProvenance deliberately never classifies a function whose result is
         // itself a returned closure (see IsDirectRcConstruction's own doc for why — whether a closure is
         // RC- or arena-represented depends on capture-time ownership state that does not exist during
         // the pre-lowering AST pass), so `measure = make(n)` now falls back to the arena

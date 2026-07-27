@@ -2327,7 +2327,7 @@ public sealed partial class Lowering
         return result;
     }
 
-    // Perceus unification Phase 4: routed through the shared IsTopCellFreshAdtConstruction terminal
+    // Routed through the shared IsTopCellFreshAdtConstruction terminal
     // check (Lowering.TopCellFreshness.cs) instead of an independent CollectCallArgs walk, so this and
     // IsFreshRuntimeManageableAdtExpression/ProducesFreshRuntimeManageableAdt can never drift apart on
     // what counts as a direct constructor application. No control-flow transparency here by design (a

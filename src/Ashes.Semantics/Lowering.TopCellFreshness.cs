@@ -2,21 +2,19 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
-// Perceus unification Phase 4 (docs/md/future/PERCEUS_UNIFICATION.md §6, Phase 4): the shared
-// "top-cell fresh" engine that ProducesFreshRuntimeManageableAdt/IsFreshRuntimeManageableAdtExpression/
-// IsFreshConstructorTree (ADTs) and ProducesFreshTuple (Tuples) are built on, instead of each
-// independently re-deriving control-flow transparency and same-parent-type arm reconciliation from AST
-// shape.
+// The shared "top-cell fresh" engine that ProducesFreshRuntimeManageableAdt/
+// IsFreshRuntimeManageableAdtExpression/IsFreshConstructorTree (ADTs) and ProducesFreshTuple (Tuples)
+// are built on, instead of each independently re-deriving control-flow transparency and
+// same-parent-type arm reconciliation from AST shape.
 //
-// "Top-cell fresh" is a deliberately NARROWER question than FunctionOwnershipSummary.ExpressionFreshness
-// (Phase 0): ExpressionFreshness asks "does this expression's value alias any parameter anywhere in its
+// "Top-cell fresh" is a deliberately NARROWER question than FunctionOwnershipSummary.ExpressionFreshness:
+// ExpressionFreshness asks "does this expression's value alias any parameter anywhere in its
 // reachable graph" (a whole-value aliasing question), while top-cell freshness asks only "was THIS
 // expression's outermost cell (the constructor/tuple shell itself) freshly allocated here" — regardless
 // of what its own field/element expressions alias. `Full(x)` is top-cell-fresh (the Full cell is a new
 // allocation) even when `x` aliases a parameter and is therefore NOT ExpressionFreshness-fresh: aliased
 // fields are handled correctly by ordinary per-field RC dup/drop, a separate and already-sound mechanism
-// that does not require the field itself to be uniquely owned. See PERCEUS_UNIFICATION.md's Phase 0
-// follow-up note and this phase's design checkpoint for the full reasoning.
+// that does not require the field itself to be uniquely owned.
 //
 // Top-cell freshness is a PURELY SYNTACTIC property (no interprocedural alias reasoning is needed to
 // answer "is this expression literally a constructor/tuple application"), so — unlike ExpressionFreshness
@@ -81,10 +79,9 @@ public sealed partial class Lowering
         => TryDescribeConstructorExpression(expression, out constructor, out arguments, out resultType);
 
     /// <summary>
-    /// Perceus unification Phase 5 (PERCEUS_UNIFICATION.md §6, Phase 5): the escaping-result-boundary
-    /// counterpart of <see cref="IsFreshListConstructionExpression"/> for Lists, giving it the same
-    /// control-flow transparency <c>ProducesFreshRuntimeManageableAdt</c>/<c>ProducesFreshTuple</c> got
-    /// in Phase 4 — a list literal returned from a match/if arm (e.g.
+    /// The escaping-result-boundary counterpart of <see cref="IsFreshListConstructionExpression"/> for
+    /// Lists, giving it the same control-flow transparency <c>ProducesFreshRuntimeManageableAdt</c>/
+    /// <c>ProducesFreshTuple</c> have — a list literal returned from a match/if arm (e.g.
     /// <c>if empty then [] else x :: rest</c>) is now recognized as top-cell fresh at a function's
     /// escaping result, not just when the whole body IS the construction directly.
     ///

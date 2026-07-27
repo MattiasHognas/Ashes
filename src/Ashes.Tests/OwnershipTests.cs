@@ -1243,12 +1243,12 @@ public sealed class OwnershipTests
             .ShouldBeGreaterThanOrEqualTo(3);
     }
 
-    // Perceus unification Phase 5 (docs/md/future/PERCEUS_UNIFICATION.md): ProducesFreshRuntimeManageableList
-    // gives IsFreshListConstructionExpression the same control-flow transparency Phase 4 gave the ADT/Tuple
-    // escape-boundary classifiers (CollectFreshEscapeTerminals), so a fresh list literal returned from an
-    // if/match arm is now recognized as an escaping runtime-managed result, not just when the whole
-    // let/lambda body IS the list construction directly. Before this phase, `IsFreshListConstructionExpression`
-    // was called directly on the escaping body with no arm-walking, so this exact shape stayed arena-managed.
+    // ProducesFreshRuntimeManageableList gives IsFreshListConstructionExpression the same control-flow
+    // transparency the ADT/Tuple escape-boundary classifiers have (CollectFreshEscapeTerminals), so a
+    // fresh list literal returned from an if/match arm is recognized as an escaping runtime-managed
+    // result, not just when the whole let/lambda body IS the list construction directly. Calling
+    // IsFreshListConstructionExpression directly on the escaping body with no arm-walking would leave
+    // this exact shape arena-managed.
 
     [Test]
     public void Fresh_list_returned_from_if_arm_transfers_runtime_ownership()
@@ -1353,13 +1353,13 @@ public sealed class OwnershipTests
             .SelectMany(function => function.Instructions)
             .Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
                 "a fresh list literal returned from a non-empty match arm must be recognized as an " +
-                "escaping runtime-managed result, the list analog of Phase 4's ADT/Tuple arm walking.");
+                "escaping runtime-managed result, the list analog of ADT/Tuple arm walking.");
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true })
             .ShouldBeTrue();
     }
 
-    // Tail-sharing adversarial guards (CO-32's exact hazard, see PERCEUS_UNIFICATION.md's Phase 5 status):
-    // these are controls, not regression targets for THIS fix -- they must stay conservative (arena) both
+    // Tail-sharing adversarial guards: these are controls, not regression targets for THIS fix -- they
+    // must stay conservative (arena) both
     // before and after ProducesFreshRuntimeManageableList exists, proving the control-flow-transparency
     // extension never widened IsFreshListConstructionExpression's terminal set. A cons cell built onto an
     // EXISTING list (a bare Var tail, or a recursive call's result as the tail) shares structure with that
@@ -1694,8 +1694,10 @@ public sealed class OwnershipTests
         runtimeManagedFlags.Count.ShouldBe(1);
     }
 
-    // Perceus unification Phase 4 (docs/md/future/PERCEUS_UNIFICATION.md): CO-38's per-arm
-    // reconciliation is now implemented by the shared AnyArmConsistentlyFresh engine
+    // Sibling if/match arms constructing the same ADT must reconcile freshness by AGREEMENT, never by
+    // OR-ing across arms (a trivially-fresh arm dragging a non-fresh sibling along mixes arena and RC
+    // representations of the same type, and an arena cell's no-op drop never walks into RC children,
+    // leaking them). This reconciliation is implemented by the shared AnyArmConsistentlyFresh engine
     // (Lowering.TopCellFreshness.cs) instead of a bespoke ProducesFreshRuntimeManageableAdt loop. This
     // pins the same invariant against a THREE-constructor sum type (the original bug and its fix were
     // only ever exercised with two constructors) to confirm the generalized reconciliation groups

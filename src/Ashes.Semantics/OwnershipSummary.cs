@@ -16,8 +16,7 @@ internal enum ParameterOwnership
 /// <summary>
 /// The provenance of a registered function's fully-saturated result, as classified from its innermost
 /// body shape (see <c>Lowering.OwnershipProvenance.cs</c>). This is the AST-level, interprocedural
-/// generalization of — and, per Perceus-unification Phase 3
-/// (docs/md/future/PERCEUS_UNIFICATION.md), the real decision behind —
+/// generalization of — and the real decision behind —
 /// <c>TryResolveKnownFunctionResultOwnership</c>/<c>IsDirectRuntimeManagedFunctionCall</c> in
 /// <c>Lowering.cs</c>. The IR-level mechanism this replaced only recognized a returned closure when a
 /// function's body temp was produced by a literal <c>MakeClosure</c>/<c>MakeClosureStack</c> instruction
