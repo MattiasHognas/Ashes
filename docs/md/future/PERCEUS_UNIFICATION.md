@@ -18,9 +18,18 @@ the ~27.4GB regression baseline to ~1.56GB (a 17.6x reduction), fully validated.
 session closed the remaining ~1.56GB residual too (a match-scrutinee wrapper-cell drop that a
 shared-ownership-identity bug had been silently skipping): fannkuch-redux N=11 peak RSS is now 256KB
 at every N from 8 through 11 — constant, matching the pre-regression historical baseline, not merely
-reduced. The four-classifier TCO collapse and the all-or-nothing frame veto removal that Phase 6 was
-originally titled for remain unstarted — see the "Phase 6 resolution" and "Phase 6 resolution, part 2"
-sections below for the full account. Phase 7 is not yet started.
+reduced. A third follow-up session then attempted the four-classifier collapse and all-or-nothing
+frame veto removal Phase 6 was originally titled for, and again landed no change: the veto was
+confirmed to fire on real, currently-shipped code (not just constructed examples), removing it was
+proven SAFE at every scale tested (per-parameter mixing across unrelated types, and a direct
+adversarial same-type-parameter-swap test, never produce a wrong value or a crash), but two of the ten
+real `challenges/` programs (`1brc`, `reverse-complement`) measurably regressed in peak RSS — a
+previously-unrecognized PROFITABILITY cost (a per-iteration defensive copy the arena-only frame never
+pays), not a safety one — and two successively narrower attempts to keep part of the removal safe were
+each found insufficient or inert. All three attempts were reverted in full; see "Phase 6, third
+attempt" below for the complete account, including a newly-discovered, separate latent gap in the
+closure-eligibility check uncovered along the way. The four-classifier collapse and veto removal
+remain unstarted. Phase 7 is not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -933,6 +942,194 @@ own enclosing scope regardless of this match), not a synthetic one this fix's me
 one exists there it is a materially different, smaller-blast-radius shape than the one fixed here and
 was not reproduced or measured.
 
+**Phase 6, third attempt — the four-classifier collapse and veto removal, re-attempted and fully
+reverted (safety confirmed, profitability not).** A follow-up session picked up exactly the piece
+both prior "Phase 6 resolution" sessions explicitly left untouched: collapsing classifiers (A)-(D)
+into one per-parameter decision and deleting `LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame`
+(the all-or-nothing veto). The classifier catalogue was re-verified against current `main` first and
+found unchanged from §1/the original Phase 6 section's own account: (A)
+`TcoContext.RuntimeManagedParamSlots`, populated by `LowerLambdaCoreIdentifyRuntimeManagedTcoParams`;
+(B) `GetTcoCopyOutKind`/arena `TcoBackEdge*`; (C) `_runtimeManagedResultTemps`; (D)
+`_runtimeManagedTcoPatternAliases`/`_pendingNestedTcoPatternAliasSites`; the veto itself duplicated at
+two call sites — `LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame` (loop-entry time, unresolved
+types) and an identical inline copy of the same "does every param qualify or is it exempt" check
+inside `LowerCallTcoPromoteResolvedRuntimeParams` (resolved-type time, re-run at every back-edge call
+site) — both funnelling into the same `ClearRuntimeManagedTcoParams` helper.
+
+*The veto fires on real, currently-shipped code, not just synthetic cases.* Before touching anything,
+a synthetic adversarial program was built and run against an instrumented build (a temporary env-var-
+gated `Console.Error.WriteLine`, since removed) to settle the original investigation's own open
+question ("does the veto ever fire for a real program, or only in principle"): a TCO loop threading a
+`Str` accumulator (unconditionally RC-eligible by type, per classifier A) alongside a closure
+accumulator that is a fresh `given`-lambda literal on some tail self-calls and threaded unchanged on
+others (so `FreshClosureParams`'s "always a fresh lambda at every self-call" aggregate never holds for
+it). Confirmed live: the veto fires and wipes the `Str` accumulator's otherwise-automatic eligibility
+down to nothing, purely because of the co-resident closure's own, unrelated failure. The same
+instrumentation was then run against two actual `challenges/` programs and found the veto fires there
+too: `challenges/1brc/brc.ash`'s `mergeEntries entries acc` (`entries: List((Str, Int, Int, Int,
+Int))`, eligible via the `ConsumedListTailParams` branch — a tail walked one cons cell at a time,
+never rebuilt fresh — blocked because its sibling `acc: Trie` is a self-recursive, multi-constructor
+ADT that can never be RC-eligible, the same structural shape as binary-trees' own `Tree`/CO-38
+precedent) and `challenges/reverse-complement/reverse-complement.ash`'s `emit chars col buf` (`buf:
+Str`, unconditionally eligible, blocked because its sibling `chars: List(Str)` fails every exemption:
+heap, not arena-resettable, not loop-invariant, and its own consumed-tail shape doesn't qualify for
+the list exemption either since a `Str` list element is never arena-resettable and the appended
+character is not merely inspected). This settles, with direct evidence rather than inference, that the
+veto is not a historical accident nobody's program actually reaches — it is live, load-bearing
+behavior in the one nontrivial real-world Ashes program this repository ships as a benchmark.
+
+*Per-parameter mixing across unrelated types is safe — proven, not assumed.* Both veto call sites were
+deleted (a pure deletion; every one of the roughly fifty downstream call sites the original
+investigation catalogued already keys off `tco.RuntimeManagedParamSlots.Contains(slot)` per slot, never
+off a frame-wide boolean, so nothing downstream needed to change to support mixing once the blunt
+clear was gone). Full validation with the veto removed: C# suite 1710/1710 (+2 new), LSP suite 52/52,
+e2e suite 546/0 (+2 new), `dotnet format --verify-no-changes` clean. The Str/closure adversarial case
+above now promotes the `Str` accumulator independently of the closure sibling, confirmed at the IR
+level (an `RcDrop{TypeName:"String", RuntimeManaged:true}` appears where none did before) and end to
+end at 300,000 and 2,000,000 iterations with correct output. The deeper, directly-adversarial question
+the project's own established practice demands ("does per-parameter mixing need a group-level
+agreement the way ADTs did, or can each parameter really be judged independently, checked directly
+rather than assumed by analogy") was tested with two same-typed `List(Int)` accumulators that trade
+values across each other's slots every third iteration (`swapLoop(n-1)(accB)(accA)`) alongside a third
+arm that grows each side independently — checked against an independent Python simulation's checksum
+(`15000100000` at N=300,000) for a ground truth the compiler's own correctness can't be assumed to
+provide. Finding: the swap can never produce a mismatched representation, and it needs no added
+reconciliation to prevent one, because the existing per-name candidacy aggregation
+(`CollectTcoParamsMatchingArguments`, backing `FreshRebuiltListParams`/`AffineConsListParams`/
+`ConsumedListTailParams`/`FreshClosureParams`) already removes a parameter from its own candidate set
+the moment ANY source-level self-call passes something other than a qualifying construction into that
+parameter's own slot — a swap, by passing a bare variable into the other side's slot, disqualifies
+BOTH swap partners simultaneously, by construction, not by an added policy. This is a genuinely
+different answer than the ADT/List categories got when this same question was asked of them (ADTs
+needed strict AND-based sibling reconciliation across `if`/`match` arms; Lists needed the same for a
+bare-Var-vs-fresh-arm hazard nothing initially suspected) — for TCO parameters specifically, the
+per-slot aggregation that already existed for an unrelated reason (deciding whether a single
+parameter's own back-edge argument looks fresh) turns out to already foreclose the cross-parameter
+mixing hazard as a side effect, with nothing to add.
+
+*But safety was the wrong question to stop at — profitability regressed real code.* The full
+`challenges/` suite was re-run against a baseline built from unmodified `main` (`git stash` of the one
+touched file, matching this document's own established practice of not needing a separate clone for a
+pure source change). Every program's output was byte-identical (`cmp -s`, not eyeballed) in every
+configuration tried below — this was never a correctness regression — but two of ten real benchmark
+programs regressed in peak RSS, reproducibly, confirmed stable across repeated runs (not noise):
+`challenges/1brc/brc.ash` at 10M rows, 6,970,236-6,971,004 KB baseline → 7,551,612-7,552,124 KB with
+the veto removed (+~581 MB, +8.3%); at 100M rows, ~9,048,940 KB baseline → ~9,688,172 KB (+~639 MB).
+`challenges/reverse-complement/reverse-complement.ash` (a 1,000,000-base FASTA input): 753,588 KB
+baseline → 1,124,352-1,124,864 KB (+~370 MB, +49%). fannkuch-redux N=11 and binary-trees N=21 — the
+two most historically sensitive sentinels — showed no change at all (256 KB constant and ~196,000 KB
+respectively, matching baseline exactly), because neither program's own TCO loops ever have more than
+one heap-typed parameter in the same frame, so the veto was never live for them either way; this is
+exactly why the two regressions surfaced only in the two programs that happen to thread more than one
+independently-classified heap accumulator through a single loop.
+
+*Root cause, confirmed by IR-level classification dumps, not inferred.* Re-instrumenting (the same
+temporary env-var-gated print, applied to both the veto-present and veto-removed builds via `git
+stash` swaps for direct comparison) isolated the mechanism precisely: in `mergeEntries`, `entries`'s
+`ConsumedListTailParams`-based eligibility and in `emit`, `buf`'s unconditional `Str` eligibility are
+each ONLY reachable at all because their respective sibling (`acc`/`Trie`, `chars`/`List(Str)`)
+independently fails every exemption — with the veto gone, both promotions fire correctly per
+classifier A's own rules, but classifier A's rules answer "is this parameter's value, in isolation,
+safely representable as RC" and never "is promoting it, in THIS frame, actually cheaper than leaving
+it arena." Promoting a parameter to runtime-managed inside a frame that must ALREADY pay for a
+per-iteration arena reset (because the sibling can never leave arena) adds a real, additional cost the
+all-arena frame never paid: the promoted value must be defensively copied out of the about-to-be-reset
+arena into RC space at every back edge (`EmitRuntimeManagedTcoDeepCopy`/`CopyOutList`/`CopyOutArena`,
+the same machinery the original investigation found driving fannkuch's own residual leak before the
+two "Phase 6 resolution" fixes closed it), regardless of whether the value was already fresh that
+iteration. This cost scales with how large the promoted value grows and how many iterations the loop
+runs — exactly `mergeEntries`' up-to-41,343-entry station table and `emit`'s per-character pass over
+an entire FASTA sequence, and exactly why the two programs with more than one heap accumulator per
+frame are the ones that caught it. This is a genuinely new axis this investigation surfaced that the
+original design doc's own framing (§5 item 4, §6's veto discussion) did not anticipate: the CO-38/PR
+#299 precedent the veto was reasoned about by analogy to is a SAFETY hazard (an arena parent's drop
+silently failing to reach an RC child of the same nominal type); what actually regressed here is not a
+safety failure at all (every output stayed byte-identical) — it is a PROFITABILITY failure, and the
+veto's blunt "clear everything" turns out to double as an (apparently accidental) cost gate against it
+that the four-classifier collapse, as originally scoped, has no replacement for.
+
+*Two narrower carve-outs were tried and also did not produce a safe, valuable, landable slice.*
+Rather than reverting immediately, two successively narrower attempts tried to keep SOME of the
+veto's removal while avoiding the measured regressions:
+
+1. Demote only the specific classification reason that caused `mergeEntries`' regression (a
+   `List`-typed parameter eligible ONLY via the `ConsumedListTailParams` branch, never
+   `FreshRebuiltListParams`/`AffineConsListParams`) back to arena whenever the frame still has a
+   genuinely-failing sibling, while leaving every other eligibility reason (Str, BigInt, ADT, Tuple,
+   Closure, and the other two List branches) fully unblocked. Implemented as a two-pass scheme:
+   track which promoted slots were "cost-sensitive" (List-typed, consumed-tail-only) during the
+   normal eligibility scan, then run the OLD veto's exact firing condition afterward but only strip
+   the cost-sensitive slots back out, never the others, when it fires. This fixed `brc.ash` exactly
+   (10M rows: 6,970,236 KB, byte-identical output, matching baseline to within measurement noise) —
+   but `reverse-complement.ash` was untouched by this carve-out (still +~370 MB) because its own
+   regressed parameter, `buf`, is a `Str`, not a `List` — proving the true cost-sensitive boundary is
+   broader than "List consumed-tail promotions" specifically, and this narrower rule does not capture
+   it.
+2. Narrow further to preserve ONLY closure-typed (`TFun`) promotions specifically — the one
+   eligibility reason the very first synthetic adversarial test above measured as genuinely free (no
+   RSS difference, 30,976 KB vs 31,232 KB, across 2,000,000 iterations), on the theory that a fresh
+   closure's own captured environment is typically small and bounded per iteration, unlike a growing
+   string or a list of non-copy elements. Implemented by having `ClearRuntimeManagedTcoParams`
+   preserve every slot already present in `tco.RuntimeManagedClosureParamSlots` instead of wiping it.
+   A dedicated adversarial test was built to exercise exactly this shape (a closure accumulator
+   rebuilt fresh at every tail self-call, alongside a self-recursive multi-constructor `Tree`
+   accumulator of the same shape as `binary-trees`' own `Tree` — deliberately chosen so the failing
+   sibling could never be confused with a scalar/arena-resettable type) and it FAILED even with the
+   fix in place: direct instrumentation showed `RuntimeManagedClosureParamSlots` never contained the
+   closure parameter at all, veto or no veto. The actual reason is a second, separate, pre-existing
+   gap this investigation was not looking for: `LowerLambdaCoreRefreshRuntimeManagedTcoParams` (the
+   pass that re-runs classification after the body is lowered, once parameter types have finally
+   resolved from unconstrained type variables to concrete types) explicitly calls
+   `LowerLambdaCoreIdentifyRuntimeManagedTcoParams(..., includeFreshClosures: false)` — deliberately
+   excluding closures from re-classification at exactly the point their type would finally be concrete
+   enough to match `TypeRef.TFun`. The FIRST (loop-entry) pass, where `includeFreshClosures` defaults
+   to `true`, almost never sees a concrete `TFun` for an ordinary, unannotated closure parameter in the
+   first place — confirmed directly: the same parameter's `parameterType` was printed as `TVar { Id =
+   10 }` at loop-entry time and only resolved to a concrete `TFun { Arg = ...; Ret = ...}` by the
+   second (closures-excluded) pass. Net effect: `RuntimeManagedClosureParamSlots` is essentially never
+   populated for ordinary recursive closures regardless of the veto, so "preserve closures past the
+   veto" has nothing left to preserve in realistic code — this carve-out is inert, not merely
+   insufficient. This is a second, independent timing gap in the same family as classifier (D)'s
+   already-documented one (`TrackRuntimeManagedTcoListPatternAliases` reading `RuntimeManagedParamSlots`
+   before it is populated for the current body) but for the closure-eligibility check itself, discovered
+   as a byproduct of this investigation rather than its target.
+
+*All three attempts reverted in full.* Given neither the full removal (regresses two real programs)
+nor either narrower carve-out (one is insufficient, the other inert) produced something both safe and
+valuable, all three were reverted. The tree at the end of this investigation is byte-for-byte identical
+to its start (verified: `git status`/`git diff` clean against the merged `main` tip this session began
+from). No test files, instrumentation, or other artifacts from any of the three attempts survive.
+
+*What is now confirmed, and what remains open.* Confirmed, with direct evidence rather than inference:
+(a) the veto is live, real-world load-bearing code, not dead weight — it fires for the one nontrivial
+program this repository ships as a benchmark, not merely for constructed examples; (b) per-parameter
+mixing across unrelated types never produces a wrong value or a crash, at every scale tested (up to
+2,000,000 iterations); (c) the specific "does mixing need group-level agreement" hazard this
+migration's own established practice demands be checked directly (never assumed by analogy to the
+ADT/List precedents, which each had a different, non-obvious answer) does NOT apply to TCO parameters
+— the existing per-slot candidacy aggregation already forecloses a same-type cross-parameter swap
+producing a mismatched representation, with nothing to add; (d) removing the veto is nonetheless not
+safe to ship, because it is not a pure safety question — it trades the original mixing-safety concern
+for a previously-unrecognized profitability one (a per-iteration defensive-copy cost the arena-only
+frame never pays), and this cost was measured, not merely hypothesized, on two real challenge programs;
+(e) the closure-eligibility path (`RuntimeManagedClosureParamSlots`) is latent, near-dead code for
+ordinary unannotated recursive closures due to the `includeFreshClosures: false` exclusion described
+above, independent of anything to do with the veto. What remains open and unstarted: the four-classifier
+structural collapse and veto removal, exactly as titled at the top of this section and the original
+Phase 6 section above. A future attempt should not re-run the same three shapes tried here without
+first building the piece none of them had: a real signal for "would promoting this specific parameter,
+in this specific loop, actually cost less than leaving it arena" — plausibly sourced from the promoted
+value's own growth behavior across iterations (bounded vs. unbounded, the same distinction
+`AffineStrParams`/`FreshRebuiltListParams` already draw for other purposes) or from proving a
+promotion requires zero defensive copying because the value's own construction already lands in RC
+form with no arena intermediate to copy out of — and should re-run this session's exact three
+measurements (the Str/closure synthetic case, `challenges/1brc/brc.ash` at 10M and 100M rows, and
+`challenges/reverse-complement/reverse-complement.ash`) as its own regression gate before considering
+any variant of veto removal landable. The classifier (D) timing gap documented in the original Phase 6
+section (`TrackRuntimeManagedTcoListPatternAliases` reading `RuntimeManagedParamSlots` before it is
+populated for the current body) remains exactly as characterized there; this investigation did not
+revisit it, beyond discovering its sibling gap in the closure-eligibility path described above.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -1018,12 +1215,18 @@ resolves the fannkuch-redux regression from ~47GB to ~27.4GB, Phase 6's interpro
 call-result-freshness resolution (its own section above) takes it from ~27.4GB to ~1.56GB, and Phase
 6's second resolution (the match-scrutinee wrapper-drop fix, its own section above) closes the
 remaining ~1.56GB residual entirely — fannkuch-redux N=11 now matches the pre-regression ~3.8MB-class
-historical baseline (measured 256KB, constant across N=8 through 11). The four-classifier TCO
-collapse and veto removal Phase 6 was originally titled for remain unstarted and are where the
-bulk of the remaining risk and effort live. Phase 7 is deliberately last: it requires new test
-infrastructure that doesn't exist yet, touches the one subsystem where the audits found a
-currently-*masked* bug (the CFG-blindness/whole-program-gate interaction), and its failure mode if
-sequenced wrong is strictly worse (UAF) than the failure mode it's fixing (leak).
+historical baseline (measured 256KB, constant across N=8 through 11). A third Phase 6 session
+attempted the four-classifier TCO collapse and veto removal themselves, confirmed removing the veto
+is SAFE (never a wrong value or a crash, at every scale and in a directly-adversarial same-type-swap
+test) but measurably regresses peak memory on two real `challenges/` programs (a previously
+unrecognized profitability cost, not a safety one), and reverted all three attempts it tried in full
+— see "Phase 6, third attempt" above. The collapse and veto removal remain unstarted and are where the
+bulk of the remaining risk and effort live; a future attempt needs a real cost signal for "is this
+promotion cheaper than leaving the value arena-managed" before reattempting, not just a safety proof.
+Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
+one subsystem where the audits found a currently-*masked* bug (the CFG-blindness/whole-program-gate
+interaction), and its failure mode if sequenced wrong is strictly worse (UAF) than the failure mode
+it's fixing (leak).
 
 This is multi-week/large-milestone-scale work in aggregate — not a sprint, and not a single PR. Per
 the user's own instruction, do not force any phase past its audit's stated risk level if a
