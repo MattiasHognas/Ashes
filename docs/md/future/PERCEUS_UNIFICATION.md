@@ -14,11 +14,13 @@ investigation with no landed change (two independently-derived fixes were each c
 measurement or by the existing regression suite, to make things worse, and both were reverted rather
 than shipped) — a follow-up session then closed the specific gap that investigation diagnosed
 (interprocedural call-result freshness), landing a real fix: fannkuch-redux N=11 peak RSS dropped from
-the ~27.4GB regression baseline to ~1.56GB (a 17.6x reduction), fully validated. The four-classifier
-TCO collapse and the all-or-nothing frame veto removal that Phase 6 was originally titled for remain
-unstarted — see the "Phase 6 resolution" section below for the full account, including a newly
-characterized, much smaller residual gap (~1.56GB, still above the ~3.8MB historical baseline) left
-for a future phase. Phase 7 is not yet started.
+the ~27.4GB regression baseline to ~1.56GB (a 17.6x reduction), fully validated. A second follow-up
+session closed the remaining ~1.56GB residual too (a match-scrutinee wrapper-cell drop that a
+shared-ownership-identity bug had been silently skipping): fannkuch-redux N=11 peak RSS is now 256KB
+at every N from 8 through 11 — constant, matching the pre-regression historical baseline, not merely
+reduced. The four-classifier TCO collapse and the all-or-nothing frame veto removal that Phase 6 was
+originally titled for remain unstarted — see the "Phase 6 resolution" and "Phase 6 resolution, part 2"
+sections below for the full account. Phase 7 is not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -823,6 +825,114 @@ but was **not** attempted, to avoid delaying this landing:
   own finding that the veto does not fire for fannkuch specifically still holds (unverified against
   the code changes in this fix, since neither touches TCO parameter classification directly).
 
+**Phase 6 resolution, part 2 — match-scrutinee wrapper drop landed, fannkuch-redux ~1.56GB → 256KB
+(constant, no residual scaling).** A follow-up session closed exactly the gap the account above
+diagnosed and deliberately left open.
+
+*Re-verifying the prior diagnosis.* The diagnosis above was confirmed unchanged against current
+code, with one refinement: `TrackOwnedBindingsInPattern` runs immediately before the aliasing loop
+and independently registers its own `OwnershipInfo` for every pattern-bound field name (with
+`RuntimeManaged` hardcoded `false`) before the aliasing loop overwrites how that name is *looked up*
+(never the scope-dictionary entry itself, since the alias lives in a separate table keyed by name).
+That placeholder entry is permanently unreachable once the alias exists — `LookupOwnedValue`
+resolves the alias first — and its own eventual "drop" compiles to `IrInst.RcDrop { RuntimeManaged =
+false }`, which `LlvmCodegen` turns into a no-op (`IrInst.RcDrop => false` when not runtime-managed).
+So the placeholder is genuinely dead weight, not a second live drop path; it does not change the
+diagnosis, only confirms there was no hidden double-accounting to worry about while fixing it.
+
+*The fix.* `TrackRuntimeManagedMatchScrutinee` (`Lowering.Patterns.cs`) now distinguishes "same
+allocation, different name" from "a field extracted from a cell" instead of aliasing both to the
+wrapper's own `OwnershipInfo`. For a freshly constructed scrutinee only (`matchValue is not
+Expr.Var` — the exact fannkuch shape; a scrutinee that is itself an existing bound variable is
+untouched, see below) whose arm pattern is a single top-level `Pattern.Constructor` with every field
+position bound by a plain name (never a nested sub-pattern, never `_`): each such field, if its own
+type is not arena-resettable, gets its own independent `OwnershipInfo` (`RuntimeManaged: true`, the
+field's own type and slot) via `TrackOwnedValue` — overwriting `TrackOwnedBindingsInPattern`'s dead
+placeholder with a live one — instead of an alias entry. The wrapper's own `OwnershipInfo` records
+the matched constructor and the set of field indices that were independently extracted
+(`OwnershipInfo.ExcludedDropFieldIndices`, new). `EmitKnownConstructorRuntimeManagedAdtDrop` gained an
+optional `excludedFieldIndices` parameter (default `null`, so every pre-existing call site is
+byte-for-byte unaffected): it now filters the constructor's fields to those *not* excluded before
+deciding whether there is anything left to recurse into, and always still emits the final
+unconditional `RcDrop` of the value's own header regardless. Net effect: the wrapper's own header and
+each independently extracted field are now released by two entirely separate ownership records, each
+following its own ordinary move/drop lifecycle — moving a field into a self-recursive tail call
+(marking only its own record `Moved`) can no longer suppress the wrapper's own, unrelated header
+release, and a field that is never moved is dropped once by its own record with the wrapper dropping
+its own header once alongside it, matching the ordinary (non-buggy) case for any other tracked value.
+
+*Why this is safe.* The construction-side and consumption-side invariants that made the wrapper's
+own recursive drop dangerous to touch carelessly are both preserved by construction, not by
+argument: (1) a field position matched by anything other than a plain top-level name (a nested
+constructor/tuple/cons pattern, or the existing `TrackRuntimeManagedTcoListPatternAliases`/
+`RecordPendingNestedTcoPatternAliasCandidates` nested-TCO-alias machinery PR #298 hardened) is never
+added to the exclusion set and stays on the pre-existing aliasing path, completely unchanged; (2) a
+resource-typed field (its own `CleanupResource`/moved-or-closed diagnostic lifecycle, orthogonal to
+RC drop bookkeeping) is explicitly excluded from independent tracking and also stays on the
+pre-existing path; (3) the "matchValue is an existing bound variable" branch of
+`TrackRuntimeManagedMatchScrutinee` — where the reuse-token mechanism
+(`GetMatchReuseScrutinee`/`TryGetRuntimeManagedReuseScrutinee`/`PublishTagSwitchArmReuseToken`) and
+the nested-TCO-alias fix-up both live — is entirely untouched; this fix only ever changes behavior
+for a freshly constructed scrutinee, which by construction is referenced nowhere else and cannot be a
+reuse-token candidate. The wrapper's own recursive drop, when it still has any non-excluded
+runtime-managed field left (the common no-fix-applies case, or a field position this fix does not
+claim), is byte-for-byte the pre-existing code path; when every runtime-managed field was
+independently extracted, the `RcIsUnique`-gated child walk simply finds nothing left to do and the
+function degenerates to its own pre-existing "no child fields" fast path (unconditional final
+`RcDrop`, no walk at all) — the exact behavior an ordinary tracked value with no runtime-managed
+fields already gets today.
+
+*Adversarial regression suite* (`MatchScrutineeWrapperDropTests.cs`, five tests; two are
+count-precise IR assertions, confirmed to fail without the fix by reverting it locally and
+re-running before trusting them): the exact fannkuch shape (field forwarded into a self-recursive
+tail call — wrapper drop count `>= 1`, was `0` before the fix); an ordinary non-tail-call match on a
+fresh wrapper with the extracted field read once and never forwarded (wrapper drop count exactly
+`1`, field's own drop count exactly `1` — not zero, not double); the extracted field used twice in
+the arm body; a nested match directly on the extracted field (the untouched "existing variable"
+branch); and a field position matched by a nested sub-pattern rather than a plain name (confirms the
+gate correctly leaves it on the old path). An end-to-end counterpart
+(`tests/runtime_rc_tco_match_scrutinee_wrapper_drop.ash`, a 100,000-iteration version of the exact
+shape) and a second one exercising the ordinary/twice-used/nested-match adversarial cases
+(`tests/runtime_rc_match_scrutinee_wrapper_drop_ordinary.ash`) both pin correct output end to end.
+
+*Measured result.* fannkuch-redux, before -> after this fix (both built from the same tip, `main`
+plus the Phase 6 interprocedural-freshness fix above; times are single-run wall clock on a loaded
+32-thread desktop, not isolated, so treat time deltas as indicative rather than precise — RSS is the
+load-bearing number here and is unaffected by CPU contention):
+
+| N | RSS before | RSS after | Time before | Time after |
+|---|---|---|---|---|
+| 8 | 1,280 KB | 256 KB | 0.02s | 0.02s |
+| 9 | 14,080 KB | 256 KB | 0.24s | 0.24s |
+| 10 | 141,312 KB | 256 KB | 2.87s | 2.80s |
+| 11 | 1,556,480 KB | 256 KB | 36.18s | 35.98s |
+
+RSS at every N is now 256 KB — the same floor as N=8, i.e. genuinely constant, not merely reduced;
+the residual per-iteration leak this fix targeted is fully closed, not partially. Checksum `556355`
+and `Pfannkuchen(11) = 51` unchanged (byte-identical stdout, `cmp` verified, not just eyeballed).
+
+Full validation: C# suite 1708/1708 (+5 new), LSP suite 52/52, e2e suite 544/0 (+2 new),
+`dotnet format --verify-no-changes` clean. Full `challenges/` suite re-run against a baseline
+compiler built from this same tip with the fix reverted (`git stash` of the three touched
+`Ashes.Semantics` files, not a separate clone, since the fix is a pure source change with no build
+artifacts to go stale): binary-trees N=21 (196,096 KB vs 196,352 KB baseline, noise-level, byte-
+identical output — CO-38 sentinel unaffected), spectral-norm N=5,500, mandelbrot N=4,000, fasta
+N=5,000,000, pidigits N=10,000, n-body N=5,000,000, k-nucleotide and reverse-complement (fasta
+N=1,000,000 input), regex-redux (fasta N=5,000,000 input), and 1BRC (10M and 100M rows — 9,048,684 KB
+in both at 100M, exactly equal, no CO-32-shaped regression) all byte-identical output and
+unchanged time/RSS versus the reverted-fix baseline — fannkuch-redux is the only benchmark this fix
+moves, exactly as expected.
+
+**What's still open after this fix**: the four-classifier TCO collapse and all-or-nothing veto
+removal Phase 6 was originally titled for (§6's own scope) remain fully unstarted and are unaffected
+by either part of this resolution. The "matchValue is an existing bound variable" branch of
+`TrackRuntimeManagedMatchScrutinee` was deliberately left untouched by this fix (see "why this is
+safe" above) — whether it has an analogous wrapper-drop gap of its own was not investigated, since
+that branch's owner is the pre-existing variable's own binding (already tracked and dropped by its
+own enclosing scope regardless of this match), not a synthetic one this fix's mechanism creates; if
+one exists there it is a materially different, smaller-blast-radius shape than the one fixed here and
+was not reproduced or measured.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -904,12 +1014,12 @@ As enumerated in §6: **Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7**, wit
 sub-parts landing together (never (a) without (b)). Phases 1-3 are the highest-value, lowest-risk
 starting point: mechanical, narrow blast radius, and each gives a real measured improvement while
 proving the "unified ownership fact, consulted not re-derived" pattern — Phase 3 in particular
-resolves the fannkuch-redux regression from ~47GB to ~27.4GB, and Phase 6's interprocedural
-call-result-freshness resolution (its own section above) takes it from ~27.4GB to ~1.56GB. That
-residual ~1.56GB (still ~400x the pre-regression ~3.8MB baseline) is now a small, specifically
-characterized bookkeeping gap in the match-scrutinee pattern-alias mechanism (see Phase 6's own
-"What's still open" account) rather than the large, unscoped question it was before — the four-classifier
-TCO collapse and veto removal Phase 6 was originally titled for remain unstarted and are where the
+resolves the fannkuch-redux regression from ~47GB to ~27.4GB, Phase 6's interprocedural
+call-result-freshness resolution (its own section above) takes it from ~27.4GB to ~1.56GB, and Phase
+6's second resolution (the match-scrutinee wrapper-drop fix, its own section above) closes the
+remaining ~1.56GB residual entirely — fannkuch-redux N=11 now matches the pre-regression ~3.8MB-class
+historical baseline (measured 256KB, constant across N=8 through 11). The four-classifier TCO
+collapse and veto removal Phase 6 was originally titled for remain unstarted and are where the
 bulk of the remaining risk and effort live. Phase 7 is deliberately last: it requires new test
 infrastructure that doesn't exist yet, touches the one subsystem where the audits found a
 currently-*masked* bug (the CFG-blindness/whole-program-gate interaction), and its failure mode if

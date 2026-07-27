@@ -332,7 +332,8 @@ public sealed partial class Lowering
         bool isResourceBearing = false,
         bool runtimeManaged = false,
         ConstructorSymbol? runtimeConstructor = null,
-        bool runtimeDeepUnique = false)
+        bool runtimeDeepUnique = false,
+        IReadOnlySet<int>? excludedDropFieldIndices = null)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -361,6 +362,19 @@ public sealed partial class Lowering
         /// sharing clears the fact before drop generation.
         /// </summary>
         public bool RuntimeDeepUnique { get; set; } = runtimeDeepUnique;
+
+        /// <summary>
+        /// Constructor field indices this value's own recursive drop must never touch, because a
+        /// pattern match already extracted those specific fields into their own independently tracked
+        /// bindings — <see cref="EmitConstructorFieldBindings"/> extracts a field by loading its stored
+        /// pointer without duplicating it, so the moment a field gets its own binding and its own
+        /// <see cref="OwnershipInfo"/> entry, ownership of that one field has already transferred away
+        /// from this value; recursing into it here as well, on top of whatever that field's own binding
+        /// later does with it, would double-release the same allocation. Null or empty means every
+        /// runtime-managed field is still this value's own responsibility, exactly as for any other
+        /// tracked value.
+        /// </summary>
+        public IReadOnlySet<int>? ExcludedDropFieldIndices { get; } = excludedDropFieldIndices;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The

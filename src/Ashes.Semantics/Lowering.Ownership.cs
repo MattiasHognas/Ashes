@@ -160,7 +160,8 @@ public sealed partial class Lowering
         TypeRef? type = null,
         bool runtimeManaged = false,
         ConstructorSymbol? runtimeConstructor = null,
-        bool runtimeDeepUnique = false)
+        bool runtimeDeepUnique = false,
+        IReadOnlySet<int>? excludedDropFieldIndices = null)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -176,7 +177,8 @@ public sealed partial class Lowering
                 isResourceBearing,
                 runtimeManaged,
                 runtimeConstructor,
-                runtimeDeepUnique);
+                runtimeDeepUnique,
+                excludedDropFieldIndices);
         }
     }
 
@@ -358,7 +360,8 @@ public sealed partial class Lowering
                     loadTemp,
                     runtimeAdt,
                     constructor,
-                    info.RuntimeDeepUnique);
+                    info.RuntimeDeepUnique,
+                    info.ExcludedDropFieldIndices);
             }
             else
             {
@@ -745,11 +748,17 @@ public sealed partial class Lowering
         int valueTemp,
         TypeRef.TNamedType named,
         ConstructorSymbol constructor,
-        bool knownUnique)
+        bool knownUnique,
+        IReadOnlySet<int>? excludedFieldIndices = null)
     {
         List<(int Index, TypeRef Type)> childFields = [];
         for (int i = 0; i < constructor.Arity; i++)
         {
+            if (excludedFieldIndices is not null && excludedFieldIndices.Contains(i))
+            {
+                continue;
+            }
+
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
             if (!CanArenaReset(fieldType))
             {
