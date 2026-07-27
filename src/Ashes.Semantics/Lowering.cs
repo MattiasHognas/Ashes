@@ -5107,6 +5107,20 @@ public sealed partial class Lowering
             _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
             _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
         }
+        else if (_lambdaDepth == 0 && letRecursive.Value is Expr.Lambda)
+        {
+            // A capturing top-level `let recursive` (one whose body calls another top-level helper, so
+            // its own closure environment is non-empty) still has a statically known code label at this
+            // declaration site — mirrors LowerLetRegisterKnownFunctionIdentity's own fallback for a
+            // plain, non-recursive top-level let. Without this, a recursive function's result is never
+            // resolvable by TryResolveKnownFunctionResultOwnership at any of its call sites (the
+            // resultLabel -> function name reverse lookup always misses), silently discarding
+            // FunctionOwnershipSummary.ResultProvenance for every non-trivial recursive function in a
+            // program — not just an unresolved edge case, but the common case, since a recursive helper
+            // calling any sibling top-level function is the ordinary shape, not the exception.
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
+            _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
+        }
     }
 
 

@@ -281,4 +281,70 @@ public sealed class OwnershipProvenanceTests
         summary.ResultProvenance.RcEligible.ShouldBeFalse();
         summary.ResultProvenance.ForwardsTo.ShouldBeNull();
     }
+
+    [Test]
+    public void Positional_single_constructor_field_nested_in_a_multi_constructor_parent_is_rc_eligible()
+    {
+        // The exact shape fannkuch-redux's nextPerm/Step/State pair has: State is a positional
+        // (no field names), single-constructor accumulator type, embedded as a field of Step, a
+        // SEPARATE, multi-constructor (Done | Continue) parent. IsFreshConstructionArgument's own
+        // narrower per-argument check rejects the nested S(...) construction outright (its own
+        // fields are bare Vars, never literals), so this shape only resolves fresh via
+        // IsDirectRcConstruction's fallback onto IsFreshRuntimeManageableAdtExpressionCore — the
+        // same top-cell-freshness query the construction-time lowering itself consults, so the two
+        // can never disagree about the same shape. Before that fallback existed, this construction
+        // (and every recursive function shaped like it) never resolved through
+        // TryResolveKnownFunctionResultOwnership, forcing every caller into an unconditional O(size)
+        // defensive deep copy on every call — the dominant driver of fannkuch-redux's ~27.4GB
+        // regression.
+        const string source =
+            """
+            type State =
+                | S(List(Int), List(Int))
+            type Step =
+                | Done
+                | Continue(State, Int)
+            let recursive next r perm count =
+                if r == 0
+                then Done
+                else Continue(S(perm)(count))(r)
+            in next(1)([1, 2])([3, 4])
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("next");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Bare_variable_directly_as_a_nested_adt_typed_field_is_never_treated_as_fresh()
+    {
+        // Adversarial guard for the new fallback (see the sibling test above): a nested ADT-typed
+        // field is only ever recognized fresh when it is ITSELF a constructor application
+        // (IsFreshTcoOwnedChildAdtConstructorApplication requires IsTopCellFreshAdtConstruction to
+        // match) — never a bare variable, no matter how "fresh-looking" the surrounding shape is.
+        // `make`'s only terminal arm builds a brand-new Continue cell, but hands it the CALLER'S OWN
+        // `st` parameter unchanged as the nested State field, rather than a new S(...) construction.
+        // Trusting this as fresh would let a caller's defensive copy be skipped for a value that is
+        // still exactly the parameter it was handed — a genuine aliasing hazard structurally
+        // identical to Rewrapping_a_match_extracted_field_is_never_treated_as_fresh, just through the
+        // new TCO-shaped nested-field path instead of the record path.
+        const string source =
+            """
+            type State =
+                | S(List(Int), List(Int))
+            type Step =
+                | Done
+                | Continue(State, Int)
+            let make st r = Continue(st)(r)
+            in make(S([1])([2]))(1)
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("make");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
 }

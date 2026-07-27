@@ -724,6 +724,13 @@ public sealed partial class Lowering
                     || CanRuntimeManageGenericCopyAdtConstructorApplication(constructor, arguments, resultType)
                     || CanRuntimeManageFreshHeapChildAdtConstructorApplication(constructor, arguments, resultType)
                     || CanRuntimeManageOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
+                    // A positional, single-constructor accumulator shape (e.g. a TCO loop's own state
+                    // record) nested as a field of an escaping ADT reaches this same ambient allocation
+                    // request too — not only the TCO tail-call-argument path below, which is gated on a
+                    // separate, narrower ambient flag. Consulting the same eligibility test here lets a
+                    // constructor that embeds one of these as a child field (rather than as its own
+                    // loop-carried parameter) still qualify.
+                    || CanRuntimeManageTcoOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
                     || CanRuntimeManageRecursiveAdtConstructorApplication(constructor, arguments, resultType)
                     || runtimeReuseRequest
                         && CanRuntimeReuseAdtConstructorApplication(constructor, arguments, resultType))
