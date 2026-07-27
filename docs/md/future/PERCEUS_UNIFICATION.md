@@ -9,7 +9,10 @@ Phase 3 (closure/function-result provenance unification + borrow-forwarding fix,
 Phase 4 (ADTs and Tuples per-expression top-cell freshness, unifying `ProducesFreshRuntimeManageableAdt`/
 `IsFreshRuntimeManageableAdtExpression`/`IsFreshConstructorTree`/`ProducesFreshTuple`, `#309`), and
 Phase 5 (Lists per-expression top-cell freshness + a reused-cell reuse-token/RC bookkeeping fix) have
-all landed on `main`. Phases 6-7 are not yet started.
+all landed on `main`. Phase 6 (TCO loop-carried values) was attempted and is recorded below as an
+investigation, not a landed change: two independently-derived fixes were each confirmed, by direct
+measurement or by the existing regression suite, to make things worse, and both were reverted rather
+than shipped. Phase 7 is not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -476,12 +479,173 @@ case), binary-trees N=21, spectral-norm, mandelbrot, fasta, pidigits, reverse-co
 k-nucleotide — every one byte-identical output and unchanged time/RSS versus a baseline binary built
 from the pre-Phase-5 tree.
 
-**Phase 6 — TCO loop-carried values (Very large, depends on Phases 3-5).** Collapse the four
-independent classifiers (A/B/C/D, §1) into one per-parameter ownership decision; delete the
-all-or-nothing frame veto; fold pattern-derived-alias tracking (D) into ordinary dup/drop placement
-instead of a separate pending-sites table. This phase cannot start meaningfully before Phases 3-5
-land, since TCO's classifiers are built on top of (and duplicate) the ADT/List/closure machinery
-those phases are unifying.
+**Phase 6 — TCO loop-carried values (Very large, depends on Phases 3-5) — attempted, not landed.**
+Scoped as: collapse the four independent classifiers (A/B/C/D, §1) into one per-parameter ownership
+decision; delete the all-or-nothing frame veto; fold pattern-derived-alias tracking (D) into ordinary
+dup/drop placement instead of a separate pending-sites table; and, per the project owner's explicit
+exit criterion, close fannkuch-redux N=11's residual ~27.4GB leak (versus a ~3.8MB pre-regression
+baseline) as a natural consequence of fixing (D). None of this landed. Two independently-scoped fixes
+were designed, implemented, and measured; both were confirmed — not merely suspected — to make things
+worse, and both were reverted. This section records the investigation in full so whoever picks this
+phase up next does not have to re-derive it.
+
+The four classifiers the design catalogued are all still present, largely under the names given in
+§1: `TcoContext.RuntimeManagedParamSlots` (`Lowering.Types.cs`, populated by
+`LowerLambdaCoreIdentifyRuntimeManagedTcoParams` in `Lowering.cs`), the `GetTcoCopyOutKind`/arena
+`TcoBackEdge*` machinery (`Lowering.cs`/`Lowering.Ownership.cs`), `_runtimeManagedResultTemps`
+(`Lowering.cs`), and `_runtimeManagedTcoPatternAliases`/`_pendingNestedTcoPatternAliasSites`
+(`Lowering.cs`/`Lowering.Patterns.cs`). The all-or-nothing veto is
+`LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame` (`Lowering.cs`): it clears every param's
+runtime-managed status the moment any one heap-typed param in the same frame fails eligibility.
+Confirmed directly (via a temporary env-var-gated instrumentation hook on
+`LowerLambdaCoreIdentifyRuntimeManagedTcoParams`, since removed): for `fannkuch-redux`'s `loop`, the
+veto never fires — `st` (the only non-copy-type parameter, a `State = S(List(Int), List(Int))`
+accumulator) is the *only* candidate and it independently qualifies, so there is nothing else in the
+frame for it to conflict with. This means the veto is not fannkuch's problem and deleting it, by
+itself, would not have moved the exit-criterion number — a first concrete data point against the
+design doc's own working assumption that closing classifier (D) would be sufficient.
+
+*Diagnosis, done first, from real IR rather than re-derivation.* Following the design doc's own
+pointer (Phase 3's `ASHES_EXPLAIN_OWNERSHIP=all` trace of `nextPerm`/`rotateFirst`/`setAt`/
+`insertAt`/`loop`), two temporary instrumentation hooks were added (env-var gated, both removed
+before this write-up): one dumping a `TcoContext`'s resolved `RuntimeManagedParamSlots` by self-name,
+one dumping a function's fully lowered (post-`ResolveDeferredTcoResets`) instruction stream by label
+or local-variable name. Reading `loop`'s and `nextPerm`'s real IR side by side (not the doc's
+paraphrase of them) found the actual mechanism:
+
+1. `nextPerm`'s body is `if r == n then Done else match st with | S(perm, count) -> ... if cr > 0
+   then Continue(S(perm2)(count2))(r) else nextPerm(r + 1)(n)(S(perm2)(count2))`. The **recursive**
+   branch's `S(perm2)(count2))` — a tail-call argument to `nextPerm` itself — is emitted as
+   `AllocAdt { RuntimeManaged: true }`, because `_runtimeRcTcoAdtAllocationRequested` is set while
+   lowering a TCO tail-call's own arguments (`LowerCallTcoEvalArg`'s `freshAdt` branch). The
+   **terminal** branch's `S(perm2)(count2))` — nextPerm's own escaping *result*, not a call
+   argument — is emitted as `AllocAdt { RuntimeManaged: false }` (confirmed by direct IR inspection),
+   because the general escaping-result freshness check (`ProducesFreshRuntimeManageableAdt`, called
+   from `LowerEscapingResult` for every lambda body) never recognizes it as fresh:
+   `IsFreshRuntimeManageableAdtExpressionCore`'s constructor-application gates
+   (`CanRuntimeManageCopyAdt`/`CanRuntimeManageGenericCopyAdtConstructorApplication`/
+   `CanRuntimeManageFreshHeapChildAdtConstructorApplication`/
+   `CanRuntimeManageOwnedChildAdtConstructorApplication`/`CanRuntimeManageRecursiveCopyAdt`) all
+   ultimately route a nested named-type field through `CanRuntimeManageAdt`, which requires the
+   nested type have *record syntax* (`DeclaringSyntax.FieldNames.Count > 0`) — `State`'s constructor
+   is positional (`S(List(Int), List(Int))`), so `CanRuntimeManageAdt(State)` is false, and
+   `CanRuntimeManageOwnedChildAdt`'s own multi-constructor gate (`Constructors.Count < 2`) means it
+   can't accept `State` either. The *TCO-parameter* eligibility gate
+   (`CanRuntimeManageTcoOwnedChildAdt`/`CanRuntimeManageTcoOwnedChildAdtConstructorFields`) already
+   handles exactly this shape (a positional single-constructor type whose fields are copy types or
+   lists of copy types) — that is how `st` itself qualifies as a TCO parameter in the first place —
+   but the general escaping-ADT-freshness classifier never consults it. Two different classifiers,
+   answering what should be the same "is this ADT shape ownable" question, disagree about the same
+   type — precisely the disease this whole document is about, just crossing between Phase 4's ADT
+   classifier and Phase 6's TCO classifier rather than within either one.
+2. Because the terminal branch's result is arena, `loop` (nextPerm's caller) — whose own `st`
+   parameter *is* runtime-managed — cannot adopt it cheaply. `loop`'s TCO back-edge normalization
+   (`TcoBackEdgeNormalizeRuntimeManagedArg`) checks `alreadyRuntimeManaged` (from
+   `IsRuntimeManagedResultTemp`, called on the lowered tail-call-argument temp) and, finding it false,
+   falls through to `EmitRuntimeManagedTcoDeepCopy`: a full `CopyOutArena` + per-field `CopyOutList`
+   deep copy of the whole `State`, allocating a **second**, independent copy of the entire
+   permutation/counter list pair, every single outer loop iteration (confirmed live in the resolved
+   IR: `CopyOutArena { StaticSizeBytes = 24, RuntimeManaged: true }` immediately followed by two
+   `CopyOutList` calls, right where the back-edge installs the new `st`). This — not classifier (D)'s
+   pattern-alias table — is the dominant, measured driver of the ~27.4GB residual: one O(size)
+   promotion copy per outer loop iteration (up to 11! ≈ 39.9M iterations for N=11), permanently
+   arena→RC-converting a value that, if the terminal branch built it RC in the first place, would
+   need no conversion at all.
+
+*Fix attempt 1 (construction side only) — made memory worse, reverted.* Extended
+`IsFreshRuntimeManageableAdtExpressionCore` to also accept
+`CanRuntimeManageTcoOwnedChildAdtConstructorApplication`, and extended
+`CanRuntimeManageOwnedChildAdt`'s and `CanRuntimeManageFreshOwnedChildExpression`'s per-field
+type/expression checks to recognize a nested positional single-constructor ADT (via
+`CanRuntimeManageTcoOwnedChildAdt`) and a nested fresh constructor application of it (via a recursive
+`IsFreshRuntimeManageableAdtExpression` call), respectively. Verified by direct IR inspection that
+this correctly flips `nextPerm`'s terminal-branch `S(perm2)(count2)`/`Continue(...)` construction to
+`RuntimeManaged: true`, matching its recursive-branch sibling. **Measured effect on fannkuch-redux
+N=11: RSS *increased*, 27,440,640 KB → 28,999,936 KB** (checksum and `Pfannkuchen(11)` output
+unchanged — still correct, just bigger). Root cause of the regression, found by re-inspecting the
+resolved IR after the change: making the construction RC without also fixing *consumption* is net
+negative. `loop`'s own back-edge still does not recognize the (now genuinely RC) `Step`/`Continue`
+result as already-fresh (`IsRuntimeManagedResultTemp` only recognizes specific instruction targets —
+`AllocAdt`, `ConcatStr`, etc. — reached by a backward scan; a `CallClosure` result, which is what
+`nextPerm(...)`'s return value is at the use site inside `loop`, is not among them), so `loop` still
+performs its own full defensive deep copy exactly as before — now copying an *already-RC* source
+instead of an arena one. Worse, the `Step` wrapper `nextPerm` returns is never registered as an owned
+value at all: `TrackRuntimeManagedMatchScrutinee` (the mechanism that would normally arrange for a
+matched scrutinee's drop) only fires for a `Var`-bound owned scrutinee or an
+`IsRuntimeManagedResultTemp`-recognized temp — neither applies to a bare `Call` expression scrutinee
+(`match nextPerm(...) with | Continue(st2, r2) -> ...`) — so the now-RC wrapper cell is allocated and
+then never dropped: a brand new leak that did not exist when the same value was arena (arena needs no
+drop). This is exactly the interprocedural, "does an ordinary call's result — not just a TCO tail-call
+argument — need RC promotion, and can the caller adopt it without re-copying" question Phase 3's own
+write-up flagged and explicitly declined to chase ("a genuinely different, inter-procedural
+question... needing each callee's own provenance resolved recursively through a call cycle
+(`rotateFirst`/`setAt`/`insertAt`/`nextPerm` all call each other)"). Reverted in full.
+
+*Fix attempt 2 (classifier D itself) — closes a real, independently-confirmed gap, but a narrower one
+than fannkuch's driver, and a broader version of it regresses an existing regression test.* Separately
+from the fannkuch investigation, direct instrumentation of `TrackRuntimeManagedTcoListPatternAliases`
+(the eager half of classifier D) found it can **never fire** for an ordinary, unannotated TCO
+accumulator: the check it makes — `_tcoCtx.RuntimeManagedParamSlots.Contains(parent.Slot)` — reads a
+classification computed once at loop entry, *before* the body (including the very match statement
+being lowered) has run; a parameter's eligibility for an unannotated accumulator is only known after
+the whole body is lowered and `LowerLambdaCoreRefreshRuntimeManagedTcoParams` has run — which is
+*after* this check's only opportunity to fire. Confirmed live: for both a synthetic ADT-scrutinee
+test and (by inspection) fannkuch's own `S(perm, count)` match, `RuntimeManagedParamSlots` is empty at
+exactly this checkpoint. This falsifies `ResolvePendingNestedTcoPatternAliasSites`'s own documented
+assumption that "direct" bindings (extracted straight off a declared TCO parameter, as opposed to a
+multi-level chain) are already protected by the eager pass and can safely be excluded from the
+retroactive one — for an unannotated accumulator, *neither* pass protects a direct binding today.
+Widening `TrackRuntimeManagedTcoListPatternAliases`'s scrutinee-type guard from `TList`-only to also
+accept `TNamedType`/`TTuple` (closing the literal "ADT scrutinees are invisible here" gap named in the
+design doc) is correct but inert on its own, since the eager pass this widens essentially never fires
+for realistic unannotated loops regardless of scrutinee type. The change that actually matters is in
+`ResolvePendingNestedTcoPatternAliasSites`: replacing its "exclude any direct binding" filter with
+"exclude only a binding the eager pass actually registered" correctly retroactively protects a direct
+binding the eager pass missed. A new adversarial test
+(`Adt_scrutinee_field_reused_in_tco_back_edge_gets_protective_dup`) confirmed both directions: it
+fails without this change (no `RcDup` anywhere in the function) and passes with it. But the *broader*
+form of this fix regresses `NestedTcoPatternAliasTests.Copy_typed_tuple_field_is_not_protected_as_
+runtime_managed` — the existing PR #298 regression test — because a plain list-cons-level direct
+binding that simply becomes the *same parameter's own next value* (e.g. `rest` flowing unchanged into
+the tail call that replaces `tbl`) is already correctly handled by the ordinary per-parameter back-edge
+argument-threading machinery (classifier B), independent of the pattern-alias table entirely; blanket
+including every direct binding as a retroactive-protection candidate now also protects bindings that
+never needed it (e.g. `pair`, consumed immediately by a nested match and never independently escaping)
+whenever eager didn't happen to register them, producing extra, unwanted protective dups the existing
+test correctly caught. Distinguishing "this direct binding independently escapes and needs the
+pattern-alias table's protection" from "this direct binding merely becomes the parameter's own next
+value and is already handled by the ordinary argument-threading path" is exactly the liveness question
+the design doc's item 4 (§5) describes as needing the extended `FunctionOwnershipSummary` to answer
+properly, rather than a further ad hoc condition bolted onto the pending-sites table. Reverted in
+full alongside its test.
+
+**Net result: no code change landed for this phase.** The tree at the end of this investigation is
+byte-for-byte identical to its start (verified: `git status`/`git diff` clean against the merged
+`main` tip). fannkuch-redux N=11 is unchanged at **27,440,640 KB peak RSS** (checksum `556355`,
+`Pfannkuchen(11) = 51`) — the exit criterion was not met. Per the explicit instruction that accompanied
+this phase ("if it turns out to need a fifth, genuinely separate mechanism... STOP and report that
+discrepancy clearly rather than either silently shipping without meeting the exit criterion, or
+forcing an unsound fix just to move the number"), this is reported as exactly that discrepancy rather
+than rounded up. What is now confirmed, with IR-level evidence rather than inference from source: (a)
+the all-or-nothing veto is not fannkuch's problem and can likely be removed later without affecting
+this benchmark either way, though its removal was not attempted here given the scale of the four-
+classifier collapse this would need to be validated alongside; (b) fannkuch's residual leak is a
+construction/consumption pair spanning Phase 4's ADT-freshness classifier and an interprocedural
+call-result-freshness question Phase 3 already flagged and declined — not primarily a TCO
+parameter-classification question, so it sits only partly inside this phase's own scope as titled; (c)
+classifier (D)'s pattern-alias table has a real, independently-reproducible protection gap for direct
+bindings off an unannotated TCO accumulator (of any scrutinee type, not just ADTs), which is exactly
+"fold pattern-derived-alias tracking into ordinary dup/drop placement" territory, but closing it
+correctly needs the same liveness reasoning the extended `FunctionOwnershipSummary` is meant to
+provide, not a further special case in the existing ad hoc table — attempting the latter produces a
+choice between "too narrow to help" and "too broad, regressing an existing UAF-history regression
+test," with no safe middle ground found in the time available. Whoever picks this up next should
+likely sequence it as: first extend `FunctionOwnershipSummary`/`ExpressionFreshness` to answer "is a
+specific call's result fresh, resolved recursively through the callee's own body" (the item Phase 3
+explicitly deferred), since that is a prerequisite for closing fannkuch's actual leak soundly; only
+then attempt the TCO-specific classifier collapse and veto removal this phase was titled for, now able
+to route classifier (D) through the same per-value liveness answer instead of patching the pending-
+sites table's exclusion rule directly.
 
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
