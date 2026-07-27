@@ -185,7 +185,7 @@ worked around — tracked here as they're found, updated once fixed:
 
 `selfhost/Frontend/` (`ashes.json` + `Tokens.ash` + `Lexer.ash` + `Main.ash`) is a complete,
 working port of `src/Ashes.Frontend/Lexer.cs` + `Tokens.cs`, validated with the differential
-strategy above via `selfhost/tools/LexDump` (C# side) + `selfhost/tools/diff-lex.py`:
+strategy above via `selfhost/tools/LexDump` (C# side) + `selfhost/tools/diff-lex.sh`:
 
 - **Full corpus** (616 `.ash` files: `tests/`, `lib/`, `examples/`): 572/616 exact token-stream
   matches. All 44 differences are the UTF-8-byte-vs-UTF-16-char-unit position divergence scoped
