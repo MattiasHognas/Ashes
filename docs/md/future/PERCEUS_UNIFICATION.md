@@ -41,14 +41,38 @@ classification before this phase started; the genuinely ambient/reactive pieces 
 `IsFreshListConstructionExpression` (no control-flow transparency) and `IsRuntimeManagedResultTemp`'s
 final "did this temp actually land RC" check (used symmetrically by both List's and Tuple's per-element
 predicates — Phase 4 did not eliminate it for Tuples either, so Phase 5 left it alone for Lists too,
-rather than making the two categories diverge for no proven benefit). Lists do NOT share the ADT
-AND-reconciliation hazard, for a stronger reason than Tuples' (which have "only one shape" but at
-least a constructible if-meaningless group key): a list has no sibling-constructor identity to group
-by AT ALL, so an AND-style reconciliation has no coherent key to key on — this was established
-analytically from the type's structure rather than by implementing and reverting an AND attempt (the
-one respect in which this phase's "test it, don't assume" discipline was a structural argument plus
-full regression-suite confirmation, not a literal implement/observe-breakage/revert cycle the way
-Phase 4's tuple finding was). The tail-sharing safeguard this phase needed and neither ADT nor Tuple
+rather than making the two categories diverge for no proven benefit).
+
+**Correction, made after the checkpoint report on this exact question**: this note originally claimed
+Lists do not share the ADT AND-reconciliation hazard, reasoning that a list has no sibling-constructor
+identity for an AND-style reconciliation to key on. That structural argument was real but incomplete —
+it explains why there is no "different constructor of the same declared type" hazard, but missed a
+DIFFERENT mixing hazard that does not need one: `if cond then existingList else [fresh, list]`, one
+arm a bare-Var passthrough of an existing (not provably fresh) binding, the other a genuine fresh
+construction. An existence check (OR) sets the ambient RC-eligibility flag for the whole escaping
+position, so the fresh arm's cons cell is allocated on the RC heap (`Alloc RuntimeManaged: true`) —
+but the join-level `MarkUniformRuntimeManagedResult`/`MarkRuntimeManagedMatchResult` machinery (which
+decides whether the JOINED/matched value is actually treated as owned) requires every arm
+independently verified runtime-managed, which the passthrough arm never is. Direct IR inspection
+confirmed the two mechanisms disagree (an orphaned `Alloc{RuntimeManaged: true}` with no reachable
+`RcDrop`) — a real, provable bookkeeping defect, fixed by requiring every terminal independently fresh
+(AND, not OR) so the two verdicts can no longer disagree. **What was NOT confirmed**: an actual
+process-memory leak. Compiled-binary testing at real scale (a discarding loop and a consuming loop, up
+to 50M iterations; a larger-payload variant to make any real leak visible in RSS) found no measurable
+difference between the pre-fix and post-fix binaries — the orphaned cell appears to be reclaimed by
+the same scope-based bulk arena watermark reset that reclaims ordinary arena garbage, since it never
+escapes its own allocating scope before that reset runs. Whether that reclaim path holds in every
+context this shape could arise in was not re-derived from the codegen/runtime source in the time
+available. The fix is real and unambiguously correct (it cannot make anything less safe, and costs
+nothing) but should be read as "a provable bookkeeping defect worth removing outright," not "a leak
+this phase's own testing caught live" — the two are different claims, deliberately not conflated. The
+same latent gap, by the same reasoning, appears to reproduce for ADTs/Tuples' `AnyArmConsistentlyFresh`
+too (a bare-Var sibling has no constructor-identity group key, so it is excluded from reconciliation
+exactly like a funneling recursive call) — checked only at the IR level, not independently confirmed
+at the compiled-binary level, and not fixed here since that is already-shipped, more broadly-used code
+this phase was not scoped to touch; reported separately for whoever owns that decision.
+
+The tail-sharing safeguard this phase needed and neither ADT nor Tuple
 did: `IsFreshListConstructionExpression`'s terminal set (`ListLit`, or a `Cons` chain bottoming out in
 one) was extended with control-flow transparency (via `CollectFreshEscapeTerminals`, as
 `ProducesFreshRuntimeManageableList`) but deliberately NOT widened to accept `Expr.Call`/`Expr.Var` —
@@ -404,12 +428,18 @@ reverse-complement, k-nucleotide, 1brc) all confirmed unchanged versus the Phase
 `ProducesFreshTuple`: it routes `IsFreshListConstructionExpression` through the shared
 `CollectFreshEscapeTerminals` walk so a fresh list literal returned from an if/match arm is now
 recognized as an escaping runtime-managed result — previously only the whole let/lambda body being
-the construction directly was recognized. Kept Tuple's existence-check (OR) semantics rather than
-ADTs' AND-based reconciliation: unlike an ADT, a list has no sibling-constructor identity for an
-AND-style reconciliation to even key on, so this is structurally not the same hazard, not merely an
-absence of an observed regression (see the status note above for the full reasoning, including why
-this phase's "test it, don't assume" evidence took a different form than Phase 4's implement/revert
-cycle). Deliberately did NOT widen `IsFreshListConstructionExpression`'s terminal set (`ListLit` /
+the construction directly was recognized. Initially kept Tuple's existence-check (OR) semantics on
+the theory that, unlike an ADT, a list has no sibling-constructor identity for an AND-style
+reconciliation to even key on. That theory was checked directly (per a coordinator review) and found
+incomplete: it explains why there is no "different constructor of the same type" hazard, but missed a
+different mixing hazard that needs no group key at all (a bare-Var passthrough of an existing binding
+sharing an escape position with a genuinely fresh sibling arm) — confirmed live by direct IR
+inspection (an orphaned `Alloc{RuntimeManaged: true}` with no reachable `RcDrop`), though NOT
+confirmed as an actual process-memory leak at the compiled-binary level (see the status note above for
+the full account of what was and wasn't verified). Landed as AND (every terminal independently fresh),
+closing the bookkeeping disagreement outright regardless of its measured runtime impact — pinned by a
+dedicated regression test and an e2e test looped at real scale. Deliberately did NOT widen
+`IsFreshListConstructionExpression`'s terminal set (`ListLit` /
 `Cons`-chain-to-`ListLit` only, never `Var`/`Call`) when adding the control-flow transparency — this
 is the tail-sharing safeguard: it keeps this RC-promotion question syntactically disjoint from the
 arena/TCO side's laxer `IsFreshListRebuildExpr` (which answers "safe to whole-clone at a back-edge,"
@@ -433,17 +463,18 @@ instead). No `.ash`-level repro reaching the vulnerable state was found within t
 full-suite regression (zero behavior change) and by inspection, flagged as such rather than presented
 as fully pinned by a dedicated fails-without-the-fix test.
 
-Full C# suite (1697/1697, +4 new `OwnershipTests`), LSP suite (52/52), e2e suite (541/0, +2 new),
+Full C# suite (1698/1698, +5 new `OwnershipTests`), LSP suite (52/52), e2e suite (542/0, +3 new),
 and `dotnet format --verify-no-changes` all green, all unchanged versus the Phase 4 baseline except
 the new tests. Full `challenges/` suite re-run and compared byte-for-byte against a Phase-4-baseline
 binary: 1BRC (`m10000000.txt`, 10M rows: 6.97 GB / ~0.7 s; `m100000000.txt`, 100M rows: 9.05 GB /
-~1.4 s — both output byte-identical to baseline, no CO-32-shaped regression), fannkuch-redux N=11
-(27.44 GB, checksum `556355`, `Pfannkuchen(11) = 51` — matches the ~27.4 GB Phase 4 baseline, this
-phase does not move that number as expected since its residual leak driver is match-extraction
-provenance, not list-element classification), n-body (3,000,000 steps, `List(Body)` accumulator,
-CO-32's original test case), binary-trees N=21, spectral-norm, mandelbrot, fasta, pidigits,
-reverse-complement, and k-nucleotide — every one byte-identical output and unchanged time/RSS versus
-a baseline binary built from the pre-Phase-5 tree.
+~1.4 s — both output byte-identical to baseline, no CO-32-shaped regression, re-confirmed after the
+AND-reconciliation fix), fannkuch-redux N=11 (27.44 GB, checksum `556355`, `Pfannkuchen(11) = 51` —
+matches the ~27.4 GB Phase 4 baseline, this phase does not move that number as expected since its
+residual leak driver is match-extraction provenance, not list-element classification; also
+re-confirmed after the fix), n-body (3,000,000 steps, `List(Body)` accumulator, CO-32's original test
+case), binary-trees N=21, spectral-norm, mandelbrot, fasta, pidigits, reverse-complement, and
+k-nucleotide — every one byte-identical output and unchanged time/RSS versus a baseline binary built
+from the pre-Phase-5 tree.
 
 **Phase 6 — TCO loop-carried values (Very large, depends on Phases 3-5).** Collapse the four
 independent classifiers (A/B/C/D, §1) into one per-parameter ownership decision; delete the

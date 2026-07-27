@@ -1277,6 +1277,60 @@ public sealed class OwnershipTests
             .ShouldBeTrue();
     }
 
+    // Adversarial guard found while re-verifying this phase (not merely proposed -- confirmed live by
+    // direct IR inspection before the fix landed): one arm a bare-Var passthrough of an EXISTING,
+    // independently-owned (here: arena) list binding, the other arm a genuinely fresh list literal.
+    // An existence-check (OR) classifier sets the ambient RC-eligibility flag for the whole escaping
+    // if, so the fresh arm's cons cell is allocated on the RC heap (Alloc RuntimeManaged: true) -- but
+    // the join-level MarkUniformRuntimeManagedResult, which decides whether the JOINED value is
+    // actually treated as owned, requires BOTH arms independently verified runtime-managed, which the
+    // passthrough arm never is. The two mechanisms disagree: pre-fix, exactly one orphaned
+    // Alloc{RuntimeManaged: true} exists with no corresponding RcDrop{TypeName: "List", RuntimeManaged:
+    // true} anywhere in the program -- confirmed via manual revert that this test fails without the
+    // fix. NOTE: compiled-binary testing at real scale (see tests/perceus_list_mixed_passthrough_sibling_no_leak.ash)
+    // did NOT show a measurable RSS difference between the pre-fix and post-fix binaries -- the
+    // orphaned cell appears to be reclaimed by the same scope-based bulk arena reset that reclaims
+    // ordinary arena garbage, since it never escapes its own allocating scope. This is fixed anyway
+    // because the bookkeeping disagreement is real and provable and costs nothing to remove, not
+    // because a live leak/corruption was confirmed at the process level -- see the fuller reasoning on
+    // ProducesFreshRuntimeManageableList in Lowering.TopCellFreshness.cs.
+    [Test]
+    public void Fresh_list_arm_with_existing_passthrough_sibling_stays_uniformly_arena_managed()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let existingList =
+                let p = "p" in
+                let q = "q" in
+                [p, q]
+
+            let build flag =
+                let discard = 0 in
+                if flag
+                then existingList
+                else [Ashes.Text.fromInt(1)]
+
+            let escaped = build(false) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        // The list literal in `build`'s OWN body (lambda_0, not the caller's normalization machinery)
+        // must never be RC-allocated: that would be the orphaned cell (Alloc{RuntimeManaged: true}
+        // with no reachable owner) confirmed live before the fix. This deliberately checks only
+        // `build`'s own function, not the whole program: a dynamic closure call's caller-side boundary
+        // (CopyOutList) unconditionally normalizes ANY list a closure returns into a fresh,
+        // properly-tracked RC copy regardless of this classifier -- that pre-existing, unrelated
+        // mechanism is what the `RcDrop{TypeName: "List", RuntimeManaged: true}` pair downstream
+        // belongs to, and asserting it away would conflate a real fix with a false expectation.
+        IrFunction build = ir.Functions.Single(function => string.Equals(function.Label, "lambda_0", StringComparison.Ordinal));
+        build.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "neither arm may be RC-allocated when a sibling arm is a passthrough of an existing, not " +
+            "provably fresh binding -- an existence check would RC-allocate the fresh arm's cons cell " +
+            "while the join declines to own it, permanently leaking it whenever that arm executes.");
+    }
+
     [Test]
     public void Fresh_list_returned_from_match_arms_transfers_runtime_ownership()
     {
