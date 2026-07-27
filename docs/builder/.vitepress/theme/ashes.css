@@ -160,14 +160,18 @@ body {
 }
 
 /* Navigation */
+/* background/backdrop-filter live on .VPNavBar, not .VPNav: a non-none backdrop-filter makes its
+   element a containing block for fixed-position descendants, and the mobile nav overlay
+   (VPNavScreen) is a fixed-position sibling of VPNavBar nested directly inside .VPNav - putting the
+   blur on .VPNav breaks the overlay's viewport-relative positioning instead of just the background. */
 .VPNav {
   border-bottom: 1px solid var(--ashes-line);
-  background: var(--vp-nav-bg-color);
-  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .VPNavBar {
   border-bottom: 0 !important;
+  background: var(--vp-nav-bg-color);
+  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .VPNavBarTitle .title {
@@ -244,8 +248,16 @@ body {
   color: var(--ashes-ember) !important;
 }
 
-.VPLocalNav,
-.VPDocAsideOutlineDropdown .content {
+/* No backdrop-filter here: this bar is position: sticky, and the mobile outline flyout
+   (.VPLocalNavOutlineDropdown .items) is absolutely positioned directly against its bottom edge -
+   blurring a sticky ancestor that a tightly-offset panel sits flush against reads as a seam/overlap
+   at the panel's top edge on iOS Safari, where sticky + backdrop-filter compositing is unreliable. */
+.VPLocalNav {
+  border-color: var(--ashes-line) !important;
+  background: var(--vp-local-nav-bg) !important;
+}
+
+.VPLocalNavOutlineDropdown .items {
   border-color: var(--ashes-line) !important;
   background: var(--vp-local-nav-bg) !important;
   backdrop-filter: blur(16px);
