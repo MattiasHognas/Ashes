@@ -84,14 +84,30 @@ public sealed partial class Lowering
     /// Reconciles a set of terminal arms (collected by <see cref="CollectFreshEscapeTerminals"/>) against
     /// a per-arm freshness predicate and a per-arm grouping key, preserving the CO-38/PR #299 invariant:
     /// a candidate arm is only accepted as making the WHOLE escape fresh when every OTHER arm sharing its
-    /// group is independently fresh too (never an OR across arms that disagree). A funneling sibling
-    /// (one with no group key — e.g. a recursive call that does not itself construct a value of the
-    /// group's shape at this position) never conflicts, since it is not compared against.
+    /// group is independently fresh too (never an OR across arms that disagree). A TRUE funneling
+    /// sibling (<paramref name="isFunnel"/> — a tail self-call back to the function currently being
+    /// lowered) never conflicts: it constructs nothing itself at this position, but by structural
+    /// induction whichever arm it eventually bottoms out at is one of THIS SAME reconciliation's own
+    /// terminals, already governed here.
+    ///
+    /// Every OTHER terminal with no group key (a bare Var, a projected field, an ordinary call — a
+    /// passthrough of a pre-existing, not-provably-fresh value, not a fresh construction and not a
+    /// funnel) DOES conflict with any fresh candidate, unconditionally. Since every terminal collected
+    /// by <see cref="CollectFreshEscapeTerminals"/> is an alternative at the exact same escape position,
+    /// they all share one declared type by construction — there is never a second, genuinely
+    /// different-typed group for a null key to legitimately avoid. Earlier code treated a null group key
+    /// as "no opinion" and skipped it here, so a passthrough sibling's non-freshness never blocked a
+    /// fresh candidate's verdict from winning unopposed — while the passthrough arm's own join-level
+    /// bookkeeping (<c>MarkUniformRuntimeManagedResult</c>/<c>MarkRuntimeManagedMatchResult</c>) correctly
+    /// declined to claim ownership of its own value. The two verdicts disagreeing produced an
+    /// <c>AllocAdt</c>/tuple <c>Alloc</c> with <c>RuntimeManaged: true</c> and no reachable
+    /// <c>RcDrop</c> anywhere in the lowered program: a leak, not a use-after-free.
     /// </summary>
     private static bool AnyArmConsistentlyFresh(
         IReadOnlyList<Expr> arms,
         Func<Expr, bool> isFresh,
-        Func<Expr, string?> groupKey)
+        Func<Expr, string?> groupKey,
+        Func<Expr, bool> isFunnel)
     {
         foreach (Expr arm in arms)
         {
@@ -104,18 +120,19 @@ public sealed partial class Lowering
             bool consistent = true;
             foreach (Expr other in arms)
             {
-                if (ReferenceEquals(other, arm))
+                if (ReferenceEquals(other, arm) || isFunnel(other))
                 {
                     continue;
                 }
 
                 string? otherKey = groupKey(other);
-                if (otherKey is not null
-                    && string.Equals(otherKey, key, StringComparison.Ordinal)
-                    && !isFresh(other))
+                if (otherKey is null || string.Equals(otherKey, key, StringComparison.Ordinal))
                 {
-                    consistent = false;
-                    break;
+                    if (!isFresh(other))
+                    {
+                        consistent = false;
+                        break;
+                    }
                 }
             }
 
@@ -126,5 +143,31 @@ public sealed partial class Lowering
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The one case a null group key must still NOT conflict during <see cref="AnyArmConsistentlyFresh"/>
+    /// reconciliation: a full self-call chain back to the tail-recursive function currently being
+    /// lowered (<c>_tcoCtx</c>), at this exact arity. A tail-recursive parser like
+    /// <c>parseStrBody acc text = match ... with ... -> Ok((acc, t)) | ... -> parseStrBody(acc + h)(t)</c>
+    /// has the recursive-call arm construct nothing here, but every execution path through it bottoms
+    /// out at one of this SAME function's own terminal arms (by structural induction on the recursion) —
+    /// arms this exact reconciliation already governs. Any OTHER non-constructing arm (a bare Var, a
+    /// projected field, a call to a different function) is not exempt: see the leak this distinction
+    /// exists to close in <see cref="AnyArmConsistentlyFresh"/>'s doc comment.
+    /// </summary>
+    private bool IsSelfRecursiveTailFunnelArm(Expr arm)
+    {
+        if (_tcoCtx is null || _tcoCtx.SelfName.Length == 0)
+        {
+            return false;
+        }
+
+        return arm switch
+        {
+            Expr.Call call => IsSelfCallChain(call, _tcoCtx.SelfName, _tcoCtx.ParamCount),
+            Expr.Var v => _tcoCtx.ParamCount == 0 && string.Equals(v.Name, _tcoCtx.SelfName, StringComparison.Ordinal),
+            _ => false,
+        };
     }
 }

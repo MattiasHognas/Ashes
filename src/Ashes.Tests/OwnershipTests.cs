@@ -1591,6 +1591,117 @@ public sealed class OwnershipTests
             "like a direct constructor application.");
     }
 
+    // Regression: AnyArmConsistentlyFresh's null group key for a non-constructing terminal used to be
+    // silently EXCLUDED from the conflict check instead of treated as a real, conflicting key. A bare-Var
+    // passthrough arm (`existing`, aliasing a pre-existing, not-provably-fresh Box) sibling to a fresh
+    // `Full(flag)` construction let the fresh arm's verdict win unopposed, so `Full(flag)` got
+    // `AllocAdt{RuntimeManaged: true}` with no reachable RcDrop anywhere in the lowered program -- a
+    // leak, confirmed via a compiled-binary repro (linear RSS growth, ~5x/10x iteration count ->
+    // ~5x/10x leaked bytes; flat for an all-fresh or all-passthrough control of the same shape). Fixed
+    // by requiring a non-constructing terminal to conflict unless it is a genuine self-recursive tail
+    // funnel (which this one, mkBox, is not -- it isn't even recursive).
+    [Test]
+    public void Adt_mixed_fresh_and_passthrough_sibling_arm_stays_conservative()
+    {
+        var ir = LowerProgram(
+            """
+            type Box =
+                | Empty
+                | Full(Int)
+
+            let mkBox flag existing =
+                if flag == 0
+                then existing
+                else Full(flag)
+
+            mkBox(1)(Full(0))
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1,
+            "a bare-Var passthrough arm (`existing`) sibling to a fresh `Full(flag)` construction must " +
+            "not let the fresh arm's verdict win unopposed -- every AllocAdt in the program must share " +
+            "one representation, matching the CO-38 uniform-representation invariant.");
+    }
+
+    // Tuple sibling of the above: ProducesFreshTuple had the identical null-group-key gap (an existence
+    // check, not even attempting reconciliation). `if flag == 0 then existing else (flag, flag)` sets
+    // the ambient runtime-managed-tuple flag for the whole position on the strength of the fresh arm
+    // alone, promoting the fresh tuple to the RC heap while the passthrough arm is never independently
+    // verified owned -- the identical leak shape, confirmed via a compiled-binary repro.
+    [Test]
+    public void Tuple_mixed_fresh_and_passthrough_sibling_arm_stays_conservative()
+    {
+        var ir = LowerProgram(
+            """
+            let mkPair flag existing =
+                if flag == 0
+                then existing
+                else (flag, flag)
+
+            mkPair(1)((0, 0))
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.Alloc>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.Count.ShouldBe(1,
+            "a bare-Var passthrough arm (`existing`) sibling to a fresh tuple construction must not let " +
+            "the fresh arm's verdict win unopposed -- every tuple Alloc in the program must share one " +
+            "representation.");
+    }
+
+    // Control for the two tests above: a self-recursive tail-call sibling (not a bare-Var passthrough)
+    // must remain exempt from the conflict -- the exact shape every hand-written parser's
+    // `parseStrBody`-style loop depends on (see Tco_loop_string_accumulator_returned_in_tuple_survives_
+    // next_call / ..._adt_wrapped_tuple_survives_next_call in EndToEndNativeBackendTests, which pin the
+    // real Result-typed version of this same pattern). Pins that the fix (requiring a non-constructing
+    // terminal to conflict) did not regress to treating funnel siblings as conflicting too, which would
+    // wrongly force every such loop back to arena-managed.
+    [Test]
+    public void Adt_self_recursive_tail_funnel_sibling_still_escapes()
+    {
+        var ir = LowerProgram(
+            """
+            type Status =
+                | Pending
+                | Done(Int)
+
+            let recursive poll n =
+                if n == 0
+                then Done(n)
+                else poll(n - 1)
+
+            poll(5)
+            """);
+
+        List<bool> runtimeManagedFlags = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.AllocAdt>()
+            .Select(alloc => alloc.RuntimeManaged)
+            .Distinct()
+            .ToList();
+
+        runtimeManagedFlags.ShouldContain(true,
+            "the self-recursive tail-call sibling (`poll(n - 1)`) must stay exempt from the conflict " +
+            "check so `Done(n)`'s constructor application is still recognized as an escaping " +
+            "runtime-managed ADT -- forcing it to conflict would regress every tail-recursive loop " +
+            "shaped like this back to arena-managed.");
+    }
+
     // --- Fresh-RC-producer whitelist: BuiltinRegistry-driven lookup replaces AST pattern matching ---
 
     // The exact call-site shapes the pre-refactor `IsRuntimeRcStringProducer` / `IsRuntimeRcBytesProducer`

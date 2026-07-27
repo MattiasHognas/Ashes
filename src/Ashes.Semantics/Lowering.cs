@@ -2975,27 +2975,63 @@ public sealed partial class Lowering
     // allocates the tuple in the RC heap (only when its elements are themselves runtime-manageable — a
     // scalar tuple stays arena), keeping it alive across calls.
     //
-    // This is an existence check (OR across terminal arms), not the AND-style same-parent-type
-    // reconciliation ADTs need (AnyArmConsistentlyFresh): a design-time hypothesis that tuples share the
-    // ADT CO-38 hazard (PR #299) turned out NOT to hold, and an AND-based attempt here broke two live
-    // regression tests (Tco_loop_string_accumulator_returned_in_(adt_wrapped_)tuple_survives_next_call —
-    // a funneling recursive-call sibling arm was wrongly treated as part of the same reconciliation
-    // group, forcing the classification to false and leaving the returned tuple's string field pointing
-    // into a since-reset TCO arena). The reason tuples genuinely differ from ADTs: the ambient
-    // _runtimeRcTupleAllocationRequested flag this predicate feeds ONLY affects literal TupleLit
-    // allocations actually lowered while this specific escaping body is lowered — it never changes an
-    // existing binding's already-fixed representation (a bare Var/funneling-call arm doesn't allocate
-    // anything new here regardless of the flag), and IsRuntimeManageableTupleElement/
-    // IsRuntimeManagedResultTemp independently re-verify each element's actual representation at every
-    // tuple Alloc site before trusting it as RC. So there is no cross-arm mixing to protect against: an
-    // existence check is sound. ADTs are different because their ambient flag feeds
-    // IsRuntimeManagedConstructorCandidate at EVERY sibling constructor application of the SAME type
-    // reached while lowering the body, not just literal ones already independently re-verified per site.
+    // An existence check (OR across terminal arms) UNLESS a genuine passthrough hazard is present, in
+    // which case it must fail outright. An earlier version of this predicate used a plain existence
+    // check on the theory that tuples don't share the ADT CO-38 hazard (PR #299) — that theory was
+    // incomplete: `if cond then existingTuple else (fresh, tuple)` (one arm a bare-Var passthrough of an
+    // existing, not-provably-fresh binding, the other a genuine TupleLit) sets the ambient
+    // _runtimeRcTupleAllocationRequested flag for the WHOLE position under a plain existence check, so
+    // the fresh arm's TupleLit gets allocated on the RC heap — but the join-level
+    // MarkUniformRuntimeManagedResult/MarkRuntimeManagedMatchResult machinery (which decides whether the
+    // joined/matched value is actually treated as owned) requires every arm independently verified
+    // runtime-managed, which the passthrough arm never is. Confirmed by a compiled-binary repro: an
+    // if/match alternating a passthrough tuple arm with a fresh construction arm, discarded every
+    // iteration, leaks linearly (verified 5x/10x iteration count -> ~5x/10x RSS growth; flat for an
+    // all-fresh or all-passthrough control of the same shape).
+    //
+    // A first attempted fix (requiring EVERY terminal independently fresh, mirroring the ADT engine's
+    // AND) broke text_json_parser_smoke: a match/if whose arms are DIFFERENT constructors of the same
+    // ADT is not automatically a tuple hazard just because one of those constructors happens not to
+    // carry a tuple at all (e.g. `Error("eof")` beside `Ok((acc, tail))` — Error's own argument is a
+    // Str, not a tuple). Error's own outer cell is still a fresh constructor application regardless
+    // (unlike a bare Var, which allocates nothing), so it is not a competing tuple representation and
+    // must not force the whole classification to false. The genuine hazard is narrower: a terminal that
+    // is NEITHER itself tuple-fresh NOR a constructor application at all (a bare Var, a projected field,
+    // an ordinary call) is the only thing that can alias a pre-existing, not-provably-fresh tuple at
+    // this exact position — that is what must conflict with a fresh sibling, and a self-recursive tail
+    // funnel (IsSelfRecursiveTailFunnelArm) is the only such non-constructing terminal that is exempt
+    // (by structural induction its eventual result bottoms out at one of this same function's own
+    // terminals, already governed by this same check when ITS call frame lowers).
     private bool ProducesFreshTuple(Expr body)
     {
         var terminals = new List<Expr>();
         CollectFreshEscapeTerminals(body, terminals);
-        return terminals.Any(IsTopCellFreshTupleTerminal);
+        bool sawFreshTuple = false;
+        foreach (Expr terminal in terminals)
+        {
+            if (IsSelfRecursiveTailFunnelArm(terminal))
+            {
+                continue;
+            }
+
+            if (IsTopCellFreshTupleTerminal(terminal))
+            {
+                sawFreshTuple = true;
+                continue;
+            }
+
+            if (IsTopCellFreshAdtConstruction(terminal, out _, out _, out _))
+            {
+                // A fresh constructor application of a DIFFERENT shape that simply doesn't carry a
+                // tuple here (e.g. Error("eof")) -- it still allocates its own outer cell, so it is not
+                // a passthrough alias and does not conflict.
+                continue;
+            }
+
+            return false;
+        }
+
+        return sawFreshTuple;
     }
 
     // A tuple literal is always top-cell-fresh at this position; a tuple wrapped in an ADT constructor
@@ -3034,9 +3070,11 @@ public sealed partial class Lowering
     // very same type. Since an arena cell's drop is a no-op that never walks into its children, any RC
     // cell reachable through an arena-managed parent then leaks forever once the arena resets.
     // AnyArmConsistentlyFresh (grouped by parent type name) enforces exactly that: a candidate "fresh"
-    // arm is refused when any OTHER arm also constructs the same parent type but is not independently
-    // fresh — a genuinely funneling sibling (a recursive call, not a construction of this type) never
-    // conflicts, since it has no group key.
+    // arm is refused when any OTHER arm either also constructs the same parent type but is not
+    // independently fresh, OR is any other non-constructing passthrough (a bare Var, a projected field,
+    // a call to another function) — the only sibling exempt from that veto is a genuine self-recursive
+    // tail funnel (IsSelfRecursiveTailFunnelArm), since every execution path through it bottoms out at
+    // one of this same function's own terminals, already governed by this same reconciliation.
     private bool ProducesFreshRuntimeManageableAdt(Expr body)
     {
         bool result = ProducesFreshRuntimeManageableAdtCore(body);
@@ -3048,12 +3086,18 @@ public sealed partial class Lowering
     {
         var terminals = new List<Expr>();
         CollectFreshEscapeTerminals(body, terminals);
-        return AnyArmConsistentlyFresh(terminals, IsFreshRuntimeManageableAdtExpression, AdtConstructorGroupKey);
+        return AnyArmConsistentlyFresh(
+            terminals,
+            IsFreshRuntimeManageableAdtExpression,
+            AdtConstructorGroupKey,
+            IsSelfRecursiveTailFunnelArm);
     }
 
     // The reconciliation group key for an ADT terminal arm: the parent type name of the constructor it
     // directly applies, or null when the arm does not directly construct anything at this position (a
-    // funneling call/passthrough, which never conflicts with a sibling's freshness verdict).
+    // bare Var, a projected field, or a call). AnyArmConsistentlyFresh treats every null-keyed arm as
+    // conflicting with a fresh sibling UNLESS it is also a self-recursive tail funnel
+    // (IsSelfRecursiveTailFunnelArm) -- a plain passthrough of an existing value is not exempt.
     private string? AdtConstructorGroupKey(Expr arm)
         => IsTopCellFreshAdtConstruction(arm, out ConstructorSymbol? constructor, out _, out _)
             && constructor is not null
