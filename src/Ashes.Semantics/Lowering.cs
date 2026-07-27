@@ -5464,6 +5464,8 @@ public sealed partial class Lowering
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
         }
+
+        RecordTcoPromotionProfitability(_scopes.Peek(), tco);
     }
 
     private void ResolvePendingRuntimeArgumentFlags(TcoContext? tco)
@@ -6119,27 +6121,7 @@ public sealed partial class Lowering
 
             TypeRef parameterType = Prune(parameter.T);
             int paramIndex = tco.ParamSlots.IndexOf(slot);
-            bool freshRebuiltList = paramIndex >= 0
-                && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
-            bool affineConsList = paramIndex >= 0
-                && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
-            bool consumedListTail = paramIndex >= 0
-                && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
-            bool freshClosure = paramIndex >= 0
-                && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
-            if (parameterType is TypeRef.TStr or TypeRef.TBigInt
-                || parameterType is TypeRef.TTuple tuple
-                    && CanRuntimeManageOwnedTupleType(tuple)
-                || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
-                || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
-                || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageTcoAdt(ownedAdt)
-                || parameterType is TypeRef.TList list
-                    && CanRuntimeManageTcoListElement(list.Element)
-                    && (freshRebuiltList
-                        || affineConsList
-                        || consumedListTail && !CanArenaReset(Prune(list.Element))
-                            && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
-                || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure)
+            if (IsIndependentlyRcEligibleTcoParam(parameterType, paramIndex, tco, includeFreshClosures))
             {
                 tco.RuntimeManagedParamSlots.Add(slot);
                 tco.RuntimeManagedParamTypes[slot] = parameterType;
@@ -6155,6 +6137,44 @@ public sealed partial class Lowering
         }
 
         LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(scope, tco);
+    }
+
+    /// <summary>
+    /// Classifier A (see the TCO section of the ownership-unification design doc): whether a TCO
+    /// parameter's own type/usage shape independently licenses runtime-managed (RC) representation,
+    /// with no regard for any other parameter in the same loop frame. Factored out of <see
+    /// cref="LowerLambdaCoreIdentifyRuntimeManagedTcoParams"/> so the promotion-profitability signal
+    /// (<see cref="RecordTcoPromotionProfitability"/>) can ask the identical question a second time —
+    /// e.g. after the frame-wide veto has cleared <see cref="TcoContext.RuntimeManagedParamSlots"/> —
+    /// without re-deriving it as a second, potentially-diverging copy of the same condition.
+    /// </summary>
+    private bool IsIndependentlyRcEligibleTcoParam(
+        TypeRef parameterType,
+        int paramIndex,
+        TcoContext tco,
+        bool includeFreshClosures)
+    {
+        bool freshRebuiltList = paramIndex >= 0
+            && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
+        bool affineConsList = paramIndex >= 0
+            && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
+        bool consumedListTail = paramIndex >= 0
+            && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
+        bool freshClosure = paramIndex >= 0
+            && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
+        return parameterType is TypeRef.TStr or TypeRef.TBigInt
+            || parameterType is TypeRef.TTuple tuple
+                && CanRuntimeManageOwnedTupleType(tuple)
+            || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
+            || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
+            || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageTcoAdt(ownedAdt)
+            || parameterType is TypeRef.TList list
+                && CanRuntimeManageTcoListElement(list.Element)
+                && (freshRebuiltList
+                    || affineConsList
+                    || consumedListTail && !CanArenaReset(Prune(list.Element))
+                        && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
+            || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure;
     }
 
     private void LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(
