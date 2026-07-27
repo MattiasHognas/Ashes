@@ -518,7 +518,7 @@ public sealed partial class Lowering
             Emit(new IrInst.JumpIfFalse(guardTemp, armCleanupLabel));
         }
 
-        TrackRuntimeManagedMatchScrutinee(match.Value, valueTemp, valueType, patternBindings);
+        TrackRuntimeManagedMatchScrutinee(match.Value, valueTemp, valueType, patternBindings, match.Cases[i].Pattern);
     }
 
     /// <summary>
@@ -917,14 +917,15 @@ public sealed partial class Lowering
         }
 
         TrackOwnedBindingsInPattern(patternBindings);
-        TrackRuntimeManagedMatchScrutinee(matchValue, valueTemp, valueType, patternBindings);
+        TrackRuntimeManagedMatchScrutinee(matchValue, valueTemp, valueType, patternBindings, cases[i].Pattern);
     }
 
     private void TrackRuntimeManagedMatchScrutinee(
         Expr matchValue,
         int valueTemp,
         TypeRef valueType,
-        IReadOnlyDictionary<string, TypeRef> patternBindings)
+        IReadOnlyDictionary<string, TypeRef> patternBindings,
+        Pattern armPattern)
     {
         // Task/coroutine bodies still use scheduler-owned arenas. Until cross-thread RC publication
         // exists, their match payloads must stay on that path instead of entering local RC transfer.
@@ -945,31 +946,8 @@ public sealed partial class Lowering
         TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
         RecordPendingNestedTcoPatternAliasCandidates(matchValue, patternBindings);
 
-        string? ownerName = null;
-        if (matchValue is Expr.Var variable
-            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true })
-        {
-            ownerName = ResolveOwnershipAlias(variable.Name);
-        }
-        else if (matchValue is not Expr.Var && IsRuntimeManagedResultTemp(valueTemp))
-        {
-            TypeRef ownedType = Prune(valueType);
-            string? typeName = GetOwnedTypeName(ownedType);
-            if (typeName is not null)
-            {
-                ownerName = $"$match_rc_{valueTemp}";
-                int ownerSlot = NewLocal();
-                Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
-                TrackOwnedValue(
-                    ownerName,
-                    ownerSlot,
-                    typeName,
-                    isResource: false,
-                    definitionSpan: null,
-                    ownedType,
-                    runtimeManaged: true);
-            }
-        }
+        (string? ownerName, HashSet<string>? independentlyTrackedFieldNames) =
+            TrackRuntimeManagedMatchScrutineeOwner(matchValue, valueTemp, valueType, patternBindings, armPattern);
 
         if (ownerName is null)
         {
@@ -978,11 +956,148 @@ public sealed partial class Lowering
 
         foreach ((string bindingName, TypeRef bindingType) in patternBindings)
         {
+            if (independentlyTrackedFieldNames?.Contains(bindingName) == true)
+            {
+                continue;
+            }
+
             if (!CanArenaReset(Prune(bindingType)))
             {
                 _ownershipAliases[bindingName] = ownerName;
             }
         }
+    }
+
+    /// <summary>
+    /// Establishes (or resolves) the single owner whose drop is responsible for a match scrutinee,
+    /// returning its tracking name together with the names of any fields that got their own
+    /// independent ownership tracking (see <see cref="TrackIndependentlyOwnedMatchFields"/>) and so
+    /// must not also be aliased to it by the caller. A scrutinee that is itself an existing owned
+    /// variable resolves to that variable's own owner unchanged — this narrower fix only applies to a
+    /// freshly constructed scrutinee, which is referenced nowhere else.
+    /// </summary>
+    private (string? OwnerName, HashSet<string>? IndependentlyTrackedFieldNames) TrackRuntimeManagedMatchScrutineeOwner(
+        Expr matchValue,
+        int valueTemp,
+        TypeRef valueType,
+        IReadOnlyDictionary<string, TypeRef> patternBindings,
+        Pattern armPattern)
+    {
+        if (matchValue is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true })
+        {
+            return (ResolveOwnershipAlias(variable.Name), null);
+        }
+
+        if (matchValue is Expr.Var || !IsRuntimeManagedResultTemp(valueTemp))
+        {
+            return (null, null);
+        }
+
+        TypeRef ownedType = Prune(valueType);
+        string? typeName = GetOwnedTypeName(ownedType);
+        if (typeName is null)
+        {
+            return (null, null);
+        }
+
+        string ownerName = $"$match_rc_{valueTemp}";
+        int ownerSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
+
+        // A freshly constructed scrutinee is referenced nowhere else, so every one of its top-level
+        // fields bound directly by a plain name (not `_`, and not a nested sub-pattern one level
+        // further in) is extracted by EmitConstructorFieldBindings via a bare GetAdtField — never
+        // duplicated. The moment that happens, ownership of that one field has already moved from this
+        // wrapper to its own binding, so this wrapper's own eventual drop must never recurse into it:
+        // doing so, on top of whatever that field's own independent tracking later does with it, would
+        // release the same allocation twice. Give each such field its own independent tracking (instead
+        // of only ever aliasing its name to this wrapper's), and record its index so this wrapper's own
+        // drop skips it. Nested sub-patterns and wildcard fields stay on the pre-existing aliasing path.
+        (HashSet<int>? excludedFieldIndices, HashSet<string>? trackedNames, ConstructorSymbol? matchedCtor) =
+            TrackIndependentlyOwnedMatchFields(ownedType, armPattern, patternBindings);
+
+        TrackOwnedValue(
+            ownerName,
+            ownerSlot,
+            typeName,
+            isResource: false,
+            definitionSpan: null,
+            ownedType,
+            runtimeManaged: true,
+            runtimeConstructor: excludedFieldIndices is not null ? matchedCtor : null,
+            excludedDropFieldIndices: excludedFieldIndices);
+
+        return (ownerName, excludedFieldIndices is not null ? trackedNames : null);
+    }
+
+    /// <summary>
+    /// For a freshly constructed match scrutinee, finds every top-level constructor field that this
+    /// arm's pattern binds directly to a plain name (not a nested sub-pattern, not a wildcard) whose
+    /// own type is not arena-resettable, gives each one its own independent runtime-managed ownership
+    /// entry (overwriting whatever placeholder <see cref="TrackOwnedBindingsInPattern"/> already
+    /// registered for it), and returns the set of field indices this represents so the caller can
+    /// exclude them from the wrapper's own recursive drop. Returns a null field-index set (and leaves
+    /// every binding on the ordinary aliasing path) when the pattern is not a single top-level
+    /// constructor pattern matching the scrutinee's own arity, so any nested or otherwise unusual shape
+    /// is left entirely on the pre-existing, more conservative behavior.
+    /// </summary>
+    private (HashSet<int>? FieldIndices, HashSet<string>? FieldNames, ConstructorSymbol? Constructor) TrackIndependentlyOwnedMatchFields(
+        TypeRef ownedType,
+        Pattern armPattern,
+        IReadOnlyDictionary<string, TypeRef> patternBindings)
+    {
+        if (ownedType is not TypeRef.TNamedType
+            || armPattern is not Pattern.Constructor ctorPattern
+            || !_constructorSymbols.TryGetValue(ctorPattern.Name, out ConstructorSymbol? matchedCtor)
+            || ctorPattern.Patterns.Count != matchedCtor.Arity)
+        {
+            return (null, null, null);
+        }
+
+        HashSet<int>? fieldIndices = null;
+        HashSet<string>? fieldNames = null;
+        for (int i = 0; i < ctorPattern.Patterns.Count; i++)
+        {
+            if (ctorPattern.Patterns[i] is not Pattern.Var { Name: var fieldName }
+                || string.Equals(fieldName, "_", StringComparison.Ordinal)
+                || !patternBindings.TryGetValue(fieldName, out TypeRef? fieldTypeOrNull)
+                || Lookup(fieldName) is not Binding.Local fieldLocal)
+            {
+                continue;
+            }
+
+            TypeRef prunedFieldType = Prune(fieldTypeOrNull);
+            if (CanArenaReset(prunedFieldType))
+            {
+                continue;
+            }
+
+            string? fieldOwnedTypeName = GetOwnedTypeName(prunedFieldType);
+            if (fieldOwnedTypeName is null || GetResourceTypeName(prunedFieldType) is not null)
+            {
+                // Resources have their own deterministic-cleanup lifecycle (CleanupResource, moved/
+                // closed diagnostics) entirely separate from RC drop bookkeeping; leave a resource-typed
+                // field on the pre-existing aliasing path rather than folding it into this mechanism.
+                continue;
+            }
+
+            TrackOwnedValue(
+                fieldName,
+                fieldLocal.Slot,
+                fieldOwnedTypeName,
+                isResource: false,
+                fieldLocal.DefinitionSpan,
+                prunedFieldType,
+                runtimeManaged: true);
+
+            fieldIndices ??= [];
+            fieldIndices.Add(i);
+            fieldNames ??= [];
+            fieldNames.Add(fieldName);
+        }
+
+        return (fieldIndices, fieldNames, fieldIndices is not null ? matchedCtor : null);
     }
 
     private void TrackRuntimeManagedTcoListPatternAliases(
