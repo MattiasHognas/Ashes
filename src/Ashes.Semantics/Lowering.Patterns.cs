@@ -1178,12 +1178,24 @@ public sealed partial class Lowering
         int nodeTemp = NewTemp();
         bool runtimeManaged = _runtimeRcListAllocationRequested
             && IsRuntimeManageableListElement(headType, headTemp);
-        if (TryConsumeReuseToken(
+        // Reconciled reuse-token rule (Perceus unification Phase 5, PERCEUS_UNIFICATION.md §6): a list
+        // cons cell satisfied by ANY reuse token — arena or (hypothetically) runtime-managed — is
+        // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
+        // the assert below), so `runtimeManaged` only ever governs the FRESH-allocation branch; it must
+        // never also drive the post-emission bookkeeping when the reuse branch actually ran. Before this
+        // fix, the bookkeeping below keyed only off `runtimeManaged` (and `_runtimeRcTcoListTailBinding`),
+        // independent of which branch emitted the cell — so a reuse-token hit could mark a cell that was
+        // just given a plain arena AllocReusing (RuntimeManaged: false, no RC header) as runtime-managed
+        // anyway, which would make a later RcDup/RcDrop read/write a bogus header at that address. Track
+        // which branch ran and gate the bookkeeping on that fact directly, instead of re-deriving it from
+        // `runtimeManaged` a second time after the emission decision has already been made.
+        bool reusedCell = TryConsumeReuseToken(
                 2,
                 runtimeManaged,
                 out int reuseTokenTemp,
                 out RuntimeReuseCleanup? runtimeCleanup,
-                listCell: true))
+                listCell: true);
+        if (reusedCell)
         {
             Debug.Assert(runtimeCleanup is null, "Runtime-managed list reuse requires list-specific child cleanup.");
             Emit(new IrInst.AllocReusing(
@@ -1201,7 +1213,7 @@ public sealed partial class Lowering
         }
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
-        if (runtimeManaged && _runtimeRcTcoListTailBinding is not null)
+        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailBinding is not null)
         {
             _runtimeManagedResultTemps.Add(nodeTemp);
         }

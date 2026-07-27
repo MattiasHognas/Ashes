@@ -1243,6 +1243,188 @@ public sealed class OwnershipTests
             .ShouldBeGreaterThanOrEqualTo(3);
     }
 
+    // Perceus unification Phase 5 (docs/md/future/PERCEUS_UNIFICATION.md): ProducesFreshRuntimeManageableList
+    // gives IsFreshListConstructionExpression the same control-flow transparency Phase 4 gave the ADT/Tuple
+    // escape-boundary classifiers (CollectFreshEscapeTerminals), so a fresh list literal returned from an
+    // if/match arm is now recognized as an escaping runtime-managed result, not just when the whole
+    // let/lambda body IS the list construction directly. Before this phase, `IsFreshListConstructionExpression`
+    // was called directly on the escaping body with no arm-walking, so this exact shape stayed arena-managed.
+
+    [Test]
+    public void Fresh_list_returned_from_if_arm_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let build flag =
+                let discard = 0 in
+                if flag
+                then [Ashes.Text.fromInt(40)]
+                else [Ashes.Text.fromInt(2)]
+
+            let escaped = build(true) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        ir.Functions.Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(2);
+        ir.Functions.Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Count(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBe(2);
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true })
+            .ShouldBeTrue();
+    }
+
+    // Adversarial guard found while re-verifying this phase (not merely proposed -- confirmed live by
+    // direct IR inspection before the fix landed): one arm a bare-Var passthrough of an EXISTING,
+    // independently-owned (here: arena) list binding, the other arm a genuinely fresh list literal.
+    // An existence-check (OR) classifier sets the ambient RC-eligibility flag for the whole escaping
+    // if, so the fresh arm's cons cell is allocated on the RC heap (Alloc RuntimeManaged: true) -- but
+    // the join-level MarkUniformRuntimeManagedResult, which decides whether the JOINED value is
+    // actually treated as owned, requires BOTH arms independently verified runtime-managed, which the
+    // passthrough arm never is. The two mechanisms disagree: pre-fix, exactly one orphaned
+    // Alloc{RuntimeManaged: true} exists with no corresponding RcDrop{TypeName: "List", RuntimeManaged:
+    // true} anywhere in the program -- confirmed via manual revert that this test fails without the
+    // fix. NOTE: compiled-binary testing at real scale (see tests/perceus_list_mixed_passthrough_sibling_no_leak.ash)
+    // did NOT show a measurable RSS difference between the pre-fix and post-fix binaries -- the
+    // orphaned cell appears to be reclaimed by the same scope-based bulk arena reset that reclaims
+    // ordinary arena garbage, since it never escapes its own allocating scope. This is fixed anyway
+    // because the bookkeeping disagreement is real and provable and costs nothing to remove, not
+    // because a live leak/corruption was confirmed at the process level -- see the fuller reasoning on
+    // ProducesFreshRuntimeManageableList in Lowering.TopCellFreshness.cs.
+    [Test]
+    public void Fresh_list_arm_with_existing_passthrough_sibling_stays_uniformly_arena_managed()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let existingList =
+                let p = "p" in
+                let q = "q" in
+                [p, q]
+
+            let build flag =
+                let discard = 0 in
+                if flag
+                then existingList
+                else [Ashes.Text.fromInt(1)]
+
+            let escaped = build(false) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        // The list literal in `build`'s OWN body (lambda_0, not the caller's normalization machinery)
+        // must never be RC-allocated: that would be the orphaned cell (Alloc{RuntimeManaged: true}
+        // with no reachable owner) confirmed live before the fix. This deliberately checks only
+        // `build`'s own function, not the whole program: a dynamic closure call's caller-side boundary
+        // (CopyOutList) unconditionally normalizes ANY list a closure returns into a fresh,
+        // properly-tracked RC copy regardless of this classifier -- that pre-existing, unrelated
+        // mechanism is what the `RcDrop{TypeName: "List", RuntimeManaged: true}` pair downstream
+        // belongs to, and asserting it away would conflate a real fix with a false expectation.
+        IrFunction build = ir.Functions.Single(function => string.Equals(function.Label, "lambda_0", StringComparison.Ordinal));
+        build.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "neither arm may be RC-allocated when a sibling arm is a passthrough of an existing, not " +
+            "provably fresh binding -- an existence check would RC-allocate the fresh arm's cons cell " +
+            "while the join declines to own it, permanently leaking it whenever that arm executes.");
+    }
+
+    [Test]
+    public void Fresh_list_returned_from_match_arms_transfers_runtime_ownership()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let build n =
+                let discard = 0 in
+                match n with
+                    | 0 -> []
+                    | 1 -> [Ashes.Text.fromInt(1)]
+                    | _ -> [Ashes.Text.fromInt(2), Ashes.Text.fromInt(3)]
+
+            let escaped = build(2) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        ir.Functions.Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+                "a fresh list literal returned from a non-empty match arm must be recognized as an " +
+                "escaping runtime-managed result, the list analog of Phase 4's ADT/Tuple arm walking.");
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true })
+            .ShouldBeTrue();
+    }
+
+    // Tail-sharing adversarial guards (CO-32's exact hazard, see PERCEUS_UNIFICATION.md's Phase 5 status):
+    // these are controls, not regression targets for THIS fix -- they must stay conservative (arena) both
+    // before and after ProducesFreshRuntimeManageableList exists, proving the control-flow-transparency
+    // extension never widened IsFreshListConstructionExpression's terminal set. A cons cell built onto an
+    // EXISTING list (a bare Var tail, or a recursive call's result as the tail) shares structure with that
+    // existing list; RC-promoting it would make a fresh-looking RC cell point at a tail that may not be an
+    // RC cell at all (an arena address, or a differently-owned RC graph) -- a UAF/corruption risk distinct
+    // from anything ADTs or Tuples have, since only Lists have a tail that can independently alias.
+
+    [Test]
+    public void List_rebuilt_by_consing_onto_an_existing_tail_var_stays_arena_managed()
+    {
+        // `h :: t` in the cons arm has a bare Var tail (not ListLit/another Cons-to-ListLit), so it must
+        // never classify as top-cell fresh, even though it sits behind an if/match arm the new
+        // control-flow-transparent walk now sees through.
+        IrProgram ir = LowerProgram(
+            """
+            let passThroughHead xs =
+                let discard = 0 in
+                match xs with
+                    | [] -> []
+                    | h :: t -> h :: t
+
+            let escaped = passThroughHead([Ashes.Text.fromInt(1), Ashes.Text.fromInt(2)]) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        IrFunction passThroughHead = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.StoreMemOffset));
+        passThroughHead.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "a cons cell rebuilt onto an existing (potentially non-RC) tail var must stay arena-managed " +
+            "regardless of which arm it sits behind -- promoting it to RC would give a fresh-looking RC " +
+            "cell a tail pointer that is not necessarily an RC cell at all.");
+    }
+
+    [Test]
+    public void List_rebuilt_by_consing_onto_a_recursive_call_result_stays_arena_managed()
+    {
+        // `h :: rebuild(t)` has a Call as its tail -- fresh per the ARENA-side IsFreshListRebuildExpr
+        // (a callee's list result is copied out of its own arena scope, so it is self-contained and safe
+        // to whole-clone at a TCO back-edge), but deliberately NOT fresh per this RC-promotion engine's
+        // narrower IsFreshListConstructionExpression, which only ever accepts ListLit or a Cons chain
+        // bottoming out in one. The two predicates answer different questions (cost-safe-to-clone vs.
+        // safe-to-RC-promote) and must not be unified into accepting the same terminal set.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive rebuild xs =
+                match xs with
+                    | [] -> []
+                    | h :: t -> h :: rebuild(t)
+
+            let escaped = rebuild([Ashes.Text.fromInt(1), Ashes.Text.fromInt(2)]) in
+            match escaped with
+                | [] -> 0
+                | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+
+        IrFunction rebuild = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.StoreMemOffset));
+        rebuild.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "a cons cell whose tail is a recursive call result must stay arena-managed under this RC " +
+            "engine even though the arena/TCO side's own IsFreshListRebuildExpr treats a call result as " +
+            "safe to whole-clone -- the two questions (RC-promotion-safe vs. clone-cost-safe) are not " +
+            "the same question and must not share a terminal set.");
+    }
+
     [Test]
     public void Recursive_user_adt_with_used_child_binding_remains_arena_managed()
     {
