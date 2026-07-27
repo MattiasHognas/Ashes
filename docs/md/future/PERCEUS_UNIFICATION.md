@@ -29,7 +29,11 @@ pays), not a safety one — and two successively narrower attempts to keep part 
 each found insufficient or inert. All three attempts were reverted in full; see "Phase 6, third
 attempt" below for the complete account, including a newly-discovered, separate latent gap in the
 closure-eligibility check uncovered along the way. The four-classifier collapse and veto removal
-remain unstarted. Phase 7 is not yet started.
+remain unstarted. A fourth follow-up session closed classifier (D)'s own timing gap in isolation (a
+direct pattern binding off a TCO parameter that independently escapes is now protected) and confirmed
+the closure-eligibility gap is not safely fixable without a larger retrofit — see "Classifier (D) timing
+gap — landed; closure-eligibility dead code — investigated, left unfixed" below. Phase 7 is not yet
+started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -1130,6 +1134,100 @@ section (`TrackRuntimeManagedTcoListPatternAliases` reading `RuntimeManagedParam
 populated for the current body) remains exactly as characterized there; this investigation did not
 revisit it, beyond discovering its sibling gap in the closure-eligibility path described above.
 
+**Classifier (D) timing gap — landed; closure-eligibility dead code — investigated, left unfixed.** A
+follow-up session picked up the two smaller, independent items the "third attempt" section above left
+open: closing the classifier (D) timing gap itself (distinct from the four-classifier collapse, which
+remains unstarted), and deciding whether the closure-eligibility gap discovered as that session's
+byproduct is safely fixable on its own.
+
+*Classifier (D): the direct-binding exclusion, replaced with a positive escape check, landed.* The
+mechanism was re-verified against current `main` first and found unchanged from both write-ups above:
+`TrackRuntimeManagedTcoListPatternAliases`'s eager check still reads `_tcoCtx.RuntimeManagedParamSlots`
+before the refresh pass has populated it for an unannotated accumulator, so it still never fires, and
+`ResolvePendingNestedTcoPatternAliasSites` still blanket-excludes every "direct" binding (one pattern
+level below a declared TCO parameter) on the assumption the eager pass already protected it. A repro
+was built and confirmed via direct IR inspection, not assumed: a `List(Str)` TCO parameter whose head is
+bound directly (`s :: rest`) and embedded in a returned constructor (`Some(Box(v = s))`, `Box` a
+single-field record) — chosen so the element type is pinned to `Str` from within the recursive
+function's own body, since without that the parameter's type stays an unresolved type variable through
+both classification passes and the parameter never becomes runtime-managed at all, which would make the
+whole question moot. With the parameter genuinely runtime-managed, the emitted IR embeds `s`'s raw
+pointer into the arena-built `Box` with no dup, and the loop's own exit drop (reached on the very first
+iteration whenever the target is found immediately) decrements the same string's refcount before the
+value ever escapes to the caller's own arena-to-RC copy-out — a live use-after-free shape, not a
+theoretical one.
+
+The fix: a new structural, pre-lowering analysis (`CollectEscapingDirectPatternBindings` in
+`Lowering.Reuse.cs`, alongside the other AST-level `Collect*ParamProperty` helpers `LowerLetRecursive
+LambdaValue` already runs before the body is lowered) walks every match directly on a declared TCO
+parameter and flags a pattern-bound name as escaping unless every one of its appearances in that arm is
+either the scrutinee of a further nested match on the same name (whatever that deeper match itself
+binds gets its own, separate accounting through the existing chain-walk) or the bare, unchanged argument
+at that same parameter's own slot in a tail self-call (already installed by the ordinary per-parameter
+back-edge argument machinery regardless of this table). The result populates a new
+`TcoContext.EscapingDirectPatternBindings` set. `ResolvePendingNestedTcoPatternAliasSites`'s filter
+changed from unconditionally excluding every direct binding to excluding one only when it is NOT in this
+set — closing the real gap without reintroducing the failure mode the design doc's own prior attempt at
+this exact fix hit (see "Fix attempt 2" above): a direct binding that merely threads back unchanged, or
+is only ever re-matched, is still excluded, exactly as before.
+
+Deliberately conservative in one specific way: the "safe" shapes counted are exactly those two, nothing
+more. A direct binding compared for equality, or passed to any function other than the enclosing
+recursion's own self-call, counts as escaping even though a bare inspection never actually retains a
+reference — this was found empirically while building the adversarial counter-test (see below), not
+assumed: distinguishing "inspected" from "retained" would need the same per-value liveness/provenance
+signal §5 item 4 and the "third attempt" section's closing paragraph both call out as the real
+prerequisite for the eventual four-classifier collapse, and this fix does not attempt to build that.
+The chosen tradeoff — an occasional redundant-but-harmless protective dup (a dup immediately followed,
+somewhere down the line, by a balancing drop) rather than risk a sharper rule that could under-protect —
+matches this phase's own explicit instruction to prefer a safe miss over a risky fix.
+
+Validated: a new adversarial test (`NestedTcoPatternAliasTests.Direct_list_element_escaping_into_
+returned_construction_gets_a_protective_dup`) fails without the change (confirmed by reverting the
+filter and re-running: no `rc_tco_nested_alias_duplicated` label anywhere in the function) and passes
+with it. `Copy_typed_tuple_field_is_not_protected_as_runtime_managed` — the exact PR #298 regression
+test the design doc's own prior attempt at this fix broke — keeps passing unmodified (still exactly one
+protected alias, `lit`; `pair` and `rest` are not swept in, because their only appearances are precisely
+the two safe shapes above). Full gate: C# suite 1709/1709 (1707 baseline + 2 new), LSP suite 52/52, e2e
+suite 544/0 (44 skipped, matching baseline), `dotnet format --verify-no-changes` clean. The four
+sentinel challenge programs (`fannkuch-redux`, `binary-trees`, `1brc/brc.ash`, `reverse-complement`)
+were each compiled at `-O2` from a baseline built via `git stash` of the touched files (matching this
+document's own established practice) and from the fixed tree, then compared with `objdump -d`: all four
+disassemble byte-for-byte identical apart from the embedded filename in the output header — none of
+them exercises the specific shape this fix changes, so the fix is a proven no-op for every benchmark
+this repository ships, not merely an untested one. `1brc/brc.ash` at 10M rows was additionally run end
+to end from both binaries and its stdout compared with `cmp`: byte-identical.
+
+*Closure-eligibility dead code: confirmed exactly as characterized, a naive fix crashes the compiler,
+left unfixed.* The "third attempt" section's byproduct finding was re-verified precisely:
+`LowerLambdaCoreRefreshRuntimeManagedTcoParams` still calls `LowerLambdaCoreIdentifyRuntimeManagedTco
+Params(..., includeFreshClosures: false)`, and the loop-entry pass (where the parameter defaults to
+`true`) still does not see a concrete `TFun` for an ordinary unannotated closure parameter — confirmed
+by the same synthetic Str-plus-closure-accumulator shape the "third attempt" session used. Rather than
+stop at re-confirming the diagnosis, this session tried the obvious candidate fix directly: flipping
+that one call site's argument to `true`. It compiles, but **crashes the compiler itself** on that exact
+synthetic program: `error: The given key '1' was not present in the dictionary.` — a `KeyNotFoundException`
+out of `TcoContext.RuntimeManagedClosureActiveSlots`, thrown while lowering. Root cause, read directly
+from the surrounding code rather than inferred: the loop-entry prologue
+(`LowerLambdaCoreEnterTcoLoop`) allocates a `RuntimeManagedClosureActiveSlots` local for every slot in
+`RuntimeManagedClosureParamSlots` **at that point** — before the body, and therefore before the refresh
+pass, ever runs — and several later call sites (`EmitRuntimeManagedTcoExitParamDrop`'s closure branch,
+among others) index that dictionary directly rather than through a `TryGetValue`/`GetValueOrDefault`
+fallback. A closure slot the refresh pass discovers only after the body is lowered was never in the
+entry-time set, so it was never given an active-slot local, was never entry-normalized into runtime-
+managed form by the separate entry-prologue splice either, and the first direct dictionary index against
+it throws. This is not a narrow, local patch away: fixing it for real needs the entry-prologue's active-
+slot allocation and its entry-normalization splice both retrofitted to handle a closure parameter
+discovered only at refresh time, which is itself new, untested surface added to the same subsystem this
+whole phase's safety notes single out as its most dangerous. Per this phase's own standing instruction —
+a missed optimization is always an acceptable place to stop; a new crash or unsound state is never
+acceptable regardless of how small the triggering change looks — the flag flip was reverted in full and
+nothing was shipped for this half of the investigation. `RuntimeManagedClosureParamSlots` remains exactly
+as dead for an ordinary unannotated recursive closure as the "third attempt" section found it; a future
+attempt should design the entry-prologue retrofit first and treat "does flipping `includeFreshClosures`
+at the refresh call site still crash the same synthetic program" as its own first regression check,
+before trying to measure any profitability gain from the classifier actually firing.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -1222,7 +1320,12 @@ test) but measurably regresses peak memory on two real `challenges/` programs (a
 unrecognized profitability cost, not a safety one), and reverted all three attempts it tried in full
 — see "Phase 6, third attempt" above. The collapse and veto removal remain unstarted and are where the
 bulk of the remaining risk and effort live; a future attempt needs a real cost signal for "is this
-promotion cheaper than leaving the value arena-managed" before reattempting, not just a safety proof.
+promotion cheaper than leaving the value arena-managed" before reattempting, not just a safety proof. A
+follow-up session closed classifier (D)'s own timing gap (a direct pattern binding off a TCO parameter
+that independently escapes now gets protected, via a new structural escape check, without regressing the
+existing narrower guarantee) — see "Classifier (D) timing gap — landed" above — and confirmed the
+closure-eligibility dead code found as that third session's byproduct is not safely fixable without a
+larger, untested retrofit of the entry-prologue machinery, so it remains exactly as dead as found.
 Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
 one subsystem where the audits found a currently-*masked* bug (the CFG-blindness/whole-program-gate
 interaction), and its failure mode if sequenced wrong is strictly worse (UAF) than the failure mode

@@ -70,6 +70,21 @@ public sealed partial class Lowering
         public HashSet<string> BorrowableConsumedListParams { get; init; } = new(System.StringComparer.Ordinal);
         public HashSet<string> FreshClosureParams { get; init; } = new(System.StringComparer.Ordinal);
 
+        // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter whose
+        // only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a further
+        // nested match on the same name, or (b) the bare, unchanged argument at that same parameter's
+        // own slot in a tail self-call. Both of those shapes are already handled without this table's
+        // help — (a) by whatever separate protection the nested match's own bindings get, (b) by the
+        // ordinary per-parameter back-edge argument installation — so a name limited to just those is
+        // left alone. A name with any OTHER appearance (embedded in a returned/constructed value, passed
+        // to a different parameter's slot, handed to another function, ...) genuinely escapes the current
+        // iteration independently and needs its own protective dup; see
+        // ResolvePendingNestedTcoPatternAliasSites, which is the only consumer. Computed once, structurally,
+        // from the pre-lowering AST (matching the style of the other Collect* param analyses above), so it
+        // is available before types are resolved. Empty when not computed (conservative — nothing extra
+        // gets protected).
+        public HashSet<string> EscapingDirectPatternBindings { get; init; } = new(System.StringComparer.Ordinal);
+
         // True only while we are still descending the recursive binding's curried lambda chain
         // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a
         // nested let-bound lambda inside the body is a separate frame and must not be mistaken for it.
