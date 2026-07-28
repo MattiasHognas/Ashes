@@ -529,11 +529,11 @@ public sealed partial class Lowering
     /// takes across ALL such call sites — re-deriving, from this same fixpoint's own already-computed
     /// <paramref name="expressionFreshness"/> map, the question <c>Lowering.Reuse.cs</c>'s
     /// <c>CollectLoopInvariantParams</c>/<c>CollectFreshRebuiltListParams</c>/
-    /// <c>CollectFreshClosureParams</c>/<c>CollectConsumedListTailParams</c> answer today by re-walking
-    /// a TCO loop's body a second time with their own, separate logic. A parameter with no
-    /// self-recursive call site to classify from (an ordinary non-recursive function, or a parameter
-    /// never itself threaded through the self-call) gets no entry at all — absence, not
-    /// <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
+    /// <c>CollectFreshClosureParams</c>/<c>CollectConsumedListTailParams</c>/<c>CollectAffineConsListParams</c>
+    /// answer today by re-walking a TCO loop's body a second time with their own, separate logic. A
+    /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
+    /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
+    /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
     /// </summary>
     private Dictionary<string, TcoParamStructuralFacts> ComputeTcoParamFacts(
         string function,
@@ -648,6 +648,9 @@ public sealed partial class Lowering
                     && tailOwners.TryGetValue(tailVar.Name, out string? owner)
                     && string.Equals(owner, paramNames[i], StringComparison.Ordinal)
                     ? TcoSelfCallArgumentShape.ConsumedTail
+                : argument is Expr.Cons { Tail: Expr.Var consTail }
+                    && string.Equals(consTail.Name, paramNames[i], StringComparison.Ordinal)
+                    ? TcoSelfCallArgumentShape.GrownCons
                 : expressionFreshness.TryGetValue(argument, out bool fresh) && fresh
                     ? TcoSelfCallArgumentShape.FreshRebuilt
                 : TcoSelfCallArgumentShape.Mixed;
@@ -1784,10 +1787,12 @@ public sealed partial class Lowering
             || !_maResultReach.TryGetValue(name, out var summary)
             || summary.Poison)
         {
+            RecordUncoveredCallArgumentsFreshness(args, env, covered: null);
             return ReachPoisoned();
         }
 
         var result = ReachBottom();
+        HashSet<int>? covered = _maExpressionFreshness is not null ? new HashSet<int>() : null;
         foreach (var (paramName, mult) in summary.Counts)
         {
             int idx = info.Params.IndexOf(paramName);
@@ -1797,9 +1802,45 @@ public sealed partial class Lowering
             }
 
             result = ReachSum(result, ReachScale(ResultReach(args[idx], env), mult));
+            covered?.Add(idx);
         }
 
+        RecordUncoveredCallArgumentsFreshness(args, env, covered);
         return result;
+    }
+
+    // Visits every argument at position NOT already covered by the loop above purely so
+    // RecordExpressionFreshness gets a chance to record its own freshness verdict, without changing
+    // what this call contributes to the caller's own reach (that contribution is exactly the sum the
+    // loop above already computed from summary.Counts, and stays untouched). This exists because a
+    // callee's own result-reach summary only lists parameters the callee's FINAL result may alias — a
+    // self-recursive accumulator that is consumed/rendered into something else (never itself returned)
+    // has no entry there at all, so without this, none of that self-call's own argument expressions
+    // would ever reach RecordExpressionFreshness, leaving every downstream consumer of
+    // ExpressionFreshness (including FunctionOwnershipSummary.TcoParamFacts) with no fact to read for
+    // that position. Outside the dedicated post-fixpoint recording pass (see ComputeExpressionFreshness)
+    // this is a genuine no-op: _maExpressionFreshness is null during the hot while-changed fixpoint loop
+    // that computes _maResultReach itself, so this can never affect that fixpoint's convergence or its
+    // stored result for any function. Idempotent for a position visited twice (deterministic given the
+    // same expression and env), so re-visiting a position the ordinary loop above already covered would
+    // be harmless too, even though covered lets us skip it.
+    private void RecordUncoveredCallArgumentsFreshness(
+        List<Expr> args,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        HashSet<int>? covered)
+    {
+        if (_maExpressionFreshness is null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < args.Count; i++)
+        {
+            if (covered is null || !covered.Contains(i))
+            {
+                ResultReach(args[i], env);
+            }
+        }
     }
 
     /// <summary>
