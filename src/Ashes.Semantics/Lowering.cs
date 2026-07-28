@@ -214,8 +214,9 @@ public sealed partial class Lowering
     // whole body's unification has run) — checking early can wrongly treat an about-to-be-Int binding as
     // heap-managed, and dup'ing a scalar value as if it were a refcounted pointer is a segfault, not just
     // a missed protection. The binding name is carried along so the resolution step can additionally
-    // consult TcoContext.EscapingDirectPatternBindings for a binding whose immediate parent is itself a
-    // declared TCO parameter slot (see the comment there for why that case needs its own check).
+    // consult the parent parameter's own TcoParamOwnership.EscapingDirectPatternBinding flag for a
+    // binding whose immediate parent is itself a declared TCO parameter slot (see the comment there
+    // for why that case needs its own check).
     private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType, string BindingName)> _pendingNestedTcoPatternAliasSites = new();
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
@@ -1047,7 +1048,7 @@ public sealed partial class Lowering
                     runtimeManaged || IsRuntimeManagedConcatStrTipResult(info.ArgTemps[index]))
                 .ToArray(),
             RuntimeManagedParams = info.ParamSlots
-                .Select(info.Tco.RuntimeManagedParamSlots.Contains)
+                .Select(info.Tco.IsRuntimeManagedSlot)
                 .ToArray(),
             RuntimeManagedParamActiveSlots = info.ParamSlots
                 .Select(slot => info.Tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1))
@@ -1165,13 +1166,13 @@ public sealed partial class Lowering
     /// <summary>
     /// True when the tail-consumed list parameter at <paramref name="paramIndex"/> is only inspected
     /// by the recursive body (nothing derived from it escapes — see
-    /// <see cref="TcoContext.BorrowableConsumedListParams"/>) AND its element is an all-inline-copy
+    /// <see cref="TcoParamOwnership.BorrowableConsumedList"/>) AND its element is an all-inline-copy
     /// record. Under both conditions the traversal reads only scalar fields and never retains a cell
     /// or head, so the caller's graph can be borrowed instead of RC-normalized into a private copy.
     /// </summary>
     private bool IsBorrowableInspectOnlyList(TcoContext tco, int paramIndex, TypeRef.TList list)
         => paramIndex >= 0
-            && tco.BorrowableConsumedListParams.Contains(tco.ParamNames[paramIndex])
+            && tco.ParamOwnership[tco.ParamSlots[paramIndex]].BorrowableConsumedList
             && Prune(list.Element) is TypeRef.TNamedType element
             && TryGetCopyOnlyRecordConstructor(element, out _);
 
@@ -2564,7 +2565,7 @@ public sealed partial class Lowering
     /// actually produced) that do not belong in this shared predicate.
     /// </summary>
     private bool IsRuntimeManagedTcoParamSlot(Binding.Local local) =>
-        _tcoCtx?.RuntimeManagedParamSlots.Contains(local.Slot) == true;
+        _tcoCtx?.IsRuntimeManagedSlot(local.Slot) == true;
 
     private (int, TypeRef) LowerVar(Expr.Var v)
     {
@@ -5005,24 +5006,24 @@ public sealed partial class Lowering
         {
             var tcoParamNames = CollectLambdaParams(lam2);
             var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
-            _tcoCtx = new TcoContext
-            {
-                SelfName = letRecursive.Name,
-                ParamCount = paramCount,
-                ParamNames = tcoParamNames,
-                InTailPosition = false,
-                LoopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
-                FreshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
-                AffineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
-                ConsumedListTailParams = consumedListTailParams,
-                BorrowableConsumedListParams = CollectBorrowableConsumedListParams(
+            _tcoCtx = new TcoContext(
+                selfName: letRecursive.Name,
+                paramCount: paramCount,
+                paramNames: tcoParamNames,
+                loopInvariantParams: CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
+                freshRebuiltListParams: CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                affineConsListParams: CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                consumedListTailParams: consumedListTailParams,
+                borrowableConsumedListParams: CollectBorrowableConsumedListParams(
                     innermostBody,
                     tcoParamNames,
                     letRecursive.Name,
                     consumedListTailParams),
-                FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
-                AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
-                EscapingDirectPatternBindings = CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name)
+                freshClosureParams: CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
+                affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
+                escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
+            {
+                InTailPosition = false,
             };
         }
         else
@@ -5414,7 +5415,7 @@ public sealed partial class Lowering
         {
             if (tco.ParamSlots.Contains(current))
             {
-                return tco.RuntimeManagedParamSlots.Contains(current);
+                return tco.IsRuntimeManagedSlot(current);
             }
 
             if (!_pendingNestedTcoPatternAliasSites.TryGetValue(current, out var entry))
@@ -5477,9 +5478,9 @@ public sealed partial class Lowering
             _scopes.Peek(),
             tco,
             includeFreshClosures: false);
-        foreach (int slot in tco.RuntimeManagedParamSlots)
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
-            if (tco.RuntimeManagedParamTypes[slot] is not TypeRef.TFun
+            if (tco.ParamOwnership[slot].RuntimeManagedType is not TypeRef.TFun
                 && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
             {
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
@@ -5496,7 +5497,7 @@ public sealed partial class Lowering
             int parameterIndex = tco?.ParamNames.IndexOf(parameterName) ?? -1;
             bool runtimeManaged = parameterIndex >= 0
                 && parameterIndex < tco!.ParamSlots.Count
-                && tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]);
+                && tco.IsRuntimeManagedSlot(tco.ParamSlots[parameterIndex]);
             if (runtimeManaged)
             {
                 continue;
@@ -5516,7 +5517,7 @@ public sealed partial class Lowering
 
     private void LowerLambdaCoreRefreshRuntimeManagedTcoResult(TcoContext? tco, int bodyTemp)
     {
-        if (tco is null || tco.RuntimeManagedParamSlots.Count == 0)
+        if (tco is null || tco.RuntimeManagedSlotCount == 0)
         {
             return;
         }
@@ -5539,7 +5540,7 @@ public sealed partial class Lowering
                 changed |= instruction switch
                 {
                     IrInst.LoadLocal load
-                        when tco.RuntimeManagedParamSlots.Contains(load.Slot)
+                        when tco.IsRuntimeManagedSlot(load.Slot)
                             || managedLocals.Contains(load.Slot)
                         => managedTemps.Add(load.Target),
                     IrInst.Borrow borrow when managedTemps.Contains(borrow.SourceTemp)
@@ -6144,16 +6145,7 @@ public sealed partial class Lowering
             int paramIndex = tco.ParamSlots.IndexOf(slot);
             if (IsIndependentlyRcEligibleTcoParam(parameterType, paramIndex, tco, includeFreshClosures))
             {
-                tco.RuntimeManagedParamSlots.Add(slot);
-                tco.RuntimeManagedParamTypes[slot] = parameterType;
-                if (parameterType is TypeRef.TList)
-                {
-                    tco.RuntimeManagedListParamSlots.Add(slot);
-                }
-                else if (parameterType is TypeRef.TFun)
-                {
-                    tco.RuntimeManagedClosureParamSlots.Add(slot);
-                }
+                tco.MarkRuntimeManaged(slot, parameterType);
             }
         }
 
@@ -6166,8 +6158,8 @@ public sealed partial class Lowering
     /// with no regard for any other parameter in the same loop frame. Factored out of <see
     /// cref="LowerLambdaCoreIdentifyRuntimeManagedTcoParams"/> so the promotion-profitability signal
     /// (<see cref="RecordTcoPromotionProfitability"/>) can ask the identical question a second time —
-    /// e.g. after the frame-wide veto has cleared <see cref="TcoContext.RuntimeManagedParamSlots"/> —
-    /// without re-deriving it as a second, potentially-diverging copy of the same condition.
+    /// e.g. after the frame-wide veto has cleared a parameter's runtime-managed verdict — without
+    /// re-deriving it as a second, potentially-diverging copy of the same condition.
     /// </summary>
     private bool IsIndependentlyRcEligibleTcoParam(
         TypeRef parameterType,
@@ -6175,14 +6167,13 @@ public sealed partial class Lowering
         TcoContext tco,
         bool includeFreshClosures)
     {
-        bool freshRebuiltList = paramIndex >= 0
-            && tco.FreshRebuiltListParams.Contains(tco.ParamNames[paramIndex]);
-        bool affineConsList = paramIndex >= 0
-            && tco.AffineConsListParams.Contains(tco.ParamNames[paramIndex]);
-        bool consumedListTail = paramIndex >= 0
-            && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
-        bool freshClosure = paramIndex >= 0
-            && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
+        TcoParamOwnership? ownership = paramIndex >= 0 && paramIndex < tco.ParamSlots.Count
+            ? tco.ParamOwnership.GetValueOrDefault(tco.ParamSlots[paramIndex])
+            : null;
+        bool freshRebuiltList = ownership?.FreshRebuiltList == true;
+        bool affineConsList = ownership?.AffineConsList == true;
+        bool consumedListTail = ownership?.ConsumedListTail == true;
+        bool freshClosure = ownership?.FreshClosure == true;
         return IsRcEligibleScalarTupleOrAdtType(parameterType)
             || parameterType is TypeRef.TList list
                 && CanRuntimeManageTcoListElement(list.Element)
@@ -6236,12 +6227,12 @@ public sealed partial class Lowering
                 || index < 0
                 || CanArenaReset(Prune(parameter.T))
                 || IsResourceHandleType(Prune(parameter.T))
-                || tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                || tco.ParamOwnership[slot].LoopInvariant
                 || Prune(parameter.T) is TypeRef.TList list
-                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && tco.ParamOwnership[slot].ConsumedListTail
                     && (CanArenaReset(Prune(list.Element))
                         || IsBorrowableInspectOnlyList(tco, index, list))
-                || tco.RuntimeManagedParamSlots.Contains(slot))
+                || tco.IsRuntimeManagedSlot(slot))
             {
                 continue;
             }
@@ -6264,7 +6255,7 @@ public sealed partial class Lowering
     // though a sibling in the same frame permanently blocks arena reset.
     private void DemoteUnprofitableRuntimeManagedTcoParams(TcoContext tco, TypeRef?[] paramTypes)
     {
-        foreach (int slot in tco.RuntimeManagedParamSlots.ToArray())
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder.ToArray())
         {
             int index = tco.ParamSlots.IndexOf(slot);
             if (index < 0 || paramTypes[index] is not { } type)
@@ -6282,12 +6273,9 @@ public sealed partial class Lowering
 
     private static void ClearOneRuntimeManagedTcoParam(TcoContext tco, int slot)
     {
-        tco.RuntimeManagedParamSlots.Remove(slot);
-        tco.RuntimeManagedListParamSlots.Remove(slot);
-        tco.RuntimeManagedClosureParamSlots.Remove(slot);
+        tco.ClearRuntimeManaged(slot);
         tco.RuntimeManagedParamActiveSlots.Remove(slot);
         tco.RuntimeManagedClosureActiveSlots.Remove(slot);
-        tco.RuntimeManagedParamTypes.Remove(slot);
     }
 
     private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
@@ -6345,6 +6333,8 @@ public sealed partial class Lowering
                 throw new InvalidOperationException($"TCO parameter '{pname}' has no local slot for the back-edge.");
             }
         }
+
+        tco.BuildParamOwnership();
     }
 
     // In-place reuse: mark accumulators that are deconstructed in the loop body as
@@ -6365,7 +6355,7 @@ public sealed partial class Lowering
         {
             if (_scopes.Peek().TryGetValue(accName, out var accBinding)
                 && accBinding is Binding.Local accLocal
-                && !tco.RuntimeManagedParamSlots.Contains(accLocal.Slot)
+                && !tco.IsRuntimeManagedSlot(accLocal.Slot)
                 && _constructorSymbols.TryGetValue(ctorName, out var accCtor)
                 && Prune(InstantiateAdtType(accCtor)) is TypeRef.TNamedType accNamed
                 && !BuiltinRegistry.IsResourceTypeName(accNamed.Symbol.Name)
@@ -6424,7 +6414,7 @@ public sealed partial class Lowering
 
             if (_scopes.Peek().TryGetValue(accName, out var accB)
                 && accB is Binding.Local accL
-                && !tco.RuntimeManagedParamSlots.Contains(accL.Slot)
+                && !tco.IsRuntimeManagedSlot(accL.Slot)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
                 && IsReusableSpecializationAccumulatorType(
@@ -6486,7 +6476,7 @@ public sealed partial class Lowering
 
         // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
         // zeroed here so no string matches until the loop's first fallback reserves.
-        foreach (var affineParam in tco.AffineStrParams)
+        foreach (var affineParam in tco.AffineStrParamNames)
         {
             int resvStart = NewLocal();
             int resvEnd = NewLocal();
@@ -6495,16 +6485,16 @@ public sealed partial class Lowering
             tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
         }
 
-        foreach (int closureSlot in tco.RuntimeManagedClosureParamSlots)
+        foreach (int closureSlot in tco.RuntimeManagedClosureSlotsInOrder)
         {
             int activeSlot = NewLocal();
             Emit(new IrInst.StoreLocal(activeSlot, compactionZero));
             tco.RuntimeManagedClosureActiveSlots[closureSlot] = activeSlot;
         }
 
-        foreach (int slot in tco.RuntimeManagedParamSlots)
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
-            if (!tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            if (!tco.IsRuntimeManagedClosureSlot(slot))
             {
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
@@ -6634,24 +6624,24 @@ public sealed partial class Lowering
 
     private void LowerLambdaCoreSpliceRuntimeManagedTcoParams(TcoContext? tco, int insertIndex)
     {
-        if (tco is null || insertIndex < 0 || tco.RuntimeManagedParamSlots.Count == 0)
+        if (tco is null || insertIndex < 0 || tco.RuntimeManagedSlotCount == 0)
         {
             return;
         }
 
         int generatedStart = _inst.Count;
-        foreach (int slot in tco.RuntimeManagedParamSlots)
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
             RecordRuntimeNormalizedTcoParamLabel(tco, slot);
-            if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+            if (tco.IsRuntimeManagedClosureSlot(slot))
             {
                 continue;
             }
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             int normalizedTemp = slot == 1
-                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.RuntimeManagedParamTypes[slot])
-                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.RuntimeManagedParamTypes[slot]);
+                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.ParamOwnership[slot].RuntimeManagedType!)
+                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.ParamOwnership[slot].RuntimeManagedType!);
             _runtimeManagedResultTemps.Add(normalizedTemp);
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
             int activeTemp = NewTemp();
@@ -6755,7 +6745,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(transferSelectedSlot, zeroTemp));
         }
 
-        foreach (int slot in tco.RuntimeManagedParamSlots)
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
@@ -6765,7 +6755,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            int activeSlot = tco.RuntimeManagedClosureParamSlots.Contains(slot)
+            int activeSlot = tco.IsRuntimeManagedClosureSlot(slot)
                 ? tco.RuntimeManagedClosureActiveSlots[slot]
                 : tco.RuntimeManagedParamActiveSlots[slot];
             int activeTemp = NewTemp();
@@ -6795,7 +6785,7 @@ public sealed partial class Lowering
 
     private void EmitRuntimeManagedTcoExitParamDrop(TcoContext tco, int slot, int sourceTemp)
     {
-        if (tco.RuntimeManagedClosureParamSlots.Contains(slot))
+        if (tco.IsRuntimeManagedClosureSlot(slot))
         {
             EmitRuntimeManagedClosureDropIfActive(
                 sourceTemp,
@@ -6813,8 +6803,8 @@ public sealed partial class Lowering
         string skipLabel = NewLabel("rc_tco_exit_drop_inactive");
         Emit(new IrInst.LoadLocal(activeTemp, tco.RuntimeManagedParamActiveSlots[slot]));
         Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
-        TypeRef type = tco.RuntimeManagedParamTypes[slot];
-        if (tco.RuntimeManagedListParamSlots.Contains(slot) && type is TypeRef.TList list)
+        TypeRef type = tco.ParamOwnership[slot].RuntimeManagedType!;
+        if (tco.IsRuntimeManagedListSlot(slot) && type is TypeRef.TList list)
         {
             EmitRuntimeManagedListDrop(sourceTemp, list.Element);
         }
@@ -7597,12 +7587,13 @@ public sealed partial class Lowering
     {
         int slot = tco.ParamSlots[index];
         string name = tco.ParamNames[index];
+        TcoParamOwnership ownership = tco.ParamOwnership[slot];
         bool supported = IsRcEligibleScalarTupleOrAdtType(type)
             || type is TypeRef.TList list
                 && CanRuntimeManageTcoListElement(list.Element)
-                && (tco.FreshRebuiltListParams.Contains(name)
-                    || tco.AffineConsListParams.Contains(name)
-                    || tco.ConsumedListTailParams.Contains(name)
+                && (ownership.FreshRebuiltList
+                    || ownership.AffineConsList
+                    || ownership.ConsumedListTail
                         && !CanArenaReset(Prune(list.Element))
                         && !IsBorrowableInspectOnlyList(tco, name, list));
         if (!supported
@@ -7613,16 +7604,11 @@ public sealed partial class Lowering
             return;
         }
 
-        tco.RuntimeManagedParamSlots.Add(slot);
-        tco.RuntimeManagedParamTypes[slot] = type;
+        tco.MarkRuntimeManaged(slot, type);
         if (type is not TypeRef.TFun
             && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
         {
             tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
-        }
-        if (type is TypeRef.TList)
-        {
-            tco.RuntimeManagedListParamSlots.Add(slot);
         }
     }
 
@@ -7637,14 +7623,15 @@ public sealed partial class Lowering
         for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
         {
             TypeRef type = Prune(argTypes[index]);
+            int slot = tco.ParamSlots[index];
             if (!CanArenaReset(type)
                 && !IsResourceHandleType(type)
-                && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+                && !tco.ParamOwnership[slot].LoopInvariant
                 && !(type is TypeRef.TList list
-                    && tco.ConsumedListTailParams.Contains(tco.ParamNames[index])
+                    && tco.ParamOwnership[slot].ConsumedListTail
                     && (CanArenaReset(Prune(list.Element))
                         || IsBorrowableInspectOnlyList(tco, index, list)))
-                && !tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[index]))
+                && !tco.IsRuntimeManagedSlot(slot))
             {
                 hasPermanentlyBlockingParam = true;
                 break;
@@ -7748,11 +7735,12 @@ public sealed partial class Lowering
         string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
-            && tco.AffineConsListParams.Contains(tco.ParamNames[index])
+            && tco.ParamOwnership[tco.ParamSlots[index]].AffineConsList
             && argument is Expr.Cons { Tail: Expr.Var tail }
             && string.Equals(tail.Name, tco.ParamNames[index], StringComparison.Ordinal);
         bool freshClosure = index < tco.ParamNames.Count
-            && tco.FreshClosureParams.Contains(tco.ParamNames[index])
+            && index < tco.ParamSlots.Count
+            && tco.ParamOwnership[tco.ParamSlots[index]].FreshClosure
             && IsRuntimeRcCopyClosureProducer(argument)
             && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
         bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);
@@ -7817,8 +7805,8 @@ public sealed partial class Lowering
     {
         if (index >= tco.ParamNames.Count
             || tco.FixedCursorSlot < 0
-            || !tco.AffineStrParams.Contains(tco.ParamNames[index])
             || index >= tco.ParamSlots.Count
+            || !tco.ParamOwnership[tco.ParamSlots[index]].AffineStr
             || argument is not Expr.Add)
         {
             return;
@@ -7857,7 +7845,8 @@ public sealed partial class Lowering
             // alongside a growing accumulator keep the fixed mark instead of stranding every
             // iteration's accumulator copy below an advancing one.
             passThrough[i] = i < tco.ParamNames.Count
-                && tco.LoopInvariantParams.Contains(tco.ParamNames[i])
+                && i < tco.ParamSlots.Count
+                && tco.ParamOwnership[tco.ParamSlots[i]].LoopInvariant
                 && collectedArgs[i] is Expr.Var passVar
                 && string.Equals(passVar.Name, tco.ParamNames[i], StringComparison.Ordinal);
 
@@ -7905,10 +7894,10 @@ public sealed partial class Lowering
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
-            tco.ParamNames.Select(tco.ConsumedListTailParams.Contains).ToArray(),
+            tco.ParamSlots.Select(slot => tco.ParamOwnership[slot].ConsumedListTail).ToArray(),
             facts.StableAccArg,
             oldRuntimeParamTemps,
-            tco.ParamSlots.Select(tco.RuntimeManagedParamSlots.Contains).ToArray(),
+            tco.ParamSlots.Select(tco.IsRuntimeManagedSlot).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.ToArray(),
@@ -8774,7 +8763,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        if (tco.RuntimeManagedParamSlots.Contains(tco.ParamSlots[parameterIndex]))
+        if (tco.IsRuntimeManagedSlot(tco.ParamSlots[parameterIndex]))
         {
             return true;
         }

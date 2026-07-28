@@ -1108,7 +1108,7 @@ public sealed partial class Lowering
         if (matchValue is not Expr.Var variable
             || Prune(valueType) is not TypeRef.TList
             || Lookup(variable.Name) is not Binding.Local parent
-            || _tcoCtx?.RuntimeManagedParamSlots.Contains(parent.Slot) != true
+            || _tcoCtx?.IsRuntimeManagedSlot(parent.Slot) != true
             || !_tcoCtx.RuntimeManagedParamActiveSlots.TryGetValue(parent.Slot, out int activeSlot))
         {
             return;

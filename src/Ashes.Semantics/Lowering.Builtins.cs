@@ -2088,16 +2088,14 @@ public sealed partial class Lowering
         string restartLabel,
         bool loopResetEligible)
     {
-        var loopTco = new TcoContext
+        var loopTco = new TcoContext(info.Name, info.ParamNames.Count, new List<string>(info.ParamNames))
         {
-            SelfName = info.Name,
-            ParamCount = info.ParamNames.Count,
-            ParamNames = new List<string>(info.ParamNames),
             ParamSlots = orderedParamSlots,
             BodyLabel = restartLabel,
             InTailPosition = true,
             DescendingChain = false
         };
+        loopTco.BuildParamOwnership();
         if (loopResetEligible)
         {
             // Per-iteration watermark, re-saved on every pass over the restart label. The slots

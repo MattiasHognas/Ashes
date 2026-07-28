@@ -96,7 +96,7 @@ public sealed partial class Lowering
     /// Tuple/ADT, as opposed to a consumed-list-tail or affine-append accumulator) even when a sibling
     /// blocks the frame. That exception was removed after being checked against the real program it
     /// was meant to cover: reverse-complement's own <c>buf</c> fails the strict affine-accumulator
-    /// syntactic test (<see cref="TcoContext.AffineStrParams"/>) because its growth is interrupted by a
+    /// syntactic test (<see cref="TcoParamOwnership.AffineStr"/>) because its growth is interrupted by a
     /// flush read on one tail-call path, so the exception classified it as "affordable regardless" —
     /// but promoting it regressed peak memory by the same ~370MB the fully-unprofitable case produces.
     /// With no case where "affordable regardless, even under a blocking sibling" has been confirmed on
@@ -156,7 +156,7 @@ public sealed partial class Lowering
             && type is not TypeRef.TFun
             && !CanArenaReset(type)
             && !IsResourceHandleType(type)
-            && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
+            && !(index < tco.ParamSlots.Count && tco.ParamOwnership[tco.ParamSlots[index]].LoopInvariant)
             && !IsIndependentlyRcEligibleTcoParam(type, index, tco, includeFreshClosures: true);
 
     // paramTypes is threaded through only to satisfy IsPermanentlyBlockingTcoSibling's own signature
