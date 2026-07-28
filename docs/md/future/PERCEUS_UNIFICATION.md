@@ -1748,3 +1748,249 @@ This is multi-week/large-milestone-scale work in aggregate — not a sprint, and
 the user's own instruction, do not force any phase past its audit's stated risk level if a
 correctness issue is discovered mid-phase; stop and report, the same discipline already applied
 throughout this audit.
+
+## 9. Classifier collapse — decomposition plan
+
+Six sessions have now worked on Phase 6 (TCO loop-carried values) without landing the collapse it was
+titled for. Four of those sessions did real, validated, individually-useful work (interprocedural
+call-result freshness, the match-scrutinee wrapper-drop fix, a promotion-cost signal, two rounds of
+classifier-D timing-gap fixes) and two attempted the actual four-classifier collapse and were reverted
+in full after real measurement. This section is a from-scratch decomposition of that remaining work,
+produced by re-reading the current code (not the design doc's own paraphrase of it) call site by call
+site, with every claim below traced to a specific file and line and spot-checked against the tree at
+this session's start. It does not propose a clever shortcut — none was found — and says plainly, in
+§9.6, exactly which parts of "collapse A/B/C/D into one per-parameter decision" remain genuinely large
+even after this decomposition.
+
+### 9.1 What each classifier actually is, re-verified against current code
+
+| Classifier | Core defining site(s) | Approx. distinct read/write sites in `src/Ashes.Semantics` | The question it answers |
+|---|---|---|---|
+| A | `TcoContext.RuntimeManagedParamSlots` (`Lowering.Types.cs:41`); populated by `LowerLambdaCoreIdentifyRuntimeManagedTcoParams` (`Lowering.cs:6109-6152`) and its shared predicate `IsIndependentlyRcEligibleTcoParam` (`Lowering.cs:6163-6188`, whose own doc comment at `6153-6161` literally reads "Classifier A"); refreshed post-body-lowering by `LowerLambdaCoreRefreshRuntimeManagedTcoParams` (`Lowering.cs:5455-5481`) | ~25 | "Does this declared TCO parameter's own static type/usage shape license RC representation, considered alone?" |
+| B | `GetTcoCopyOutKind` (`Lowering.Ownership.cs:3276-3322`) and the `TcoBackEdge*` family (`Lowering.cs:986-2164`), gated by `CanArenaReset` (`Lowering.Ownership.cs:1495-1499`) | ~30 functions, no mutable state of its own | "Given a value's TYPE alone, what copy-out/reset strategy (none, shallow memcpy, list walk, TCO-list-cell, recursive deep-copy) would be legal for it at a back edge?" — purely a representation query, never asked "is this value owned." |
+| C | `_runtimeManagedResultTemps` (`Lowering.cs:550`, a per-lambda-body `HashSet<int>` of temp numbers), queried via `IsRuntimeManagedResultTemp` (`Lowering.cs:4725-4760`) and forward-propagated by `LowerLambdaCoreRefreshRuntimeManagedTcoResult` (`Lowering.cs:5508-5568`) | Several dozen, spread across nearly every lowering file (`Lowering.cs`, `Lowering.Ownership.cs`, `Lowering.Patterns.cs`, `Lowering.Symbols.cs`, `Lowering.Operators.cs`) | "Is this specific already-lowered IR temp's value, right now, runtime-managed?" — the compiler's single most-consulted ownership fact. |
+| D | `_runtimeManagedTcoPatternAliases` (`Lowering.cs:189-190`) + `_activeRuntimeManagedTcoPatternAliases` (`Lowering.cs:191`, a genuinely distinct "currently holds an extra protective ref this iteration" flag set, not an alias for the dictionary) + `_pendingNestedTcoPatternAliasSites` (`Lowering.cs:219`) + `TcoContext.EscapingDirectPatternBindings` (`Lowering.Types.cs:86`, populated by `CollectEscapingDirectPatternBindings`, `Lowering.Reuse.cs:355-414`) | ~20, concentrated in `Lowering.Patterns.cs` (1103-1167) and `Lowering.cs` (5353-5453, 7468-7541) | "Does this value, extracted by pattern match from a runtime-managed TCO parameter, independently escape the current loop iteration and therefore need its own protective dup before the parameter's own drop can run?" |
+
+One correction to the design doc's own catalogue, found while re-verifying: there is no `ClearRuntimeManagedTcoParams` (plural) function anywhere in the tree — only `ClearOneRuntimeManagedTcoParam` (`Lowering.cs:6257-6265`), called per-slot from `DemoteUnprofitableRuntimeManagedTcoParams` (`Lowering.cs:6239-6255`). Also, `TcoContext.EscapingDirectPatternBindings`'s own doc comment (`Lowering.Types.cs:73-86`) still describes only the two safe shapes from the "timing gap" fix — it was never updated when the "escaping-call-argument" fix added the third shape (`Lowering.Reuse.cs:526-533`); the code is correct, only that one comment is stale. Neither of these is a functional finding, but both matter for anyone reading the code cold before attempting the collapse.
+
+### 9.2 Where two or more classifiers answer the same question, with evidence
+
+This migration's own repeatedly-diagnosed disease ("two classifiers, same question, different code paths, can disagree") recurs at the TCO layer in (at least) five concrete places, each independently verified against current code:
+
+1. **A and B both re-derive the same type-shape eligibility test, three times, independently.** `IsIndependentlyRcEligibleTcoParam` (`Lowering.cs:6163-6188`), `LowerCallTcoPromoteResolvedRuntimeParam`'s inline resolved-type re-check (`Lowering.cs:7574-7584`), and `TcoBackEdgeRuntimeManagedArgCanReset` (`Lowering.cs:1561-1582`) each independently test overlapping conditions — `CanCopyOutAdt`, `CanRuntimeManageTcoAdt`, `CanRuntimeManageOwnedTupleType`, `CanArenaReset`, and per-branch list-shape facts (`FreshRebuiltListParams`/`PassThrough`/`FreshListRebuild`/`ConsumedListTailParams`/`ConsumedListTail`/`SingleFreshCons`) — but as three separately-typed, separately-maintained predicate bodies rather than one shared function called three times. `IsIndependentlyRcEligibleTcoParam`'s own doc comment already names this exact hazard for a *different* pair (itself vs. the promotion-cost signal) and was fixed by extraction (`RecordTcoPromotionProfitability` calls the same function, `Lowering.TcoPromotionCostSignal.cs:119`) — the identical fix has not yet been applied to reconcile A against B.
+2. **A and C are combined ad hoc, three times, at exactly the sites that decide whether a plain variable reference is "owned."** `LowerVar` (`Lowering.cs:2581-2600`) computes `runtimeManagedResult` as `_activeRuntimeManagedTcoPatternAliases.Contains(v.Name) [D] || ownerInfo is { RuntimeManaged: true } || _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true [A]`, then writes classifier C (`_runtimeManagedResultTemps.Add`, lines 2589/2599) — a three-classifier OR-then-write in 20 lines. The match-arm join (`MarkRuntimeManagedMatchResult`, `Lowering.Patterns.cs:71-83`, and its per-arm helper `MatchArmReturnsRuntimeManagedTcoParam`, `Lowering.Patterns.cs:85-96`) does the same OR between an inline classifier-C-like scan and a direct classifier-A read, for every arm, ANDed across arms. `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops` (`Lowering.cs:6715-6768`) does the reverse combination at loop exit: reads C (`IsRuntimeManagedResultTemp(bodyTemp)`, line 6724) to decide the drop-vs-transfer strategy, then iterates A (`tco.RuntimeManagedParamSlots`, line 6732) to apply it per parameter.
+3. **B's own `TcoBackEdgeArgCopyOutKind` downgrade exists specifically because A and B can disagree about what a value's construction history was.** The downgrade (`Lowering.cs:1852-1869`, comment quoted verbatim: "The whole-list DeepAdt clone is licensed per ARG, not per type... a threaded/consumed list... can share unbounded structure with the previous iteration — cloning it per back-edge multiplies the loop's cost by the list length (1brc's merge phase regressed ~400x)") is a hand-added correction bolted onto B precisely because B's pure type-shape answer and A's "was this rebuilt fresh this iteration" fact disagree for a consumed (not rebuilt) list, and nothing structurally prevents that disagreement from recurring for a shape this specific patch doesn't cover.
+4. **D's own eligibility gate is entirely a read of A, at a point where A is provably not yet populated.** `TrackRuntimeManagedTcoListPatternAliases` (`Lowering.Patterns.cs:1103-1134`) gates on `_tcoCtx?.RuntimeManagedParamSlots.Contains(parent.Slot)` — but for an ordinary unannotated accumulator, `RuntimeManagedParamSlots` is only finalized by the refresh pass that runs *after* the whole body (including this exact match) has already been lowered. This is not merely "two classifiers asking the same question" but "one classifier asking another classifier a question that classifier cannot yet answer" — precisely the timing gap two of the six sessions already spent fixing (indirectly, via the separate `EscapingDirectPatternBindings` structural analysis) rather than fixing this gate itself.
+5. **C's forward-taint pass and D's retroactive resolution are hand-sequenced to run in a specific order inside one function, because each is a precondition for the other's correctness, not because either was designed as a single pipeline.** `LowerLambdaCoreFinalizeTcoOwnership` (`Lowering.cs:5323-5337`) runs, in this exact order: A's refresh → D's `ResolvePendingNestedTcoPatternAliasSites` → a pending-flag resolution pass → A/B's entry-ownership splice → C's `LowerLambdaCoreRefreshRuntimeManagedTcoResult`. Reordering any two of these five calls would very plausibly reintroduce one of this subsystem's own historical bugs (CO-34(b)'s late-typed-accumulator leak and PR #298's use-after-free are both named in §2 of this document as consequences of exactly this "record now, resolve independently later" pattern) — the sequencing is load-bearing, undocumented as a dependency graph, and expressed only as call order in one function body.
+
+### 9.3 Coupling graph
+
+```mermaid
+flowchart TB
+    A["Classifier A\nRuntimeManagedParamSlots\n(static per-parameter shape)"]
+    B["Classifier B\nGetTcoCopyOutKind / TcoBackEdge*\n(pure type-shape representation query,\nno mutable state)"]
+    C["Classifier C\n_runtimeManagedResultTemps\n(per-temp reactive scan +\nforward-taint fixpoint)"]
+    D["Classifier D\npattern-alias tables\n(escape analysis for\nmatch-extracted values)"]
+
+    A -->|"IsIndependentlyRcEligibleTcoParam\nre-derives B's own shape facts\n(Lowering.cs:6163-6188 vs\nLowering.cs:1561-1582)"| B
+    A -->|"TrackRuntimeManagedTcoListPatternAliases\ngates entirely on A\n(Patterns.cs:1108-1115),\ntimed BEFORE A is populated"| D
+    A -->|"LowerVar / match-join OR classifier A\nwith C's write (Lowering.cs:2581-2600,\nPatterns.cs:71-96)"| C
+    C -->|"PendingTcoReset seeds\nRuntimeManagedArgResults from C\n(Lowering.cs:7879), B's normalize\nwrites results back into C\n(Lowering.cs:1463/1484/1642/1700)"| B
+    D -->|"LowerVar reads\n_activeRuntimeManagedTcoPatternAliases\nalongside A, feeds C's write\n(Lowering.cs:2582/2589)"| C
+    B -->|"TcoBackEdgeArgCopyOutKind downgrade\nexists only because B disagrees\nwith A's fresh-vs-consumed fact\n(Lowering.cs:1852-1869)"| A
+
+    VETO["LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame\n+ DemoteUnprofitableRuntimeManagedTcoParams\n(reads A, consults promotion-cost signal,\nclears A's own membership)"]
+    A --> VETO
+    VETO --> A
+```
+
+### 9.4 Separability: which classifiers are closest, which is the odd one out
+
+**B is the most separable, and arguably does not need to be "collapsed" at all.** Every predicate in
+`GetTcoCopyOutKind`/`CanArenaReset`/the `TcoBackEdge*` dispatch chain was confirmed, by direct reading,
+to depend only on `TypeRef`/`TypeSymbol` shape — never on `TcoContext`, `_runtimeManagedResultTemps`,
+or any per-value ownership fact. `CanArenaReset` calls nothing else in this group; `GetTcoCopyOutKind`
+calls only `CanArenaReset` and other pure shape predicates. This is, verbatim, the role §5 of this
+document already assigns to "representation, chosen *after* ownership is decided": B already **is**
+that downstream oracle, just not yet treated as one — today it's consulted through three
+independently-phrased duplicate gates (§9.2 item 1) instead of one. The actionable finding is not "fold
+B into the unified decision" but "stop re-deriving B's own answer by hand at A's and the back-edge's
+own call sites, and call B directly instead."
+
+**A and C are the closest pair, and the natural first real merge.** Both ultimately answer the same
+question — "is this specific value, right now, runtime-managed" — just seeded from different starting
+facts (A: static per-parameter classification; C: reactive instruction-shape scan + forward taint).
+They are already directly OR'd together at the two sites in §9.2 item 2 with no abstraction boundary
+between them; unifying those two sites into one shared "is this local/temp runtime-managed" query is a
+change to *how the existing OR is expressed*, not a change to *what gets computed*, provided it's done
+as a pure refactor first (mirroring the "safe reuse over a parallel rule" pattern already proven for a
+different pair of classifiers during the Phase 6 interprocedural-freshness fix: `IsDirectRcConstruction`
+was extended to fall back to `IsFreshRuntimeManageableAdtExpressionCore` rather than re-deriving a
+parallel rule, specifically so a future change to one side "can never leave the interprocedural consumer
+silently out of sync with it").
+
+**D is the odd one out, and not just because it's the most-patched.** A, B, and C's three questions
+("is this parameter's shape RC-eligible," "what copy-out strategy does this type support," "is this
+temp currently runtime-managed") are all, at bottom, the *same kind* of question restated at different
+granularities (parameter / type / temp) — which is exactly why unifying A+C is mostly a matter of
+routing existing reads through one function. D's question — "does a value extracted by pattern match
+from a runtime-managed parameter *independently escape* this iteration" — is a genuinely different kind
+of question: a **liveness** question, not an **ownership-representation** question. Nothing in A, B, or
+C, even fully unified, would answer it; today it is answered by a syntactic enumeration of "safe shapes"
+(`Lowering.Reuse.cs:500-533`) that its own authors have twice found incomplete in opposite directions
+(§9.5's account of the historical fixes) precisely because it is standing in for a liveness analysis
+that does not exist yet. This is the same conclusion every one of the six Phase 6 sessions independently
+reached from a different angle — the original investigation's closing note, the third attempt's closing
+note, and the "timing gap" fix's own closing note all say, in different words, "this needs the
+extended `FunctionOwnershipSummary`'s liveness answer, not another ad hoc condition." Nothing found in
+this session's re-reading contradicts that; if anything, the concentration of coupling evidence in
+§9.2 items 4 and 5 makes the case more precisely.
+
+### 9.5 Why D must be last: the bidirectional-failure evidence, re-confirmed
+
+Three fixes have now landed on classifier D's escape analysis in this document's own recent history,
+and they are not all protecting the same invariant in the same direction:
+
+- PR #298 (original) and the "timing gap" fix protect the **same** invariant — a pattern-extracted value
+  must be protected from its parent TCO parameter's own drop before it escapes — with the timing-gap fix
+  widening detection because the original mechanism structurally cannot fire for an ordinary unannotated
+  accumulator (`Lowering.Patterns.cs:1108-1115`'s gate reads classifier A before A is populated for that
+  body). Under-detection here is a **use-after-free**.
+- The "escaping-call-argument" fix protects the **opposite** failure mode, introduced by the timing-gap
+  fix's own conservative choice: over-classifying a binding as escaping installs a spurious `RcDup` that
+  permanently pins a list head cell's refcount at 2, defeating `EmitKnownConstructorRuntimeManagedAdtDrop`'s
+  `RcIsUnique` check and causing it to abandon (leak) the rest of the list every iteration — confirmed
+  as the exact mechanism behind `fannkuch-redux`'s factorial-scaling regression between the two fixes.
+  Over-detection here is an **unbounded leak**, via a code path (the drop walk's uniqueness check) that
+  isn't part of classifier D at all.
+
+Both directions have already shipped once, on `main`, inside a single-file change each time, and both
+were caught only by real-scale RSS measurement — not by unit tests, not by disassembly comparison (the
+same investigation that found the second regression also found the first regression's own validation
+technique, `objdump -d` on this compiler's statically-linked binaries, silently produces zero
+disassembly lines for any input, making its "byte-identical" claim vacuous by construction, not merely
+insufficiently thorough). Any future change to D — including folding it into a unified per-value
+decision — inherits this exact bidirectional fragility and this exact detection requirement: full
+`challenges/` suite at production `N`, RSS numbers actually read from `/usr/bin/time -v` or equivalent,
+not a disassembly diff and not a unit-test pass alone. This is why D is ordered last regardless of how
+the rest of the sequence goes: it is the one classifier where "smaller, more careful" has already twice
+failed to be automatically safe, and prerequisite infrastructure (a real liveness signal, per §9.4) does
+not exist yet to make the next attempt structurally different from the last two.
+
+### 9.6 Proposed sequence, honestly scoped
+
+**Step 1 — Deduplicate the A/B type-shape predicate (mechanical, low risk).** Extract one shared
+function covering the overlapping conditions currently duplicated across `IsIndependentlyRcEligibleTcoParam`
+(`Lowering.cs:6163-6188`), `LowerCallTcoPromoteResolvedRuntimeParam`'s inline check (`Lowering.cs:7574-7584`),
+and `TcoBackEdgeRuntimeManagedArgCanReset` (`Lowering.cs:1561-1582`); route all three through it. This is
+the Phase-1-shaped move (mechanical, narrow blast radius, "consult a declared fact instead of
+re-deriving from AST/type shape") applied to the one classifier pair (A/B) that is already
+representation-only on one side.
+- *What changes*: no behavior, if done correctly — this is a pure refactor. The risk is entirely in
+  verifying "correctly": the three predicates are not textually identical today (they combine the same
+  core shape facts with different additional conditions — A also requires membership in
+  `FreshRebuiltListParams`/`AffineConsListParams`/`ConsumedListTailParams`; B's back-edge check tests
+  `PassThrough`/`FreshListRebuild`/`ConsumedListTail`/`SingleFreshCons` against resolved facts instead of
+  name-sets), so the shared function must be built by exhaustively enumerating every `TypeRef` shape
+  category (`TStr`, `TBigInt`, every `TTuple`/`TNamedType` branch, every `TList` sub-branch, `TFun`) and
+  confirming all three current call sites agree on each one *before* deleting any of the three original
+  bodies — if they don't agree somewhere today, that disagreement is either a latent bug (fix it and
+  treat the fix as its own, separately-validated change) or evidence the three questions aren't really
+  the same question and shouldn't be merged after all.
+- *Validation gate*: a new unit-test truth table (one assertion per `TypeRef` shape category, comparing
+  old-inline vs. new-shared) confirmed to fail before the extraction and pass after, on top of the full
+  `challenges/` suite (all ten programs, particularly `1brc` and `reverse-complement` — the two programs
+  that already once caught a subtle A/B-adjacent profitability regression — at production scale, RSS via
+  `/usr/bin/time -v`, byte-identical output via `cmp -s`) plus the full C#/LSP/e2e suites.
+- *Scope*: genuinely single-session. It does not reduce classifier count (A and B remain two separate
+  tables/mechanisms) — it removes one instance of duplicated derivation between them. Call this
+  prerequisite cleanup, not "the collapse."
+
+**Step 2 — Unify A and C at their two proven joint-decision sites (moderate risk, tight scope).**
+Replace the ad hoc `D-then-A-then-write-C` combination in `LowerVar` (`Lowering.cs:2581-2600`) and the
+`C-scan-then-A` combination in the match/if-join triad (`MarkRuntimeManagedMatchResult`/
+`MatchArmReturnsRuntimeManagedTcoParam`, `Lowering.Patterns.cs:71-96`; `MarkUniformRuntimeManagedResult`,
+`Lowering.cs:5226-5232`) with one shared "is this local/temp runtime-managed" query that both sites call,
+instead of each re-deriving its own OR combination. Deliberately **do not** touch the other ~15
+A-and-C-adjacent sites the audit found (TCO loop-entry splice, exit-drop pass, back-edge normalization,
+etc.) in this step — those already route through A/C correctly via different, already-working
+mechanisms, and widening this step's blast radius to "everywhere A and C are both mentioned" is exactly
+the kind of scope creep this document's own history warns produces an unlandable single session.
+- *What changes*: `LowerVar` and the match/if-join sites call one function instead of inlining the
+  OR/AND logic; the underlying facts consulted (A's `RuntimeManagedParamSlots`, C's
+  `_runtimeManagedResultTemps` via `IsRuntimeManagedResultTemp`) are unchanged.
+- *Validation gate*: the existing `OwnershipTests`, `MatchScrutineeWrapperDropTests`, and
+  `NestedTcoPatternAliasTests` suites (all three already exercise `LowerVar`/match-join paths directly)
+  plus, at real scale, `fannkuch-redux` N=8 through N=11 (the sentinel most directly shaped by the two
+  already-landed match-join/LowerVar-adjacent fixes — "Phase 6 resolution, part 2" fixed exactly a
+  wrapper-drop bug in this neighborhood, making it the single most sensitive tripwire for a regression
+  here) and `binary-trees` N=21 (the CO-38 sentinel, since match-arm joining is structurally close to
+  binary-trees' own `Tree` recursion).
+- *Scope*: plausibly single-session if — and only if — held strictly to these two sites. This is the
+  same size of effort as the already-landed Phase 4/5 work (ADT/Tuple/List top-cell-freshness
+  unification), which took a full session each and needed real re-verification passes; there is no
+  reason to expect this pair to be easier, only that it is comparably sized, not smaller.
+
+**Step 3 — Restructure the TCO orchestration to read one per-parameter table instead of five
+hand-sequenced passes (large; NOT single-session; needs its own further split).** This is the actual
+"four-classifier collapse and veto removal" Phase 6 was titled for, now scoped down to "A, B (via step
+1), and C (via step 2) act as one input" while D is deliberately deferred to Step 4. Concretely:
+`LowerLambdaCoreFinalizeTcoOwnership`'s five-call sequence (`Lowering.cs:5323-5337`, item 5 of §9.2) would
+need to become a single pass producing one per-parameter verdict (RC / arena, with the promotion-cost
+signal already built in `Lowering.TcoPromotionCostSignal.cs` folded in as the profitability half of that
+verdict, replacing `DemoteUnprofitableRuntimeManagedTcoParams`'s current after-the-fact demotion), and
+`LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame`'s veto would need to be re-expressed as "no
+per-parameter clearing at all, only the profitability-gated demotion already landed" — which the
+document's own history shows was already attempted three times (full removal: safe but regresses `1brc`
+and `reverse-complement`'s RSS; two narrower carve-outs: one insufficient, one inert) and once landed in
+a genuinely narrower form (the profitability-gated relaxation). Given that history, this step should
+itself split further, not be attempted whole:
+- **3a (smaller, but still not proven trivial)**: re-verify whether the currently-landed
+  profitability-gated relaxation can be widened now that steps 1-2 have removed the A/B and A/C
+  duplicate-derivation risk that made the third attempt's own re-diagnosis (§"Phase 6, third attempt")
+  hard to trust — re-run its exact three regression measurements (the Str/closure synthetic case, `1brc`
+  at 10M/100M rows, `reverse-complement`) as the literal acceptance gate, since nothing about steps 1-2
+  changes the actual profitability physics that caused those regressions.
+- **3b (large, genuinely open)**: the actual orchestration rewrite (one unified per-parameter table
+  replacing the five-call sequence). This needs a real design pass of its own — deciding what a
+  "unified per-parameter TCO ownership record" looks like structurally, whether it lives on `TcoContext`
+  or is computed by an extended `FunctionOwnershipSummary` per §5 item 4 — before any code is written,
+  and should not be attempted in the same session as 3a.
+
+**Step 4 — Fold classifier D into the unified per-value answer (highest risk; explicitly last; not
+single-session; requires new prerequisite infrastructure that does not exist yet).** Per §9.4/§9.5, this
+is not a refactor of duplicated logic (as steps 1-2 are) — it requires building a real liveness signal
+("does this specific pattern-extracted binding's own live range end before the iteration completes,
+independent of a fixed enumeration of syntactic shapes") that today only Steps 1-3's ownership
+unification, extended with expression-level reach per §5 item 1, could plausibly provide. Concretely:
+- **4a (shadow-compare only, no behavior change)**: mirroring Phase 0's own established practice
+  ("compute it in parallel, assert-compare its answer against each existing classifier's answer in debug
+  builds, and fix any disagreement found before anything depends on the new analysis"), build the
+  liveness signal and run it, read-only, against every existing D-adjacent regression test
+  (`NestedTcoPatternAliasTests`, the `fannkuch-redux`/`reverse-complement` sentinels) plus a purpose-built
+  adversarial corpus enumerating every combination of the three current "safe shapes" and their
+  negations, comparing its verdict against `CollectEscapingDirectPatternBindings`'s current verdict on
+  each, before writing a single line that changes emitted IR.
+- **4b (cutover, only after 4a soaks clean)**: replace the syntactic safe-shape enumeration with the
+  liveness signal's verdict, re-running the full `challenges/` suite at production scale (RSS via
+  `/usr/bin/time -v`, not disassembly) as the acceptance gate, given that the disassembly-based check
+  used to validate one of D's own prior fixes was confirmed vacuous for this compiler's binaries.
+Given that two of D's last two patches — each scoped, tested, and full-suite-validated at the time —
+still shipped a regression caught only by a later session's own re-measurement, this step should be
+budgeted as needing its own dedicated multi-session effort with a mandatory soak period between 4a and
+4b, not estimated as a single sitting regardless of how well 1-3 go.
+
+### 9.7 Honest summary
+
+Of the four steps above, only **Step 1** is confidently single-session-sized as scoped. **Step 2** is
+plausibly single-session but comparably sized to the already-landed Phase 4/5 work, which is not a small
+bar. **Step 3** is explicitly not single-session and has already, across three independent sessions,
+resisted being landed whole — this decomposition narrows it (3a vs. 3b) but does not make either half
+small. **Step 4** is explicitly last, explicitly the highest risk, and explicitly requires prerequisite
+analysis infrastructure that doesn't exist yet — estimating it as a single session would repeat the
+exact mistake this document's own history warns against (an artificially small-sounding first step that
+turns out to hide the real complexity). The honest bottom line: this decomposition makes the work
+*sequenceable* and gives each step a concrete, evidence-based validation gate, but it does not make the
+four-classifier collapse small. Roughly two-thirds of the risk and effort documented across all six
+Phase 6 sessions to date lives in what this section calls Steps 3 and 4 — exactly the two steps this
+section also declines to claim are single-session tasks.
