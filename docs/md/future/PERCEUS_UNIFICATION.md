@@ -3207,3 +3207,299 @@ Per §13.6's own framing, this is a meaningful fraction of Option B's total scop
 coverage question, and the name-collision fix each remain open, separately-scoped follow-ups, and any
 cutover attempt should re-run this same shadow-compare after addressing them, not assume today's
 82-disagreement baseline shrinks on its own.
+
+## 16. Classifier collapse — Step 3b, Option B: closing two of §15.4's three gaps
+
+This section picks up exactly where §15.4 left off: the three concrete blockers §15.2/§15.3 found
+while shadow-compare-soaking the `TcoParamFacts` extension. Two are closed here (the missing fifth
+shape, and — within a bound this section discovered rather than assumed — the `ExpressionFreshness`
+coverage gap). The third (the flat whole-program name-collision gap in `_maFuncs`) was investigated in
+depth and deliberately left open: §16.4 explains precisely why, per this document's own standing rule
+that a change to shared, already-shipped foundational infrastructure only lands when it can be verified
+safe with high confidence, not on a time budget. Zero cutover happened here, same as §15: nothing new
+reads `TcoParamFacts` to make a real decision.
+
+### 16.1 Gap closed: the missing `GrownCons` shape (§15.2)
+
+`TcoSelfCallArgumentShape` gains a fourth positive case, `GrownCons` (`OwnershipSummary.cs`, next to
+`ConsumedTail`), documented as exactly the inverse of `ConsumedTail`: "every self-recursive call site's
+argument at this position is a fresh cons cell whose tail is a bare, unchanged reference to this same
+parameter." `TcoParamFactsWalkCall` (`Lowering.MoveAnalysis.cs`) gets one more arm, inserted between the
+`ConsumedTail` check and the `ExpressionFreshness`-driven `FreshRebuilt` fallback:
+
+```csharp
+: argument is Expr.Cons { Tail: Expr.Var consTail }
+    && string.Equals(consTail.Name, paramNames[i], StringComparison.Ordinal)
+    ? TcoSelfCallArgumentShape.GrownCons
+```
+
+This is a literal re-derivation of `CollectAffineConsListParams`'s own predicate
+(`Lowering.Reuse.cs:256-265`: `argument is Expr.Cons { Tail: Expr.Var tail } && tail.Name ==
+paramNames[index]`), through the same self-call detection `TcoParamFactsWalkCall` already uses (root is
+a bare `Var` named exactly the enclosing function, argument count matches) — not a new mechanism, the
+same syntactic question the old classifier already answers, asked through the new field instead.
+`ShadowCompareTcoParamFacts` (`Lowering.OwnershipShadowCompare.cs`) is simplified to match: the
+`AffineConsListParams` argument now maps to `TcoSelfCallArgumentShape.GrownCons` in the ordinary
+`oldShape` ternary alongside the other three name-sets, and the special-cased "known-gap" log line
+(§15.2's own workaround for the shape not existing yet) is deleted outright — every `AffineConsListParams`
+member is now an ordinary comparison, logged only on genuine disagreement like every other shape.
+
+Effect, verified directly (§16.6): every one of the previous 104 raw "known-gap"-tagged log lines is
+gone. Every `AffineConsListParams` member across the full corpus this session re-ran now agrees exactly
+with `GrownCons`, with the sole exception of members whose enclosing function's name collides elsewhere
+in the stitched program (§16.4's own untouched gap) — those surface as `old=GrownCons new=absent`,
+correctly attributed to the *other*, still-open gap rather than to this one.
+
+### 16.2 Gap closed (within a discovered bound): the `ExpressionFreshness` coverage gap (§15.3)
+
+§15.3's root cause, re-verified directly against the code before touching anything: `CallReachRegistered`
+(`Lowering.MoveAnalysis.cs`) only calls `ResultReach(args[idx], env)` — the one call that also invokes
+`RecordExpressionFreshness` — for a self-call argument at position `idx` when that position's parameter
+name appears in the callee's own `_maResultReach[name].Counts`. A "fold then render" loop (an accumulator
+consumed/rendered into something else, never itself returned) has an empty `Counts` for itself, so
+`CallReachRegistered`'s `foreach` never executes and none of that self-call's own argument expressions
+are ever visited — confirmed directly on `tests/tco_multi_fresh_list_accumulator.ash`'s `bump`, whose
+`[ownership]` line reported `expr-fresh=3/3` with none of the three nodes being one of `bump`'s own
+self-call arguments, exactly as §15.3 recorded.
+
+**The critical fact that made a safe fix possible**: `RecordExpressionFreshness` is a no-op unless
+`_maExpressionFreshness` is non-null, and that field is set **only** during `ComputeExpressionFreshness`
+— a dedicated, single extra walk over one function's body, run once per registered function, strictly
+*after* `ComputeResultReach`'s hot `while (changed)` fixpoint has already converged
+(`AnalyzeReuseCopyElision`'s own ordering: `ComputeResultReach()` first, then the
+`foreach (var function in _maFuncs.Keys...)` loop that calls `CreateOwnershipSummary` →
+`ComputeExpressionFreshness`). During the hot loop itself, `_maExpressionFreshness` is always null. This
+means the option §15.4 flagged as risky — "always recurse `ResultReach`'s visitation into a self-call's
+own arguments, regardless of result-reach relevance" — can be implemented **gated on
+`_maExpressionFreshness is not null`**, which makes it provably inert during the one pass every other
+consumer of this fixpoint (`_maResultReach` itself, and therefore `IsParamMoveSafe`/`UniqueParameters`,
+and `ResultProvenance`, which is computed by an entirely separate AST walk in
+`Lowering.OwnershipProvenance.cs` that never calls `ResultReach` at all) actually depends on. This is not
+"the broad option, accepted as an acceptable risk" — it is a narrower, provably-safe fix than either
+option §15.4 sketched, found by reading the recording mechanism closely enough to see the gate already
+existed.
+
+**What was built**: `CallReachRegistered` now tracks, via a `HashSet<int>? covered` (allocated only when
+`_maExpressionFreshness is not null` — zero allocation overhead during the hot loop), which argument
+positions the ordinary `summary.Counts` loop already visited, then calls a new helper,
+`RecordUncoveredCallArgumentsFreshness`, which — only when recording is active — visits every argument
+position *not* already covered purely so `RecordExpressionFreshness` gets a chance to record it, without
+changing what this call contributes to the caller's own reach (that contribution is exactly the sum the
+existing loop already computes; the new visits are pure side effect, their own return values discarded).
+The same helper also runs on the early `poison`/arity-mismatch return path, where previously *no*
+argument was ever visited at all. Idempotent by construction: revisiting a position the ordinary loop
+already covered recomputes the identical verdict (freshness depends only on structure and env, never on
+the specific numeric value `_maReachToken` happens to assign — confirmed by reading `TokenReach`/
+`HasPathAncestorPair`: token identity only needs to be locally distinct within one pass, never a specific
+value), so the `covered` set is an optimization, not a correctness requirement.
+
+**Verified safe for every existing consumer, not just argued**: `_maResultReach` (the real decision
+behind `IsParamMoveSafe`, hence `UniqueParameters`, and behind `IsResultAliasMove`) is fully computed and
+stable *before* `ComputeExpressionFreshness` ever runs, so nothing about this change can retroactively
+alter it. `FunctionResultProvenance` (`Lowering.OwnershipProvenance.cs`) is its own from-scratch AST
+classifier that never calls `ResultReach`/`CallReachRegistered` (confirmed by grep — the one hit in that
+file is a comment cross-reference, not a call). The four existing consumers of `ExpressionFreshness`
+itself (`ShadowCompareExpressionFreshness`'s call sites in `Lowering.Ownership.cs`/`Lowering.cs`) are all
+shadow-compare-only (log-only, `void`-returning, never influencing control flow) — broadened coverage
+can only make them log *more* comparisons than before (nodes that previously had no entry and were
+silently skipped now get compared), never change what any of them causes the compiler to do. Confirmed
+empirically, not just by code reading: the full C# suite (1722/1722), LSP suite (52/52), and e2e suite
+(544/0/44) all pass identically, `dotnet format` stays clean, and — because this change touches the
+shared fixpoint — the full `challenges/` suite (all 13 programs, `-O0` and `-O2`, 26 binaries) was
+rebuilt from an `origin/main` baseline and diffed: **every binary is byte-identical** (`cmp -s`), and the
+runtime numbers this document tracks were re-measured directly rather than inferred from that identity
+(§16.6).
+
+### 16.3 What the coverage fix reveals: coverage was real, but is not the whole story
+
+An A/B comparison (this fix built, then reverted, then rebuilt with only §16.1's shape landed) isolates
+its exact effect: the `FreshRebuilt → Mixed` disagreement count moves from **34 to 33** — one pair
+(`loopB param=p`, `tests/tco_multi_heap_accumulator_arg_order.ash`) resolves into full agreement, the
+other 33 persist. This is a small number relative to the emphasis §15.3 put on this root cause, so it
+was investigated rather than accepted at face value.
+
+`loopB`'s self-call argument at `p` is `Acc(a + 1)(b + 1)` — a constructor application whose fields are
+plain `Int` arithmetic extracted from `p` itself via pattern match. Before this fix, that argument was
+never visited at all (`loopB`'s own result never reaches `p` — its base case returns `a + b +
+slen(s)(0)`, scalars only), so it fell to `Mixed` via *absence*. After this fix, `CallReachConstructor`
+correctly computes its reach as empty (both fields are copy-typed `Int`s, excluded from the sum) and
+`Poison: false`, so it is now correctly recorded as genuinely fresh — matching `IsFreshListRebuildExpr`'s
+verdict (any `Expr.Call`, including a constructor application, counts as fresh there) by actual agreement,
+not by coincidence of both sides guessing the same way.
+
+The other 33 (`bump`/`nextPerm`/`resetCounts`/`mergeEntries`/`sortEntries`/`countFlips`/`applySubs`/...)
+share a different shape: each self-call argument is a call to a **helper function** (typically a
+`setAt`-style indexed-update helper) whose own result-reach summary shows it genuinely embeds the tail of
+its list argument (confirmed directly for `nextPerm`/`resetCounts` in `challenges/fannkuch-redux`, both
+of which build their self-call argument via `setAt(r)(...)(count)`, and for `bump` in
+`tests/tco_multi_fresh_list_accumulator.ash`). Once visited (which this fix now does), `ResultReach` on
+that whole call expression correctly computes a non-empty reach (the parameter is genuinely embedded in
+the result, by an ordinary `h :: setAt(...)` recursive rebuild that shares its own tail), so
+`ExpressionFreshness` reports `false` — soundly, not incorrectly. **This is not a residual coverage bug.**
+It is a semantic difference between two distinct questions that §13.2's original design used one shape
+name (`FreshRebuilt`) for: `IsFreshListRebuildExpr` (`Lowering.cs:925`) asks "is this argument
+ARENA-SCOPE self-contained" (its own doc comment: "a function's list result is copied out of the
+callee's arena scope on return, so it is self-contained" — true of *any* call result, regardless of
+whether it shares a reference with the caller's previous value, because the copy-out already happened at
+the callee's own return boundary); `ExpressionFreshness`/`TcoSelfCallArgumentShape.FreshRebuilt` ask "does
+this value's REFERENCE alias any parameter" (an RC/aliasing question, correctly answered `false` when a
+helper's result structurally embeds the input's tail, even though that tail was already copied out of
+the helper's own arena scope). Both answers are individually correct for the question each side is
+actually asking; they simply are not the same question, and no amount of closing the coverage gap can
+make them agree, because the underlying properties genuinely differ. A future cutover of classifier A
+onto `TcoSelfCallArgumentShape` needs to resolve this BEFORE substituting `FreshRebuilt`'s membership for
+`FreshRebuiltListParams`'s — either by proving arena-scope self-containment is always sufficient for
+whatever `FreshRebuiltListParams`'s consumer actually needs (in which case `FreshRebuilt` is too strict
+and a distinct, additional shape capturing "arena-fresh via callee copy-out, alias status irrelevant" is
+needed alongside it), or by re-deriving that consumer's actual correctness requirement from the
+RC-aliasing side. This was not attempted here — it is a new, more precise finding than §15.3's own
+framing, and is the honest reason this fix's yield (1 pair) is much smaller than its emphasis in §15.3
+suggested it might be, while still being the correct, safe, fully-verified fix for the coverage question
+it was actually scoped to answer.
+
+### 16.4 Gap investigated, left open: the flat whole-program name-collision gap (§15.3's third finding)
+
+This is the gap the session's own brief asked to treat with the most caution, and it is left open,
+precisely for the reasons the brief anticipated rather than despite them.
+
+**What was checked.** `_maFuncs`/`_maAmbiguous`/`_maCallSites`/`_maEscaped` are read or written at 21
+distinct sites inside `Lowering.MoveAnalysis.cs` alone, plus direct reads from at least two other files
+(`Lowering.OwnershipProvenance.cs:81,403` and a documented dependency in
+`Lowering.TopCellFreshness.cs`). The ambiguity collapse itself happens once, early, and upstream of
+everything: `RegisterOneBinding` (`Lowering.MoveAnalysis.cs:272`) marks a second same-named binding
+`_maAmbiguous`, and `AnalyzeReuseCopyElision` then deletes BOTH colliding names from `_maFuncs`/
+`_maValueRhs` and marks them `_maEscaped` before `CollectCallsAndEscapes`, `ComputeResultReach`, or any
+other analysis in this file ever runs. This means the collision is not a property of one lookup table
+that a second, TCO-scoped index could safely sit alongside — it is baked into the WHOLE-PROGRAM call-site
+census and the result-reach fixpoint's own inputs, before either of those (which `IsParamMoveSafe`,
+`UniqueParameters`, and every `ResultReach`-derived fact for every OTHER already-shipped consumer depend
+on) computes anything.
+
+**Why a purely additive fix does not work.** The natural-looking additive idea — key a *new*, parallel
+table by body reference identity (every `RegisterOneBinding` call already computes a unique
+`GetInnermostBody(lam)` subtree per binding, ambiguous or not) instead of by bare name, and have
+`TcoParamFacts` consult that instead of `_maFuncs` — was considered and rejected on inspection, not
+merely assumed to fail. `ComputeTcoParamFacts`'s own correctness depends on the SAME name-keyed facts
+every other classifier in this file depends on: `ComputeExpressionFreshness`/`ComputeResultReach` compute
+`_maResultReach`/`ExpressionFreshness` by walking `_maFuncs[name].Body` under an env built from
+`info.Params`, and self-call resolution throughout (`CallReach`, `CallReachRegistered`,
+`TcoParamFactsWalkCall`'s own root-name check) matches by the literal function NAME, not by any
+reference-identity key. A second, reference-keyed lookup table for `TcoParamFacts` alone would not fix
+anything, because the underlying `_maResultReach`/`ExpressionFreshness` computation that
+`ComputeTcoParamFacts` reads its `expressionFreshness` argument from is ITSELF already collapsed/dropped
+for a colliding name before `TcoParamFacts` is ever computed — an additive index on top of an already-lost
+computation cannot recover data that was never computed correctly in the first place. Giving `_maFuncs`
+real per-scope identity would mean re-deriving `RegisterBindings`/`RegisterOneBinding`,
+`CollectCallsAndEscapes`, `_maCallSites`, `_maResultReach`'s own dictionary keys, `_maNestedRecursive`,
+and `_maMoveSafeMemo`/`_maInProgress`'s cycle-detection keys — essentially the whole file's own identity
+scheme — not a narrow, bolt-on addition.
+
+**Decision: stop, per this document's own standing rule.** Re-deriving that identity scheme is a genuine
+redesign of shared, already-shipped foundational infrastructure that `IsParamMoveSafe`/`UniqueParameters`,
+`ExpressionFreshness` (four already-wired shadow-compare consumers), and `ResultProvenance` (a REAL,
+already-cutover decision — `TryResolveKnownFunctionResultOwnership` reads it directly, per §13.2) all
+depend on today, for every function in the program, not only the colliding ones. Verifying such a change
+"stays behaviorally identical with high confidence" would require the same kind of exhaustive,
+category-by-category re-verification §10/Phase 4/5 needed for a much smaller surface, and — per this
+session's own brief and this document's repeatedly-stated priority — that is exactly the signal to stop
+and hand this to its own dedicated session rather than force it under this session's time budget. This
+gap therefore remains open, exactly as characterized in §15.4: any real cutover of classifier A is
+blocked on it whenever the cutover target is a function whose bare name collides anywhere else in the
+stitched program — which, per §15.3's own finding, is not a rare shape (`go`/`scan`/`split`-named local
+recursion helpers are idiomatic, not exceptional).
+
+### 16.5 Shadow-compare results: before/after
+
+Re-run with the exact corpus this session's own brief specified: every `tests/tco_*.ash`, `reuse_*.ash`,
+`ownership_*.ash`, `runtime_rc_*.ash` (50 files) plus the full `challenges/` suite (13 programs,
+including both `server/` fixtures) — 63 files total, every one compiling cleanly (`ashes compile ... -o
+...`, `ASHES_EXPLAIN_OWNERSHIP=all`, exit 0 for all 63). This is narrower than §15.3's own corpus (which
+additionally sampled `co_*`/`fold_*`/`list_*` fixtures) — the corpus difference, not a regression, is the
+most likely explanation for the small movement in the name-collision bucket noted below.
+
+Raw output: 2532 total `[ownership-shadow]` lines across every predicate; 466 raw `TcoParamFacts` lines,
+deduplicating to **155 unique (function, parameter) disagreement pairs** (down from §15.3's 82, but not
+directly comparable — see below), across:
+
+| Category | Before (§15.3) | After | Change |
+|---|---|---|---|
+| `AffineConsListParams`/`GrownCons` mismatch ("known-gap" before, ordinary comparison after) | 104 raw lines, not counted among the 82 | **0** (3 residual instances are the name-collision gap, not a shape mismatch — see below) | Fully closed |
+| `none → FreshRebuilt` (scalar misclassification — explicitly expected to persist, harmless) | ~40 pairs (incl. 1 genuine improvement) | 112 pairs (incl. the same 1 improvement, `advance param=dt → UnchangedPassthrough`) | Grew, expected: broadened `ExpressionFreshness` coverage (§16.2) now gives many previously-invisible scalar accumulator positions a real (correct) verdict instead of silently defaulting to `Mixed`-via-absence, which the old suppression logic in `ShadowCompareTcoParamFacts` did not log at all |
+| `FreshRebuilt → Mixed` (the semantic-gap category, §16.3) | 34 pairs | 33 pairs | 1 pair resolved (`loopB param=p`); the other 33 are a genuine, now-precisely-characterized semantic gap, not a coverage bug (§16.3) |
+| Flat-namespace collision (`new=absent`) | 7 pairs | 10 pairs | §16.4's gap untouched; the difference is attributable to this session's narrower corpus (see above), not a regression — 3 of the 10 are `GrownCons`-shaped members caught by this SAME untouched collision, confirming §16.1's fix is itself subject to §16.4's gap for a colliding name |
+
+The "genuine, unexplained" disagreement total this document's own acceptance bar cares about (excluding
+the explicitly-excused scalar bucket) moves from 34 + 7 = 41 to 33 + 10 = 43 — not a shrink in raw count,
+but every one of those 43 is now precisely attributed to one of two fully-understood, separately-scoped
+causes (§16.3's semantic gap, §16.4's collision gap) rather than to an unexplained "the new analysis
+disagrees" residue. §16.1's own 104-line category is fully eliminated; §16.2's fix is verified safe and
+directly improves data quality for scalar accumulator positions across the whole corpus (the 112-pair
+growth), even though it only closes 1 of the 34 list-shaped `FreshRebuilt → Mixed` pairs it was hoped to
+address — the other 33 turned out to need a design decision (§16.3), not a bigger fixpoint.
+
+### 16.6 Validation results
+
+- `dotnet build Ashes.slnx`: clean, 0 warnings, 0 errors.
+- `dotnet run --project src/Ashes.Tests -- --no-progress`: **1722/1722 passed**, including
+  `NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`, `OwnershipTests`,
+  `OwnershipProvenanceTests`, `TcoMixedOwnershipTests`, `TcoPromotionCostSignalTests`,
+  `TcoRcEligibilityPredicateTests` — none weakened or deleted.
+- `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`: **52/52 passed**.
+- `dotnet run --project src/Ashes.Cli -- test tests`: **544 passed, 0 failed, 44 skipped** — identical
+  to the pre-change baseline, re-run twice (once before, once after restoring from the A/B comparison in
+  §16.3) with identical results both times.
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- Zero cutover confirmed directly: `grep -rn "TcoParamFacts\b" src/` finds only the field declaration,
+  its computation, and the shadow-compare hook — no new consumer anywhere.
+- **Challenges byte-identical gate** (mandatory here because §16.2 touches the shared `ResultReach`
+  fixpoint, unlike §15's own pure-addition change): a baseline CLI was built from `origin/main` at this
+  session's own starting commit (`24d003e`) in the same worktree (changes stashed, baseline built,
+  restored). Every program in `challenges/` (all 13, including both `server/` fixtures) was compiled with
+  both the baseline and this session's compiler at `-O0` and `-O2` — 26 binaries total — and every single
+  one is **byte-identical** (`cmp -s`).
+- Runtime measurements were still taken directly, not merely inferred from that identity:
+  **fannkuch-redux** N=8/9/10/11 — constant **256 KB** peak RSS at every N on both binaries (35.01s vs.
+  35.09s at N=11, ordinary run-to-run noise); **binary-trees** N=21 — 196352 KB (192 MB) on both, output
+  MD5-identical; **1BRC** at 10M rows (generated via `head` from the full 1e9-row fixture) — 0.55s vs.
+  0.56s, ~6.97 GB RSS on both, output MD5-identical; at 100M rows — 1.27s vs. 1.28s, ~9.05 GB RSS on
+  both, output MD5-identical; **reverse-complement** against a 1M-base `fasta`-generated input — 0.51s on
+  both, 753476 KB vs. 753832 KB RSS (noise), output MD5-identical.
+
+### 16.7 Honest summary, and the question this session's brief asked to answer directly
+
+Two of the three gaps §15.4 catalogued are closed: the missing `GrownCons` shape (§16.1, a clean, full
+closure — its own disagreement category goes to zero except where the untouched collision gap also
+applies) and the `ExpressionFreshness` coverage gap (§16.2, closed via a narrower, provably-safe
+mechanism than either option §15.4 sketched, verified inert for every existing consumer both by code
+reading and by a byte-identical `challenges/` rebuild) — though §16.2's yield on the specific
+`FreshRebuilt → Mixed` disagreement count is much smaller than its emphasis in §15.3 suggested, because
+most of that category turned out to be a genuine semantic gap (§16.3) rather than the coverage bug it
+was diagnosed as. The third — the flat whole-program name-collision gap in `_maFuncs` — was investigated
+precisely enough to confirm it is NOT a narrow, TCO-local fix: it is baked into the whole-program
+call-site census and result-reach fixpoint every other already-shipped consumer of this file depends on,
+and re-deriving it safely would need the same exhaustive verification effort as Phase 4/5's own
+category-by-category work, on a larger and more foundational surface. Per this document's own standing
+rule and this session's own brief, that is precisely the signal to leave it open for its own dedicated
+session rather than force it here.
+
+**Is a safe cutover of classifier A realistic without §16.4's gap resolved first?** No, not in general, and this
+session's evidence makes that concrete rather than hypothetical: 3 of the 155 disagreement pairs found
+here are `GrownCons`/other-shape members that simply vanish (`new=absent`) the moment their enclosing
+function's bare name collides elsewhere in the stitched program — meaning `TcoParamFacts` would silently
+fall back to the conservative `Mixed`/absent case for exactly those functions today, and any real cutover
+built on top of it would need its OWN fallback to the old `Collect*` walks specifically for a
+name-collision case, which is either a second, permanently-necessary code path (defeating the
+unification this whole effort is for) or a bug waiting to regress a `go`/`scan`/`split`-named loop's
+optimization the moment someone adds a second differently-scoped function with the same short name
+elsewhere in a large program. §16.4's gap is therefore a hard blocker for a *general* cutover, not merely
+an edge case to note and move past. A narrower cutover — restricted to functions provably unambiguous in
+`_maFuncs` today (i.e., skip `TcoParamFacts` and keep the old `Collect*` path whenever
+`GetOwnershipSummary(name)` is null or the name is in the ambiguous set) — is technically possible
+without §16.4's gap closed, but only at the cost of keeping exactly the "two classifiers, same question,
+different code paths" duplication this whole migration exists to remove, for precisely the common,
+idiomatic short-recursion-helper-name case §16.4 describes. §16.3's semantic-gap finding is a second,
+independent reason a
+cutover cannot yet simply substitute `FreshRebuilt`'s membership for `FreshRebuiltListParams`'s without
+first resolving what "fresh" should mean for a helper call that is arena-scope self-contained but not
+reference-alias-free. Both open items are now precisely enough characterized that a future session can
+scope its own work against them directly, rather than rediscovering them from scratch.

@@ -68,9 +68,15 @@ internal enum TcoSelfCallArgumentShape
     /// the classifier it re-derives actually checks.
     ConsumedTail,
 
-    /// No single shape above holds at every self-recursive call site (including a self-call whose
-    /// argument at this position grows the parameter's own previous value, e.g. consing a fresh head
-    /// onto it — a real, distinct shape with no positive case of its own here), or the function has no
+    /// Every self-recursive call site's argument at this position is a fresh cons cell whose tail is a
+    /// bare, unchanged reference to this same parameter — the accumulator grows by one cell per
+    /// iteration, consing onto its own prior value rather than replacing it wholesale. Distinct from
+    /// <see cref="FreshRebuilt"/> (the cons cell is NOT alias-free — it embeds the parameter's own
+    /// previous value as its tail) and from <see cref="ConsumedTail"/> (the parameter grows here,
+    /// rather than shrinking via pattern-extraction).
+    GrownCons,
+
+    /// No single shape above holds at every self-recursive call site, or the function has no
     /// self-recursive call site to classify from at all.
     Mixed,
 }

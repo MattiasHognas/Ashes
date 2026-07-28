@@ -65,10 +65,8 @@ public sealed partial class Lowering
     /// Compares a TCO loop's own <c>Collect*</c>-derived per-parameter classification (still the real
     /// decision — nothing reads the new field yet) against <c>FunctionOwnershipSummary.TcoParamFacts</c>
     /// for the same self-recursive function, logging every disagreement. <paramref name="affineConsListParams"/>
-    /// has no positive case of its own in <see cref="TcoSelfCallArgumentShape"/> (see that enum's own
-    /// remarks) — every one of its members is expected to land on <see cref="TcoSelfCallArgumentShape.Mixed"/>
-    /// on the new side, so that overlap is logged separately from a genuine disagreement rather than
-    /// folded into the same count.
+    /// (the growing-cons-accumulator shape) compares against <see cref="TcoSelfCallArgumentShape.GrownCons"/>
+    /// like every other old name-set compares against its own positive shape.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
         string selfName,
@@ -91,24 +89,17 @@ public sealed partial class Lowering
             bool isLoopInvariant = loopInvariantParams.Contains(name);
             bool isFreshRebuilt = freshRebuiltListParams.Contains(name) || freshClosureParams.Contains(name);
             bool isConsumedTail = consumedListTailParams.Contains(name);
-            bool isAffineConsGrowth = affineConsListParams.Contains(name);
+            bool isGrownCons = affineConsListParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
                 isLoopInvariant ? TcoSelfCallArgumentShape.UnchangedPassthrough
                 : isFreshRebuilt ? TcoSelfCallArgumentShape.FreshRebuilt
                 : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
+                : isGrownCons ? TcoSelfCallArgumentShape.GrownCons
                 : null;
 
             bool haveNew = tcoParamFacts is not null && tcoParamFacts.TryGetValue(name, out var newFacts);
             TcoSelfCallArgumentShape? newShape = haveNew ? tcoParamFacts![name].Shape : null;
-
-            if (isAffineConsGrowth)
-            {
-                LogOwnershipShadowDisagreement(
-                    "TcoParamFacts",
-                    $"known-gap function={selfName} param={name} old=AffineConsList (no positive TcoSelfCallArgumentShape case) new={(haveNew ? newShape!.Value.ToString() : "absent")}");
-                continue;
-            }
 
             if (oldShape is null && !haveNew)
             {
