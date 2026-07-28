@@ -1748,3 +1748,123 @@ This is multi-week/large-milestone-scale work in aggregate — not a sprint, and
 the user's own instruction, do not force any phase past its audit's stated risk level if a
 correctness issue is discovered mid-phase; stop and report, the same discipline already applied
 throughout this audit.
+
+## 9. Classifier collapse — Step 1 landed (A/B type-shape predicate dedup)
+
+A parallel session produced a from-scratch decomposition of the remaining four-classifier-collapse
+work (a "## 9. Classifier collapse — decomposition plan" section, its own PR not yet merged at the
+time this session started, so its content was read directly from that PR's branch rather than from
+`main`) and proposed a four-step sequence, Step 1 being: three call sites in `Lowering.cs` —
+`IsIndependentlyRcEligibleTcoParam`, `LowerCallTcoPromoteResolvedRuntimeParam`'s inline resolved-type
+check, and `TcoBackEdgeRuntimeManagedArgCanReset` — independently re-derive what should be one
+type-shape question ("does this TCO parameter/argument's own type independently license
+runtime-managed representation"), and should share one function. This section records that step
+actually landing, plus a correction to how completely the three sites turned out to overlap.
+
+**What was actually found, re-verified line by line against all three bodies.** The three predicates
+are the same question, confirmed identical, for four of five type-shape categories:
+
+- `TStr`/`TBigInt`: all three unconditionally `true`.
+- `TTuple`: all three delegate to `CanRuntimeManageOwnedTupleType`.
+- `TNamedType`: all three reduce to `CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named)`.
+  `IsIndependentlyRcEligibleTcoParam` carried a third, textually-distinct disjunct,
+  `CanRuntimeManageAdt(ownedRecord)`, that looked like a real difference from the other two sites —
+  it is not: `CanRuntimeManageTcoAdt` already calls `CanRuntimeManageAdt` as its own first disjunct
+  (`Lowering.cs`, `CanRuntimeManageTcoAdt`'s one-line body), so `A || (A || B || C)` is just `A || B ||
+  C` — the extra disjunct was dead weight, not a divergent rule, and removing it changes nothing.
+
+For the remaining two categories, the three sites are genuinely **not** the same question — this
+confirms, rather than corrects, the decomposition plan's own stated caution ("the three predicates are
+not textually identical today... so the shared function must be built by exhaustively enumerating
+every `TypeRef` shape category... if they don't agree somewhere today, that disagreement is either a
+latent bug... or evidence the three questions aren't really the same question and shouldn't be merged
+after all"):
+
+- `TList`: `IsIndependentlyRcEligibleTcoParam` and `LowerCallTcoPromoteResolvedRuntimeParam` both
+  consult the same three **whole-loop-body, static, per-parameter-name** classifications
+  (`TcoContext.FreshRebuiltListParams`/`AffineConsListParams`/`ConsumedListTailParams`, looked up by
+  the parameter's declared name, computed once before the loop's own body is lowered) — these two
+  really were identical, just spelled with a name lookup in one and an index lookup in the other
+  (`IsBorrowableInspectOnlyList` already has both overloads, one delegating to the other).
+  `TcoBackEdgeRuntimeManagedArgCanReset`, however, consults four entirely different fields
+  (`PendingTcoReset.PassThrough`/`FreshListRebuild`/`ConsumedListTail`/`SingleFreshCons`, each a
+  **per-back-edge, per-argument** fact resolved fresh from the actual argument expression at that
+  specific tail call — see `LowerCallTcoGatherResetFacts`). `ConsumedListTail` happens to be seeded
+  from the same underlying name-set, but `PassThrough`/`FreshListRebuild`/`SingleFreshCons` have no
+  analogue in the other two sites' name-sets at all; they answer "what did THIS call site's argument
+  expression look like," not "what does the loop body's whole-program shape say about this parameter."
+- `TFun` (closures): `IsIndependentlyRcEligibleTcoParam` gates on `TcoContext.FreshClosureParams`
+  (again a static, whole-loop-body, per-parameter-name fact); `LowerCallTcoPromoteResolvedRuntimeParam`
+  has no closure branch at all (closure promotion for a resolved argument type is handled by a
+  different, already-existing code path around `LowerCallTcoEvalArg`'s own `freshClosure` check,
+  `Lowering.cs:7731-7734`, which requests closure allocation directly rather than going through this
+  predicate — folding a redundant closure branch into this site would be inert, not incorrect, but
+  was left alone rather than added speculatively); `TcoBackEdgeRuntimeManagedArgCanReset` uses
+  `PendingTcoReset.RuntimeManagedArgResults`, again a per-back-edge resolved fact, unrelated to
+  `FreshClosureParams`.
+
+**Consolidation landed.** Extracted `IsRcEligibleScalarTupleOrAdtType(TypeRef)` — exactly the four
+identical categories above, with the redundant ADT disjunct dropped — and routed all three call sites
+through it for those categories. The `TList`/`TFun` branches were deliberately left exactly as they
+were at each of the three sites (still separately coded, still consulting their own genuinely different
+signal), with the reason documented inline at the new shared function's own doc comment rather than
+merged, per the decomposition plan's own explicit permission to report a real difference instead of
+picking one arbitrarily. This is a smaller consolidation than "one function answers the whole
+question" — it removes one confirmed instance of the duplicated-derivation disease for 4 of 5 shape
+categories, and leaves classifier A and classifier B's own genuinely distinct list/closure facts
+exactly as separate as they always were. Net change: roughly 30 lines added (one new shared method
+plus its doc comment), roughly 25 lines removed (the three old inline copies of the identical portion),
+across `src/Ashes.Semantics/Lowering.cs`.
+
+**Validation.** A new reflection-based truth-table test
+(`src/Ashes.Tests/TcoRcEligibilityPredicateTests.cs`) pins the shared predicate directly: plain scalars
+false, `Str`/`BigInt` true, a copy-safe tuple true vs. one containing a function element false, a
+single-constructor record of copy-safe fields true (via the shallow-copy-out path), a
+single-constructor record with a `Str` field true (via the runtime-managed-dropper path, proving the
+now-removed disjunct's own case is still covered by `CanRuntimeManageTcoAdt`), a multi-constructor ADT
+whose fields are all independently copy-safe false (nothing to protect, so no promotion is licensed),
+and a synthetic zero-constructor type false. Full gate, run from a tree with the LLVM native runtime
+and the repo's own 1BRC 10M/100M-row fixtures already available locally (no re-download needed):
+
+- `dotnet build Ashes.slnx`: clean.
+- C# suite: 1722/1722 passed (0 failed, 0 skipped), including the new test file and every test named
+  in this step's own safety brief (`NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`,
+  `OwnershipTests`, `OwnershipProvenanceTests`, `TcoMixedOwnershipTests`, `TcoPromotionCostSignalTests`).
+- LSP suite: 52/52 passed.
+- e2e suite (`dotnet run --project src/Ashes.Cli -- test tests`): 544 passed, 0 failed, 44 skipped
+  (platform-gated tests, unrelated to this change).
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- Full `challenges/` suite, compared against a baseline built from `origin/main` at the commit this
+  session started from (`1e68013`), same machine, same `-O2`, both compiled via a plain `git clone`
+  of the working tree (not a second `git worktree`) checked out to that commit: **all eleven compiled
+  binaries — `binary-trees`, `fannkuch-redux`, `fasta`, `k-nucleotide`, `mandelbrot`, `n-body`,
+  `pidigits`, `regex-redux`, `reverse-complement`, `spectral-norm`, and the 1BRC `brc` binary — are
+  byte-for-byte identical to their baseline counterparts (`cmp -s`), not merely output-identical.**
+  This is a stronger check than the byte-identical-output/RSS-measurement bar this step's own brief
+  asked for (and stronger than a resolved-IR dump, which was rejected as a check for a different
+  reason earlier in this document — a full ELF `cmp` has no analogous blind spot). Runtime spot
+  checks on top of the binary identity, all matching within normal single-run noise: `fannkuch-redux`
+  N=8/9/10/11 all resident at the documented constant 256 KB floor (checksums 1616/8629/73196/556355,
+  `Pfannkuchen` 22/30/38/51, matching the README exactly); `binary-trees` N=21 at 196,352 KB (~191.75
+  MB, matching the README's ~191.8 MB) with byte-identical stdout against the baseline binary;
+  1BRC at 10,000,000 rows (6,970,836 KB vs. baseline 6,970,176 KB, a ~0.01% run-to-run difference) and
+  100,000,000 rows (9,048,772 KB vs. baseline 9,048,880 KB, ~0.001%), both with byte-identical output;
+  `reverse-complement` on a 1,000,000-sequence FASTA input (753,588 KB vs. baseline 753,080 KB,
+  ~0.07%) with byte-identical output. Every other challenge's stdout was also confirmed byte-identical
+  against its baseline run (`mandelbrot`, `n-body`, `pidigits`, `k-nucleotide`, `spectral-norm`,
+  `regex-redux`).
+
+**Honest scope assessment.** The decomposition plan called Step 1 "confidently single-session-sized as
+scoped," with the caveat that the risk was entirely in verifying the three predicates actually agreed
+category-by-category before deleting anything. That is exactly how this session went: the code change
+itself is small (one extracted method, three call sites routed through it), but a meaningful fraction
+of the session's effort went into confirming, rather than assuming, that the ADT disjunct really was
+redundant (it required tracing `CanRuntimeManageTcoAdt`'s own definition, not just reading the caller)
+and that the list/closure branches were genuinely NOT the same question rather than a divergence to
+paper over (it required tracing `PendingTcoReset`'s field-population site,
+`LowerCallTcoGatherResetFacts`, back to confirm those facts really are per-back-edge and not just a
+renamed copy of the static per-parameter-name sets). Step 1 turned out exactly as small as the
+decomposition plan estimated, provided the verification work is treated as the actual deliverable and
+the diff size is not — a two-line diff with an unverified "they're the same" assumption behind it
+would have been the fast, wrong way to do this same step. Step 2 (unifying classifier A and C at the
+`LowerVar`/match-join sites) remains the next candidate; Steps 3 and 4 are untouched by this session.

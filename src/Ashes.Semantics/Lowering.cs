@@ -1565,20 +1565,18 @@ public sealed partial class Lowering
             return false;
         }
 
-        return Prune(info.ArgTypes[index]) switch
-        {
-            TypeRef.TStr or TypeRef.TBigInt => true,
-            TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
-                || CanRuntimeManageTcoAdt(named),
-            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
-                && (info.PassThrough[index]
-                    || info.FreshListRebuild[index]
-                    || info.ConsumedListTail[index]
-                    || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
-            TypeRef.TFun => info.RuntimeManagedArgResults[index],
-            _ => false,
-        };
+        TypeRef type = Prune(info.ArgTypes[index]);
+        return IsRcEligibleScalarTupleOrAdtType(type)
+            || type switch
+            {
+                TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
+                    && (info.PassThrough[index]
+                        || info.FreshListRebuild[index]
+                        || info.ConsumedListTail[index]
+                        || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
+                TypeRef.TFun => info.RuntimeManagedArgResults[index],
+                _ => false,
+            };
     }
 
     private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type)
@@ -6174,12 +6172,7 @@ public sealed partial class Lowering
             && tco.ConsumedListTailParams.Contains(tco.ParamNames[paramIndex]);
         bool freshClosure = paramIndex >= 0
             && tco.FreshClosureParams.Contains(tco.ParamNames[paramIndex]);
-        return parameterType is TypeRef.TStr or TypeRef.TBigInt
-            || parameterType is TypeRef.TTuple tuple
-                && CanRuntimeManageOwnedTupleType(tuple)
-            || parameterType is TypeRef.TNamedType named && CanCopyOutAdt(named, out _)
-            || parameterType is TypeRef.TNamedType ownedRecord && CanRuntimeManageAdt(ownedRecord)
-            || parameterType is TypeRef.TNamedType ownedAdt && CanRuntimeManageTcoAdt(ownedAdt)
+        return IsRcEligibleScalarTupleOrAdtType(parameterType)
             || parameterType is TypeRef.TList list
                 && CanRuntimeManageTcoListElement(list.Element)
                 && (freshRebuiltList
@@ -6188,6 +6181,28 @@ public sealed partial class Lowering
                         && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
             || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure;
     }
+
+    /// <summary>
+    /// The scalar/tuple/ADT portion of "does this type's own shape independently license
+    /// runtime-managed (RC) representation" — shared by <see
+    /// cref="IsIndependentlyRcEligibleTcoParam"/>, <see
+    /// cref="LowerCallTcoPromoteResolvedRuntimeParam"/>'s resolved-argument-type check, and <see
+    /// cref="TcoBackEdgeRuntimeManagedArgCanReset"/>. All three previously re-derived this exact test
+    /// independently (one of them carrying a redundant extra disjunct, <c>CanRuntimeManageAdt</c>,
+    /// that <c>CanRuntimeManageTcoAdt</c> already subsumes as its own first disjunct). List and
+    /// closure eligibility are deliberately NOT covered here and remain separate at each of the three
+    /// call sites: two of them judge a list/closure parameter from a whole-loop-body, per-parameter-
+    /// name classification computed once before the loop is entered, while the third judges it from
+    /// per-back-edge, per-argument facts resolved fresh at each tail call — those are genuinely
+    /// different signals, not a duplicated derivation of the same one, so folding them into this
+    /// shared helper would either silently change behavior or be a no-op wrapper around already-
+    /// divergent inputs.
+    /// </summary>
+    private bool IsRcEligibleScalarTupleOrAdtType(TypeRef type)
+        => type is TypeRef.TStr or TypeRef.TBigInt
+            || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
+            || type is TypeRef.TNamedType named
+                && (CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named));
 
     // Detects whether ANY parameter in the frame permanently blocks a per-iteration arena reset
     // (heap-typed, not a resource handle, not loop-invariant, not an arena-reclaimable consumed-list
@@ -7571,10 +7586,7 @@ public sealed partial class Lowering
     {
         int slot = tco.ParamSlots[index];
         string name = tco.ParamNames[index];
-        bool supported = type is TypeRef.TStr or TypeRef.TBigInt
-            || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
-            || type is TypeRef.TNamedType named && (CanCopyOutAdt(named, out _)
-                || CanRuntimeManageTcoAdt(named))
+        bool supported = IsRcEligibleScalarTupleOrAdtType(type)
             || type is TypeRef.TList list
                 && CanRuntimeManageTcoListElement(list.Element)
                 && (tco.FreshRebuiltListParams.Contains(name)
