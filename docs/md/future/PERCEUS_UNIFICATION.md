@@ -48,6 +48,16 @@ floor; see "Phase 6, profitability-gated veto relaxation" below for both account
 structural collapse remains unstarted, and the classifier (D) regression remains unfixed. Phase 7 is not
 yet started.
 
+**Correction to the classifier (D) timing gap fix, made after that session's own merge**: the fix
+landed above shipped a live regression on `fannkuch-redux` specifically — the exact benchmark this
+whole document exists to keep constant. A direct pattern binding fed into a plain (non-self,
+non-constructor) helper call was wrongly classified as escaping, and the resulting protective dup was
+never balanced by a matching drop for this shape, growing N=8's 256KB floor to ~54MB and N=9's to
+~554MB (extrapolating to tens of GB by N=11) — not the "harmless, at worst redundant" tradeoff that
+fix's own writeup assumed. See "Classifier (D) escaping-call-argument gap — landed" below for the
+full diagnosis and fix; the four disassembly-identical benchmarks that session checked did not
+include `fannkuch-redux` in that specific check, which is why it was missed at merge time.
+
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
 teaching `FunctionResultProvenance` to consult Phase 1's `BuiltinRegistry.ProducesFreshRcResult`
@@ -1509,6 +1519,113 @@ given its severity and its location in the single most historically dangerous su
 tracks, should likely be the very next thing whoever owns `#317` looks at, ahead of any further Phase 6
 collapse work.
 
+**Classifier (D) escaping-call-argument gap — landed; corrects the prior session's own merge.** A
+follow-up session found and fixed a live regression the "Classifier (D) timing gap — landed" session
+above had itself introduced into `fannkuch-redux` — the one benchmark this whole document exists to
+keep at a constant floor.
+
+*Confirming the regression, independently, before trusting the report that named it.* A direct
+build-and-run (`-O2`, the same binary+workload the rest of this document uses) reproduced it exactly
+as described: N=8 peak RSS 54,272 KB, N=9 554,240 KB — both far above the 256 KB floor "Phase 6
+resolution, part 2" established and confirmed constant through N=11. The growth ratio between N=8 and
+N=9 (~10.2x) matches `N!/(N-1)! = N` for N=9, the same factorial-scaling signature this document's own
+"Phase 6" residual-leak investigation already used to diagnose an unbounded per-outer-iteration leak,
+not a fixed-size regression.
+
+*Root cause.* `CollectEscapingDirectPatternBindings`'s two recognized-safe shapes (a further nested
+match on the same name; the bare, unchanged argument at the same parameter's own slot in a tail
+self-call) do not cover `nextPerm`'s and `loop`'s own shape: `perm`/`count`, extracted directly from
+the `S(perm, count)` match on the `st` TCO parameter, are passed as arguments to plain helper calls
+(`rotateFirst`, `getAt`, `setAt`) whose *results* (not `perm`/`count` themselves) are what get threaded
+into the next iteration. Neither existing safe shape matches this, so the fix classified both bindings
+as escaping and spliced a protective `RcDup` right after each pattern extraction, every outer-loop
+iteration. Reading the resolved IR side by side with the actual runtime drop mechanism found why that
+dup is not merely wasted, unlike the "occasional redundant-but-harmless dup" tradeoff the fix's own
+writeup accepted: the parameter's real structural release (`EmitKnownConstructorRuntimeManagedAdtDrop`'s
+per-field walk, reached either at the TCO back-edge or the function's exit) decides whether to
+recursively free a list's cons cells or stop after a single decrement by checking `RcIsUnique` on the
+list's own head cell. The spurious dup permanently pins that head cell's reference count at 2 instead
+of 1, so the uniqueness check fails, the walk takes its conservative "shared, decrement once, do not
+recurse" branch, and the entire remainder of that iteration's list is abandoned — every outer-loop
+iteration, without bound. This is a genuine unbounded leak, not a wasted-but-balanced dup: nothing in
+this shape ever drops the local pattern-binding's own slot independently (it is aliased to the TCO
+parameter's own `OwnershipInfo`, not independently tracked), so the extra reference the dup adds is
+never released by anything.
+
+*The fix.* A third safe shape was added, checked as broadly and as safely as the existing two: a direct
+binding whose every occurrence is a bare argument, at any position, to a call whose callee is not a
+known constructor. This is sound independent of self-recursion — every call site's own
+argument-passing convention already borrows the argument for the callee and only dups it if the
+callee's own return value is found to retain it (confirmed directly in the resolved IR: a `Borrow`
+followed by a conditionally-emitted `RcDup`), so the caller's own reference is left completely
+unchanged by passing it into an ordinary call, regardless of what the callee does internally. A
+constructor application is excluded because it is not a call in this sense: `Ctor(bindingName)` embeds
+the binding's own reference, unchanged, directly into a new cell's field — exactly the shape that does
+need the extra protective dup, since the field's original owner (the TCO parameter) and the new cell
+are now two independent owners of what was one reference. The check is a purely syntactic comparison
+against the real constructor-symbol table (not a naming-convention heuristic), matching the existing
+self-call check's own syntactic rigor. `CollectEscapingDirectPatternBindings` and its helpers were
+converted from static to instance methods to reach that table.
+
+*Validated by hand against both existing regression tests before touching anything.* The new rule can
+only ever move a binding from escaping to safe, never the reverse, and it excludes constructor
+applications outright, so tracing it against `Copy_typed_tuple_field_is_not_protected_as_runtime_managed`
+(the PR #298 regression the original broader attempt at this fix once broke) and
+`Direct_list_element_escaping_into_returned_construction_gets_a_protective_dup` (the real escape this
+fix's own predecessor closed) confirmed neither could regress: both tests' bindings were already
+recognized safe (or, for the escaping one, still route through a constructor and stay excluded). Both
+tests were then run and confirmed passing unmodified. A new adversarial test
+(`Direct_binding_passed_only_to_a_plain_helper_call_is_not_protected_as_escaping`) pins the exact
+`nextPerm`/`rotateFirst` shape — a direct list-cons binding fed only to a plain helper call, embedded
+nowhere — and was confirmed to fail without the fix (the protective-dup label appears) before
+confirming it passes with it.
+
+*Measured result.* `fannkuch-redux`, before -> after this fix (same binary+workload as the rest of
+this document, `-O2`):
+
+| N | RSS before | RSS after | Checksum / Pfannkuchen |
+|---|---|---|---|
+| 8 | 54,272 KB | 256 KB | 1616 / 22 (unchanged) |
+| 9 | 554,240 KB | 256 KB | 8629 / 30 (unchanged) |
+| 10 | (factorial-scaling, untested) | 256 KB | 73196 / 38 |
+| 11 | (factorial-scaling, untested) | 256 KB | 556355 / 51 (matches the historical floor exactly) |
+
+RSS at every N is now 256 KB — the same constant floor "Phase 6 resolution, part 2" established,
+confirmed unregressed rather than merely smaller.
+
+Full validation: C# suite 1714/1714 (+1 new), LSP suite 52/52, e2e suite 544/0 (unchanged),
+`dotnet format --verify-no-changes` clean. The full `challenges/` suite was re-run against a baseline
+built from `origin/main` immediately before this fix (`4defd77`, i.e. with the classifier (D) timing
+gap fix but not this correction): `binary-trees` N=21 (196,352 KB vs 196,096 KB baseline, noise-level,
+byte-identical output), `1brc` (`m10000000.txt`/`m100000000.txt`, 10M and 100M rows — 6,971,004 KB /
+9,048,684 KB baseline vs 6,971,004 KB / 9,048,172 KB fixed, noise-level, byte-identical output),
+`reverse-complement` (fasta N=1,000,000 input — 753,760 KB baseline vs 753,636 KB fixed, noise-level,
+byte-identical output), `n-body`, `spectral-norm`, `mandelbrot`, `pidigits`, and `fasta` all
+byte-identical output with no RSS regression beyond the same noise band. `k-nucleotide` and
+`regex-redux` (both fasta N=1,000,000 input) showed a real ~10% RSS difference against a baseline built
+from the older pre-PR-#317 commit (`4bd0288`) the task's own instructions named as the comparison
+point, but a direct rebuild from `4defd77` (immediately before this fix, i.e. after PR #317) reproduced
+the same ~10% figure byte-for-byte with no dependency on this fix at all — confirmed by inspecting the
+resolved IR directly for both binaries' `HashMap`-backed loops, which is byte-identical before and
+after this fix. That difference predates this fix, is unrelated to it, and is out of scope for it;
+reported here rather than silently absorbed into this fix's own numbers.
+
+*A verification-methodology discrepancy, resolved rather than left open.* The "Classifier (D) timing
+gap" session's own validation checked `fannkuch-redux` among its four disassembly-compared sentinels
+and reported all four "byte-for-byte identical," which is why this regression was not caught at merge
+time. Reproducing that exact check found the actual cause: these binaries are statically linked with no
+ELF section headers at all, so `objdump -d` emits zero lines of disassembly for either input —
+confirmed directly (`objdump -d <any binary produced by this compiler>` produces only the file-format
+banner line, nothing else). A diff of that output is therefore trivially "identical" for any two
+binaries this compiler produces, whether or not their actual machine code differs — the check that
+session ran could never have detected a real difference, in `fannkuch-redux` or in any of its other
+three sentinels, because the disassembler it relied on never disassembled anything. This is a real gap
+in this project's own verification discipline, not specific to this one fix: any future session reusing
+an `objdump -d` comparison against these binaries should confirm the tool actually produced
+disassembly output before trusting a diff of it — a resolved-IR dump (as this fix's own validation
+used) or a runtime measurement (RSS, checksum) are the load-bearing checks for this compiler's binaries,
+not a disassembler that silently produces nothing.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -1607,17 +1724,22 @@ direct pattern binding off a TCO parameter that independently escapes now gets p
 structural escape check, without regressing the existing narrower guarantee) — see "Classifier (D)
 timing gap — landed" above — and confirmed the closure-eligibility dead code found as the third
 session's byproduct is not safely fixable without a larger, untested retrofit of the entry-prologue
-machinery, so it remains exactly as dead as found. A fifth session then wired the cost signal into the
-frame veto ("Phase 6, profitability-gated veto relaxation" above): the veto's own firing condition is
-untouched, but a parameter the signal finds `Profitable` now survives a sibling's failure instead of
-being cleared along with it — but only after finding and correcting a real gap in the signal itself
-(a cost-sensitivity exception with no real-program validation behind it, wrong on reverse-complement's
-actual `buf`), and separately discovering that the classifier (D) timing-gap fix immediately above it
-regressed fannkuch-redux's own peak memory back off its 256KB floor — unrelated to and undone by neither
-this document's own changes nor the classifier-D fix's stated intent, reported in full in that section
-rather than fixed there. The full structural collapse of classifiers A-D into one per-parameter
-decision remains unstarted and is where the bulk of the remaining risk and effort live — as does fixing
-the classifier (D) regression, which given its severity should likely come first. Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
+machinery, so it remains exactly as dead as found. That timing-gap fix's own escape check was, however,
+too narrow — it missed a direct binding fed only to a plain helper call, regressing `fannkuch-redux`
+to unbounded per-iteration growth; a follow-up session closed that gap too (see "Classifier (D)
+escaping-call-argument gap — landed" above), restoring the constant 256KB floor and, along the way,
+finding that the timing-gap session's own four-sentinel disassembly check had been silently vacuous
+(`objdump -d` produces no output at all for this compiler's binaries) rather than genuinely confirming
+no change. A fifth session, running in parallel with the escaping-call-argument fix, wired the cost
+signal into the frame veto ("Phase 6, profitability-gated veto relaxation" above): the veto's own
+firing condition is untouched, but a parameter the signal finds `Profitable` now survives a sibling's
+failure instead of being cleared along with it — but only after finding and correcting a real gap in
+the signal itself (a cost-sensitivity exception with no real-program validation behind it, wrong on
+reverse-complement's actual `buf`). The full structural collapse of classifiers A-D into one
+per-parameter decision remains unstarted and is where the bulk of the remaining risk and effort live; a
+future attempt now has the cost signal the third attempt found missing, but still needs to wire it in,
+re-validate against the same regression gate, and close the type-resolution-timing gaps the signal's
+own validation reconfirmed before landing any variant of veto removal. Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
 one subsystem where the audits found a currently-*masked* bug (the CFG-blindness/whole-program-gate
 interaction), and its failure mode if sequenced wrong is strictly worse (UAF) than the failure mode
 it's fixing (leak).

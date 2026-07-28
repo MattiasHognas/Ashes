@@ -333,21 +333,26 @@ public sealed partial class Lowering
     /// <summary>
     /// Pattern-bound names extracted directly (one pattern level) off a bare reference to a declared TCO
     /// parameter — via any match on that parameter, not just a list cons — whose appearances in the arm
-    /// that binds them are not entirely limited to the two shapes already protected elsewhere: the
+    /// that binds them are not entirely limited to the three shapes already protected elsewhere: the
     /// scrutinee of a further nested match on the same name (whatever that nested match itself binds gets
-    /// its own, separate accounting), or the bare, unchanged argument at that same parameter's own slot in
-    /// a tail self-call (installed by the ordinary per-parameter back-edge argument machinery regardless
-    /// of this table). A name whose every appearance in its own arm falls into one of those two shapes is
-    /// left out — it needs no help here. A name with any other appearance (embedded in a returned or
-    /// constructed value, passed to a different parameter's slot, handed to another function, ...)
-    /// genuinely escapes the current iteration on its own and is included so
+    /// its own, separate accounting); the bare, unchanged argument at that same parameter's own slot in a
+    /// tail self-call (installed by the ordinary per-parameter back-edge argument machinery regardless of
+    /// this table); or a bare argument, at any position, to a call whose callee is not a known
+    /// constructor (an ordinary function call's own argument-passing convention already borrows or dups
+    /// the value correctly at the call boundary — see the comment on <see
+    /// cref="IsSafeDirectPatternBindingUse"/> for why this makes the extra protective dup redundant, and
+    /// why it stays excluded when the callee IS a constructor). A name whose every appearance in its own
+    /// arm falls into one of those three shapes is left out — it needs no help here. A name with any
+    /// other appearance (embedded in a returned or constructed value, passed to a different parameter's
+    /// slot, ...) genuinely escapes the current iteration on its own and is included so
     /// <see cref="ResolvePendingNestedTcoPatternAliasSites"/> can protect it. Purely structural, computed
     /// once from the pre-lowering AST like the other Collect* analyses above — necessary because the
     /// binding's own runtime-managed eligibility is not resolved until much later (see the field comment
     /// on <c>_pendingNestedTcoPatternAliasSites</c>), so this has to answer "does it escape" from shape
-    /// alone, never from type.
+    /// alone, never from type. Not static (unlike its sibling Collect* helpers): the constructor-call
+    /// exclusion needs the real constructor symbol table, not a name-shape heuristic.
     /// </summary>
-    private static HashSet<string> CollectEscapingDirectPatternBindings(
+    private HashSet<string> CollectEscapingDirectPatternBindings(
         Expr body,
         IReadOnlyList<string> paramNames,
         string selfName)
@@ -409,11 +414,12 @@ public sealed partial class Lowering
     }
 
     // Counts, within the same arm a direct pattern binding came from, the occurrences of bindingName
-    // that are either the scrutinee of a further match on it, or the bare argument at parentIndex in a
-    // full-arity self-call — the two shapes CollectEscapingDirectPatternBindings treats as already
-    // covered elsewhere. Mirrors CountNameOccurrences's reflection-based AST walk so every occurrence
-    // (regardless of surrounding node shape) is visited exactly once, keeping the two counts comparable.
-    private static int CountSafeDirectPatternBindingUses(
+    // that are either the scrutinee of a further match on it, the bare argument at parentIndex in a
+    // full-arity self-call, or a bare argument (any position) to a non-constructor call — the three
+    // shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere. Mirrors
+    // CountNameOccurrences's reflection-based AST walk so every occurrence (regardless of surrounding
+    // node shape) is visited exactly once, keeping the two counts comparable.
+    private int CountSafeDirectPatternBindingUses(
         object? node,
         string bindingName,
         int parentIndex,
@@ -472,10 +478,26 @@ public sealed partial class Lowering
         return count;
     }
 
-    // The two shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere: this
-    // node IS a further match on the binding itself, or IS the bare argument at parentIndex in a
-    // full-arity self-call.
-    private static bool IsSafeDirectPatternBindingUse(
+    // The three shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere: this
+    // node IS a further match on the binding itself; IS the bare argument at parentIndex in a full-arity
+    // self-call; or IS a bare argument, at any position, to a call whose callee is not a known
+    // constructor.
+    //
+    // The third shape is safe for a reason independent of self-recursion: an ordinary call's own
+    // argument-passing convention already borrows the argument for the callee and only dups it if the
+    // callee actually retains it (confirmed at the IR level -- every call site emits a Borrow followed by
+    // a conditionally-emitted RcDup gated on the callee's own retention flag), so the caller's own copy
+    // of bindingName is left with an unchanged reference count regardless of what the callee does with
+    // it. Nothing about that convention depends on whether the callee happens to be the enclosing
+    // recursion's own self-call. A constructor application is excluded because it is not a call in this
+    // sense -- `Ctor(bindingName)` embeds bindingName's own reference, unchanged, directly into the new
+    // cell's field, which is exactly the shape that needs the extra protective dup (the parent's later
+    // drop and the new cell's own later drop would otherwise both decrement a single reference).
+    // Deliberately a purely syntactic check against the literal callee name (matching this rule's own
+    // self-call sibling above, which is equally purely syntactic against selfName): a constructor
+    // referenced only indirectly through another binding is not recognized as a constructor here and
+    // would be treated as an ordinary call.
+    private bool IsSafeDirectPatternBindingUse(
         object node,
         string bindingName,
         int parentIndex,
@@ -496,11 +518,19 @@ public sealed partial class Lowering
 
         var arguments = new List<Expr>();
         Expr root = CollectCallArgs(call, arguments);
-        return root is Expr.Var function
+        if (root is Expr.Var function
             && string.Equals(function.Name, selfName, StringComparison.Ordinal)
             && arguments.Count == paramCount
-            && arguments[parentIndex] is Expr.Var argument
-            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal);
+            && arguments[parentIndex] is Expr.Var selfArgument
+            && string.Equals(selfArgument.Name, bindingName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return root is Expr.Var callee
+            && !_constructorSymbols.ContainsKey(callee.Name)
+            && arguments.Any(argument => argument is Expr.Var argumentVar
+                && string.Equals(argumentVar.Name, bindingName, StringComparison.Ordinal));
     }
 
     /// <summary>
