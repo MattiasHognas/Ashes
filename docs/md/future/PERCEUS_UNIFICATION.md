@@ -28,8 +28,13 @@ previously-unrecognized PROFITABILITY cost (a per-iteration defensive copy the a
 pays), not a safety one — and two successively narrower attempts to keep part of the removal safe were
 each found insufficient or inert. All three attempts were reverted in full; see "Phase 6, third
 attempt" below for the complete account, including a newly-discovered, separate latent gap in the
-closure-eligibility check uncovered along the way. The four-classifier collapse and veto removal
-remain unstarted. Phase 7 is not yet started.
+closure-eligibility check uncovered along the way. A fourth follow-up session then built the
+promotion-cost signal the third attempt's own closing note called for — a per-parameter
+profitability query (`Lowering.GetTcoPromotionProfitability`), validated against the third attempt's
+two real regressions plus its synthetic adversarial case plus a single-heap-parameter sanity check,
+landed as read-only analysis infrastructure with no compiled-output change and not yet wired to any
+decision; see "Phase 6, promotion-cost signal" below. The four-classifier collapse and veto removal
+themselves remain unstarted. Phase 7 is not yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -1130,6 +1135,138 @@ section (`TrackRuntimeManagedTcoListPatternAliases` reading `RuntimeManagedParam
 populated for the current body) remains exactly as characterized there; this investigation did not
 revisit it, beyond discovering its sibling gap in the closure-eligibility path described above.
 
+**Phase 6, promotion-cost signal — a per-parameter profitability query built, not yet wired to any
+decision.** The third attempt above ended by naming exactly what was missing before any further veto-
+removal attempt: "a real signal for 'would promoting this specific parameter, in this specific loop,
+actually cost less than leaving it arena.'" A follow-up session built that signal
+(`Lowering.TcoPromotionCostSignal.cs`, queried via `Lowering.GetTcoPromotionProfitability(functionName)`)
+as standalone, read-only analysis infrastructure — it changes no compiled output today; nothing in the
+compiler consults it yet.
+
+*Re-tracing the third attempt's own mechanism, from the actual emitted instructions rather than its
+prose summary.* Before designing anything, the exact defensive-copy call sites the third attempt named
+(`EmitRuntimeManagedTcoDeepCopy`/`CopyOutList`/`CopyOutArena`, reached through
+`TcoBackEdgeNormalizeRuntimeManagedArg`) were re-read directly, and a temporary, env-var-gated
+instrumentation hook (bypassing both veto call sites and tracing `EmitTcoBackEdgeArenaBlock`'s own
+three-way dispatch, since removed) was built against a from-scratch synthetic repro shaped exactly
+like `mergeEntries`/`Trie` (a `List((Str, Int))` consumed one cons cell at a time, alongside a
+self-recursive two-constructor tree rebuilt fresh every iteration by a helper call). This confirmed the
+third attempt's account of *where* the veto fires and *that* per-parameter mixing is safe, but found
+one thing the third attempt's own prose did not state precisely: for this exact shape, tracing which of
+`EmitTcoBackEdgeArenaBlock`'s three back-edge strategies actually fires shows the frame reaches neither
+`TcoBackEdgeTryEmitRuntimeManagedReset`'s cheap per-parameter retain path NOR the "two-pass copy-out"
+fallback (`GetTcoCopyOutKind`-driven) — it falls all the way through to `EmitTcoBackEdgeArenaBlock`'s
+`!allCopyable` branch ("complex heap types — no arena reset") — and, critically, this happens
+*identically* whether or not the consumed-tail list parameter is promoted to runtime-managed, because
+both dispatch points key off `GetTcoCopyOutKind`/`CanArenaReset`, which are pure type-shape queries with
+no dependence on which representation a value has been assigned. `TcoBackEdgeArgCopyOutKind` already
+downgrades a consumed (non-freshly-rebuilt) list's `DeepAdt` kind to `None` for exactly the reason its
+own in-code comment gives ("1brc's merge phase regressed ~400x" — a different, earlier incident than
+this one), and that downgrade alone is enough to disqualify the whole frame's `TcoBackEdgeAllArgsCopyable`
+check regardless of the tree sibling. So the specific per-iteration `EmitRuntimeManagedTcoDeepCopy` call
+site the third attempt's diagnosis leads with is not, for this shape, actually the site where the extra
+cost is added — the frame's back-edge reset strategy is provably unchanged by the promotion. The
+additional cost the third attempt measured on the real binary must instead come from a *different*
+consumer of `RuntimeManagedParamSlots` membership than the back-edge reset dispatch itself — most
+plausibly the one-time loop-entry conversion of the value flowing in from the enclosing (non-tail) call,
+and/or the per-node runtime-managed bookkeeping (header, `RcDup`/`RcDrop`) a cons cell now permanently
+carries once promoted, that a plain arena cell never pays regardless of how the back edge resets. This
+was not chased to a byte-level confirmation within this session's time (it would need its own
+instrumentation of the loop-entry normalization path and the match/pattern-destructure `RcDup`/`RcDrop`
+emission, not just the back-edge dispatch already traced) — it is reported as a correction to the third
+attempt's account, not a refutation of its bottom-line finding (the two regressions are real,
+reproducible, and cost-shaped, not safety-shaped): the *specific instruction sequence* the third
+attempt's diagnosis names is confirmed real and exists, but is not the one that actually fires for the
+`ConsumedListTailParams` shape specifically; a different, not-yet-instrumented consumer of the same
+promotion decision is.
+
+*The signal's design.* Rather than trying to price the not-yet-fully-traced downstream consumer
+directly, the signal reuses a structural observation confirmed by the same tracing: in both of the
+third attempt's real regressions (`mergeEntries`/`Trie` in `1brc`, and `emit`/`chars` in
+`reverse-complement`), the promoted parameter's own classifier-A eligibility reason is one that is only
+affordable *when the loop can actually reclaim between iterations* — a list walked one cons cell at a
+time and never rebuilt fresh (`ConsumedListTailParams`, without also being `FreshRebuiltListParams`/
+`AffineConsListParams`), or a string grown by repeated affine append (`AffineStrParams`) — and in both
+cases a sibling parameter in the same frame (a self-recursive multi-constructor `Trie`, and a list that
+is re-passed *unchanged* at one of its own two tail-call sites, which disqualifies it from
+`ConsumedListTailParams` entirely per `CollectConsumedListTailParams`'s "every self-call site must agree
+which variable is the tracked tail" rule) permanently fails every arena-reset and RC-eligibility
+exemption the compiler already has (`CanArenaReset`, `IsResourceHandleType`,
+`TcoContext.LoopInvariantParams`, classifier A's own per-parameter test). The signal
+(`Lowering.RecordTcoPromotionProfitability`, computed once resolved parameter types are available,
+alongside `LowerLambdaCoreRefreshRuntimeManagedTcoParams`'s own re-classification pass) asks, per
+classifier-A-eligible candidate parameter: does any *other* parameter in the frame permanently block
+every exemption (heap-typed, not a resource handle, not loop-invariant, not itself independently
+RC-eligible) — with one deliberate exception: a closure (`TFun`) sibling never counts as blocking even
+when it fails classifier A on its own, because a non-escaping closure is stack-allocated (a third,
+zero-reset-cost representation, not arena-or-RC at all), so it cannot force the frame into the
+"no reclaim at all" fallback the way a heap ADT/List sibling does — and *does* the candidate's own
+eligibility reason belong to the "only affordable with reclaim" bucket. Both true → `NotProfitable`;
+otherwise → `Profitable`. This factors classifier A's own per-parameter condition
+(`Lowering.IsIndependentlyRcEligibleTcoParam`, extracted from
+`LowerLambdaCoreIdentifyRuntimeManagedTcoParams` as a pure refactor, no behavior change) into a shared
+helper the signal calls a second time, per this document's own repeated lesson about two classifiers
+silently diverging on the same question — the signal asks classifier A's exact question about a
+candidate's siblings, not a re-derived approximation of it.
+
+*Validation.* Four C# unit tests (`TcoPromotionCostSignalTests.cs`) query the signal directly against
+hand-built `.ash` sources shaped like the four required cases, each confirmed against the expected
+answer: a `mergeEntries`/`Trie`-shaped loop (`entries` — `NotProfitable`), an `emit`/`chars`-shaped loop
+(`buf` — `NotProfitable`), the original Str-accumulator-plus-sometimes-fresh-closure adversarial case
+(`str` — `Profitable`, confirming the closure-exception is load-bearing: without it this case would
+wrongly read `NotProfitable`), and a single-heap-parameter loop matching fannkuch-redux's own
+`loop`/`State` shape (asserted `Profitable` if classifier A finds it eligible at all — a vacuous-sibling
+sanity check that the signal does not touch what it shouldn't). Building the second and third of these
+directly reproduced, independently, the exact type-resolution-timing family of gap this document's own
+"Phase 6, third attempt" section already found for the closure-eligibility path: a parameter's type
+(the tuple field of a consumed list element in one case; a closure's argument/return type in another)
+can still read as an unresolved `TVar` at the exact point classifier A's own resolved-type pass runs,
+unless something *within that same function's own body* forces unification early (a strict, non-deferred
+builtin call; the deferred `+`-operator resolution path, `ResolveDeferredAdds`, evidently runs later
+than this point for a value whose only Str/Float evidence is an unannotated `+` chain). This is not a
+defect in the new signal specifically — classifier A's own resolved-type pass is subject to the same
+gap, for the same reason — but it is a real, reproducible constraint on this signal's precision worth
+recording plainly: for a TCO parameter whose eligibility-defining type is established *only* through an
+unannotated `+` chain with no other constraining use in the same function body, the signal (like
+classifier A itself) can under-fire (fail to recognize eligibility at all, the safe direction — a real
+promotion opportunity looks like "not eligible," never a wrong verdict on an eligible one) rather than
+misclassify. No case in the four validated here needed reaching further than this to get a correct
+answer once the test sources were adjusted to include an ordinary, in-body forcing use (matching what
+the real `1brc`/`reverse-complement` programs already do via `Ashes.Byte.fromText`/`io.write`).
+
+*Scope discipline: no stretch goal attempted.* This session did not wire the signal into any veto or
+classifier decision — the task was scoped to the signal itself, and the four-classifier collapse plus
+veto removal genuinely needed to reattempt this after a signal exists (as the third attempt's own
+closing note anticipated) is left for a future session, now with this piece available. The signal
+touches no existing lowering decision: `RecordTcoPromotionProfitability` only reads facts other passes
+already compute (`TcoContext`'s existing candidate sets, `CanArenaReset`, `IsResourceHandleType`,
+classifier A's own condition) and writes to a new, otherwise-unconsulted table
+(`Lowering._tcoPromotionProfitability`). Full validation: C# suite 1712/1712 (+4 new), LSP suite 52/52,
+e2e suite 544/0 (unchanged), `dotnet format --verify-no-changes` clean, and a spot check (fannkuch-redux
+N=8, checksum 1616/`Pfannkuchen(8) = 22`, peak RSS 256 KB — matching the post-"Phase 6 resolution, part
+2" constant floor exactly) confirming nothing about ordinary compilation changed. The full
+`challenges/` suite was not re-run at production scale beyond this spot check, since nothing in this
+session changes any emitted instruction — the four-classifier collapse this signal exists to support
+still needs that full gate (per the milestone-completion discipline already established for this
+project) once it actually wires a decision to something.
+
+*What remains for whoever wires this up next.* The signal answers "is promoting this parameter, given
+its own eligibility reason and its siblings' own exemption status, expected to be profitable" — it does
+not yet attempt to price the specific downstream mechanism (loop-entry conversion cost, per-node
+`RcDup`/`RcDrop` bookkeeping) precisely enough to rank *how much* cheaper or more expensive a promotion
+is, only whether it crosses from "adds bookkeeping with nothing to show for it" to "reaches a
+representation that was going to be at least as cheap as arena regardless." A minimal wiring
+(gate `LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame`'s per-parameter clear by this signal's
+verdict instead of clearing the whole frame) is the natural next step, but per this document's own
+established gate, it must re-run this session's and the third attempt's exact regression measurements
+(the Str/closure synthetic case, `challenges/1brc/brc.ash` at 10M and 100M rows, and
+`challenges/reverse-complement/reverse-complement.ash`) byte-identical and with no time/RSS regression
+before being considered landable, and it must also close the two type-resolution-timing gaps this
+session reconfirmed (the closure-eligibility one already on record, and the deferred-`+`-resolution one
+newly recorded here) if a wired decision is going to depend on seeing a resolved type at the point it
+runs — a missed promotion because a type read as unresolved is conservative and acceptable; a *wrong*
+promotion decision made against a stale, still-unresolved type would not be.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -1220,10 +1357,14 @@ attempted the four-classifier TCO collapse and veto removal themselves, confirme
 is SAFE (never a wrong value or a crash, at every scale and in a directly-adversarial same-type-swap
 test) but measurably regresses peak memory on two real `challenges/` programs (a previously
 unrecognized profitability cost, not a safety one), and reverted all three attempts it tried in full
-— see "Phase 6, third attempt" above. The collapse and veto removal remain unstarted and are where the
-bulk of the remaining risk and effort live; a future attempt needs a real cost signal for "is this
-promotion cheaper than leaving the value arena-managed" before reattempting, not just a safety proof.
-Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
+— see "Phase 6, third attempt" above. A fourth Phase 6 session then built exactly the cost signal that
+finding called for ("Phase 6, promotion-cost signal" above) — validated against both real regressions,
+the synthetic adversarial case, and a sanity check, but landed as a read-only query only, not wired to
+the veto or classifier A. The collapse and veto removal themselves remain unstarted and are where the
+bulk of the remaining risk and effort live; a future attempt now has the cost signal the third attempt
+found missing, but still needs to wire it in, re-validate against the same regression gate, and close
+the type-resolution-timing gaps the signal's own validation reconfirmed before landing any variant of
+veto removal. Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
 one subsystem where the audits found a currently-*masked* bug (the CFG-blindness/whole-program-gate
 interaction), and its failure mode if sequenced wrong is strictly worse (UAF) than the failure mode
 it's fixing (leak).
