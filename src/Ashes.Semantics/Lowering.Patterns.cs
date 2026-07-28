@@ -1162,7 +1162,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType);
+            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType, bindingName);
         }
     }
 

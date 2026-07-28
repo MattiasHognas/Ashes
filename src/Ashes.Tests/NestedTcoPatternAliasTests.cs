@@ -98,6 +98,61 @@ public sealed class NestedTcoPatternAliasTests
             .ShouldBe(1);
     }
 
+    [Test]
+    public void Direct_list_element_escaping_into_returned_construction_gets_a_protective_dup()
+    {
+        // "s" is bound directly off tbl -- one pattern level, not a further nested match, the same
+        // depth as "rest" -- and escapes independently into Box(v = s), which becomes part of the
+        // function's own returned value. This is a different fate than "rest" (which only ever flows
+        // back into tbl's own next tail-call argument, already handled by the ordinary back-edge
+        // argument machinery) and must still get its own protective dup: tbl's cons cell that "s" came
+        // from is dropped once the loop exits without recursing, and without a dup the returned Box
+        // would keep a dangling pointer into that just-freed cell.
+        IrProgram program = LowerProgram("""
+            type Box =
+                | v: Str
+
+            let table = ["a", "b", "c", "d"]
+
+            let recursive findFirst target tbl =
+                match tbl with
+                    | [] -> None
+                    | s :: rest ->
+                        if s == target
+                        then Some(Box(v = s))
+                        else findFirst(target)(rest)
+
+            let r1 =
+                match findFirst("c")(table) with
+                    | Some(b) -> b.v
+                    | None -> "?"
+
+            let r2 =
+                match findFirst("b")(table) with
+                    | Some(b) -> b.v
+                    | None -> "?"
+
+            Ashes.IO.print(r1 + " " + r2)
+            """);
+
+        IrFunction findFirst = program.Functions.Single(function => function.Instructions
+            .Any(instruction => instruction is IrInst.CmpStrEq));
+
+        findFirst.Instructions
+            .OfType<IrInst.Label>()
+            .ShouldContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+        findFirst.Instructions.OfType<IrInst.RcDup>().ShouldContain(dup => dup.RuntimeManaged);
+    }
+
+    // The adversarial counterpart -- proving a direct binding used ONLY as a further match scrutinee
+    // ("pair") or ONLY as the unchanged argument at its own parameter's slot ("rest") is not
+    // double-protected by this fix -- is Copy_typed_tuple_field_is_not_protected_as_runtime_managed
+    // above: it asserts an EXACT protected-alias count of 1 (just "lit") for a shape where "pair" and
+    // "rest" are exactly those two safe cases, and it is required to keep passing unmodified. A prior,
+    // broader attempt at this same fix (replacing the exclusion instead of narrowing it with a positive
+    // escape check) regressed exactly this test by also protecting "pair" and "rest"; this fix's own
+    // narrower EscapingDirectPatternBindings set is what keeps it passing.
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();
