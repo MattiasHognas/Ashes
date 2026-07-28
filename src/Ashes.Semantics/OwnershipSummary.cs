@@ -43,6 +43,47 @@ internal enum ParameterOwnership
 internal sealed record FunctionResultProvenance(bool RcEligible, string? ForwardsTo);
 
 /// <summary>
+/// The shape a self-recursive function's own tail-call argument takes at a given parameter position,
+/// across every self-call site found in its body. Re-derives, from the same whole-program AST-only
+/// fixpoint that already computes <see cref="FunctionOwnershipSummary.ExpressionFreshness"/>, the
+/// question the TCO loop's own local <c>Collect*</c> classifiers (<c>Lowering.Reuse.cs</c>) answer by
+/// re-walking the body a second time.
+/// </summary>
+internal enum TcoSelfCallArgumentShape
+{
+    /// Every self-recursive call site's argument at this position is a bare, unchanged reference to
+    /// this same parameter — the loop-invariant shape (never rebuilt, so a plain per-iteration arena
+    /// reset always leaves it valid).
+    UnchangedPassthrough,
+
+    /// Every self-recursive call site's argument at this position aliases no parameter of the
+    /// function (<c>ExpressionFreshness[argExpr] == true</c> for every occurrence) and is not itself
+    /// an unchanged passthrough — a self-contained value built fresh this iteration.
+    FreshRebuilt,
+
+    /// Every self-recursive call site's argument at this position is a name pattern-extracted, one
+    /// match level deep, as the cons-tail of this same parameter's own value — a strictly smaller
+    /// structural decomposition of the parameter, never rebuilt and never handed to a different
+    /// parameter's own slot. Does not model field extraction beyond a list cons-tail, matching what
+    /// the classifier it re-derives actually checks.
+    ConsumedTail,
+
+    /// No single shape above holds at every self-recursive call site (including a self-call whose
+    /// argument at this position grows the parameter's own previous value, e.g. consing a fresh head
+    /// onto it — a real, distinct shape with no positive case of its own here), or the function has no
+    /// self-recursive call site to classify from at all.
+    Mixed,
+}
+
+/// <summary>
+/// One parameter's self-call argument classification, keyed by parameter name on
+/// <see cref="FunctionOwnershipSummary.TcoParamFacts"/>. Present only for a self-recursive function's
+/// own parameters at a position some self-call site actually supplies — an ordinary, non-recursive
+/// function's parameters never get an entry.
+/// </summary>
+internal sealed record TcoParamStructuralFacts(TcoSelfCallArgumentShape Shape);
+
+/// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge
 /// between today's move/reuse analyses and the owned and borrowed environments used by RC Perceus.
 /// </summary>
@@ -55,7 +96,8 @@ internal sealed record FunctionOwnershipSummary(
     IReadOnlyDictionary<string, int> ResultReach,
     bool ResultPoisoned,
     IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
-    FunctionResultProvenance ResultProvenance)
+    FunctionResultProvenance ResultProvenance,
+    IReadOnlyDictionary<string, TcoParamStructuralFacts> TcoParamFacts)
 {
     /// <summary>Parameters whose ownership remains with the caller.</summary>
     public IReadOnlyList<string> BorrowedParameters => Parameters

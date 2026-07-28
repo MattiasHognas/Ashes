@@ -5005,26 +5005,39 @@ public sealed partial class Lowering
         if (hasTailSelfCalls)
         {
             var tcoParamNames = CollectLambdaParams(lam2);
+            var loopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name);
+            var freshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name);
+            var affineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name);
             var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
+            var freshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext(
                 selfName: letRecursive.Name,
                 paramCount: paramCount,
                 paramNames: tcoParamNames,
-                loopInvariantParams: CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name),
-                freshRebuiltListParams: CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name),
-                affineConsListParams: CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name),
+                loopInvariantParams: loopInvariantParams,
+                freshRebuiltListParams: freshRebuiltListParams,
+                affineConsListParams: affineConsListParams,
                 consumedListTailParams: consumedListTailParams,
                 borrowableConsumedListParams: CollectBorrowableConsumedListParams(
                     innermostBody,
                     tcoParamNames,
                     letRecursive.Name,
                     consumedListTailParams),
-                freshClosureParams: CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
+                freshClosureParams: freshClosureParams,
                 affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
             };
+
+            ShadowCompareTcoParamFacts(
+                letRecursive.Name,
+                tcoParamNames,
+                loopInvariantParams,
+                freshRebuiltListParams,
+                affineConsListParams,
+                consumedListTailParams,
+                freshClosureParams);
         }
         else
         {

@@ -498,6 +498,7 @@ public sealed partial class Lowering
 
         var expressionFreshness = ComputeExpressionFreshness(function, info);
         var provenance = ResolveFunctionResultProvenance(function);
+        var tcoParamFacts = ComputeTcoParamFacts(function, info, expressionFreshness);
 
         return new FunctionOwnershipSummary(
             function,
@@ -508,7 +509,153 @@ public sealed partial class Lowering
             new Dictionary<string, int>(counts, StringComparer.Ordinal),
             poison,
             expressionFreshness,
-            provenance);
+            provenance,
+            tcoParamFacts);
+    }
+
+    // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i] narrows
+    // from "unclassified" to one shape, or locks into Mixed the first time two self-call sites at the
+    // same position disagree; SawSelfCall distinguishes "no self-call found at all" (no entries at all
+    // in the returned dictionary) from "self-calls found, every position landed on Mixed."
+    private sealed class TcoParamFactsState
+    {
+        public required TcoSelfCallArgumentShape?[] Observed { get; init; }
+        public bool SawSelfCall { get; set; }
+    }
+
+    /// <summary>
+    /// Classifies every parameter of <paramref name="function"/> that some self-recursive call site
+    /// supplies an argument for, into the <see cref="TcoSelfCallArgumentShape"/> that argument's shape
+    /// takes across ALL such call sites — re-deriving, from this same fixpoint's own already-computed
+    /// <paramref name="expressionFreshness"/> map, the question <c>Lowering.Reuse.cs</c>'s
+    /// <c>CollectLoopInvariantParams</c>/<c>CollectFreshRebuiltListParams</c>/
+    /// <c>CollectFreshClosureParams</c>/<c>CollectConsumedListTailParams</c> answer today by re-walking
+    /// a TCO loop's body a second time with their own, separate logic. A parameter with no
+    /// self-recursive call site to classify from (an ordinary non-recursive function, or a parameter
+    /// never itself threaded through the self-call) gets no entry at all — absence, not
+    /// <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
+    /// </summary>
+    private Dictionary<string, TcoParamStructuralFacts> ComputeTcoParamFacts(
+        string function,
+        (List<string> Params, Expr Body) info,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness)
+    {
+        var paramNames = info.Params;
+        var state = new TcoParamFactsState { Observed = new TcoSelfCallArgumentShape?[paramNames.Count] };
+        TcoParamFactsWalk(
+            info.Body,
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            function,
+            paramNames,
+            expressionFreshness,
+            state);
+
+        var result = new Dictionary<string, TcoParamStructuralFacts>(StringComparer.Ordinal);
+        if (!state.SawSelfCall)
+        {
+            return result;
+        }
+
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            if (state.Observed[i] is { } shape)
+            {
+                result[paramNames[i]] = new TcoParamStructuralFacts(shape);
+            }
+        }
+
+        return result;
+    }
+
+    // Walks the tail spine (If arms, Match case bodies, Let bodies) the same way
+    // CollectConsumedListTailParams does, threading a tail-owner map (extracted binding name -> the
+    // parameter it was pattern-matched out of, one Cons level deep) so a self-call argument that is
+    // just that extracted tail can be recognized as ConsumedTail.
+    private void TcoParamFactsWalk(
+        Expr expression,
+        IReadOnlyDictionary<string, string> tailOwners,
+        string function,
+        IReadOnlyList<string> paramNames,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        TcoParamFactsState state)
+    {
+        switch (expression)
+        {
+            case Expr.If iff:
+                TcoParamFactsWalk(iff.Then, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(iff.Else, tailOwners, function, paramNames, expressionFreshness, state);
+                return;
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    var armTailOwners = tailOwners;
+                    if (match.Value is Expr.Var source
+                        && IndexOfOrdinal(paramNames, source.Name) >= 0
+                        && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
+                    {
+                        armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal)
+                        {
+                            [tail.Name] = source.Name,
+                        };
+                    }
+
+                    TcoParamFactsWalk(matchCase.Body, armTailOwners, function, paramNames, expressionFreshness, state);
+                }
+
+                return;
+            case Expr.Let let:
+                TcoParamFactsWalk(let.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                return;
+            case Expr.LetResult letResult:
+                TcoParamFactsWalk(letResult.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                return;
+            case Expr.LetRecursive letRecursive:
+                TcoParamFactsWalk(letRecursive.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                return;
+            case Expr.Call:
+                TcoParamFactsWalkCall(expression, tailOwners, function, paramNames, expressionFreshness, state);
+                return;
+        }
+    }
+
+    // The self-call site itself: classifies every argument position's local shape and narrows (or
+    // locks to Mixed on disagreement) the running per-position verdict in state.Observed.
+    private void TcoParamFactsWalkCall(
+        Expr expression,
+        IReadOnlyDictionary<string, string> tailOwners,
+        string function,
+        IReadOnlyList<string> paramNames,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        TcoParamFactsState state)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is not Expr.Var callee
+            || !string.Equals(callee.Name, function, StringComparison.Ordinal)
+            || arguments.Count != paramNames.Count)
+        {
+            return;
+        }
+
+        state.SawSelfCall = true;
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            Expr argument = arguments[i];
+            TcoSelfCallArgumentShape local =
+                argument is Expr.Var argVar && string.Equals(argVar.Name, paramNames[i], StringComparison.Ordinal)
+                    ? TcoSelfCallArgumentShape.UnchangedPassthrough
+                : argument is Expr.Var tailVar
+                    && tailOwners.TryGetValue(tailVar.Name, out string? owner)
+                    && string.Equals(owner, paramNames[i], StringComparison.Ordinal)
+                    ? TcoSelfCallArgumentShape.ConsumedTail
+                : expressionFreshness.TryGetValue(argument, out bool fresh) && fresh
+                    ? TcoSelfCallArgumentShape.FreshRebuilt
+                : TcoSelfCallArgumentShape.Mixed;
+
+            state.Observed[i] = state.Observed[i] is { } already && already != local
+                ? TcoSelfCallArgumentShape.Mixed
+                : state.Observed[i] ?? local;
+        }
     }
 
     /// <summary>
