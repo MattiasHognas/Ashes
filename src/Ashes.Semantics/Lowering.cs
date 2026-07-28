@@ -2554,6 +2554,18 @@ public sealed partial class Lowering
         return (t, new TypeRef.TStr());
     }
 
+    /// <summary>
+    /// True when a local's storage slot is one of the current TCO loop's parameters that its own
+    /// static type/usage shape licenses for runtime-managed representation. This single slot-set
+    /// membership test is the one fact that both a plain variable reference and a match arm's
+    /// trailing-value check need to ask identically; each of those two call sites folds in further
+    /// facts of its own (a variable reference also accounts for its pattern-alias and per-binding
+    /// ownership state; a match arm's check is combined with a separate scan of what value the arm
+    /// actually produced) that do not belong in this shared predicate.
+    /// </summary>
+    private bool IsRuntimeManagedTcoParamSlot(Binding.Local local) =>
+        _tcoCtx?.RuntimeManagedParamSlots.Contains(local.Slot) == true;
+
     private (int, TypeRef) LowerVar(Expr.Var v)
     {
         var b = Lookup(v.Name);
@@ -2580,8 +2592,7 @@ public sealed partial class Lowering
         bool transfersRuntimeReference = _activeRuntimeManagedTcoPatternAliases.Contains(v.Name);
         bool runtimeManagedResult = transfersRuntimeReference
             || ownerInfo is { RuntimeManaged: true }
-            || b is Binding.Local runtimeLocal
-                && _tcoCtx?.RuntimeManagedParamSlots.Contains(runtimeLocal.Slot) == true;
+            || b is Binding.Local runtimeLocal && IsRuntimeManagedTcoParamSlot(runtimeLocal);
         if (runtimeManagedResult)
         {
             _runtimeManagedResultTemps.Add(result.Temp);

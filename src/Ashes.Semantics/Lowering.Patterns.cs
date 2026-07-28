@@ -92,7 +92,7 @@ public sealed partial class Lowering
 
         return result is Expr.Var variable
             && Lookup(variable.Name) is Binding.Local local
-            && _tcoCtx?.RuntimeManagedParamSlots.Contains(local.Slot) == true;
+            && IsRuntimeManagedTcoParamSlot(local);
     }
 
     private List<bool>? LowerMatchArms(
