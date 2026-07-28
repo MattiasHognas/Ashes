@@ -2849,3 +2849,172 @@ closely enough to decide); and the exact rewiring diff for each of the ~50 consu
 catalogued (this section sketches the pattern via `IsRuntimeManagedTcoParamSlot` but does not enumerate
 all fifty). None of these change this section's central recommendation (§13.3) or its sequencing
 assessment (§13.6); they are the concrete work Option A/B would each still need to do.
+
+## 14. Classifier collapse — Step 3b, Option A landed (the repackaging half only)
+
+This section implements exactly what §13.6 scoped as **Option A**: `TcoParamOwnership`, a container
+built from `TcoContext`'s existing `Collect*`-derived facts, unchanged, replacing the twelve scattered
+name/slot-keyed fields with one dictionary and rewiring their consumers to read it. Per Option A's own
+definition, this is a pure repackaging — **the classification logic itself did not change anywhere**;
+every `Collect*` call, every eligibility/veto/profitability decision, and every timing relationship
+between them is byte-for-byte the same as before this section's diff. What changed is only which C#
+data structure stores the answer and how a consumer asks for it.
+
+### 14.1 What was actually built
+
+`TcoParamOwnership` (`Lowering.Types.cs`) is a per-parameter record holding:
+
+- Eight static, AST-derived facts, computed once at `TcoContext` construction time (before any type is
+  resolved) and never mutated afterward: `LoopInvariant`, `FreshRebuiltList`, `AffineConsList`,
+  `ConsumedListTail`, `BorrowableConsumedList`, `FreshClosure`, `AffineStr`, plus identity
+  (`ParamName`/`Slot`).
+- Four mutable fields carrying the runtime-managed (RC) representation verdict — `RuntimeManaged`,
+  `RuntimeManagedList`, `RuntimeManagedClosure`, `RuntimeManagedType` — written by two new `TcoContext`
+  methods, `MarkRuntimeManaged`/`ClearRuntimeManaged`, which replace the direct `HashSet<int>`/
+  `Dictionary<int, TypeRef>` mutations the old classifier-A/veto functions used to perform on four
+  separate collections. Every call site that used to call `.Add`/`.Remove` on one of those four now
+  calls one of these two methods instead, at the exact same point in the exact same functions.
+
+`TcoContext.ParamOwnership` (`Dictionary<int, TcoParamOwnership>`) is populated once, by
+`BuildParamOwnership()`, called from `LowerLambdaCoreBindTcoParamSlots` immediately after `ParamSlots`
+is built (the earliest point a parameter's slot is known) — one entry per parameter, so every
+consumer downstream of that point can assume the entry exists.
+
+### 14.2 Corrections to this document's own estimates, found while building this
+
+**Field count: 12 fields, but only 11 actually collapse into `TcoParamOwnership`.**
+`EscapingDirectPatternBindings` turned out to be keyed by a **different identity space** than the
+other eleven: reading `CollectEscapingDirectPatternBindings` (`Lowering.Reuse.cs:355`) directly shows
+it returns a `HashSet<string>` of **extracted pattern-binding names** (e.g. a nested match's own
+`rest`), not TCO parameter names — a name that, in general, is not itself one of `tco.ParamNames`. Every
+consumer of the old field (`ResolvePendingNestedTcoPatternAliasSites`, `Lowering.cs:5396`) looks it up
+by the extracted binding's own name, not by a parameter index. Folding it into a per-*parameter* record
+keyed by parameter slot would have silently changed what the lookup answers (parameter-name membership
+instead of extracted-binding-name membership) — exactly the kind of forced-through shape mismatch this
+document's own brief said to stop and report rather than paper over. `EscapingDirectPatternBindings`
+therefore stays a freestanding `IReadOnlySet<string>` property directly on `TcoContext`, unchanged in
+every respect (same population call, same consumer, same key space) — only *documented* more precisely
+than before (the class's own comment previously implied, incorrectly, that it was parameter-keyed like
+its neighbors). Net: **11 of the 12 fields fold into `TcoParamOwnership`; one — a different key space
+entirely — does not and should not.**
+
+**Construction sites: three, not one.** §13.1's audit (and this section's own initial pass) traced only
+the main `let recursive` lambda path (`LowerLetRecursiveLambdaValue`, `Lowering.cs:5008`) which runs the
+full `Collect*` family. Two more sites construct a bare `TcoContext` without running any of them:
+`MutualRecursionTcoLowerDispatchAndWrappers` (`Lowering.TopLevel.cs:872`, a synthesized mutual-recursion
+dispatch lambda whose own body is scanned once *it* is lowered through the ordinary path) and
+`LowerHelperCoroutineTaskCreateLoopTco` (`Lowering.Builtins.cs:2091`, an async helper coroutine's
+restart loop, whose classifier-A/D passes never run at all — gated off entirely by the
+`_usesAsync`/`_inCoroutineBody` check in `LowerLambdaCoreIdentifyRuntimeManagedTcoParams`). Both used to
+get all twelve old fields' default-empty-collection initializers for free; the new design needs an
+explicit accommodation, added as a second `TcoContext` constructor overload that defaults all eight
+static facts to one shared empty set. The coroutine site additionally assigns `ParamSlots` directly
+(bypassing `LowerLambdaCoreBindTcoParamSlots`, the normal `BuildParamOwnership()` call site), so it now
+calls `BuildParamOwnership()` explicitly right after. Behavior at both sites is unchanged — an empty
+static-fact set and an unpopulated runtime-managed verdict are exactly what the twelve old fields
+already defaulted to there.
+
+**Call sites: roughly 65 distinct read/write expressions across three files, not ~50.** A direct grep
+for the twelve old field names across `src/Ashes.Semantics` found 65 occurrences (`Lowering.cs`:
+57, `Lowering.Patterns.cs`: 1, `Lowering.TcoPromotionCostSignal.cs`: 2, plus five construction-site
+assignments) once comments and the `Collect*` function definitions themselves are excluded — closer to
+§9.2/§13.4's own "~50" estimate than not, but on the high side; the difference is mostly the several
+sites this section found that test two or three of the fields in one boolean expression (each counted
+once by file-and-line here, same as the design doc's own count), plus the profitability-signal file's
+own two sites the original audit did not itemize separately.
+
+### 14.3 What this section deliberately did NOT build, and why
+
+§13.4/§13.5 sketch a further redesign — a `TcoParamEligibility` enum (`IneligibleByType`/
+`IneligibleByShape`/`IndependentlyEligible`), an `EscapesIndependently` field sourced from an extended
+`FunctionOwnershipSummary`, and a single two-phase `BuildTcoParamOwnership` function replacing today's
+five-function veto sequence (`LowerLambdaCoreIdentifyRuntimeManagedTcoParams` +
+`RecordTcoPromotionProfitability` + `LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame` +
+`DemoteUnprofitableRuntimeManagedTcoParams` + `ClearOneRuntimeManagedTcoParam`) with "no `Clear`/`Demote`
+mutation anywhere." None of that was built here, and that is a deliberate scope decision, not an
+oversight: today's veto sequence runs at genuinely different times relative to how much of a parameter's
+type is resolved (an unresolved-type loop-entry pass, a resolved-type post-body refresh pass, and a
+per-back-edge resolved-argument-type promotion — three, not two, distinct timing points, the third found
+only while rewiring `LowerCallTcoPromoteResolvedRuntimeParam`, §14.2's call-site recount). Collapsing
+that into one two-phase construction function would mean re-deriving *when* eligibility and
+profitability get decided relative to type resolution — a genuine control-flow change, not a data
+reshaping — and is exactly the kind of forced-through restructuring this section's own brief said to
+stop short of. The `EscapesIndependently`/extended-`FunctionOwnershipSummary` piece is, in this
+document's own words, Option B, explicitly out of scope for this session. What this section built
+instead — `MarkRuntimeManaged`/`ClearRuntimeManaged` as the sole two write paths onto one shared
+per-parameter object — is the largest simplification available without touching that timing, and
+leaves `RuntimeManaged` as a plain mutable field rather than a derived, eligibility-times-profitability
+property; a future Option-B-scoped session that actually unifies the timing into two phases can turn it
+into the derived property §13.5 sketches at that point, once eligibility and profitability are
+genuinely computed as separate phases rather than interleaved across three timing points.
+
+### 14.4 The one place this section had to make an unproven-but-verified judgment call: enumeration order
+
+Three call sites don't just test membership in the old `RuntimeManagedParamSlots`/
+`RuntimeManagedClosureParamSlots` sets — they `foreach` over them, allocating a fresh local slot
+(`NewLocal()`) or emitting an instruction once per member visited
+(`LowerLambdaCoreRefreshRuntimeManagedTcoParams`, `LowerLambdaCoreSpliceRuntimeManagedTcoParams`,
+`LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`, plus the closure-only enumeration in
+`LowerLambdaCoreEmitTcoLoopEntry`). Enumeration ORDER is therefore not merely cosmetic here: two
+functionally-equivalent orderings can still assign different local-slot numbers or emit instructions in
+a different sequence, which — even though never observable as a behavior difference — could plausibly
+produce non-byte-identical compiled output, the exact bar this refactor is held to. The old
+`RuntimeManagedParamSlots`'s own enumeration order is the accumulated result of potentially many
+`.Add`/`.Remove` calls spread across three timing points (§14.3) and is not simply "parameter
+declaration order" in every case (a parameter promoted only at the resolved-argument-type back-edge
+pass could sort earlier in insertion order than one promoted at loop entry, if the back-edge pass visits
+it first). Rather than trust that `Dictionary<int, TcoParamOwnership>`'s own iteration order — fixed at
+`BuildParamOwnership()` time, in `ParamSlots` order — coincidentally matches that history in every case,
+this section kept two small private `HashSet<int>` fields on `TcoContext`
+(`_runtimeManagedOrder`/`_runtimeManagedClosureOrder`), mutated at the exact same `MarkRuntimeManaged`/
+`ClearRuntimeManaged` call sites and therefore experiencing the identical sequence of insertions and
+removals the old `RuntimeManagedParamSlots`/`RuntimeManagedClosureParamSlots` HashSets did — exposed via
+`RuntimeManagedSlotsInOrder`/`RuntimeManagedClosureSlotsInOrder`, the only things those three call sites
+now iterate. This was verified, not merely argued: §14.5's byte-identical results cover every
+`challenges/` program at both `-O0` and `-O2`, and none differs, which is the strongest evidence
+available that this ordering concern does not manifest for any program actually exercised — but it
+remains a narrower, unproven-in-general judgment call worth flagging precisely rather than asserting as
+airtight for every possible TCO loop shape.
+
+### 14.5 Validation results
+
+- `dotnet build Ashes.slnx`: clean, 0 warnings, 0 errors.
+- `dotnet run --project src/Ashes.Tests -- --no-progress`: **1722/1722 passed**, including
+  `NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`, `OwnershipTests`,
+  `OwnershipProvenanceTests`, `TcoMixedOwnershipTests`, `TcoPromotionCostSignalTests`,
+  `TcoRcEligibilityPredicateTests` — none weakened or deleted.
+- `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`: **52/52 passed**.
+- `dotnet run --project src/Ashes.Cli -- test tests`: **544 passed, 0 failed, 44 skipped** (skips are
+  the usual platform-conditional fixtures, unrelated to this change).
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- **Challenges byte-identical gate**: a baseline CLI was built from `origin/main` at commit `81e770b`
+  (this section's own starting point) in a separate worktree. Every program in `challenges/`
+  (`1brc/brc`, `binary-trees`, `fannkuch-redux`, `fasta`, `k-nucleotide`, `mandelbrot`, `n-body`,
+  `pidigits`, `regex-redux`, `reverse-complement`, `server/http_echo`, `server/tcp_echo`,
+  `spectral-norm` — thirteen programs, including the two `server/` ones this document's own table
+  omits) was compiled with both the baseline and this branch's compiler at both `-O0` (the test
+  runner's own optimization level) and `-O2` (the `challenges/bench.sh` level) — 26 binaries total —
+  and every single one is **byte-identical** (`cmp -s`), not merely output-identical.
+- Because the binaries are byte-identical, the mandated runtime measurements are, by construction,
+  identical to whatever `origin/main` itself produces; they were still run directly, not merely
+  inferred: **fannkuch-redux** N=8/9/10/11 — constant **256 KB** peak RSS at every N (35.44 s at
+  N=11), confirming the tripwire this document has called out repeatedly stays flat; **binary-trees**
+  N=21 — 1.44 s, 192 MB (196608 KB), check value 4194303, matching this document's own recorded
+  baseline; **1BRC** at 10M rows — 0.56 s, ~6.97 GB RSS, output MD5-identical between the baseline and
+  this branch's binary; at 100M rows — 1.30 s, ~9.05 GB RSS; **reverse-complement** against a 1M-base
+  `fasta`-generated input — 0.53 s, ~753 MB RSS.
+
+### 14.6 Honest summary
+
+This step landed as scoped: a mechanical, verified-behavior-preserving repackaging of eleven of
+`TcoContext`'s twelve classification fields into one per-parameter record, with the twelfth kept
+freestanding for a precise, discovered reason rather than forced to fit. It reduces `TcoContext`'s own
+surface area, gives the ~65 call sites this section rewired one field to read instead of a scattered
+set-membership test, and gives a future Step 4 attempt one clean place to eventually plug classifier
+D's verdict into — exactly what §13.6 said Option A would deliver, no more. It does **not** advance
+Step 4 (per §13.6's own framing, this was never its job): classifier D's escape question is still
+answered by the exact same `CollectEscapingDirectPatternBindings` mechanism, at the exact same point in
+the pipeline, with the exact same twice-regressed fragility this document has tracked since §9.5.
+Option B — routing `TcoSelfCallArgumentShape`/`EscapesIndependently` through an extended
+`FunctionOwnershipSummary` instead of `TcoContext`'s own `Collect*` walks — remains a separately-scoped,
+separately-budgeted follow-up, exactly as §13.6 recommended.

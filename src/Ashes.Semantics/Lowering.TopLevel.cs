@@ -869,11 +869,8 @@ public sealed partial class Lowering
         int paramCount = arity + 1; // the dispatch tag plus the shared parameters
         var savedTcoCtx = _tcoCtx;
         _tcoCtx = HasTailSelfCalls(GetInnermostBody(dispatchLambda), dispatchName, paramCount)
-            ? new TcoContext
+            ? new TcoContext(dispatchName, paramCount, CollectLambdaParams(dispatchLambda))
             {
-                SelfName = dispatchName,
-                ParamCount = paramCount,
-                ParamNames = CollectLambdaParams(dispatchLambda),
                 InTailPosition = false
             }
             : null;

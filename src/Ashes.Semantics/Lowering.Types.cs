@@ -29,61 +29,261 @@ public sealed partial class Lowering
         }
     }
 
-    // TCO (tail call optimization) state
-    private sealed class TcoContext
+    // One TCO loop parameter's ownership facts: the static, AST-derived usage-shape signals a
+    // parameter can be classified by before its type is even resolved, plus the runtime-managed (RC)
+    // representation verdict that is decided once types are known and can be revised later by the
+    // frame-wide profitability veto. Replaces what used to be twelve separate name/slot-keyed sets and
+    // maps on TcoContext (see that class's own remarks) with one entry per parameter, keyed by slot.
+    private sealed class TcoParamOwnership
     {
-        public string SelfName { get; init; } = "";
-        public string BodyLabel { get; set; } = "";
-        public int ParamCount { get; init; }
-        public List<string> ParamNames { get; init; } = [];
-        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
-        public List<int> ParamSlots { get; init; } = [];
-        public HashSet<int> RuntimeManagedParamSlots { get; } = [];
-        public HashSet<int> RuntimeManagedListParamSlots { get; } = [];
-        public HashSet<int> RuntimeManagedClosureParamSlots { get; } = [];
-        public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
-        public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
-        public Dictionary<int, TypeRef> RuntimeManagedParamTypes { get; } = [];
-        public bool InTailPosition { get; set; }
+        public required string ParamName { get; init; }
+        public required int Slot { get; init; }
 
-        // Params passed as their own unchanged Var at EVERY tail self-call — loop-invariant, so they
-        // never hold a value allocated inside the loop and always point below the arena watermark. A
-        // plain per-iteration reset therefore leaves them valid, even when they are heap types (e.g. a
-        // Bytes threaded unchanged through a fold). Empty when not computed (conservative).
-        public HashSet<string> LoopInvariantParams { get; init; } = new(System.StringComparer.Ordinal);
+        // Param passed as its own unchanged Var at EVERY tail self-call — loop-invariant, so it
+        // never holds a value allocated inside the loop and always points below the arena watermark.
+        // A plain per-iteration reset therefore leaves it valid, even when it is a heap type (e.g. a
+        // Bytes threaded unchanged through a fold).
+        public bool LoopInvariant { get; init; }
 
-        // Params whose argument is a self-contained fresh list at every tail self-call. These may
-        // use whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
+        // Param whose argument is a self-contained fresh list at every tail self-call. May use
+        // whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
         // separate ownership-transfer path instead.
-        public HashSet<string> FreshRebuiltListParams { get; init; } = new(System.StringComparer.Ordinal);
-        public HashSet<string> AffineConsListParams { get; init; } = new(System.StringComparer.Ordinal);
-        public HashSet<string> ConsumedListTailParams { get; init; } = new(System.StringComparer.Ordinal);
+        public bool FreshRebuiltList { get; init; }
+        public bool AffineConsList { get; init; }
+        public bool ConsumedListTail { get; init; }
 
-        // Subset of ConsumedListTailParams that the recursive body only INSPECTS: every head and
-        // tail bound from the param is used solely as a match scrutinee (heads destructured into
+        // True when ConsumedListTail also holds AND the recursive body only INSPECTS the param: every
+        // head and tail bound from it is used solely as a match scrutinee (heads destructured into
         // inline-copy scalar fields) or re-passed in the same tail position of the self-call, never
         // returned, stored into a constructed value, or handed to another function in an owning
         // position. Such a list can be BORROWED from the caller's graph — no per-entry RC
         // normalization/dup/drop — because nothing derived from it escapes the traversal (the
         // pointer-bearing analogue of the inline-element borrowed cursor). Gated additionally on an
         // all-inline-copy-field record element type at the runtime-managed decision site.
-        public HashSet<string> BorrowableConsumedListParams { get; init; } = new(System.StringComparer.Ordinal);
-        public HashSet<string> FreshClosureParams { get; init; } = new(System.StringComparer.Ordinal);
+        public bool BorrowableConsumedList { get; init; }
+        public bool FreshClosure { get; init; }
 
-        // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter whose
-        // only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a further
-        // nested match on the same name, or (b) the bare, unchanged argument at that same parameter's
-        // own slot in a tail self-call. Both of those shapes are already handled without this table's
-        // help — (a) by whatever separate protection the nested match's own bindings get, (b) by the
-        // ordinary per-parameter back-edge argument installation — so a name limited to just those is
-        // left alone. A name with any OTHER appearance (embedded in a returned/constructed value, passed
-        // to a different parameter's slot, handed to another function, ...) genuinely escapes the current
-        // iteration independently and needs its own protective dup; see
-        // ResolvePendingNestedTcoPatternAliasSites, which is the only consumer. Computed once, structurally,
-        // from the pre-lowering AST (matching the style of the other Collect* param analyses above), so it
-        // is available before types are resolved. Empty when not computed (conservative — nothing extra
-        // gets protected).
-        public HashSet<string> EscapingDirectPatternBindings { get; init; } = new(System.StringComparer.Ordinal);
+        // Param proven AFFINE across the loop (consumed at most once along every loop-continuing
+        // path, and only as the leftmost leaf of the `+` chain producing its own tail-call argument).
+        // The affine property guarantees the loop holds no other reference, licensing in-place
+        // reservation growth (ConcatStrTip). False when not computed (conservative).
+        public bool AffineStr { get; init; }
+
+        // The runtime-managed (RC) representation verdict and its resolved type/shape. Mutated at the
+        // same points in the lowering pipeline the four separate collections this replaces used to be
+        // written: the loop-entry and post-body classifier-A passes, the resolved-argument-type
+        // promotion at each back-edge call site, and the frame-wide profitability veto's demotion. See
+        // TcoContext.MarkRuntimeManaged/ClearRuntimeManaged, the only writers.
+        public bool RuntimeManaged { get; set; }
+        public bool RuntimeManagedList { get; set; }
+        public bool RuntimeManagedClosure { get; set; }
+        public TypeRef? RuntimeManagedType { get; set; }
+    }
+
+    // TCO (tail call optimization) state
+    private sealed class TcoContext
+    {
+        public string SelfName { get; init; }
+        public string BodyLabel { get; set; } = "";
+        public int ParamCount { get; init; }
+        public List<string> ParamNames { get; init; }
+        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
+        public List<int> ParamSlots { get; init; } = [];
+
+        // One ownership record per parameter, keyed by slot — the single source of truth every
+        // consumer should read instead of testing membership in a scattered set. Populated once
+        // ParamSlots is known (see BuildParamOwnership) by joining ParamNames against the raw
+        // Collect*-derived facts below; the RuntimeManaged* fields on each entry are then written and
+        // revised in place by MarkRuntimeManaged/ClearRuntimeManaged as the lowering pipeline resolves
+        // types and evaluates profitability.
+        public Dictionary<int, TcoParamOwnership> ParamOwnership { get; } = [];
+
+        // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership
+        // sets this replaces (the old RuntimeManagedParamSlots/RuntimeManagedClosureParamSlots
+        // HashSet<int> fields), because a handful of codegen passes iterate "every currently
+        // runtime-managed parameter" and allocate a fresh local slot or emit an instruction per one
+        // visited — changing that order would not change program behavior, but could change the exact
+        // sequence of locals/instructions the backend emits. Kept as private, order-preserving backing
+        // state rather than folded into ParamOwnership's own (fixed, ParamSlots-order) iteration order.
+        private readonly HashSet<int> _runtimeManagedOrder = [];
+        private readonly HashSet<int> _runtimeManagedClosureOrder = [];
+
+        public IEnumerable<int> RuntimeManagedSlotsInOrder => _runtimeManagedOrder;
+        public IEnumerable<int> RuntimeManagedClosureSlotsInOrder => _runtimeManagedClosureOrder;
+        public int RuntimeManagedSlotCount => _runtimeManagedOrder.Count;
+
+        public bool IsRuntimeManagedSlot(int slot) =>
+            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManaged;
+
+        public bool IsRuntimeManagedListSlot(int slot) =>
+            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManagedList;
+
+        public bool IsRuntimeManagedClosureSlot(int slot) =>
+            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManagedClosure;
+
+        // Records that `slot` independently licenses runtime-managed representation as `type`
+        // (classifier A, at whichever pass currently has the most resolved view of the type available
+        // — loop entry, post-body refresh, or a specific back-edge call site). Monotonic like the
+        // HashSet.Add calls it replaces: never turns an already-true List/Closure flag back off just
+        // because this particular call's type doesn't match that branch.
+        public void MarkRuntimeManaged(int slot, TypeRef type)
+        {
+            if (!ParamOwnership.TryGetValue(slot, out var ownership))
+            {
+                return;
+            }
+
+            if (!ownership.RuntimeManaged)
+            {
+                _runtimeManagedOrder.Add(slot);
+            }
+
+            ownership.RuntimeManaged = true;
+            ownership.RuntimeManagedType = type;
+            if (type is TypeRef.TList)
+            {
+                ownership.RuntimeManagedList = true;
+            }
+            else if (type is TypeRef.TFun)
+            {
+                if (!ownership.RuntimeManagedClosure)
+                {
+                    _runtimeManagedClosureOrder.Add(slot);
+                }
+
+                ownership.RuntimeManagedClosure = true;
+            }
+        }
+
+        // The frame-wide profitability veto's demotion: undoes MarkRuntimeManaged for one parameter.
+        public void ClearRuntimeManaged(int slot)
+        {
+            if (ParamOwnership.TryGetValue(slot, out var ownership))
+            {
+                ownership.RuntimeManaged = false;
+                ownership.RuntimeManagedList = false;
+                ownership.RuntimeManagedClosure = false;
+                ownership.RuntimeManagedType = null;
+            }
+
+            _runtimeManagedOrder.Remove(slot);
+            _runtimeManagedClosureOrder.Remove(slot);
+        }
+
+        public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
+        public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
+        public bool InTailPosition { get; set; }
+
+        // Raw, name-keyed AST-derived facts stashed at construction time (before ParamSlots is known)
+        // and consumed once by BuildParamOwnership below. Not read anywhere else — every other
+        // consumer reads the corresponding field on ParamOwnership[slot] instead.
+        private readonly IReadOnlySet<string> _loopInvariantParams;
+        private readonly IReadOnlySet<string> _freshRebuiltListParams;
+        private readonly IReadOnlySet<string> _affineConsListParams;
+        private readonly IReadOnlySet<string> _consumedListTailParams;
+        private readonly IReadOnlySet<string> _borrowableConsumedListParams;
+        private readonly IReadOnlySet<string> _freshClosureParams;
+        private readonly IReadOnlySet<string> _affineStrParams;
+
+        // Every affine-string param's own name, in CollectAffineAccumulators's own AST-walk order —
+        // exposed directly (not re-derived from ParamOwnership's fixed ParamSlots-order iteration)
+        // because the one consumer (reservation-slot setup at loop entry) allocates a fresh pair of
+        // locals per name visited, so it must keep visiting them in this collection's original order.
+        public IEnumerable<string> AffineStrParamNames => _affineStrParams;
+
+        // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter
+        // whose only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a
+        // further nested match on the same name, or (b) the bare, unchanged argument at that same
+        // parameter's own slot in a tail self-call. Both of those shapes are already handled without
+        // this table's help — (a) by whatever separate protection the nested match's own bindings
+        // get, (b) by the ordinary per-parameter back-edge argument installation — so a name limited
+        // to just those is left alone. A name with any OTHER appearance (embedded in a
+        // returned/constructed value, passed to a different parameter's slot, handed to another
+        // function, ...) genuinely escapes the current iteration independently and needs its own
+        // protective dup; see ResolvePendingNestedTcoPatternAliasSites, the only consumer. Keyed by
+        // the EXTRACTED BINDING's own name (e.g. a pattern-matched "rest", not the parent parameter's
+        // own name), a distinct key space from ParamOwnership's per-parameter entries, so this stays a
+        // freestanding set rather than a field on TcoParamOwnership. Computed once, structurally, from
+        // the pre-lowering AST, so it is available before types are resolved. Empty when not computed
+        // (conservative — nothing extra gets protected).
+        public IReadOnlySet<string> EscapingDirectPatternBindings { get; }
+
+        private static readonly IReadOnlySet<string> EmptyStaticFacts = new HashSet<string>(System.StringComparer.Ordinal);
+
+        // Used by the two call sites that build a TcoContext without first running the Collect*
+        // family over a real recursive body — a synthesized mutual-recursion dispatch lambda (whose
+        // own body gets scanned once IT is lowered through the ordinary path, same as any other
+        // recursive binding) and an async helper coroutine's restart loop (whose classifier-A/D
+        // passes never run at all — see the _usesAsync/_inCoroutineBody gate on
+        // LowerLambdaCoreIdentifyRuntimeManagedTcoParams). Every static fact defaults to false, the
+        // same default the twelve original fields' own empty-collection initializers gave both sites.
+        public TcoContext(string selfName, int paramCount, List<string> paramNames)
+            : this(
+                selfName,
+                paramCount,
+                paramNames,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts,
+                EmptyStaticFacts)
+        {
+        }
+
+        public TcoContext(
+            string selfName,
+            int paramCount,
+            List<string> paramNames,
+            IReadOnlySet<string> loopInvariantParams,
+            IReadOnlySet<string> freshRebuiltListParams,
+            IReadOnlySet<string> affineConsListParams,
+            IReadOnlySet<string> consumedListTailParams,
+            IReadOnlySet<string> borrowableConsumedListParams,
+            IReadOnlySet<string> freshClosureParams,
+            IReadOnlySet<string> affineStrParams,
+            IReadOnlySet<string> escapingDirectPatternBindings)
+        {
+            SelfName = selfName;
+            ParamCount = paramCount;
+            ParamNames = paramNames;
+            _loopInvariantParams = loopInvariantParams;
+            _freshRebuiltListParams = freshRebuiltListParams;
+            _affineConsListParams = affineConsListParams;
+            _consumedListTailParams = consumedListTailParams;
+            _borrowableConsumedListParams = borrowableConsumedListParams;
+            _freshClosureParams = freshClosureParams;
+            _affineStrParams = affineStrParams;
+            EscapingDirectPatternBindings = escapingDirectPatternBindings;
+        }
+
+        // Joins ParamNames against ParamSlots (only available once LowerLambdaCoreBindTcoParamSlots
+        // has run) with the raw static facts stashed at construction, producing one entry per
+        // parameter, keyed by its local slot. Called exactly once, right after ParamSlots is built.
+        public void BuildParamOwnership()
+        {
+            ParamOwnership.Clear();
+            int count = ParamNames.Count < ParamSlots.Count ? ParamNames.Count : ParamSlots.Count;
+            for (int i = 0; i < count; i++)
+            {
+                string name = ParamNames[i];
+                int slot = ParamSlots[i];
+                ParamOwnership[slot] = new TcoParamOwnership
+                {
+                    ParamName = name,
+                    Slot = slot,
+                    LoopInvariant = _loopInvariantParams.Contains(name),
+                    FreshRebuiltList = _freshRebuiltListParams.Contains(name),
+                    AffineConsList = _affineConsListParams.Contains(name),
+                    ConsumedListTail = _consumedListTailParams.Contains(name),
+                    BorrowableConsumedList = _borrowableConsumedListParams.Contains(name),
+                    FreshClosure = _freshClosureParams.Contains(name),
+                    AffineStr = _affineStrParams.Contains(name),
+                };
+            }
+        }
 
         // True only while we are still descending the recursive binding's curried lambda chain
         // (given a -> given b -> body). The chain's innermost lambda owns the tail-call loop label; a
@@ -106,12 +306,6 @@ public sealed partial class Lowering
         // growing String/BigInt accumulator stays O(current size) instead of O(sum of sizes).
         public int FixedCursorSlot { get; set; } = -1;
         public int FixedEndSlot { get; set; } = -1;
-
-        // Params proven AFFINE across the loop (consumed at most once along every loop-continuing
-        // path, and only as the leftmost leaf of the `+` chain producing their own tail-call
-        // argument). The affine property guarantees the loop holds no other reference, licensing
-        // in-place reservation growth (ConcatStrTip). Empty when not computed (conservative).
-        public HashSet<string> AffineStrParams { get; init; } = new(System.StringComparer.Ordinal);
 
         // Per affine param: the reservation start/end local slots (zeroed at loop entry, written by
         // ConcatStrTip's fallback, zeroed again by the compaction that reclaims the reservation).
