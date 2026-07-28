@@ -37,8 +37,16 @@ decision; see "Phase 6, promotion-cost signal" below. The other closed classifie
 in isolation (a direct pattern binding off a TCO parameter that independently escapes is now
 protected) and confirmed the closure-eligibility gap is not safely fixable without a larger retrofit —
 see "Classifier (D) timing gap — landed; closure-eligibility dead code — investigated, left unfixed"
-below. The four-classifier collapse and veto removal themselves remain unstarted. Phase 7 is not yet
-started.
+below. A fifth session then wired the promotion-cost signal into the frame veto itself — the veto's
+firing condition is unchanged, but its consequence is no longer a blanket clear: only a parameter the
+signal finds `NotProfitable` is demoted, so a sibling parameter the signal finds `Profitable` keeps its
+runtime-managed representation even when the frame can never fully arena-reset — but only after fixing a
+real gap the signal itself had (found by re-validating against the actual `challenges/` programs, not
+just hand-built unit tests) and separately discovering, unrelated to anything in this document's own
+changes, that the classifier (D) timing-gap fix regressed fannkuch-redux's peak memory off its 256KB
+floor; see "Phase 6, profitability-gated veto relaxation" below for both accounts. The four-classifier
+structural collapse remains unstarted, and the classifier (D) regression remains unfixed. Phase 7 is not
+yet started.
 
 Known follow-ups from Phase 0, not yet landed: confirming the shadow-compare result at the full
 `challenges/fannkuch-redux` N=11 workload (only N=9 was run, for sandbox resource-safety reasons);
@@ -1365,6 +1373,142 @@ attempt should design the entry-prologue retrofit first and treat "does flipping
 at the refresh call site still crash the same synthetic program" as its own first regression check,
 before trying to measure any profitability gain from the classifier actually firing.
 
+**Phase 6, profitability-gated veto relaxation — landed.** A fifth follow-up session did exactly the
+minimal wiring the promotion-cost signal session's own closing note called for: gate
+`LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame`'s clear (and its resolved-type counterpart inside
+`LowerCallTcoPromoteResolvedRuntimeParams`) per parameter, by `GetTcoPromotionProfitability`'s verdict,
+instead of clearing every promoted parameter in the frame the moment any one of them is found blocking.
+
+*Design.* Both veto call sites keep their original firing condition byte-for-byte unchanged — the
+question "does some parameter in this frame permanently block a per-iteration arena reset" is exactly
+as conservative as it always was, so nothing about when the veto fires changed. What changed is the
+consequence of firing: instead of `ClearRuntimeManagedTcoParams` wiping every slot in
+`TcoContext.RuntimeManagedParamSlots`, a new `DemoteUnprofitableRuntimeManagedTcoParams` walks only the
+currently-promoted slots and clears a slot only when `ClassifyTcoParamPromotion` — the exact function
+the read-only signal itself calls, not a re-derived copy — returns `NotProfitable` for it. A parameter
+the signal finds `Profitable` keeps its runtime-managed representation even though a sibling in the
+same frame permanently blocks the frame's own reset. The two veto call sites needed separate treatment
+(one walks `scope` bindings with possibly-unresolved types at loop-entry time, the other walks already-
+resolved `argTypes` at each back-edge call site) but funnel into the one shared demotion helper.
+
+*The four known cases, re-verified against the real programs, not just the unit tests.* Re-running the
+existing `TcoPromotionCostSignalTests.cs` cases first confirmed all four still resolve to their
+documented verdict with this wiring in place. But per this document's own repeated lesson that a
+signal validated only against hand-built `.ash` sources "shaped like" a real program is not the same
+claim as validating it against the real program, the full `challenges/` suite was run next — and this
+is where a real, confirmed gap in the signal itself turned up, not a wiring bug:
+
+`challenges/reverse-complement/reverse-complement.ash`'s real `emit chars col buf` reproduced the full
+~370MB regression the third attempt measured for the fully-removed veto, even with the profitability
+gate wired in. Direct inspection (temporary instrumentation printing each parameter's verdict, since
+removed) found `buf` classified `Profitable` — wrong, since `chars` still permanently blocks the frame
+exactly as before. The reason: `ClassifyTcoParamPromotion`'s `costSensitive` check treated `buf` as
+"affordable regardless of reclaim" because it is not a member of `TcoContext.AffineStrParams` — but it
+fails that strict syntactic test for a reason specific to the *real* program that the hand-built unit
+test's simplified source did not reproduce: `emit`'s column-wrap branch is `let _ = io.write(buf +
+"\n") in emit(chars)(0)("")`, an intervening *read* of `buf` before resetting it to `""`, and
+`CollectAffineAccumulatorsWalkLet` correctly disqualifies any candidate mentioned in a let-bound value
+preceding a loop-continuing body — precisely because that read is a non-tail-position use the
+affine-append proof cannot see past. The synthetic unit test's `then` branch omits that read
+(`emit(chars)(0)("")` directly, no preceding `io.write`), so it never triggered the same disqualification
+and the signal's own validation missed the gap. Auditing which of the four validated cases actually
+exercised the "sibling blocks, but this candidate's own reason is affordable regardless" branch found the
+answer was *none of them*: the brc/reverse-complement-synthetic cases both hit the `costSensitive ==
+true` path, and the Str/closure and single-heap-parameter cases both have `hasBlockingSibling == false`
+(the closure sibling is explicitly excluded from "blocking" by `IsPermanentlyBlockingTcoSibling`'s own
+`TFun` carve-out, so they never reach that branch either) — the one branch responsible for the real
+regression had zero positive evidence behind it and one concrete counterexample once checked against
+real code.
+
+*The fix: remove the exception rather than patch it further.* Given "a missed optimization is always
+acceptable, a regression never is" and given the one real case exercising that branch was wrong, the
+verdict was simplified to depend only on `hasBlockingSibling`: `NotProfitable` whenever a sibling
+permanently blocks the frame, `Profitable` otherwise, full stop. This still passes every existing
+`TcoPromotionCostSignalTests.cs` case (verified directly, not assumed) because the Str/closure case's
+benefit never depended on the removed branch — it depended on `IsPermanentlyBlockingTcoSibling`'s own
+`TFun` exclusion making `hasBlockingSibling` false in the first place, which is untouched. The remaining
+net effect of this whole relaxation is therefore narrower than originally hoped: it helps exactly the
+case that motivated wanting the veto gone (a closure that fails classifier A on its own no longer wipes
+an unrelated, independently-eligible heap sibling's promotion) and nothing broader — every case where a
+genuine (non-closure) heap sibling permanently blocks the frame now demotes every promoted parameter in
+it, identically to the original all-or-nothing veto.
+
+*A second, unrelated discovery made during this validation pass, reported not fixed here.* Re-measuring
+fannkuch-redux N=11 as this document's own most-scrutinized sentinel found it was **not** constant at
+256KB on the tree this session started from (`main` plus the classifier-D timing-gap fix immediately
+above, `#317`) — it reproduced the exact N!-scaling leak shape "Phase 6 resolution, part 2" was supposed
+to have closed, just roughly 43x larger per iteration (measured: N=8 ~54MB, N=9 ~554MB). Bisected
+precisely across every commit between the last confirmed-256KB point and the tree this session started
+from (rebuilding and re-measuring at each commit from a clean clone, not inferring): `73cf95f`
+(match-scrutinee wrapper drop) — 256KB; `fa0a65b` (third attempt, reverted) — 256KB; `4bd0288` (`#316`,
+promotion-cost signal) — 256KB; `4defd77` (`#317`, classifier D timing-gap fix, immediately above) —
+regressed. `#317` itself is the cause, despite that PR's own validation claiming byte-identical
+disassembly for fannkuch-redux specifically. Root cause, read directly from `#317`'s own diff: its new
+`CollectEscapingDirectPatternBindings` (`Lowering.Reuse.cs`) flags a pattern binding extracted directly
+off a declared TCO parameter as "escaping" — and therefore now eligible for a retroactively-spliced
+protective `RcDup` that was previously always skipped for direct bindings — the moment it is used
+anywhere beyond the two shapes that analysis treats as already safe (a further nested match on the same
+name, or the bare unchanged argument at its own parameter's slot in a self-call). fannkuch-redux's own
+`nextPerm` matches `st` (a TCO parameter) as `S(perm, count)` and passes `perm`/`count` into helper calls
+(`rotateFirst`, `getAt`, `setAt`) — neither of the two safe shapes — so both now qualify for the new
+retroactive dup. `#317`'s own writeup calls this tradeoff "a redundant-but-harmless protective dup (a
+dup immediately followed, somewhere down the line, by a balancing drop)," but the measured behavior on
+the real program contradicts that: the growth is unbounded and scales with the loop's own iteration
+count exactly like a genuine leak, not a bounded one-time waste.
+
+Because this regression lives entirely inside classifier D's own machinery — the single most
+historically dangerous subsystem this document tracks (CO-8, CO-9, CO-28/29/32/34/35, `#298`, and now
+this) — and is completely independent of the profitability-gated veto relaxation this session was
+scoped to deliver (verified: the two changesets touch disjoint functions in `Lowering.cs`, confirmed by
+temporarily reverting just the `#317` merge and re-validating this session's own commits cleanly on top
+of the unaffected `#316` tip), no attempt was made to patch classifier D's own mechanism in this session.
+`#317` remains merged on `main` with this regression live; whoever picks this up next should treat this
+account, and the bisection commits above, as a ready-made starting point rather than re-deriving the
+diagnosis from scratch — likely starting from `CollectEscapingDirectPatternBindings`'s own "inspected vs
+retained" limitation that PR's own writeup already flagged as a known imprecision, now confirmed to be
+more than just imprecision for this shape. This is reported as a discovery made *during* this session's
+own required validation pass, not something this session set out to fix.
+
+*Validation.* This session's own two commits were first validated in isolation against a corrected
+(`#316`-only) base — built via a clean clone of `main` at the `#316` tip, confirming this session's
+changes alone introduce no regression anywhere before layering `#317`'s independent, pre-existing
+regression back on top for the final combined state. C# suite 1712/1712 against the `#316`-only base
+(unchanged from that baseline — this relaxation added no new C# tests of its own, relying on the
+existing `TcoPromotionCostSignalTests.cs` plus the challenges suite below), LSP suite 52/52, e2e suite
+544/0, `dotnet format --verify-no-changes` clean. Full `challenges/` suite, every program run to
+completion and compared byte-for-byte (`cmp -s`) against a baseline binary built from the unmodified
+`#316`-merge tip, peak RSS via `/usr/bin/time -v`, not spot-checked: fannkuch-redux N=11 — 256KB constant
+in both baseline and this relaxation (checksum `556355`, `Pfannkuchen(11) = 51`, unchanged — this
+measurement predates layering `#317` back in, since `#317`'s own regression is independent of anything
+tested here); binary-trees N=21 — 196,096 vs 196,352 KB (noise-level), byte-identical output; 1BRC 10M
+rows — 6,971,004 vs 6,969,468 KB (noise-level); 1BRC 100M rows — 9,048,684 vs 9,049,196 KB (noise-level);
+reverse-complement (1,000,000-base FASTA input) — 753,568 vs 752,992 KB (noise-level, and this is the
+exact case that regressed before the `costSensitive`-branch removal above); mandelbrot N=4000, n-body
+5,000,000 steps, spectral-norm N=5,500, pidigits N=10,000, k-nucleotide and regex-redux
+(5,000,000-base FASTA input), and fasta 5,000,000 — all byte-identical output, all peak RSS within noise
+of baseline. No program in the suite regressed from this session's own changes. Separately, compiling
+fannkuch-redux with and without this session's changes on top of the `#317`-including tree produces a
+byte-for-byte identical binary (confirmed by direct comparison, not just a size match) — fannkuch-redux's
+own TCO frame has only one heap-typed parameter, so this relaxation's demotion logic has no sibling to
+ever act on there, proving this session's changes are inert for that specific program regardless of
+`#317`'s unrelated, pre-existing regression.
+
+*What remains open.* The four-classifier structural collapse (A/B/C/D into one per-parameter decision)
+remains fully unstarted — this session, like the promotion-cost-signal session before it, was scoped to
+the veto side of Phase 6 only. The net value delivered is narrower than the original four-classifier
+collapse would be: closure/heap-sibling mixing no longer trips the all-or-nothing veto, but a genuine
+non-closure blocking sibling still demotes every promoted parameter in the frame, identically to before
+— because no case has ever been found, on real code, where a promotion is profitable *despite* a
+non-closure sibling permanently blocking the frame, and the one attempt to except such a case was wrong.
+A future session attempting the full collapse should treat "does promoting parameter X pay for itself
+given the ACTUAL downstream cost, not just whether some type-shape reason sounds affordable" as still
+unanswered precisely — the signal identifies whether a sibling blocks the frame at all, not how to price
+a promotion when there is no sibling to blame, which is the harder question the eventual per-parameter
+decision (§5 item 4) still needs. The classifier-D regression discovered above is also unaddressed and,
+given its severity and its location in the single most historically dangerous subsystem this document
+tracks, should likely be the very next thing whoever owns `#317` looks at, ahead of any further Phase 6
+collapse work.
+
 **Phase 7 — Async/task-frame narrowing (Very large, most dangerous, do last).** Two sub-parts that
 must both land together, not separately:
   (a) Replace `_usesAsync`/`_inCoroutineBody`'s whole-program scope with a per-value "does this
@@ -1463,11 +1607,17 @@ direct pattern binding off a TCO parameter that independently escapes now gets p
 structural escape check, without regressing the existing narrower guarantee) — see "Classifier (D)
 timing gap — landed" above — and confirmed the closure-eligibility dead code found as the third
 session's byproduct is not safely fixable without a larger, untested retrofit of the entry-prologue
-machinery, so it remains exactly as dead as found. The collapse and veto removal themselves remain
-unstarted and are where the bulk of the remaining risk and effort live; a future attempt now has the
-cost signal the third attempt found missing, but still needs to wire it in, re-validate against the
-same regression gate, and close the type-resolution-timing gaps the signal's own validation
-reconfirmed before landing any variant of veto removal. Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
+machinery, so it remains exactly as dead as found. A fifth session then wired the cost signal into the
+frame veto ("Phase 6, profitability-gated veto relaxation" above): the veto's own firing condition is
+untouched, but a parameter the signal finds `Profitable` now survives a sibling's failure instead of
+being cleared along with it — but only after finding and correcting a real gap in the signal itself
+(a cost-sensitivity exception with no real-program validation behind it, wrong on reverse-complement's
+actual `buf`), and separately discovering that the classifier (D) timing-gap fix immediately above it
+regressed fannkuch-redux's own peak memory back off its 256KB floor — unrelated to and undone by neither
+this document's own changes nor the classifier-D fix's stated intent, reported in full in that section
+rather than fixed there. The full structural collapse of classifiers A-D into one per-parameter
+decision remains unstarted and is where the bulk of the remaining risk and effort live — as does fixing
+the classifier (D) regression, which given its severity should likely come first. Phase 7 is deliberately last: it requires new test infrastructure that doesn't exist yet, touches the
 one subsystem where the audits found a currently-*masked* bug (the CFG-blindness/whole-program-gate
 interaction), and its failure mode if sequenced wrong is strictly worse (UAF) than the failure mode
 it's fixing (leak).

@@ -5,23 +5,32 @@ namespace Ashes.Semantics;
 /// into a new, equally real (or larger) runtime-managed one. See
 /// <see cref="Lowering.RecordTcoPromotionProfitability"/> for the analysis and
 /// docs/md/future/PERCEUS_UNIFICATION.md's TCO promotion-cost signal section for the evidence this
-/// classification is built on.</summary>
+/// classification is built on, including why the verdict depends only on whether a sibling parameter
+/// permanently blocks the frame's own per-iteration reclaim — an earlier version of this signal also
+/// tried to except a candidate whose OWN eligibility reason looked "unconditionally cheap regardless"
+/// (a plain non-growth Str/BigInt/Tuple/ADT, as opposed to a consumed-list-tail or affine-append
+/// accumulator) even when a sibling was blocking; that finer split was never validated against a real
+/// program exercising it and was later found wrong on exactly the real program it was supposed to
+/// describe (reverse-complement's own <c>buf</c>, which fails the strict affine-accumulator syntactic
+/// test because of an intervening flush read, yet regresses in memory identically to the fully
+/// unprofitable case when promoted) — removed rather than patched further, since nothing about "this
+/// specific reason is cheap even when a sibling blocks the frame" has ever been confirmed on real
+/// code.</summary>
 internal enum TcoPromotionVerdict
 {
     /// <summary>No sibling parameter in the same loop frame permanently blocks the frame's own
-    /// per-iteration reclaim strategy, so this parameter's own promotion reason (see
-    /// <see cref="TcoParamPromotionProfitability.Reason"/>) is expected to reach a genuinely cheap
-    /// per-iteration representation (an O(1) retain/dup, or a copy the arena-only frame would have
-    /// paid anyway) rather than adding cost with nothing to show for it.</summary>
+    /// per-iteration reclaim strategy, so this parameter's own promotion is expected to reach a
+    /// genuinely cheap per-iteration representation (an O(1) retain/dup, or a copy the arena-only
+    /// frame would have paid anyway) rather than adding cost with nothing to show for it.</summary>
     Profitable,
 
     /// <summary>Some other heap-typed parameter in the same loop frame independently fails every
-    /// arena-reset and RC-eligibility exemption, and this parameter's own eligibility reason is one
-    /// that only pays off when the frame can actually reclaim per iteration (a list walked one cons
-    /// cell at a time, or a string/list grown by repeated affine append). In that combination the
-    /// frame's per-iteration reclaim was already unreachable before this parameter, so promoting it
-    /// adds new, permanent per-node runtime-managed bookkeeping (header, dup/drop, and/or reservation
-    /// regrowth) that buys no corresponding reduction in the arena-only frame's own cost.</summary>
+    /// arena-reset and RC-eligibility exemption, so the frame's own per-iteration reclaim was already
+    /// unreachable before this parameter. Promoting it anyway adds new, permanent per-node
+    /// runtime-managed bookkeeping (header, dup/drop, and/or reservation regrowth) with nothing
+    /// confirmed to offset that cost — no case tested against a real program has ever shown a
+    /// parameter's promotion to be cheap under this condition, and one real case
+    /// (reverse-complement's <c>buf</c>) has shown the opposite.</summary>
     NotProfitable,
 }
 
@@ -82,16 +91,18 @@ public sealed partial class Lowering
     /// affine-growth accumulator, reservation-regrowth) bookkeeping the arena version never paid — a
     /// pure addition, not a relocation, scaling with how many nodes/iterations the loop touches.
     ///
-    /// This is exactly why the two regressions share no type in common (a List, and a Str) but do
-    /// share a shape: in both, the promoted parameter's OWN eligibility reason is one that is only
-    /// affordable when the loop can actually reclaim between iterations (a list walked one cons cell
-    /// at a time rather than rebuilt fresh, or a string grown by repeated affine append) — reasons
-    /// already distinguished from the "affordable regardless" reasons (a list rebuilt fresh every
-    /// iteration, or a plain non-growth-accumulator Str/BigInt/Tuple/ADT) by <see
-    /// cref="TcoContext.ConsumedListTailParams"/>/<see cref="TcoContext.AffineConsListParams"/>/<see
-    /// cref="TcoContext.AffineStrParams"/> and the existing DeepAdt-for-non-fresh-list downgrade inside
-    /// <see cref="TcoBackEdgeArgCopyOutKind"/> — this signal reuses those same facts rather than
-    /// re-deriving a fourth, potentially-diverging notion of "cheap."
+    /// An earlier version of this method additionally tried to except a candidate whose own
+    /// eligibility reason looked "affordable regardless of reclaim" (a plain non-growth Str/BigInt/
+    /// Tuple/ADT, as opposed to a consumed-list-tail or affine-append accumulator) even when a sibling
+    /// blocks the frame. That exception was removed after being checked against the real program it
+    /// was meant to cover: reverse-complement's own <c>buf</c> fails the strict affine-accumulator
+    /// syntactic test (<see cref="TcoContext.AffineStrParams"/>) because its growth is interrupted by a
+    /// flush read on one tail-call path, so the exception classified it as "affordable regardless" —
+    /// but promoting it regressed peak memory by the same ~370MB the fully-unprofitable case produces.
+    /// With no case where "affordable regardless, even under a blocking sibling" has been confirmed on
+    /// real code, and one case where it produced a real regression, the verdict now depends only on
+    /// whether a sibling permanently blocks the frame at all — see <see cref="TcoPromotionVerdict"/>'s
+    /// own doc comment.
     /// </summary>
     private void RecordTcoPromotionProfitability(IReadOnlyDictionary<string, Binding> scope, TcoContext tco)
     {
@@ -148,6 +159,12 @@ public sealed partial class Lowering
             && !tco.LoopInvariantParams.Contains(tco.ParamNames[index])
             && !IsIndependentlyRcEligibleTcoParam(type, index, tco, includeFreshClosures: true);
 
+    // paramTypes is threaded through only to satisfy IsPermanentlyBlockingTcoSibling's own signature
+    // (it needs every OTHER parameter's resolved type, not just the candidate's own); the candidate's
+    // own type is unused here beyond having already gated which candidates this is even called for
+    // (see RecordTcoPromotionProfitability), since the verdict no longer depends on a per-reason
+    // cost-sensitivity split (see TcoPromotionVerdict's own doc comment for why that split was
+    // removed).
     private TcoParamPromotionProfitability ClassifyTcoParamPromotion(
         TcoContext tco,
         TypeRef?[] paramTypes,
@@ -158,28 +175,14 @@ public sealed partial class Lowering
         bool hasBlockingSibling = Enumerable.Range(0, tco.ParamSlots.Count)
             .Any(other => other != index && IsPermanentlyBlockingTcoSibling(tco, paramTypes, other));
 
-        // Only affordable when the loop can actually reclaim between iterations: a consumed list
-        // tail (walked one cons cell at a time, never rebuilt), an affine cons chain, or an affine
-        // string append — as opposed to a list rebuilt fresh every iteration, or a plain
-        // non-growth-accumulator Str/BigInt/Tuple/ADT, which classifier A also allows regardless.
-        bool costSensitive = type is TypeRef.TList
-                && tco.ConsumedListTailParams.Contains(name)
-                && !tco.FreshRebuiltListParams.Contains(name)
-                && !tco.AffineConsListParams.Contains(name)
-            || type is TypeRef.TList && tco.AffineConsListParams.Contains(name)
-            || tco.AffineStrParams.Contains(name);
-
-        if (hasBlockingSibling && costSensitive)
-        {
-            return new TcoParamPromotionProfitability(
+        return hasBlockingSibling
+            ? new TcoParamPromotionProfitability(
                 name,
                 TcoPromotionVerdict.NotProfitable,
-                "a sibling parameter permanently fails every reset/RC exemption, and this parameter's own eligibility only pays off when the frame can reclaim per iteration");
-        }
-
-        string reason = hasBlockingSibling
-            ? "a sibling parameter fails every exemption, but this parameter's own representation is unconditionally cheap regardless"
-            : "no sibling parameter permanently blocks this frame's per-iteration reclaim";
-        return new TcoParamPromotionProfitability(name, TcoPromotionVerdict.Profitable, reason);
+                "a sibling parameter permanently fails every reset/RC exemption, and no real case has confirmed this parameter's own promotion stays cheap under that condition")
+            : new TcoParamPromotionProfitability(
+                name,
+                TcoPromotionVerdict.Profitable,
+                "no sibling parameter permanently blocks this frame's per-iteration reclaim");
     }
 }
