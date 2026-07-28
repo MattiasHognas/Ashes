@@ -2114,3 +2114,124 @@ decomposition plan estimated, provided the verification work is treated as the a
 the diff size is not — a two-line diff with an unverified "they're the same" assumption behind it
 would have been the fast, wrong way to do this same step. Step 2 (unifying classifier A and C at the
 `LowerVar`/match-join sites) remains the next candidate; Steps 3 and 4 are untouched by this session.
+
+## 11. Classifier collapse — Step 2 landed (A/C consolidation at LowerVar and the match/if-join sites, smaller than proposed)
+
+A session picked up Step 2 as proposed above: unify classifier A and C at the two sites where they are
+combined ad hoc — `LowerVar` and the match/if-join triad. As with Step 1, the actual current code was
+re-read line by line rather than trusting this document's own paraphrase, and the result is honestly
+smaller than "one shared query, two call sites": the three named call sites turned out to be doing three
+structurally different jobs, of which only one narrow fragment is genuinely identical text. That
+fragment has been extracted and shared; the rest has been left exactly as it was, with the reasons
+documented here rather than papered over.
+
+**What was actually found, re-verified against the tree at this session's start (`dc3c9e9`, this
+document's own §10 landing).**
+
+- `LowerVar` (`Lowering.cs:2557-2602`, unchanged from this document's own citation) is not a site that
+  *reads* an existing classifier-C fact and ORs it with classifier A — it is one of classifier C's own
+  *population* sites. It computes a three-way OR — the pattern-alias set (the mechanism this document
+  calls classifier D) `||` a per-binding ownership fact recorded when the binding was first tracked
+  (`ownerInfo is { RuntimeManaged: true }`, populated far away at each binding's own `TrackOwnedValue`
+  call from that binding's construction-expression shape — a genuinely separate fact from either A or C,
+  not merely an alias for one of them) `||` classifier A's slot-membership test — and then writes that
+  OR's result into `_runtimeManagedResultTemps`, i.e. classifier C's own table. So "unify A and C" does
+  not describe what happens at this site at all: A is one of three ingredients being folded into a fresh
+  C entry, not combined with a pre-existing one.
+- The match-arm join (`MarkRuntimeManagedMatchResult`/`MatchArmReturnsRuntimeManagedTcoParam`,
+  `Lowering.Patterns.cs:71-96`, also unchanged from this document's citation) is structurally the
+  opposite: it reads an already-computed per-arm flag (populated earlier, in `LowerMatchArmsLinear`
+  around `Lowering.Patterns.cs:623-632` — outside this step's two named line ranges) and ORs it with a
+  direct classifier-A peek at the arm's own trailing AST node. The per-arm flag itself is a mix of a
+  classifier-C read (`_runtimeManagedResultTemps.Contains`) and an inline instruction-shape scan.
+- A genuine correction to this document's own characterization, in the same spirit as §10's correction
+  about the redundant ADT disjunct: `MarkUniformRuntimeManagedResult` (the if-join site, `Lowering.cs:
+  5224-5230`) does **not** perform an ad hoc "C-scan-then-A" combination at all. Reading it directly:
+  it calls `IsRuntimeManagedResultTemp` — the one canonical, already-shared classifier-C query used
+  throughout the rest of the file — on both branch temps and ANDs the two results. There is no separate
+  classifier-A read anywhere in this function. This document's own §9.2/§9.6 text bundled it into "the
+  match/if-join triad" performing the same ad hoc combination as the other two sites; that bundling does
+  not hold up against the current code. Nothing needed consolidating here: this site already **is** the
+  shared query the rest of this step is trying to establish elsewhere.
+- A latent, pre-existing possible coverage gap was found, and deliberately **not** touched: the per-arm
+  scan feeding `MarkRuntimeManagedMatchResult` (`Lowering.Patterns.cs:623-631`) recognizes only two
+  instruction kinds (`AllocAdt`, `AllocReusing`) when checking whether an arm's own copy-out produced a
+  fresh runtime-managed value, whereas the canonical `IsRuntimeManagedResultTemp` (`Lowering.cs:
+  4723-4758`) recognizes roughly twenty-three. Routing that per-arm scan through the canonical query
+  would very plausibly widen which match results get classified as uniformly runtime-managed — a real
+  behavior change, not a refactor, and squarely the kind of change this step's brief said not to make.
+  It is also outside both of this step's two named line ranges (it lives in `LowerMatchArmsLinear`, not
+  in the join functions named by §9.6). Left exactly as it is; flagged here as a candidate for a future,
+  separately-scoped and separately-validated investigation, not attempted in this session.
+
+**Consolidation landed.** The only fragment confirmed genuinely identical at both of this step's named
+sites is the classifier-A slot-membership test itself, applied to a `Binding.Local`:
+`_tcoCtx?.RuntimeManagedParamSlots.Contains(slot) == true`. `LowerVar` had it inline as one arm of its
+three-way OR; `MatchArmReturnsRuntimeManagedTcoParam` had the identical expression, reached via its own
+`Lookup` instead of an already-resolved `Binding.Local`. Extracted `IsRuntimeManagedTcoParamSlot
+(Binding.Local)` (`Lowering.cs:2557-2566`) and routed both through it — a literal, provably
+behavior-identical extraction (same field, same containment call, same operand), not a widening of
+either site's combination. `LowerVar`'s other two OR ingredients (the pattern-alias set and the
+per-binding ownership fact) and the match-arm join's per-arm classifier-C-derived flag are untouched,
+because they are not shared with anything at the other site — folding either site's extra facts into
+the shared predicate would change what the *other* site computes, which is exactly the kind of scope
+creep this step's brief warned against forcing.
+
+**Validation.** Full gate, run from a tree with the LLVM native runtime and the repo's own 1BRC
+10M/100M-row fixtures already available locally (copied from a sibling worktree's `runtimes/`
+directory rather than re-downloaded):
+
+- `dotnet build Ashes.slnx`: clean.
+- C# suite: 1722/1722 passed (0 failed, 0 skipped), including every test named in this step's own
+  safety brief that actually exists in the tree today: `NestedTcoPatternAliasTests` (4),
+  `MatchScrutineeWrapperDropTests` (5), `OwnershipTests` (142), `OwnershipProvenanceTests` (12),
+  `TcoPromotionCostSignalTests` (4), `TcoRcEligibilityPredicateTests` (8, this document's own §10
+  addition). One name in the brief, `TcoMixedOwnershipTests`, does not correspond to any class in the
+  current tree (`grep -rn TcoMixedOwnership src/` finds nothing) — noted here rather than silently
+  ignored, per this document's own standard of reporting what was actually found rather than what was
+  expected.
+- LSP suite: 52/52 passed.
+- e2e suite (`dotnet run --project src/Ashes.Cli -- test tests`): 544 passed, 0 failed, 44 skipped
+  (platform-gated, unrelated to this change), including every `tco_*.ash` (15), `reuse_*.ash` (27),
+  `ownership_*.ash` (1), and `runtime_rc_*.ash` (7) file re-run explicitly by name as an extra check on
+  top of the full-suite run.
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- Full `challenges/` suite, compared against a baseline built from `origin/main` at the commit this
+  session started from (`dc3c9e9`, this document's own §10 landing), same machine, same `-O2`, the
+  baseline built from a plain `git clone` of the repo (not a second `git worktree`) checked out to that
+  commit, per this document's own established practice: **all eleven compiled binaries —
+  `binary-trees`, `fannkuch-redux`, `fasta`, `k-nucleotide`, `mandelbrot`, `n-body`, `pidigits`,
+  `regex-redux`, `reverse-complement`, `spectral-norm`, and the 1BRC `brc` binary — are byte-for-byte
+  identical to their baseline counterparts (`cmp -s`).** Runtime spot checks on top of the binary
+  identity (necessarily identical to their own baseline runs, since the binaries themselves are
+  identical, but re-measured directly rather than assumed): `fannkuch-redux` N=8/9/10/11 all resident at
+  the documented constant 256 KB floor (checksums 1616/8629/73196/556355, `Pfannkuchen` 22/30/38/51,
+  matching both the README and this document's own §10 measurement exactly); `binary-trees` N=21 at
+  196,096 KB (~191.5 MB, matching §10's 196,352 KB within ordinary run-to-run noise) with byte-identical
+  stdout against the baseline binary; 1BRC at 10,000,000 rows (6,969,920 KB vs. §10's 6,970,836 KB) and
+  100,000,000 rows (9,048,624 KB vs. §10's 9,048,772 KB), both with byte-identical stdout;
+  `reverse-complement` on a freshly generated 1,000,000-sequence FASTA input (753,984 KB vs. §10's
+  753,588 KB) with byte-identical stdout. The remaining six challenges (`mandelbrot`, `n-body`,
+  `pidigits`, `k-nucleotide`, `spectral-norm`, `regex-redux`) were not independently re-run at full
+  scale: byte-for-byte identical compiled binaries cannot produce different output for the same input,
+  so the `cmp -s` result already subsumes what a separate stdout comparison would show for them.
+
+**Honest scope assessment.** This document's own §9.6 called Step 2 "plausibly single-session... there
+is no reason to expect this pair to be easier, only that it is comparably sized" to the Phase 4/5 work.
+That estimate assumed the two named sites really were both instances of "OR classifier A with classifier
+C" — re-reading the current code directly shows that assumption was not quite right: `LowerVar` is a
+classifier-C *producer* folding in three facts (one of which, the per-binding ownership flag, is not
+literally classifier A or C at all), while the match-arm join is a classifier-C *consumer* combined with
+an independent classifier-A fallback, and the if-join site turned out to need no work at all because it
+was already routed through the canonical shared query. Only one thin, unambiguous fragment was common to
+both of this step's two named sites, and it has been extracted and shared with zero behavioral change
+(confirmed at the strongest available bar: byte-identical compiled output, not disassembly, not just
+unit tests). This is a smaller, more honest result than "the two sites now share one combined query" —
+matching this document's own §10 precedent of reporting a partial, correctly-scoped consolidation rather
+than forcing a merge the underlying code does not actually support. The remaining, larger question this
+step does not resolve — whether `LowerVar`'s three-way OR and the match-arm join's flag-plus-fallback
+should ever be restructured into one true shared "is this value runtime-managed" query, as opposed to
+sharing only their one common sub-fact — is left to Step 3, where §9.6 already anticipated the
+orchestration-level rework would need its own design pass; nothing found in this session narrows that
+remaining work, only clarifies precisely where today's boundary between classifiers A and C actually
+sits at these two sites.
