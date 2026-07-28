@@ -3018,3 +3018,192 @@ the pipeline, with the exact same twice-regressed fragility this document has tr
 Option B — routing `TcoSelfCallArgumentShape`/`EscapesIndependently` through an extended
 `FunctionOwnershipSummary` instead of `TcoContext`'s own `Collect*` walks — remains a separately-scoped,
 separately-budgeted follow-up, exactly as §13.6 recommended.
+
+## 15. Classifier collapse — Step 3b, Option B: the `FunctionOwnershipSummary` extension, shadow-compare only
+
+This section builds the piece §14.6 left as Option B's own separately-scoped follow-up: the
+`TcoSelfCallArgumentShape`/`TcoParamFacts` extension to `FunctionOwnershipSummary` sketched in §13.4,
+computed by re-deriving classifier A's own question from the whole-program AST-only fixpoint instead
+of `Lowering.Reuse.cs`'s `Collect*` walks. Per §13.6's own explicit warning that Option B is "realistically
+a multi-session effort in its own right, not 'Step 3b' as a single unit," this section builds and
+shadow-compares the extension itself and lands **zero cutover** — nothing anywhere reads
+`TcoParamFacts` to make a real decision. `EscapesIndependently` (classifier D's own generalization) is
+also **not built here** — deliberately deferred, per its own higher risk profile (§9.5's two prior
+regressions) and this session's brief, which named it out of scope regardless of how the rest went.
+
+### 15.1 What was built
+
+`OwnershipSummary.cs` gains `TcoSelfCallArgumentShape` (`UnchangedPassthrough`/`FreshRebuilt`/
+`ConsumedTail`/`Mixed`) and `TcoParamStructuralFacts(Shape)`, plus a `TcoParamFacts` field on
+`FunctionOwnershipSummary`, keyed by parameter name. `Lowering.MoveAnalysis.cs`'s `CreateOwnershipSummary`
+computes it via `ComputeTcoParamFacts`, called once per registered function immediately after
+`ComputeExpressionFreshness` — no second fixpoint pass, exactly as §13.2 prescribed. The walk mirrors
+`CollectConsumedListTailParams`'s own tail spine (If arms, Match case bodies, Let bodies) and its
+tail-owner tracking (a pattern-extracted cons-tail name mapped back to the parameter it came from, one
+match level deep), extended to classify every self-call argument position into one of the four shapes
+by checking, in order: is it a bare unchanged reference to its own parameter
+(`UnchangedPassthrough`); is it the tracked tail-owner variable for that parameter
+(`ConsumedTail`); does `ExpressionFreshness` say it aliases no parameter (`FreshRebuilt`); otherwise
+`Mixed`. Every self-call site's verdict at a given position is intersected against every other
+site's — the first disagreement locks that position to `Mixed` for the rest of the walk, mirroring the
+narrowing-candidate-set style every `Collect*` sibling already uses. A parameter with no self-recursive
+call site at all gets no dictionary entry (absence, not `Mixed`, exactly matching §13.4's own
+"never asked" framing).
+
+A shadow-compare hook, `ShadowCompareTcoParamFacts` (`Lowering.OwnershipShadowCompare.cs`), is wired
+at the one site that constructs a `TcoContext` from a real recursive body
+(`LowerLetRecursiveLambdaValue`, `Lowering.cs`), reusing `ASHES_EXPLAIN_OWNERSHIP` exactly as
+`ShadowCompareExpressionFreshness` already does — no second logging channel. It compares, per
+parameter, the four already-computed `Collect*` results (`LoopInvariantParams`→`UnchangedPassthrough`,
+`FreshRebuiltListParams`/`FreshClosureParams`→`FreshRebuilt`, `ConsumedListTailParams`→`ConsumedTail`)
+against `TcoParamFacts[name].Shape`, logging every disagreement. `AffineConsListParams` membership is
+logged as its own, separately-tagged "known-gap" line rather than folded into the disagreement count
+(§15.2 explains why).
+
+### 15.2 A gap in §13.4's own enum design, found while building it
+
+§13.4 sketches exactly three positive shapes plus `Mixed`. `AffineConsListParams` — the fourth
+old name-set Option B was asked to re-derive — does not fit any of the three: its actual predicate
+(`Lowering.Reuse.cs:256`) is "the self-call argument is `Cons(_, sameParamOldValue)`" — a fresh cons
+cell wrapping the parameter's own previous value as tail. That is neither `UnchangedPassthrough` (the
+value changes — it grows by one cell every iteration) nor `ConsumedTail` (the shape that name
+describes is shrinking via pattern-extraction, not growing via `Cons`) nor `FreshRebuilt` in the sense
+this session gave that case (the argument is NOT alias-free — it embeds the parameter's own prior
+value as its tail, so `ExpressionFreshness` correctly reports it as reaching that parameter, hence not
+fresh). Every `AffineConsListParams` member this session observed classifies as `Mixed` under a literal
+implementation of §13.4's own enum — not a bug in this implementation, but a real, previously
+unnoticed gap in the design itself: a faithful, lossless re-derivation of all four old name-sets needs
+a fifth shape (a `GrowingConsAroundSelf` case, or equivalent), not the three-plus-`Mixed` design as
+drafted. Whoever eventually cuts classifier A over to `TcoParamFacts` must add this case first, or
+`AffineConsListParams`'s own optimization (in-place cons-cell reset without a full spine copy) silently
+regresses to the conservative fallback.
+
+### 15.3 Shadow-compare findings — real, informative, and not zero
+
+Shadow-compare was run (compile-only, `ASHES_EXPLAIN_OWNERSHIP=all`) over every `tests/tco_*.ash`,
+`reuse_*.ash`, `ownership_*.ash`, `runtime_rc_*.ash`, plus a broader sample of `co_*`/`fold_*`/`list_*`
+fixtures, and separately over the full `challenges/` suite (all thirteen programs, including both
+`server/` fixtures) — every compile stitches in the full standard library, so each run exercises every
+stdlib TCO loop as well as the fixture's own. Total: 341 logged lines, 104 tagged `known-gap`
+(§15.2's `AffineConsListParams` overlap — expected, not investigated further) and 237 genuine
+disagreements, deduplicating to **82 distinct (function, parameter) pairs** across three real,
+distinct categories:
+
+**`FreshRebuilt` → `Mixed` (34 unique pairs) — the most consequential finding.** The old classifier
+says fresh; the new one falls back to the uninformative case. Root-caused, not just observed: `CallReachRegistered`
+(`Lowering.MoveAnalysis.cs:1741`) only recurses `ResultReach` into a callee's argument at position `i`
+when that position's parameter name appears in the callee's OWN `_maResultReach[...].Counts` — i.e.
+only when the enclosing function's own final result is already known to reach that parameter. A
+self-recursive call to `function` resolves through this exact path (`_maResultReach[function]`, the
+function's own converging summary), so a TCO loop whose accumulator does **not** itself reach the
+function's eventual result — e.g. `bump(r, n, count)` in `tests/tco_multi_fresh_list_accumulator.ash`,
+which returns `show(count)` (a brand-new `String`, not `count` itself) — has an EMPTY `Counts` for
+itself, so `CallReachRegistered`'s `foreach (paramName, mult) in summary.Counts` loop never executes,
+and **none** of that self-call's own argument expressions are ever visited by `ResultReach` at all.
+Confirmed directly: `bump`'s own `[ownership]` line reports `result=fresh expr-fresh=3/3` — only
+three expression nodes in the entire function are ever recorded, and none of them is one of the
+self-call's own three arguments. This falsifies §13.2's claim that "a TCO loop's own self-call
+argument expressions are already recorded in `ExpressionFreshness` today" for a whole, common category
+of loop: exactly the "accumulate a structure, then render/summarize it once at the end" pattern (fold
+then map), which is neither rare nor pathological — it shows up in `challenges/fannkuch-redux`'s
+`countFlips`/`nextPerm`, `challenges/1brc`-adjacent `mergeEntries`/`sortEntries`, `challenges/n-body`'s
+`sumMomentum`, and `challenges/regex-redux`'s `applySubs`, among others. `ExpressionFreshness`'s
+existing coverage is sufficient for classifier D's escape question (§13.2's own claim holds for that
+narrower, already-verified use) but is not, as this session found by direct construction, sufficient
+on its own for classifier A's fresh-rebuild question across every loop shape that question needs to
+answer.
+
+**`none` → `FreshRebuilt` (40 unique pairs).** The new derivation classifies plain scalar accumulators
+(loop counters, `Int`/`Float` running totals — `i`, `acc`, `sum`, `shift`, ...) as `FreshRebuilt`,
+because `ExpressionFreshness` correctly reports that a fresh arithmetic result aliases no parameter;
+the old `FreshRebuiltListParams`/`FreshClosureParams` never considered these positions at all, since
+their own syntactic checks (`IsFreshListRebuildExpr`, `IsFreshClosureExpression`) only recognize
+list/closure-shaped expressions. This is very likely harmless once classifier A's real (separately
+computed, type-driven) eligibility gate is reapplied downstream — a scalar fails
+`IsRcEligibleScalarTupleOrAdtType` immediately regardless of shape — but it means raw shape-agreement
+counts are not, by themselves, the right acceptance metric for an eventual cutover; whoever does that
+work needs to re-run this comparison gated by resolved type, not shape alone. One pair in this
+direction is a genuine improvement rather than noise: `advance param=dt` (an n-body loop) classifies
+as `UnchangedPassthrough` under the new derivation where the old `CollectLoopInvariantParams` walk
+missed it — the new derivation finding a real loop-invariant parameter the old one didn't.
+
+**A shape or `absent` (7 unique pairs) — a flat-namespace collision, not a classification
+disagreement.** Every instance is a function literally named `go`, `scan`, or `split` — common,
+unremarkable local recursion-helper names reused independently across unrelated `let recursive`
+bindings throughout the stitched stdlib-plus-fixture program. `RegisterOneBinding`
+(`Lowering.MoveAnalysis.cs:272`) registers every binding into one FLAT, whole-program name table with
+no lexical-scope disambiguation: a second binding anywhere in the desugared tree sharing the same bare
+identifier marks BOTH ambiguous and drops them from `_maFuncs`/`_ownershipSummaries` entirely, so
+`GetOwnershipSummary` returns `null` for that name and `TcoParamFacts` is simply absent — even though
+the old TCO-local `Collect*` walks are scope-safe by construction (each runs only over the one lambda
+body captured at its own `LowerLetRecursiveLambdaValue` call site, by reference, never touching any
+other same-named binding elsewhere in the program). This is a real, load-bearing architectural gap
+between "a fact computed once, whole-program, before any body is lowered" (§13.2's own stated
+advantage) and "a fact that needs per-lexical-scope identity, not per-bare-name identity" — TCO loops
+are exactly the latter, since short, locally-scoped accumulator-loop names are the norm, not the
+exception, in idiomatic Ashes code.
+
+### 15.4 What remains open, precisely
+
+Three concrete blockers stand between this session's shadow-compare-only slice and any real cutover
+of classifier A onto `TcoParamFacts`, each substantial enough to be its own follow-up rather than a
+quick fix bolted onto this session:
+
+- **§15.2's missing fifth shape** for `AffineConsListParams`'s growing-cons pattern — otherwise a
+  cutover silently regresses every affine-cons-growth loop to the conservative fallback.
+- **§15.3's `ExpressionFreshness` coverage gap** for self-call arguments whose parameter does not
+  reach the enclosing function's own result — the dominant source of real disagreement found here, and
+  a change to `CallReachRegistered`'s own short-circuit (a hot fixpoint loop, guarded carefully for
+  exactly the reasons §9.5 catalogues) rather than a change local to this new field. Two directions are
+  possible — always recurse into a self-call's own arguments regardless of result-reach relevance
+  (broader coverage, more fixpoint work per iteration), or accept the gap and fall back to the old
+  `Collect*` result specifically for `Mixed`-classified positions during any future cutover (bounded,
+  safe, but keeps two code paths alive for exactly the loops this extension was meant to unify) —
+  neither was attempted here.
+- **The flat whole-program name-collision gap** (§15.3's third finding) — `TcoParamFacts` cannot be
+  trusted as a drop-in replacement for any `Collect*` result on a function whose name collides
+  anywhere else in the stitched program until `_maFuncs`'s registration gains some form of per-scope
+  identity (a mangled or node-identity key, not a bare name) — affecting `RegisterOneBinding` and every
+  existing consumer of `_maFuncs`/`GetOwnershipSummary`, not something scoped narrowly to this field.
+
+None of these are soundness risks today — every one of them degrades to `Mixed`/absent, the
+conservative, "not yet answered" case, and nothing reads `TcoParamFacts` to make a real decision yet.
+They are the concrete reasons a future cutover session needs its own scope, its own shadow-compare
+re-run after fixing at least the first two, and should not assume this extension is cutover-ready as
+built.
+
+### 15.5 Validation results
+
+- `dotnet build Ashes.slnx`: clean, 0 warnings, 0 errors.
+- `dotnet run --project src/Ashes.Tests -- --no-progress`: **1722/1722 passed**, including
+  `NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`, `OwnershipTests`,
+  `OwnershipProvenanceTests`, `TcoMixedOwnershipTests`, `TcoPromotionCostSignalTests`,
+  `TcoRcEligibilityPredicateTests` — none weakened or deleted.
+- `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`: **52/52 passed**.
+- `dotnet run --project src/Ashes.Cli -- test tests`: **544 passed, 0 failed, 44 skipped** (the usual
+  platform-conditional fixtures).
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- **Challenges gate**: per this document's own rule for a shadow-compare-only slice with no cutover
+  (nothing consumer-facing changed, so no byte-identical/runtime-measurement gate applies), the full
+  `challenges/` suite (all thirteen programs) was compiled once with `ASHES_EXPLAIN_OWNERSHIP=all` and
+  its shadow-compare output collected and analyzed — §15.3 above IS that report, not a placeholder for
+  one.
+
+### 15.6 Honest summary
+
+This section landed exactly the slice it set out to: the `FunctionOwnershipSummary.TcoParamFacts`
+extension, computed inside the existing `ComputeResultReach`-adjacent pass with no second fixpoint,
+covering all four of classifier A's old name-sets, shadow-compared against their real, currently-live
+`Collect*` derivations across every stdlib TCO loop and the full `challenges/` suite — with zero
+cutover anywhere and `EscapesIndependently` (classifier D's own generalization) deliberately untouched.
+The shadow-compare run is itself the most valuable output: it found three concrete, well-understood,
+non-hypothetical gaps (§15.2's missing fifth shape, §15.3's `ExpressionFreshness` coverage gap tied to
+result-reachability, and a flat-namespace name-collision gap in `_maFuncs` itself) that a future
+cutover attempt needs to resolve first — none of them were visible from reading the design alone; all
+three were found only by building the extension and running it against real code, exactly the kind of
+finding §13.6 anticipated Option B's own "exhaustive, category-by-category verification" would surface.
+Per §13.6's own framing, this is a meaningful fraction of Option B's total scope, not all of it: the
+`EscapesIndependently`/classifier-D generalization, the fifth shape, the `ExpressionFreshness`
+coverage question, and the name-collision fix each remain open, separately-scoped follow-ups, and any
+cutover attempt should re-run this same shadow-compare after addressing them, not assume today's
+82-disagreement baseline shrinks on its own.

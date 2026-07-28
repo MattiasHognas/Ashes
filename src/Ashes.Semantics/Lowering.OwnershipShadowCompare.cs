@@ -61,6 +61,79 @@ public sealed partial class Lowering
     // so there is no separate "old" answer left to shadow-log against — ResultProvenance IS the real
     // decision now, not a comparison candidate.
 
+    /// <summary>
+    /// Compares a TCO loop's own <c>Collect*</c>-derived per-parameter classification (still the real
+    /// decision — nothing reads the new field yet) against <c>FunctionOwnershipSummary.TcoParamFacts</c>
+    /// for the same self-recursive function, logging every disagreement. <paramref name="affineConsListParams"/>
+    /// has no positive case of its own in <see cref="TcoSelfCallArgumentShape"/> (see that enum's own
+    /// remarks) — every one of its members is expected to land on <see cref="TcoSelfCallArgumentShape.Mixed"/>
+    /// on the new side, so that overlap is logged separately from a genuine disagreement rather than
+    /// folded into the same count.
+    /// </summary>
+    private void ShadowCompareTcoParamFacts(
+        string selfName,
+        IReadOnlyList<string> paramNames,
+        IReadOnlySet<string> loopInvariantParams,
+        IReadOnlySet<string> freshRebuiltListParams,
+        IReadOnlySet<string> affineConsListParams,
+        IReadOnlySet<string> consumedListTailParams,
+        IReadOnlySet<string> freshClosureParams)
+    {
+        if (!ShouldExplainOwnership())
+        {
+            return;
+        }
+
+        var tcoParamFacts = GetOwnershipSummary(selfName)?.TcoParamFacts;
+
+        foreach (string name in paramNames)
+        {
+            bool isLoopInvariant = loopInvariantParams.Contains(name);
+            bool isFreshRebuilt = freshRebuiltListParams.Contains(name) || freshClosureParams.Contains(name);
+            bool isConsumedTail = consumedListTailParams.Contains(name);
+            bool isAffineConsGrowth = affineConsListParams.Contains(name);
+
+            TcoSelfCallArgumentShape? oldShape =
+                isLoopInvariant ? TcoSelfCallArgumentShape.UnchangedPassthrough
+                : isFreshRebuilt ? TcoSelfCallArgumentShape.FreshRebuilt
+                : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
+                : null;
+
+            bool haveNew = tcoParamFacts is not null && tcoParamFacts.TryGetValue(name, out var newFacts);
+            TcoSelfCallArgumentShape? newShape = haveNew ? tcoParamFacts![name].Shape : null;
+
+            if (isAffineConsGrowth)
+            {
+                LogOwnershipShadowDisagreement(
+                    "TcoParamFacts",
+                    $"known-gap function={selfName} param={name} old=AffineConsList (no positive TcoSelfCallArgumentShape case) new={(haveNew ? newShape!.Value.ToString() : "absent")}");
+                continue;
+            }
+
+            if (oldShape is null && !haveNew)
+            {
+                // Neither side classifies this parameter (an ordinary threaded accumulator with no
+                // uniform self-call shape) — expected agreement, nothing to log.
+                continue;
+            }
+
+            if (oldShape is null && haveNew && newShape == TcoSelfCallArgumentShape.Mixed)
+            {
+                // Old side never positively classified this parameter (its Collect* sets all missed
+                // it, the same "none of the above" verdict Mixed represents) — expected agreement.
+                continue;
+            }
+
+            if (!haveNew || oldShape != newShape)
+            {
+                LogOwnershipShadowDisagreement(
+                    "TcoParamFacts",
+                    $"function={selfName} param={name} old={(oldShape?.ToString() ?? "none")} "
+                        + $"new={(haveNew ? newShape!.Value.ToString() : "absent")}");
+            }
+        }
+    }
+
     private static string DescribeForShadowLog(Expr expression)
     {
         var arguments = new List<Expr>();
