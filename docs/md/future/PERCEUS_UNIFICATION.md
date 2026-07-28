@@ -2235,3 +2235,138 @@ sharing only their one common sub-fact — is left to Step 3, where §9.6 alread
 orchestration-level rework would need its own design pass; nothing found in this session narrows that
 remaining work, only clarifies precisely where today's boundary between classifiers A and C actually
 sits at these two sites.
+
+## 12. Classifier collapse — Step 3a: re-verifying the profitability-gated veto relaxation's scope (no widening landed)
+
+§9.6 scoped Step 3a as: re-check whether the currently-landed profitability-gated relaxation ("Phase
+6, profitability-gated veto relaxation" above) can be widened now that Steps 1-2 removed the A/B and
+A/C duplicate-derivation risk that made the third attempt's own re-diagnosis hard to trust, re-running
+its exact three regression measurements as the acceptance gate. A session picked this up starting from
+the Step 2 tip (`0fc99cf`), which is also `origin/main`'s tip at the time this session started — the
+relaxation from `#318` and both classifier-collapse steps are already merged; nothing about the tree
+needed to change before the re-verification could begin.
+
+**Tracing whether Steps 1-2 actually touch anything the veto/profitability signal depends on, rather
+than assuming they do because both are "classifier work."** The veto's own firing condition
+(`LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame`/`LowerCallTcoRejectPartialResolvedRuntimeManagedTcoFrame`,
+`Lowering.cs:6225-6257`/`7634-7666`) and the profitability signal's own two functions
+(`IsPermanentlyBlockingTcoSibling`/`ClassifyTcoParamPromotion`, `Lowering.TcoPromotionCostSignal.cs:154-187`)
+were re-read directly against the two extractions Steps 1-2 actually landed:
+
+- Step 1's `IsRcEligibleScalarTupleOrAdtType` (`Lowering.cs:6212-6216`) **is** on the profitability
+  signal's own call path — `IsPermanentlyBlockingTcoSibling` calls `IsIndependentlyRcEligibleTcoParam`
+  (`Lowering.cs:6172-6194`), which calls the shared predicate for the `TStr`/`TBigInt`/`TTuple`/
+  `TNamedType` branches. But §10's own landing already proved this extraction behavior-identical for
+  exactly those four categories (confirmed there by exhaustive category-by-category comparison and, at
+  the strongest available bar, eleven byte-for-byte identical compiled binaries against a same-commit
+  baseline) — a proven no-op cannot have changed what the veto or the profitability signal compute,
+  and re-confirming that proof wasn't necessary a second time; what needed checking was only whether
+  it's genuinely a no-op on this exact call path too, which the category-by-category argument already
+  covers since `IsIndependentlyRcEligibleTcoParam` is one of the three original call sites §10 verified.
+  The `TList`/`TFun` branches — the ones §10 found were **not** actually the same question at the three
+  original sites and therefore deliberately left unmerged — remain exactly as separate today as they
+  were before Step 1, so nothing about the one classifier pairing (list/closure eligibility) most
+  entangled with the profitability signal's own closure carve-out (`IsPermanentlyBlockingTcoSibling`'s
+  `TFun` exclusion) gained any new shared foundation to reason from.
+- Step 2's `IsRuntimeManagedTcoParamSlot` (`Lowering.cs:2557-2566`) has zero overlap with either the veto
+  or the profitability signal: `grep -n "IsRuntimeManagedTcoParamSlot" src/Ashes.Semantics/*.cs` finds it
+  used only at `LowerVar` (`Lowering.cs:2595`) and the match-arm join (`Lowering.Patterns.cs:95`) — the
+  two sites named in Step 2's own scope, neither of which the veto/profitability call graph reaches from
+  either direction. Classifier C (`_runtimeManagedResultTemps`) is consulted by neither
+  `IsPermanentlyBlockingTcoSibling` nor `ClassifyTcoParamPromotion`; the profitability signal's whole
+  question is answered entirely from classifier A's own resolved-type facts plus `CanArenaReset`/
+  `IsResourceHandleType`/`TcoContext.LoopInvariantParams`, none of which Step 2 touched.
+
+**What this means for the actual question Step 3a was asked to re-check.** The third attempt's own
+re-diagnosis was "hard to trust" for a reason unrelated to A/B or A/C disagreeing with each other: the
+`costSensitive` exception that was later added and then removed (see "Phase 6, profitability-gated veto
+relaxation" above) failed on `reverse-complement`'s real `buf` because a strict syntactic membership
+test (`TcoContext.AffineStrParams`) could not see past an intervening flush read that the hand-built
+unit test's simplified source happened not to reproduce — a **downstream-cost-modeling precision gap**,
+not a case of two classifiers silently computing different answers to the same question. The
+promotion-cost-signal session's own closing note named the actual missing piece precisely: pricing the
+*specific* downstream consumer (loop-entry conversion cost, per-node `RcDup`/`RcDrop` bookkeeping) rather
+than only asking whether some sibling blocks the frame at all — and stated plainly that this pricing
+"was not chased to a byte-level confirmation" in that session. Steps 1-2 did not touch that downstream
+consumer in any way: `GetTcoCopyOutKind`, `CanArenaReset`, `EmitTcoBackEdgeArenaBlock`, and
+`TcoBackEdgeRuntimeManagedArgCanReset` are all untouched by either step, and are exactly where that
+pricing would have to be built. Since the actual source of "hard to trust" was never the classifier
+duplication Steps 1-2 removed, removing it does not make a finer per-parameter rule any more buildable
+or trustworthy today than it was when the third attempt's carve-outs were tried and reverted — the
+missing analysis is still missing, in the same place, for the same reason.
+
+**Re-running the three named acceptance-gate measurements anyway, since a plausible-sounding argument is
+not the same thing as re-measuring.** All three were re-run against the current tree (`0fc99cf`, with no
+code changes made this session) as a direct check that nothing about the currently-landed relaxation's
+own behavior has drifted, plus the two general sentinels this document tracks for the whole subsystem:
+
+- *Str/closure synthetic case*: the existing `TcoPromotionCostSignalTests.
+  Affine_string_accumulator_alongside_a_sometimes_fresh_closure_is_profitable` (part of the full C# run
+  below) still asserts `Profitable` for `str`. Additionally compiled and ran, end to end at `-O2`, a
+  freestanding program of the same shape (a `Str` accumulator, unconditionally RC-eligible, threaded
+  alongside a closure that is a fresh `given`-lambda literal on even steps and threaded unchanged on odd
+  ones) for 2,000,000 iterations: correct output (`2000001`, the accumulated string length plus the
+  final `fn` result), peak RSS 35,112 KB — small and bounded, in the same range as the 30,976-31,232 KB
+  the promotion-cost-signal session measured for its own version of this case, not the ~370 MB scale a
+  genuinely blocked promotion produces. Closure/heap mixing still does not trip the veto.
+- *`challenges/1brc/brc.ash`*, freshly generated 10,000,000-row and 100,000,000-row `measurements.txt`
+  files (station names sampled from the upstream seed list, Gaussian per-station temperatures, same
+  generation method `download.sh` already documents): 10M rows — 6,969,712 KB peak RSS; 100M rows —
+  9,048,692 KB. Both match §10's (6,970,836 / 9,048,772 KB) and §11's (6,969,920 / 9,048,624 KB)
+  previously-recorded numbers within ordinary run-to-run noise (well under 0.1%) — no regression.
+- *`challenges/reverse-complement/reverse-complement.ash`*, a freshly generated 1,000,000-sequence FASTA
+  input (via the repo's own `fasta` challenge binary): peak RSS 753,912 KB, matching §10's 753,588 KB and
+  §11's 753,984 KB within noise — no regression, and nowhere near the ~1,124,352-1,124,864 KB the third
+  attempt measured for the fully-removed veto or the ~370 MB delta the `costSensitive` exception's own
+  removal was validated against.
+
+Plus the two general sentinels: `fannkuch-redux` N=8 through N=11 — all four constant at the 256 KB
+floor (checksums 1616/8629/73196/556355, `Pfannkuchen` 22/30/38/51, matching every prior session's
+numbers exactly); `binary-trees` N=21 — 196,096 KB, matching §11's own measurement of the same commit
+exactly. A baseline was independently built from a clean `git clone` of this session's own starting
+commit (`0fc99cf`, confirmed identical to `origin/main`'s tip) rather than assumed equivalent to the
+working tree: `brc`, `reverse-complement`, `fannkuch-redux`, and `binary-trees` all compiled
+byte-for-byte identical (`cmp -s`) between the two, as expected given zero source changes were made —
+establishing, and exercising, the exact baseline-comparison infrastructure a future session would need
+if it does land a change here.
+
+Full validation gate, all against the unmodified tree: `dotnet build Ashes.slnx` clean; C# suite
+1722/1722 (0 failed, 0 skipped), including `NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`,
+`OwnershipTests`, `OwnershipProvenanceTests`, `TcoPromotionCostSignalTests`, and `TcoRcEligibilityPredicateTests`
+by name (`TcoMixedOwnershipTests` still does not correspond to any class in the tree, exactly as §11
+already noted — re-confirmed by `grep -rln TcoMixedOwnership src/`, no output); LSP suite 52/52; e2e suite
+(`dotnet run --project src/Ashes.Cli -- test tests`) 544 passed, 0 failed, 44 skipped, matching every
+prior session's baseline exactly; `dotnet format Ashes.slnx --verify-no-changes` clean.
+
+**Conclusion: no widening warranted, and none landed.** Steps 1-2's cleanup is real and already
+validated (§10, §11), but it addressed a specific, different disease — two independently-coded
+predicates silently answering the same eligibility/slot-membership question — that was never the reason
+the profitability signal's own finer rule failed on real code. That failure came from a downstream cost
+mechanism (loop-entry conversion, per-node runtime-managed bookkeeping) that no session has yet traced
+to the instruction level, and Steps 1-2 leave it exactly as untraced as they found it: neither step
+touches `GetTcoCopyOutKind`, `CanArenaReset`, `EmitTcoBackEdgeArenaBlock`, or either of
+`TcoBackEdgeRuntimeManagedArgCanReset`'s and classifier A's own still-separate list/closure branches.
+Building a more precise per-parameter rule than "any (non-closure) blocking sibling demotes the whole
+frame" would require exactly the instruction-level downstream-cost tracing the promotion-cost-signal
+session's own closing note deferred — a genuine, separately-scoped investigation, not something Steps
+1-2's dedup work unlocks as a side effect. Per this document's own standing practice (§9's own framing
+for this exact step, and the "Phase 6, third attempt" section's own closing instruction not to reattempt
+the same shapes without first building the missing signal), manufacturing a widening here would repeat
+exactly the failure mode this subsystem has already been reverted for three times: a change that looks
+justified by adjacent cleanup but isn't actually supported by anything that cleanup did. The
+currently-landed relaxation (closure/heap-sibling mixing no longer trips the veto; a genuine non-closure
+blocking sibling still demotes every promoted parameter in the frame) remains exactly at the scope §11
+left it, re-confirmed rather than changed.
+
+**What this narrows for whoever attempts Step 3b.** Step 3a's re-verification directly rules out one
+hypothesis a future session might otherwise have had to re-check from scratch: that the classifier
+duplication Steps 1-2 removed was secretly entangled with the profitability signal's own known
+imprecision. It was not, confirmed by tracing the actual call graph rather than reasoning from the two
+areas' shared "classifier" label. Step 3b's real prerequisite is unchanged and unmet: a signal that can
+price a specific promotion's actual downstream cost (loop-entry conversion, per-node dup/drop, and, for
+an affine-growth accumulator, reservation regrowth) precisely enough to answer "does this promotion pay
+for itself" even when a sibling blocks the frame — not the coarser "does any sibling block at all"
+question the current signal answers. Nothing found this session makes Step 3b either more or less
+tractable than §9.6 already assessed it to be; it narrows what future work does NOT need to re-derive
+(the classifier-duplication hypothesis, now checked and ruled out) without narrowing the size of what
+still does need building.
