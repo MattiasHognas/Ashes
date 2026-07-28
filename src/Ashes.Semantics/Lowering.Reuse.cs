@@ -331,6 +331,179 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Pattern-bound names extracted directly (one pattern level) off a bare reference to a declared TCO
+    /// parameter — via any match on that parameter, not just a list cons — whose appearances in the arm
+    /// that binds them are not entirely limited to the two shapes already protected elsewhere: the
+    /// scrutinee of a further nested match on the same name (whatever that nested match itself binds gets
+    /// its own, separate accounting), or the bare, unchanged argument at that same parameter's own slot in
+    /// a tail self-call (installed by the ordinary per-parameter back-edge argument machinery regardless
+    /// of this table). A name whose every appearance in its own arm falls into one of those two shapes is
+    /// left out — it needs no help here. A name with any other appearance (embedded in a returned or
+    /// constructed value, passed to a different parameter's slot, handed to another function, ...)
+    /// genuinely escapes the current iteration on its own and is included so
+    /// <see cref="ResolvePendingNestedTcoPatternAliasSites"/> can protect it. Purely structural, computed
+    /// once from the pre-lowering AST like the other Collect* analyses above — necessary because the
+    /// binding's own runtime-managed eligibility is not resolved until much later (see the field comment
+    /// on <c>_pendingNestedTcoPatternAliasSites</c>), so this has to answer "does it escape" from shape
+    /// alone, never from type.
+    /// </summary>
+    private static HashSet<string> CollectEscapingDirectPatternBindings(
+        Expr body,
+        IReadOnlyList<string> paramNames,
+        string selfName)
+    {
+        var escaping = new HashSet<string>(StringComparer.Ordinal);
+
+        void Walk(Expr expression)
+        {
+            switch (expression)
+            {
+                case Expr.If iff:
+                    Walk(iff.Then);
+                    Walk(iff.Else);
+                    return;
+                case Expr.Let let:
+                    Walk(let.Body);
+                    return;
+                case Expr.LetResult letResult:
+                    Walk(letResult.Body);
+                    return;
+                case Expr.LetRecursive letRecursive:
+                    Walk(letRecursive.Body);
+                    return;
+                case Expr.Match match:
+                    int parentIndex = match.Value is Expr.Var scrutinee
+                        ? IndexOfOrdinal(paramNames, scrutinee.Name)
+                        : -1;
+                    foreach (MatchCase matchCase in match.Cases)
+                    {
+                        if (parentIndex >= 0)
+                        {
+                            foreach (string bindingName in PatternBindings(matchCase.Pattern))
+                            {
+                                int total = CountNameOccurrences(matchCase.Body, bindingName);
+                                int safe = CountSafeDirectPatternBindingUses(
+                                    matchCase.Body,
+                                    bindingName,
+                                    parentIndex,
+                                    paramNames.Count,
+                                    selfName);
+                                if (total > safe)
+                                {
+                                    escaping.Add(bindingName);
+                                }
+                            }
+                        }
+
+                        Walk(matchCase.Body);
+                    }
+
+                    return;
+                default:
+                    return;
+            }
+        }
+
+        Walk(body);
+        return escaping;
+    }
+
+    // Counts, within the same arm a direct pattern binding came from, the occurrences of bindingName
+    // that are either the scrutinee of a further match on it, or the bare argument at parentIndex in a
+    // full-arity self-call — the two shapes CollectEscapingDirectPatternBindings treats as already
+    // covered elsewhere. Mirrors CountNameOccurrences's reflection-based AST walk so every occurrence
+    // (regardless of surrounding node shape) is visited exactly once, keeping the two counts comparable.
+    private static int CountSafeDirectPatternBindingUses(
+        object? node,
+        string bindingName,
+        int parentIndex,
+        int paramCount,
+        string selfName)
+    {
+        if (node is null or string)
+        {
+            return 0;
+        }
+
+        int count = IsSafeDirectPatternBindingUse(node, bindingName, parentIndex, paramCount, selfName) ? 1 : 0;
+
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                count += CountSafeDirectPatternBindingUses(tuple[i], bindingName, parentIndex, paramCount, selfName);
+            }
+
+            return count;
+        }
+
+        if (node is System.Collections.IEnumerable seq)
+        {
+            foreach (var item in seq)
+            {
+                count += CountSafeDirectPatternBindingUses(item, bindingName, parentIndex, paramCount, selfName);
+            }
+
+            return count;
+        }
+
+        if (node is not (Expr or Pattern or MatchCase))
+        {
+            return count;
+        }
+
+        foreach (var prop in node.GetType().GetProperties())
+        {
+            if (prop.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            var t = prop.PropertyType;
+            if (typeof(Expr).IsAssignableFrom(t)
+                || typeof(Pattern).IsAssignableFrom(t)
+                || typeof(MatchCase).IsAssignableFrom(t)
+                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
+            {
+                count += CountSafeDirectPatternBindingUses(prop.GetValue(node), bindingName, parentIndex, paramCount, selfName);
+            }
+        }
+
+        return count;
+    }
+
+    // The two shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere: this
+    // node IS a further match on the binding itself, or IS the bare argument at parentIndex in a
+    // full-arity self-call.
+    private static bool IsSafeDirectPatternBindingUse(
+        object node,
+        string bindingName,
+        int parentIndex,
+        int paramCount,
+        string selfName)
+    {
+        if (node is Expr.Match match
+            && match.Value is Expr.Var scrutinee
+            && string.Equals(scrutinee.Name, bindingName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (node is not Expr.Call call)
+        {
+            return false;
+        }
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(call, arguments);
+        return root is Expr.Var function
+            && string.Equals(function.Name, selfName, StringComparison.Ordinal)
+            && arguments.Count == paramCount
+            && arguments[parentIndex] is Expr.Var argument
+            && string.Equals(argument.Name, bindingName, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Of the <paramref name="consumedTailParams"/>, returns those the recursive body only inspects:
     /// nothing derived from the list (a bound head or tail) escapes the traversal. A head may only be
     /// a match scrutinee; a tail may only be a match scrutinee or the argument at the param's own

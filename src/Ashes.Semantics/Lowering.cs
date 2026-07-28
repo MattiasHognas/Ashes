@@ -200,20 +200,23 @@ public sealed partial class Lowering
     // fully-resolved type, which for a parameter whose type comes from unification with later call sites
     // is not yet known until the whole body has been lowered — see the comment on
     // LowerLambdaCoreRefreshRuntimeManagedTcoParams. So every pattern-bound local extracted from another
-    // local is recorded here unconditionally (payload slot → (immediate parent slot, the instruction
-    // index right after its extraction was emitted, and the payload's own TypeRef)); once the body is
-    // fully lowered and the refresh pass has resolved real eligibility, ResolvePendingNestedTcoPatternAliasSites
-    // walks each entry's chain of parents back to a declared TCO parameter slot and, only for chains that
-    // bottom out at a slot the refresh pass confirmed runtime-managed, splices in a guarded protective
-    // dup at the recorded site — a retroactive fix-up, the same "record now, resolve and splice later"
-    // shape LowerLambdaCoreSpliceRuntimeManagedTcoParams already uses for the entry-normalization
-    // prologue. The payload's copy-type check (CanArenaReset) is deferred to that same resolution point
-    // rather than applied at record time for the same reason eligibility itself is deferred: a pattern
-    // binding's type can still be an unresolved type variable during the first pass (e.g. a tuple field
-    // whose element type only becomes concrete Int once the whole body's unification has run) — checking
-    // early can wrongly treat an about-to-be-Int binding as heap-managed, and dup'ing a scalar value as
-    // if it were a refcounted pointer is a segfault, not just a missed protection.
-    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType)> _pendingNestedTcoPatternAliasSites = new();
+    // local is recorded here unconditionally (payload slot → immediate parent slot, the instruction
+    // index right after its extraction was emitted, the payload's own TypeRef, and the binding's own
+    // source name); once the body is fully lowered and the refresh pass has resolved real eligibility,
+    // ResolvePendingNestedTcoPatternAliasSites walks each entry's chain of parents back to a declared TCO
+    // parameter slot and, only for chains that bottom out at a slot the refresh pass confirmed runtime-
+    // managed, splices in a guarded protective dup at the recorded site — a retroactive fix-up, the same
+    // "record now, resolve and splice later" shape LowerLambdaCoreSpliceRuntimeManagedTcoParams already
+    // uses for the entry-normalization prologue. The payload's copy-type check (CanArenaReset) is
+    // deferred to that same resolution point rather than applied at record time for the same reason
+    // eligibility itself is deferred: a pattern binding's type can still be an unresolved type variable
+    // during the first pass (e.g. a tuple field whose element type only becomes concrete Int once the
+    // whole body's unification has run) — checking early can wrongly treat an about-to-be-Int binding as
+    // heap-managed, and dup'ing a scalar value as if it were a refcounted pointer is a segfault, not just
+    // a missed protection. The binding name is carried along so the resolution step can additionally
+    // consult TcoContext.EscapingDirectPatternBindings for a binding whose immediate parent is itself a
+    // declared TCO parameter slot (see the comment there for why that case needs its own check).
+    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType, string BindingName)> _pendingNestedTcoPatternAliasSites = new();
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
@@ -5009,7 +5012,8 @@ public sealed partial class Lowering
                     letRecursive.Name,
                     consumedListTailParams),
                 FreshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name),
-                AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name)
+                AffineStrParams = CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
+                EscapingDirectPatternBindings = CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name)
             };
         }
         else
@@ -5355,27 +5359,35 @@ public sealed partial class Lowering
         }
 
         // A candidate whose immediate parent is itself a declared TCO parameter slot (pair, rest —
-        // bound directly off tbl) is a "direct" binding: TrackRuntimeManagedTcoListPatternAliases /
-        // LowerCallTcoTransferPatternAliases already protect these at their own (different) checkpoint
-        // — the recursive-call site, when the binding flows into the next iteration's arguments — so
-        // splicing an unconditional extra dup here too would double-protect it (every iteration, not
-        // just the ones that actually recurse), leaking a reference each time. Only a candidate whose
-        // parent is itself ANOTHER pending candidate (a chain at least two pattern levels deep — the
-        // gap this fix-up exists for) is new territory with no other protection, so only those are
-        // spliced; the direct ones stay recorded (unprotected) purely so a deeper chain can still walk
-        // through them to its TCO-parameter root.
-        // The copy-type filter is applied here rather than at record time for the same reason
-        // eligibility itself is: a pattern binding's type can still be an unresolved type variable
-        // during the first pass, so checking early can wrongly treat an about-to-be-Int (or -Float,
-        // -Bool, -UInt) binding as heap-managed — and dup'ing a scalar as if it were a refcounted
-        // pointer segfaults rather than merely over-protecting.
+        // bound directly off tbl) is a "direct" binding. Most of these need no help here: a name that
+        // merely flows unchanged into the same parameter's own next tail-call argument (rest) is already
+        // installed by the ordinary per-parameter back-edge argument machinery, and a name used only as
+        // the scrutinee of a further nested match (pair) is covered by that deeper chain's own,
+        // independent accounting once IT escapes — splicing an unconditional extra dup here for either
+        // would double-protect them (every iteration, not just the ones that actually recurse), leaking a
+        // reference each time. But a direct binding CAN independently escape on its own — embedded in a
+        // returned or constructed value, passed to a different parameter's slot, handed to another
+        // function — and TrackRuntimeManagedTcoListPatternAliases's own eager pass, the mechanism that
+        // would normally protect exactly that case, structurally cannot run early enough for an ordinary
+        // unannotated accumulator to catch it (see the field comment on
+        // _runtimeManagedTcoPatternAliases): TcoContext.EscapingDirectPatternBindings is the structural,
+        // pre-lowering answer to which direct bindings are in that situation, computed once from the raw
+        // AST specifically so this resolution step can tell the two apart. A candidate whose parent is
+        // itself ANOTHER pending candidate (a chain at least two pattern levels deep) is new territory
+        // with no other protection either way, so those are always eligible here regardless of this set.
+        // The copy-type filter is applied here rather than at record time for the same reason eligibility
+        // itself is: a pattern binding's type can still be an unresolved type variable during the first
+        // pass, so checking early can wrongly treat an about-to-be-Int (or -Float, -Bool, -UInt) binding
+        // as heap-managed — and dup'ing a scalar as if it were a refcounted pointer segfaults rather than
+        // merely over-protecting.
         var accepted = _pendingNestedTcoPatternAliasSites
             .Where(site => !CanArenaReset(Prune(site.Value.PayloadType))
-                && !tco.ParamSlots.Contains(site.Value.ParentSlot)
+                && (!tco.ParamSlots.Contains(site.Value.ParentSlot)
+                    || tco.EscapingDirectPatternBindings.Contains(site.Value.BindingName))
                 && IsChainRootRuntimeManaged(site.Value.ParentSlot, tco))
             .OrderByDescending(site => site.Value.InsertIndex)
             .ToList();
-        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _)) in accepted)
+        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _, string _)) in accepted)
         {
             SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, insertIndex);
         }
