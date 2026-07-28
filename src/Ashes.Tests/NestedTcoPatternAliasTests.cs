@@ -153,6 +153,59 @@ public sealed class NestedTcoPatternAliasTests
     // escape check) regressed exactly this test by also protecting "pair" and "rest"; this fix's own
     // narrower EscapingDirectPatternBindings set is what keeps it passing.
 
+    [Test]
+    public void Direct_binding_passed_only_to_a_plain_helper_call_is_not_protected_as_escaping()
+    {
+        // "s" is bound directly off tbl -- the same depth as "described" is derived from it -- and its
+        // only appearance in this arm is as a plain (non-self, non-constructor) helper call's argument;
+        // the value that actually gets embedded in the returned Box is "described" (the helper's own
+        // result), never "s" itself. Splicing a protective dup for "s" here is not merely wasted: an
+        // ordinary function's own recursive structural drop of its ADT parent uses a uniqueness check to
+        // decide whether to recurse into a child list's own cons cells or stop after a single decrement,
+        // and the spurious extra reference this dup would add makes that check see a shared owner where
+        // there is really only one, permanently abandoning the rest of the list every time this shape
+        // recurs -- an unbounded leak, not a redundant-but-harmless dup. This is the real shape
+        // (`rotateFirst`/`getAt`/`setAt` consuming a TCO-parameter-derived binding as a plain call
+        // argument) that caused a factorial-scaling regression in the fannkuch-redux challenge program.
+        IrProgram program = LowerProgram("""
+            type Box =
+                | v: Str
+
+            let describe x = x
+
+            let table = ["a", "b", "c", "d"]
+
+            let recursive walk n tbl =
+                match tbl with
+                    | [] -> None
+                    | s :: rest ->
+                        let described = describe(s)
+                        in
+                            if n == 0
+                            then Some(Box(v = described))
+                            else walk(n - 1)(rest)
+
+            let r1 =
+                match walk(0)(table) with
+                    | Some(b) -> b.v
+                    | None -> "?"
+
+            let r2 =
+                match walk(2)(table) with
+                    | Some(b) -> b.v
+                    | None -> "?"
+
+            Ashes.IO.print(r1 + " " + r2)
+            """);
+
+        IrFunction walk = program.Functions.Single(function => function.Instructions
+            .Any(instruction => instruction is IrInst.CmpIntEq));
+
+        walk.Instructions
+            .OfType<IrInst.Label>()
+            .ShouldNotContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();
