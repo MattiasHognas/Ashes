@@ -3503,3 +3503,349 @@ cutover cannot yet simply substitute `FreshRebuilt`'s membership for `FreshRebui
 first resolving what "fresh" should mean for a helper call that is arena-scope self-contained but not
 reference-alias-free. Both open items are now precisely enough characterized that a future session can
 scope its own work against them directly, rather than rediscovering them from scratch.
+
+## 17. `_maFuncs` per-binding identity: investigation deepened, redesign scoped, not landed this session
+
+This section picks up exactly where §16.4 left off — the third of §15.4's three catalogued gaps, the
+flat whole-program name-collision gap in `_maFuncs`, the one §16.4 investigated and explicitly declined
+to fix "per this document's own standing rule." This session's brief asked for the same gap to be
+attempted again, with the same caution, but with a real design produced either way. It is produced below,
+together with independent evidence that goes beyond what §16.4 established. No source file changes are
+landed: the conclusion, reached only after building a concrete design and tracing its blast radius through
+actual code (not by re-assuming §16.4's own estimate), is that this redesign is not safely implementable
+and re-verifiable inside one session, and the honest, load-bearing part of this session's work is the
+design and the evidence, not a patch.
+
+### 17.1 Re-verifying §16.4's own count and characterization
+
+§16.4 states "`_maFuncs`/`_maAmbiguous`/`_maCallSites`/`_maEscaped` are read or written at 21 distinct
+sites inside `Lowering.MoveAnalysis.cs`." A fresh `grep -n` for all four names against the current file
+(2679 lines) returns 41 raw matches; excluding the four field declarations, the one line-130 comment, and
+the four `.Clear()` calls in `AnalyzeReuseCopyElision`'s reset block, there are **30** genuine read/write
+access points, not 21 — the count has grown (correctly, given intervening sessions added `TcoParamFacts`
+machinery that also reads these tables), and this session's own number should be treated as the current
+baseline for whoever picks this up next rather than re-trusting either count blindly.
+
+More consequential than the raw count: two things §16.4's phrasing does not fully convey were confirmed
+by directly reading every one of those 30 sites plus their two dependent files (§17.2, §17.3 below), and
+they make the redesign's true shape both clearer and larger than "give `_maFuncs` an identity key."
+
+### 17.2 New finding: `Lowering.OwnershipProvenance.cs` has its own bare-name-keyed memoization, not just two read sites
+
+§16.4 describes `Lowering.OwnershipProvenance.cs`'s dependency as "at least two call sites"
+(`:81,403`). Reading the whole 411-line file directly shows the coupling is a third, independent
+mechanism, not just two lookups into `_maFuncs`:
+
+- `ResolveFunctionResultProvenance(string function)` (`Lowering.OwnershipProvenance.cs:37`) memoizes
+  through its own `_maProvenanceMemo: Dictionary<string, FunctionResultProvenance>`
+  (`Lowering.OwnershipProvenance.cs:25`) and its own cycle-detection guard,
+  `_maProvenanceInProgress: HashSet<string>` (`:28`) — both keyed by the same bare function name, and
+  both a direct structural twin of `_maMoveSafeMemo`/`_maInProgress` in `Lowering.MoveAnalysis.cs:52-53`.
+- `ClassifyFunctionResultProvenance(string function)` (`:79`) reads `_maFuncs.TryGetValue(function, ...)`
+  directly (`:81`, the first of §16.4's "two call sites") and, deeper in the same file,
+  `ClassifyFunctionResultProvenanceFromArms`/`IsSelfRecursiveArm` (`:106,239`) resolve a forwarding arm's
+  target and a self-recursive arm, both by comparing bare function-name strings — the same "does this
+  call refer to myself" pattern `TcoParamFactsWalkCall` uses (§13's own already-cutover
+  `ResultProvenance`, not a shadow-compare-only field), and the same pattern that breaks under a
+  collision for exactly the reason §16.4 describes for `CallReach`.
+
+This means a real per-binding-identity redesign must give **its own** identity to `_maProvenanceMemo`/
+`_maProvenanceInProgress` too, not just to the tables declared in `Lowering.MoveAnalysis.cs` — the blast
+radius crosses the file boundary in a second, independent way beyond the two direct `_maFuncs` reads
+§16.4 already named.
+
+`Lowering.TopCellFreshness.cs`'s "documented dependency" was also re-verified directly: `grep -n
+"_maFuncs" Lowering.TopCellFreshness.cs` returns exactly one hit, and it is a **comment** (`:23`,
+"`_maFuncs`-registered top-level/self-recursive function bodies"), not executable code. This file has no
+live coupling to `_maFuncs`'s keying scheme at all today — §16.4's phrasing ("a documented dependency")
+was accurate but is worth stating unambiguously for whoever scopes the next attempt: this file does not
+need to change.
+
+### 17.3 Confirmed directly: the AST carries zero resolved binder identity, and no scope-stack mechanism exists yet to derive one
+
+§16.4 frames the blocker as "`_maFuncs` needs some form of per-scope identity." This session verified,
+by reading the `Expr` type itself and every relevant traversal, exactly how little machinery already
+exists to build that identity from:
+
+- `Expr.Var(string Name)`, `Expr.Let(string Name, ...)`, `Expr.LetRecursive(string Name, ...)`,
+  `Expr.LetResult(string Name, ...)`, `Expr.Lambda(string ParamName, ...)` (`Ashes.Frontend/Ast.cs:40,
+  127, 145, 139, 163`) carry a bare `string` and nothing else — no unique id, no symbol reference, no
+  de Bruijn index. This is the same single `Expr` type used from the parser all the way through
+  `AnalyzeReuseCopyElision`; no separate "resolved" IR exists at this point in the pipeline.
+- `AnalyzeReuseCopyElision(body)` runs at `Lowering.cs:723`, immediately after `DesugarTopLevel`
+  (`:722`) and immediately before the real recursive-descent `Lower(body)` (`:724`) — on the **same**
+  `body` object both calls share. It runs before any symbol resolution, before any type inference, and
+  after module stitching (which happens at the source-text level, before parsing, and mangles only each
+  module's own top-level exports — `ProjectSupport.cs:2100-2105` — never a nested local binding's name).
+- Critically, the existing code does not even attempt scope-stack resolution for `_maFuncs` lookups
+  today: `RegisterOneBinding` (`Lowering.MoveAnalysis.cs:272-298`) walks the entire tree — top-level and
+  arbitrarily nested — into one flat `Dictionary<string, ...>`, and every consumer (`CallReach`'s
+  `_maFuncs.TryGetValue(name, ...)` at `:1674`, `CollectCallsAndEscapesCall`'s `_maFuncs.TryGetValue(
+  calleeName, ...)` at `:2346`, the plain `Expr.Var` escape check at `:2281`) is a **pure global-name
+  lookup with no scope stack, no enclosing-binder tracking, and no shadowing awareness at all** — not a
+  scope-aware walk that merely lacks an identity key bolted on top, as a narrower reading of §16.4 might
+  suggest. The `enclosing: string` parameter already threaded through `CollectCallsAndEscapes`
+  (e.g. `:2272`) tracks only "which top-level/registered function is this call site's own provenance
+  attributed to" for `_maCallSites`, not a resolution scope for shadowing.
+
+Two existing mechanisms in this same file *do* already implement immutable, shadowing-correct
+name-to-value threading — `ResultReach`'s `env: Dictionary<string, (Counts, Poison)>` parameter
+(extended per-binding via `ExtendEnv`, `Lowering.MoveAnalysis.cs:1535-1545`) and
+`TcoParamFactsWalk`'s `tailOwners` parameter — but both thread a *value* (a reach fact, an extracted-tail
+owner name) bound to a name already known to be locally unambiguous by construction (a `let`/pattern
+binding within the one function currently being walked); neither is used, or usable as-is, to resolve
+*which of several same-named function bindings elsewhere in the whole program* a `Var`/`Call`-head name
+denotes. They are the right *pattern* to build from (§17.6), not a solved instance of this problem.
+
+### 17.4 A related but distinct, currently-dormant gap found in passing: top-level mutual-recursion groups are invisible to this entire file
+
+While tracing every `Expr` subtype `RegisterBindings`/`CollectCallsAndEscapes` handle, this session found
+that top-level `let recursive f = ... and g = ...` groups desugar to a private
+`RecursiveGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body)`
+(`Lowering.TopLevel.cs:568`) — a **different** `Expr` subtype than `Expr.Let`/`Expr.LetRecursive`, produced
+only by `DesugarRecursiveGroup` (`:560`) for the parser's `TopLevelItem.RecursiveGroup`
+(confirmed: `and`-groups have no nested-expression form — `Parser.cs:1862`'s comment states a nested
+`let rec ... and ...` "must report the missing `in`," i.e., mutual recursion is a top-level-only
+construct, never available to a locally-nested nice-looking helper). `RegisterBindings`'s switch
+(`Lowering.MoveAnalysis.cs:219-269`) has no case for `RecursiveGroupExpr`; its `default` arm falls through
+to `EnumerateChildren`, whose own switch (`:337-352`) has no case for it either (only arithmetic,
+comparison, and aggregate literal children) — so `RegisterBindings` does not descend into a
+`RecursiveGroupExpr`'s `Bindings` **or its `Body`** at all. `grep -n "RecursiveGroupExpr"` against
+`Lowering.MoveAnalysis.cs`, `Lowering.OwnershipProvenance.cs`, and `Lowering.TopCellFreshness.cs` returns
+zero hits in all three.
+
+This is a distinct, pre-existing gap from the name-collision one this section is about — it means any
+mutually-recursive top-level group, and (more severely) **everything textually after it** in the stitched
+program's declaration spine, would be entirely unregistered and therefore always conservative/absent from
+`_maFuncs`, `TcoParamFacts`, and `ResultProvenance` alike. It appears to be **dormant** today rather than
+silently costing real optimizations: `grep -rn "and " lib/Ashes/*.ash` for stdlib `let recursive ... and
+...` usage returns no hits, so no shipped stdlib module currently exercises this path, and this session
+did not find or construct a case where it changes an already-observed result (the "nothing after a
+mutual-recursion group gets analyzed" hypothesis was not stress-tested against a real multi-hundred-line
+program because the stdlib genuinely does not use the construct today). It is noted here as a fact found
+while re-verifying this file's coverage, explicitly **not** investigated further and **not** in scope for
+this section's own redesign — a future session should treat it as its own separately-scoped item, and
+should re-confirm the "dormant" characterization directly (by constructing a case) rather than trusting
+this session's absence-of-evidence.
+
+### 17.5 Direct empirical reproduction: the collision's blast radius is worse than "the colliding function loses its own facts"
+
+§15.3's shadow-compare finding was re-derived independently here with a minimal, hand-written repro (not
+drawn from the existing `tests/tco_*`/`challenges/` corpus), to confirm the mechanism first-hand rather
+than trust the prior session's aggregate counts. Two top-level functions, each with its own unrelated
+local accumulator helper both named `go`:
+
+```
+let recursive sumTo =
+    given (n) ->
+        let recursive go =
+            given (acc) ->
+                given (k) -> if k > n then acc else go(acc + k)(k + 1)
+        in go(0)(1)
+
+let recursive productTo =
+    given (n) ->
+        let recursive go =
+            given (acc) ->
+                given (k) -> if k > n then acc else go(acc * k)(k + 1)
+        in go(1)(1)
+```
+
+Compiled with `ASHES_EXPLAIN_OWNERSHIP=all`, `go` never appears in the summary list at all (both
+registrations collide, both drop), and — this is the part beyond what §15.3's own writeup emphasizes —
+**the enclosing functions' own facts are also visibly degraded**, not just the colliding helper's:
+
+```
+[ownership] productTo(n:consumed) unique={n} captures={} result=poisoned expr-fresh=0/2 provenance={rc-eligible:false forwards-to:none}
+[ownership] sumTo(n:consumed) unique={n} captures={} result=poisoned expr-fresh=0/2 provenance={rc-eligible:false forwards-to:none}
+```
+
+Renaming one `go` to `goTimes` (removing the collision, changing nothing else) changes both the helpers'
+*and* the enclosing functions' own summaries:
+
+```
+[ownership] go(acc:consumed, k:consumed) unique={acc,k} captures={} result=reaches{acc} expr-fresh=3/5 provenance={rc-eligible:false forwards-to:none}
+[ownership] goTimes(acc:consumed, k:consumed) unique={acc,k} captures={} result=reaches{acc} expr-fresh=3/5 provenance={rc-eligible:false forwards-to:none}
+[ownership] productTo(n:consumed) unique={n} captures={} result=fresh expr-fresh=4/4 provenance={rc-eligible:false forwards-to:goTimes}
+[ownership] sumTo(n:consumed) unique={n} captures={} result=fresh expr-fresh=4/4 provenance={rc-eligible:false forwards-to:goTimes}
+```
+
+`sumTo`/`productTo` themselves flip from `result=poisoned`/`expr-fresh=0/2`/`forwards-to:none` to
+`result=fresh`/`expr-fresh=4/4`/`forwards-to:go`(`goTimes`) once the collision is removed — confirming
+that `ResultProvenance` (§13.2's already-cutover consumer, read directly by
+`TryResolveKnownFunctionResultOwnership`) is not merely *unavailable* for a colliding helper; it is
+actively **worse for the helper's own caller** than it would be without the collision, because
+`CallReach`/`ClassifyFunctionResultProvenance` cannot see through the dropped callee at all and fall back
+to their poisoned/no-forwarding default. The collision's cost compounds up the call graph, not just at
+the colliding name itself.
+
+### 17.6 A concrete design — more specific than the "additive index" already rejected in §16.4
+
+§16.4 rejected one shape (a second, reference-keyed table consulted only by `TcoParamFacts`) and, having
+rejected it, characterized the real fix only as "give `_maFuncs` real per-scope identity... essentially
+the whole file's own identity scheme." This session went further and designed that identity scheme
+concretely, specifically to find out whether its blast radius is actually as large as feared or smaller
+once spelled out. It is at least as large.
+
+**Identity.** Every `Expr` node in the desugared program is reference-unique (already relied on by
+`_maExpressionFreshnessAll`/`_maExpressionFreshness`, which key by `ReferenceEqualityComparer.Instance` —
+`Lowering.MoveAnalysis.cs:96,104` — for exactly this reason). A binding's own defining
+`Expr.Let`/`Expr.LetRecursive`/`Expr.LetResult` node is therefore already a sound, zero-cost identity key
+with no new bookkeeping required: a `FuncKey` wrapping that node by reference equality (mirroring the
+existing `ReferenceEqualityComparer` pattern already used twice in this file) uniquely and stably
+identifies one specific source occurrence of a binding, colliding or not.
+
+**Resolution is the hard part, not identity.** Keying `_maFuncs`/`_maCallSites`/`_maResultReach`/
+`_maNestedRecursive`/`_maMoveSafeMemo`/`_maInProgress`/`_ownershipSummaries`/`_maProvenanceMemo`/
+`_maProvenanceInProgress` by `FuncKey` instead of `string` is the easy half of this design and was not
+the reason §16.4 stopped. The real question — confirmed by §17.3's direct reading, not assumed — is: given
+a bare `Var{Name="go"}` encountered while walking function A's own body, which registered `FuncKey`
+does it denote, when a wholly unrelated function B also has a nested binding named `go`? Per §17.3, the
+`Expr` tree gives no help; this must be re-derived by a scope-stack walk, and per this document's own
+"Model A" sequential-scoping rule (this repository's `CLAUDE.md`), the correct answer is **lexical, and
+grows as the walk descends** — a name declared partway through A's body is visible only to what follows
+it, not to what precedes it, so the scope map cannot be snapshotted once at A's own registration; it must
+be threaded and extended live, the same way `ResultReach`'s `env` and `TcoParamFactsWalk`'s `tailOwners`
+are already threaded and extended today (`ExtendEnv`, `Lowering.MoveAnalysis.cs:1535-1545`, is the exact,
+reusable pattern — copy-on-write, immutable extension per binder crossed). Top-level mutual recursion
+groups need no special handling in this scope map, confirmed by §17.4: the grammar forbids `and` groups
+in any nested position, so a nested local helper is always a single, non-mutual `Let`/`LetRecursive`, the
+one shape `ExtendEnv`'s pattern already handles cleanly.
+
+**Where the new scope parameter must be threaded.** Tracing every method that resolves a `Var`/call-head
+name against `_maFuncs` (directly or by iterating it), rather than assuming a single central choke point
+exists, found four independent traversal families needing their own new `scope: IReadOnlyDictionary<string,
+FuncKey>` parameter, threaded through every recursive call:
+
+- The `ResultReach`/`CallReach` family: `ResultReach`, `ResultReachCore`, `ResultReachVar`,
+  `ResultReachRecordLit`, `SumReach`, `MatchReach`, `CallReach`, `CallReachSelfRecursive`,
+  `CallReachConstructor`, `CallReachOverApplied`, `CallReachRegistered`, `OverApplicationReach`,
+  `OverApplyReachSym`, `IsResultAliasMove`, `IsResultAliasMoveOverApplied` — roughly 15 methods, all
+  already the most fixpoint-sensitive, cycle/poison-cap-critical code in the file (§9.5's own
+  "bidirectional-failure evidence" family), and the exact surface `ResultProvenance` (a live, cutover
+  consumer) is computed from.
+- The `CollectCallsAndEscapes` family: `CollectCallsAndEscapes`, `CollectCallsAndEscapesCall`,
+  `TryCollectPartialFoldBinding`, `CollectCallsAndEscapesMatch`, `CollectCallsAndEscapesOperators`,
+  `CollectCallsAndEscapesAggregates`, `CollectBinary`, `WalkBindingValue` — roughly 8 methods (the
+  `AllUsesAreCompletingCalls` helper family resolves a *locally-bound* partial-application alias, not a
+  `_maFuncs` name, and does not need the new parameter).
+- The `TcoParamFactsWalk` family: `ComputeTcoParamFacts`, `TcoParamFactsWalk`, `TcoParamFactsWalkCall` —
+  3 methods (the smallest family, and the only one with zero live consumers today).
+- The `ArgIsMove`/`TryFindLocalLet` family: `ArgIsMove`, `ArgIsMoveVar`, `TryFindLocalLet` and its three
+  helpers — roughly 6 methods.
+- In `Lowering.OwnershipProvenance.cs`: `ResolveFunctionResultProvenance`,
+  `ClassifyFunctionResultProvenance`, `ClassifyFunctionResultProvenanceFromArms`, `IsSelfRecursiveArm`,
+  plus re-keying `_maProvenanceMemo`/`_maProvenanceInProgress` (§17.2) — 4 more methods, in a second file.
+
+That is on the order of 35-40 methods, in the two most safety-critical files in this migration, one of
+which computes a fact a live decision already depends on. `_maValueRhs`/`IsNullarySeed`'s alias-following
+and `_maAmbiguous`'s role for non-function value bindings were deliberately scoped **out**: a colliding
+plain value binding (not lambda-valued) staying conservative under the existing bare-name/ambiguity
+mechanism is still sound (§17.7 explains why), so the redesign's blast radius does not need to include
+them — a real narrowing of scope this session found, not assumed.
+
+### 17.7 Why this is not landed as code this session
+
+Per this document's own standing rule (repeated verbatim in §16.7 and every prior "stop" decision:
+§7, §9.5, §12): a change is only landed when it can be verified behaviorally identical for every
+already-correct case with high confidence, not on a time budget. Three independent reasons converge here,
+each sufficient on its own:
+
+1. **Scale.** ~35-40 methods across two files need a new threaded parameter, not a bolt-on field or a
+   single choke-point fix — confirmed by direct enumeration (§17.6), not by re-trusting §16.4's own
+   estimate. Several of those methods (`ResultReach`, `CallReach`, `CallReachRegistered`,
+   `OverApplyReachSym`) are exactly the fixpoint machinery §9.5 catalogues as having twice regressed
+   `fannkuch-redux` from far smaller changes (the "classifier D reads classifier A before A is populated"
+   timing-gap family) — this is objectively a larger and more sensitive surface than either of those
+   regressions touched.
+2. **A live consumer sits downstream.** `ResultProvenance` (§13.2, cut over already) is computed from
+   this exact fixpoint and read directly by `TryResolveKnownFunctionResultOwnership` to make real
+   RC-vs-arena decisions today. §17.5's own repro shows the blast radius of getting this wrong is not
+   confined to the colliding function — it visibly changes the *caller's* result classification too. An
+   error introduced while threading the new scope parameter through 15 fixpoint methods would not fail
+   loudly; per this file's own documented philosophy it would fail as an under- or over-claimed
+   confinement fact, silently changing which values get moved versus copied for some case this session's
+   test corpus does not happen to exercise.
+3. **The validation bar this document has held itself to for changes at this level is itself expensive
+   and slow to falsify a subtle mistake against.** §16.6's own gate for a smaller, purely-additive change
+   (§16.2, which touched the shared `ResultReach` fixpoint but added no new threaded parameter) required a
+   from-`origin/main` baseline rebuild, 26 byte-identical binary comparisons, and five separate runtime
+   measurements. A redesign of this scope threading a new parameter through the fixpoint's own recursive
+   structure is qualitatively riskier than a value computed once by an unmodified fixpoint (§16.2's own
+   shape) — verifying it "stays behaviorally identical with high confidence" is not a matter of running
+   the existing gate once; it needs the same exhaustive, category-by-category re-verification this
+   document's own Phase 4/5 needed for a substantially smaller surface (§16.4's own comparison, reconfirmed
+   here rather than merely repeated).
+
+None of this is a soundness risk today: every colliding function still degrades to the same
+`Mixed`/absent/poisoned conservative default it does today, and nothing new was introduced that could
+regress an already-correct case, because nothing in `Lowering.MoveAnalysis.cs` or
+`Lowering.OwnershipProvenance.cs` was changed this session.
+
+### 17.8 What a future session should do
+
+Given the design in §17.6 and the risk analysis in §17.7, a future attempt should not be scoped as "fix
+the collision gap" in one pass. A safer decomposition, following this document's own established pattern
+of splitting large changes into independently-landable, independently-verifiable steps:
+
+- **Step A (infrastructure only, inert):** Introduce `FuncKey` and re-key `_maFuncs`/`_maCallSites`/
+  `_maResultReach`/`_maNestedRecursive`/`_maMoveSafeMemo`/`_maInProgress`/`_ownershipSummaries` by it,
+  but populate the new scope-threading machinery to resolve to **exactly the same** `FuncKey` a bare-name
+  lookup would have found for every currently-unambiguous function (i.e., build the scope map, but do not
+  yet change what happens on collision — keep `_maAmbiguous`'s drop-both behavior as the fallback when the
+  scope map cannot resolve a name unambiguously). This step is shadow-compareable against today's bare-name
+  resolution for every non-colliding function, function by function, before anything about the collision
+  behavior itself changes — the exact category-by-category discipline §13.6 used for Option B.
+- **Step B:** Once Step A is verified byte-identical/shadow-compare-clean for the non-colliding case
+  specifically (not the whole suite passing — a specific per-function comparison, since a global pass/fail
+  could hide a compensating pair of errors), extend the collision-detection logic itself so a name that
+  resolves unambiguously *via the scope map* (even though it collides in the old flat table) is treated as
+  resolved rather than ambiguous, and re-run the full `ASHES_EXPLAIN_OWNERSHIP=all` shadow-compare from
+  §15.3/§16.5 to confirm the `go`/`scan`/`split`-shaped disagreements specifically shrink.
+- **Step C:** Migrate `Lowering.OwnershipProvenance.cs`'s own memoization (§17.2) using the same `FuncKey`,
+  since it is a live consumer and must not regress independently of Step A/B's own verification.
+- Re-run the full validation gate (build, both C# suites, e2e, format, and the byte-identical
+  `challenges/` + runtime-measurement gate from §16.6) after **each** step, not only at the end — this
+  document's own repeated experience (§9.5, the two `fannkuch-redux` regressions) is that a fixpoint-level
+  change which passes the ordinary test suite can still regress a specific, untested program shape, and
+  the `challenges/` gate is what has caught that in the past.
+
+### 17.9 Validation results
+
+No production source file changed this session (`Lowering.MoveAnalysis.cs`, `Lowering.OwnershipProvenance.cs`,
+`Lowering.TopCellFreshness.cs`, and every other file in `src/` are byte-identical to this session's
+starting commit). The following were run as a direct-confirmation baseline check of this worktree, not as
+a "did my change break anything" gate, since nothing changed:
+
+- `dotnet build Ashes.slnx`: clean, 0 warnings, 0 errors.
+- `dotnet run --project src/Ashes.Tests -- --no-progress`: **1722/1722 passed**.
+- `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`: **52/52 passed**.
+- `dotnet run --project src/Ashes.Cli -- test tests`: **544 passed, 0 failed, 44 skipped** — identical to
+  the baseline §16.6 recorded.
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- The two hand-written repros in §17.5 (`sumTo`/`productTo` sharing a colliding `go`, and the same pair
+  with one renamed to `goTimes`) were compiled directly with `ASHES_EXPLAIN_OWNERSHIP=all` to confirm
+  the collision's behavior and blast radius first-hand, independent of the existing shadow-compare
+  corpus.
+
+Since no code changed, the `challenges/` byte-identical/runtime-measurement gate this document requires
+for a landed change (§16.6) does not apply — there is nothing to compare against a baseline, because this
+session's compiler output *is* the baseline, unmodified.
+
+### 17.10 Honest summary
+
+This session did not close §15.4's third gap, matching §16.4's own prior conclusion — but it re-verified
+that conclusion independently rather than deferring to it, and found the gap to be at least as large as
+characterized, in three concrete ways new to this session: `Lowering.OwnershipProvenance.cs` has its own
+bare-name-keyed memoization (`_maProvenanceMemo`/`_maProvenanceInProgress`), not just two flat reads
+(§17.2); the AST carries no resolved binder identity anywhere, so the fix needs a genuine lexical
+scope-stack mechanism built from scratch (reusing the `ExtendEnv` pattern, but applied to a new purpose),
+not merely a new key type (§17.3); and the collision's cost compounds onto the *caller* of a colliding
+function, not just the colliding function itself, confirmed by direct, hand-built reproduction rather than
+by re-reading §15.3's aggregate counts (§17.5). A concrete, named-identity design (`FuncKey` over `Expr`
+reference equality, plus a scope map threaded the same way `ResultReach`'s `env` already is) is documented
+here, together with a precise enumeration of the ~35-40 methods across two files it would touch (§17.6),
+and a phased decomposition (§17.8) a future session can scope its own work against directly. Per this
+document's own repeatedly-applied standard, and per this session's own brief, that is the responsible
+place to stop: the gap remains open, exactly as it was after §16.4, but the next attempt now has a real
+design and a real blast-radius map to start from instead of having to re-derive both from scratch.
