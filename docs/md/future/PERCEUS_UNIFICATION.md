@@ -2370,3 +2370,482 @@ question the current signal answers. Nothing found this session makes Step 3b ei
 tractable than §9.6 already assessed it to be; it narrows what future work does NOT need to re-derive
 (the classifier-duplication hypothesis, now checked and ruled out) without narrowing the size of what
 still does need building.
+
+## 13. Classifier collapse — Step 3b design: the unified per-parameter TCO ownership record
+
+This is a design-only session, produced against the tree at `fc36a61` (§12's own landing, current
+`origin/main` tip at the time this section was written). Per its own brief, it makes **no code
+change** anywhere except this section: `git status`/`git diff` are clean against `fc36a61` for every
+file except this one, and `dotnet format Ashes.slnx --verify-no-changes` was re-run and stays clean
+(a no-op check for a markdown-only change, confirmed rather than assumed). §9.6 scoped Step 3b as "a
+real design pass of its own — deciding what a unified per-parameter TCO ownership record looks like
+structurally, whether it lives on `TcoContext` or is computed by an extended `FunctionOwnershipSummary`
+per §5 item 4 — before any code is written." This section is that design pass.
+
+### 13.1 Re-verifying the two things this section's brief said might have drifted
+
+**`TcoContext`'s field count.** §5 item 4 estimated "~17 independently-scanned classification
+fields." Reading `TcoContext` directly (`Lowering.Types.cs:33-143`) finds **31 total fields**, of
+which:
+
+- **15 are genuine classification/eligibility data** — the actual target of this step:
+  `RuntimeManagedParamSlots`, `RuntimeManagedListParamSlots`, `RuntimeManagedClosureParamSlots`,
+  `RuntimeManagedParamTypes`, `LoopInvariantParams`, `FreshRebuiltListParams`, `AffineConsListParams`,
+  `ConsumedListTailParams`, `BorrowableConsumedListParams`, `FreshClosureParams`,
+  `EscapingDirectPatternBindings`, `AffineStrParams` (12 name/slot-keyed sets or maps), plus
+  `ParamNames`/`ParamSlots`/`ParamLabels` (the 3 identity-mapping tables every classifier above indexes
+  through by parameter name or slot — not themselves a classification, but load-bearing plumbing every
+  one of the 12 depends on).
+- **11 are pure codegen bookkeeping**, not ownership classification at all, and out of scope for this
+  step regardless of how the unified record is shaped: `RuntimeManagedParamActiveSlots`,
+  `RuntimeManagedClosureActiveSlots`, `AffineResvSlots`, `ArenaCursorSlot`, `ArenaEndSlot`,
+  `FixedCursorSlot`, `FixedEndSlot`, `CompactionSizeSlot`, `StackPtrSlot`, `CoroutineLoopReset`,
+  `OwnershipDepthAtEntry` — these are LLVM-codegen-facing slot numbers and reset-strategy state that a
+  unified ownership *decision* would still need to drive, but that are not themselves an ownership
+  question and should not be folded into the record proposed below.
+- **5 are structural/identity fields unrelated to ownership**: `SelfName`, `BodyLabel`, `ParamCount`,
+  `InTailPosition`, `DescendingChain`.
+
+So "~17" underestimated the true count of independently-scanned classification fields by roughly
+avoiding double-counting; the corrected number worth citing going forward is **12 name/slot-keyed
+classification sets, backed by 3 identity tables** — 15 fields total that a unified per-parameter
+record should be able to fully replace, out of `TcoContext`'s 31.
+
+**`LowerLambdaCoreFinalizeTcoOwnership`'s call count.** §9.2 item 5 characterized this as "five calls":
+A's refresh → D's resolution → a pending-flag pass → A/B's entry-ownership splice → C's refresh.
+Reading it directly (`Lowering.cs:5332-5347`) finds **six calls**, not five:
+
+```csharp
+private void LowerLambdaCoreFinalizeTcoOwnership(...)
+{
+    LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);       // A (+ profitability, see below)
+    ResolvePendingNestedTcoPatternAliasSites(tco);            // D
+    ResolvePendingRuntimeArgumentFlags(tco);                  // pending-flag resolution (unrelated to A-D)
+    LowerLambdaCoreSpliceTcoEntryOwnership(..., tco, ...);     // A/B entry-ownership splice
+    LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs); // NOT an A-D classifier pass (see below)
+    LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp); // C
+}
+```
+
+The sixth call, `LowerLambdaCoreRecordAccStableFold` (`Lowering.cs:6857`), is address-stable-fold
+bookkeeping (a CO-16/CO-32-adjacent question: "does this fold's accumulator come back at a stable
+address so an outer loop threading it across a back-edge can keep a plain arena reset") — a real,
+separate concern that happens to be sequenced here because it also needs the body fully lowered, but
+it is not itself an A/B/C/D ownership classifier and this document's own catalogue (§1, §9.1) never
+listed it. This is a correction in the same spirit as §10's redundant-disjunct finding and §11's
+"this site doesn't do what the brief assumed" finding: not a functional problem, but anyone designing
+around "the five-call sequence" should know it is actually six, one of which is orthogonal. Also worth
+recording precisely: `LowerLambdaCoreRefreshRuntimeManagedTcoParams` (`Lowering.cs:5464-5490`) itself
+calls `RecordTcoPromotionProfitability` (line 5489) — so the profitability signal already runs
+*inside* the "A's refresh" step, not as a separate seventh call; profitability is demoted only later,
+inside `LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame` (called from within
+`LowerLambdaCoreIdentifyRuntimeManagedTcoParams`, `Lowering.cs:6160`), which itself runs at TWO
+different points in the overall sequence: once at loop entry (`Lowering.cs:6107`, unresolved types,
+`includeFreshClosures: true`) and once inside the refresh call above (resolved types,
+`includeFreshClosures: false`) — the "five/six calls in `FinalizeTcoOwnership`" framing understates how
+many total classification passes actually run per loop; the loop-entry pass is a seventh, upstream of
+everything `FinalizeTcoOwnership` itself does.
+
+### 13.2 What `FunctionOwnershipSummary` already provides, verified against its actual computation
+
+`FunctionOwnershipSummary` (`OwnershipSummary.cs:49-58`) carries five facts per registered function:
+`ParameterOwnership` (Borrowed/Consumed per parameter), `UniqueParameters`, `CapturedValues`,
+`ResultReach`/`ResultPoisoned`, `ExpressionFreshness` (per-`Expr`-node, reference-keyed), and
+`ResultProvenance` (`RcEligible`/`ForwardsTo`). Three properties of how it is actually computed
+(`Lowering.MoveAnalysis.cs`) matter directly for this design:
+
+1. **It is computed once, over the whole desugared program, entirely from AST shape — no `TypeRef`
+   is ever consulted.** `AnalyzeReuseCopyElision` (`Lowering.MoveAnalysis.cs:149-201`) registers every
+   top-level/`let recursive` function (`RegisterBindings`/`RegisterOneBinding`, `Lowering.MoveAnalysis.cs:219-298`
+   — the same `CollectLambdaParams`/`GetInnermostBody` shape `_maFuncs` uses is exactly the shape a TCO
+   loop's own recursive binding has), builds a whole-program call-site census
+   (`CollectCallsAndEscapes`), then runs `ComputeResultReach` (`Lowering.MoveAnalysis.cs:973-1008`) to a
+   monotone least fixpoint. None of this reads a `TypeRef` anywhere — it cannot, because per §2 of this
+   document, types are resolved progressively *during* lowering via interleaved unification, and this
+   whole analysis is confirmed (by reading its own call site, not assumed) to run once, before any
+   function's body is lowered. This is the structural reason it is immune to the exact "classifier D
+   reads classifier A before A is populated for this body" timing-gap family (§9.2 item 4, and both
+   "Classifier (D) timing gap" sessions) that has twice regressed `fannkuch-redux`: there is no "before
+   this body is lowered" moment for a fact computed before *any* body is lowered.
+2. **It already flows correctly through a TCO loop's own self-recursion**, not just through ordinary
+   fold-style helpers. `ComputeResultReach`'s fixpoint iterates every `_maFuncs` entry
+   (`Lowering.MoveAnalysis.cs:973-1008`); when a registered function's own body calls itself, `CallReach`
+   (`Lowering.MoveAnalysis.cs:1490-1542`) resolves it via ordinary `CallReachRegistered`
+   (`Lowering.MoveAnalysis.cs:1630-1656`), looking up `_maResultReach[name]` — the function's own,
+   currently-converging entry. (`_maSelfRecursive`/`CallReachSelfRecursive`,
+   `Lowering.MoveAnalysis.cs:1544-1575`, is a *different*, narrower mechanism for the nested
+   `let rec go = (given acc -> B) in go` "Map.set shape," not the ordinary top-level
+   `let recursive f = given x -> ... f(...) ...` shape a ordinary TCO loop actually uses — verified by
+   reading `TryGetNestedRecursiveReturnShape`'s own gate; a plain TCO loop is registered as an ordinary
+   `_maFuncs` entry and goes through the general self-referential fixpoint, not this special case.)
+   Because `RecordExpressionFreshness` (`Lowering.MoveAnalysis.cs:1248-...`) is invoked from inside
+   `ResultReach` for every sub-expression it visits, **a TCO loop's own self-call argument expressions
+   are already recorded in `ExpressionFreshness` today** — e.g. `nextPerm`'s own
+   `S(perm2)(count2)` construction fed back into its own recursive call is exactly the kind of
+   expression this fixpoint already classifies, keyed by AST-node reference identity, fully computed
+   before `nextPerm`'s body is ever lowered.
+3. **It genuinely cannot answer classifier A's real question on its own**, because classifier A's
+   question is fundamentally type-shape-dependent (`IsRcEligibleScalarTupleOrAdtType`,
+   `CanRuntimeManageTcoListElement`, `CanArenaReset`, `IsResourceHandleType` — all `TypeRef`-driven,
+   `Lowering.cs:6212-6216` and neighbors) and `FunctionOwnershipSummary` is computed before any
+   `TypeRef` is resolved. `ExpressionFreshness`/`ParameterOwnership` answer *aliasing/escape* questions
+   ("does this expression's value alias any parameter," "is this parameter only read, never
+   moved/stored/returned") — necessary ingredients for classifier A's `FreshRebuiltListParams`/
+   `ConsumedListTailParams`-style distinctions and for classifier D's escape question, but not a
+   substitute for the type-eligibility half of the question.
+
+Two existing, narrower precedents for exactly the kind of structural, fail-closed AST walk a
+generalized version of this would need already exist and are worth building from rather than
+re-deriving: `ParamUsedOnlyAsBorrowRead` (`Lowering.Borrow.cs:66-117`) — "every occurrence of this
+parameter is a positively-verified safe use (here: the resource argument of a whitelisted
+borrow-read builtin), else assume the worst" — currently hardcoded to a small `BorrowReadResourceOps`
+whitelist (`Lowering.Borrow.cs:26-38`) and resource types only, not a general escape signal; and
+`CollectEscapingDirectPatternBindings`/`IsSafeDirectPatternBindingUse`
+(`Lowering.Reuse.cs:355-414`, `481-534`) — classifier D's own already-generalized-once "every
+occurrence of this pattern-bound name is one of three positively-verified safe shapes (nested match
+on the same name; bare unchanged argument at its own parameter's slot in a self-call; bare argument
+to a non-constructor call), else it escapes" — which is structurally the same *shape* of analysis as
+`ParamUsedOnlyAsBorrowRead`, just already generalized past resources to arbitrary pattern-bound
+names, and already scoped to exactly the TCO question at hand. Both are purely syntactic, both are
+fail-closed, and both are currently one-off, hand-maintained AST walks local to their own file rather
+than facts hosted on `FunctionOwnershipSummary` — this is the concrete gap between "the pattern this
+migration wants" and "what exists today."
+
+The shadow-compare infrastructure this design would want to validate against before cutover already
+exists and is currently unused for TCO: `Lowering.OwnershipShadowCompare.cs` (75 lines) provides
+`TryGetExpressionFreshness`/`ShadowCompareExpressionFreshness`, reusing `ASHES_EXPLAIN_OWNERSHIP` as
+its logging channel — wired today only into the Phase 4/5 ADT/List freshness classifiers
+(`Lowering.Ownership.cs:2374`, `Lowering.cs:3093,4182,4238` — confirmed by `grep`, no TCO call site
+consults it). This is a direct, reusable template for both Step 3b's own validation and Step 4a's
+mandated shadow-compare phase (§9.6).
+
+### 13.3 The central design question, answered
+
+**Does the unified record extend `TcoContext`, or is it computed by extending
+`FunctionOwnershipSummary`?** Neither alone, and the honest answer is a layering, not a choice:
+
+- The record's **structural ingredients** — which self-call-argument shape a parameter's value takes
+  (fresh construction vs. unchanged passthrough vs. consumed-tail-walk vs. mixed/escaping), and
+  whether any pattern-extracted sub-binding of it independently escapes — are answerable from AST
+  shape alone, need no type information, and are exactly the kind of fact `FunctionOwnershipSummary`
+  already computes once, before lowering, immune to timing gaps by construction. These should be
+  **read from an extension of `FunctionOwnershipSummary`**, not re-derived by `TcoContext`'s own
+  ad hoc walks (today's `Lowering.Reuse.cs` `Collect*` family) — this is the direct application of
+  §5 item 4's original vision, and of the exact "safe reuse over a parallel rule" precedent this
+  document's own Phase 6 interprocedural-freshness fix already used successfully
+  (`IsDirectRcConstruction` falling back to `IsFreshRuntimeManageableAdtExpressionCore` instead of
+  re-deriving a parallel rule — §6, "Safe reuse over a parallel rule").
+- The record's **type-eligibility and profitability verdict** — is this parameter's resolved type
+  RC-manageable at all, does any sibling permanently block the frame — is inescapably a lowering-time
+  fact: the parameter's concrete `TypeRef` does not exist until enough of the function's own body has
+  been lowered for unification to pin it down (confirmed directly: `LowerLambdaCoreIdentifyRuntimeManagedTcoParams`'s
+  loop-entry pass, `Lowering.cs:6107`, sees `TVar`s for an ordinary unannotated parameter; only the
+  post-body `LowerLambdaCoreRefreshRuntimeManagedTcoParams` pass, `Lowering.cs:5476-5479`, sees
+  resolved types — this is not an accident of today's implementation, it is a direct consequence of
+  §2's "ownership decisions are made at lowering time, interleaved with unification" architecture, and
+  no amount of restructuring the *classifier* code changes *when types resolve*). This half **must
+  remain a `TcoContext`-resident fact**, computed at lowering time, because there is no earlier point
+  in the pipeline where it could be computed instead.
+
+Concretely: **materialize the unified per-parameter record on `TcoContext`** (it cannot live purely on
+`FunctionOwnershipSummary`, because half its fields need information that does not exist until that
+specific loop's own body is lowered) **but populate its structural fields by reading an extended
+`FunctionOwnershipSummary` for the enclosing self-recursive function**, instead of by running
+`TcoContext`'s own separate `Collect*` AST walks a second time over the same body. This directly
+targets the disease this whole document is about — "two classifiers, same question, different code
+paths, can disagree" — for the TCO/whole-program pair specifically: today, `FunctionOwnershipSummary`
+already computes (for every function, TCO loops included) facts adjacent to what `FreshRebuiltListParams`/
+`ConsumedListTailParams`/`EscapingDirectPatternBindings` re-derive independently in
+`Lowering.Reuse.cs`; a second independent derivation of a materially similar question is exactly the
+pattern Step 1 (A/B) and the "safe reuse over a parallel rule" fix (Phase 6) each already closed for a
+different pair, not something to reproduce a third time here by accident.
+
+```mermaid
+flowchart TB
+    subgraph pre["Pre-lowering, whole-program, AST-only (once, before any body lowers)"]
+        AST["Desugared program AST"]
+        AST --> FOS["FunctionOwnershipSummary\n(extended, §13.4)"]
+        FOS --> SHAPE["Per (function, param):\nSelfCallArgumentShape\n+ escape verdict"]
+    end
+    subgraph perloop["Per TCO loop, at lowering time (types resolve progressively)"]
+        ENTRY["Loop-entry pass\n(provisional: types still TVars)"]
+        REFRESH["Post-body refresh pass\n(authoritative: types resolved)"]
+        SHAPE --> ENTRY
+        SHAPE --> REFRESH
+        ENTRY --> RECORD["TcoContext.ParamOwnership\nDictionary<int, TcoParamOwnership>"]
+        REFRESH --> RECORD
+    end
+    RECORD --> CONSUMERS["~50 consumer call sites\n(LowerVar, match-join, exit-drop,\nback-edge normalization, ...)"]
+```
+
+### 13.4 Concrete shapes
+
+**Extend `FunctionOwnershipSummary` with one new field**, computed by the same `ComputeResultReach`
+fixpoint pass that already computes `ExpressionFreshness` (`Lowering.MoveAnalysis.cs:1017-1033`), so it
+is populated with zero additional passes over the AST — only additional bookkeeping inside the walk
+that already visits every self-call:
+
+```csharp
+// OwnershipSummary.cs
+internal enum TcoSelfCallArgumentShape
+{
+    /// Every self-recursive call site's argument at this parameter's position is a syntactically
+    /// fresh construction (ExpressionFreshness[argExpr] == true for every occurrence) — the
+    /// FreshRebuiltListParams/FreshClosureParams shape.
+    FreshRebuilt,
+
+    /// Every self-recursive call site's argument at this parameter's position is a bare reference
+    /// to this same parameter, unchanged — the LoopInvariantParams shape.
+    UnchangedPassthrough,
+
+    /// Every self-recursive call site's argument at this parameter's position is derived from this
+    /// same parameter's own value by a structural, strictly-smaller decomposition (a cons-tail, a
+    /// single field extraction) that is never rebuilt, never embedded in a constructed value, and
+    /// never handed to a different parameter's slot — the ConsumedListTailParams shape.
+    ConsumedTail,
+
+    /// No single shape above holds at every self-recursive call site, or the argument aliases a
+    /// DIFFERENT parameter, or the function has no self-recursive call sites at all (ordinary
+    /// non-TCO function). Conservative fallback — carries no promotion opportunity by itself.
+    Mixed,
+}
+
+// One entry per (function, parameter name) — a TCO loop's own accumulator parameters only;
+// absent for a parameter with no self-recursive call sites to classify (Mixed is the explicit
+// "classified but inconclusive" case; a missing key is "never asked," e.g. an ordinary
+// non-recursive function's own parameters).
+internal sealed record TcoParamStructuralFacts(
+    TcoSelfCallArgumentShape Shape,
+    bool EscapesIndependently); // classifier D's verdict — does ANY pattern-derived sub-binding
+                                // of this parameter's value, within its own recursive body, have
+                                // an occurrence that is not one of CollectEscapingDirectPatternBindings's
+                                // three already-known-safe shapes (generalized as a first-class
+                                // per-parameter fact instead of a side pending-table)
+
+internal sealed record FunctionOwnershipSummary(
+    string Function,
+    IReadOnlyList<string> Parameters,
+    IReadOnlyDictionary<string, ParameterOwnership> ParameterOwnership,
+    IReadOnlySet<string> UniqueParameters,
+    IReadOnlyList<string> CapturedValues,
+    IReadOnlyDictionary<string, int> ResultReach,
+    bool ResultPoisoned,
+    IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
+    FunctionResultProvenance ResultProvenance,
+    IReadOnlyDictionary<string, TcoParamStructuralFacts> TcoParamFacts); // NEW
+```
+
+**`TcoContext` collapses its 12 name/slot-keyed classification fields (§13.1) to one dictionary**,
+keyed by slot (matching every existing consumer's own preferred key — most read by slot, a few by
+name via `ParamNames`/`ParamSlots`, which stay as the identity-mapping plumbing they already are):
+
+```csharp
+// Lowering.Types.cs — TcoContext
+public Dictionary<int, TcoParamOwnership> ParamOwnership { get; } = [];
+// Replaces: RuntimeManagedParamSlots, RuntimeManagedListParamSlots, RuntimeManagedClosureParamSlots,
+// RuntimeManagedParamTypes, LoopInvariantParams, FreshRebuiltListParams, AffineConsListParams,
+// ConsumedListTailParams, BorrowableConsumedListParams, FreshClosureParams,
+// EscapingDirectPatternBindings, AffineStrParams. RuntimeManagedParamActiveSlots/
+// RuntimeManagedClosureActiveSlots/AffineResvSlots (pure codegen slot bookkeeping, §13.1) are
+// unaffected and stay exactly as they are.
+```
+
+```csharp
+// New file, e.g. Lowering.TcoOwnership.cs
+internal enum TcoParamEligibility
+{
+    /// Type shape alone (IsRcEligibleScalarTupleOrAdtType / list-element shape) does not license
+    /// RC representation regardless of self-call argument shape — e.g. a multi-constructor ADT
+    /// with pointer-bearing fields, or a List(Str) whose element itself needs RC management.
+    IneligibleByType,
+
+    /// Type shape licenses RC representation, but the self-call argument shape does not license
+    /// the specific normalization strategy that type shape needs (e.g. a List eligible only via
+    /// ConsumedTail, but this parameter's own self-calls disagree about which structural
+    /// sub-decomposition to use across call sites — TcoSelfCallArgumentShape.Mixed).
+    IneligibleByShape,
+
+    /// Both type shape and self-call argument shape license RC representation, independent of any
+    /// sibling parameter in the same frame (classifier A's own question, considered alone).
+    IndependentlyEligible,
+}
+
+internal sealed record TcoParamOwnership(
+    string ParamName,
+    int Slot,
+    TypeRef ResolvedType,
+    TcoParamEligibility Eligibility,
+    TcoPromotionVerdict Profitability,  // Lowering.TcoPromotionCostSignal.cs, computed inline (§13.5)
+    bool EscapesIndependently)          // sourced from FunctionOwnershipSummary.TcoParamFacts (§13.2/13.4)
+{
+    /// The actual representation decision — the one fact every one of the ~50 downstream call
+    /// sites should read, instead of testing RuntimeManagedParamSlots.Contains(slot) or combining
+    /// several of TcoContext's old name/slot sets by hand.
+    public bool RuntimeManaged =>
+        Eligibility == TcoParamEligibility.IndependentlyEligible
+        && Profitability == TcoPromotionVerdict.Profitable;
+}
+```
+
+**Consumer call sites change from set-membership tests to one field read.** For example,
+`IsRuntimeManagedTcoParamSlot` (`Lowering.cs:2566-2567`, Step 2's own shared extraction) becomes:
+
+```csharp
+private bool IsRuntimeManagedTcoParamSlot(Binding.Local local) =>
+    _tcoCtx?.ParamOwnership.TryGetValue(local.Slot, out var ownership) == true && ownership.RuntimeManaged;
+```
+
+with the same one-line shape at every other of the ~50 sites the audit catalogued (§4) that today read
+`tco.RuntimeManagedParamSlots.Contains(slot)`, `tco.RuntimeManagedListParamSlots.Contains(slot)`, or
+`tco.RuntimeManagedClosureParamSlots.Contains(slot)` — each becomes `.ParamOwnership[slot].RuntimeManaged`
+plus, where a caller specifically needs to know *why* (e.g. `LowerLambdaCoreRefreshRuntimeManagedTcoParams`'s
+own closure-vs-non-closure branch, `Lowering.cs:5482`), a read of `.ResolvedType`/`.Eligibility` instead
+of a separate `RuntimeManagedListParamSlots`/`RuntimeManagedClosureParamSlots` set membership test.
+Classifier B (`GetTcoCopyOutKind`/`TcoBackEdge*`) is **not** folded into this record — per §9.4's
+already-confirmed finding (re-verified here, unchanged: every predicate in that family still depends
+only on `TypeRef`/`TypeSymbol` shape, never on any per-value ownership fact), it stays a pure,
+stateless, downstream-only query, *consulted* by whatever build the record but not a field of it.
+Classifier C (`_runtimeManagedResultTemps`) also stays separate, for a different, orthogonal reason:
+it answers a strictly finer-grained question ("is this specific already-lowered IR *temp*, right now,
+runtime-managed") that a per-parameter record cannot precompute, because a temp's value may flow
+through arbitrary intervening expressions the parameter-level record has no visibility into — C's own
+job is to propagate the parameter-level verdict forward through IR, not to duplicate it.
+
+### 13.5 Re-expressing the veto
+
+§9.6's own framing for Step 3b: "the veto would need to be re-expressed as 'no per-parameter clearing
+at all, only the profitability-gated demotion already landed.'" This is achievable, concretely, as
+follows: `Profitability` becomes a field computed **once, at record-construction time**, by asking
+`ClassifyTcoParamPromotion`'s existing question (`Lowering.TcoPromotionCostSignal.cs:168-187`, itself
+unchanged) — but as part of building every parameter's record in one pass, not as a later mutation
+applied to an already-populated `RuntimeManagedParamSlots` set. Concretely, `BuildTcoParamOwnership`
+replaces `LowerLambdaCoreIdentifyRuntimeManagedTcoParams` + `RecordTcoPromotionProfitability` +
+`LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame` + `DemoteUnprofitableRuntimeManagedTcoParams` +
+`ClearOneRuntimeManagedTcoParam` (five functions, `Lowering.cs:6118-6291`) with one two-phase function:
+
+```csharp
+private void BuildTcoParamOwnership(IReadOnlyDictionary<string, Binding> scope, TcoContext tco)
+{
+    // Phase 1: every parameter's OWN eligibility, independent of siblings (classifier A's exact
+    // question, unchanged — IsIndependentlyRcEligibleTcoParam's logic, reading TcoParamStructuralFacts
+    // off the FunctionOwnershipSummary for tco.SelfName instead of tco's own now-removed
+    // FreshRebuiltListParams/AffineConsListParams/ConsumedListTailParams/FreshClosureParams sets).
+    var eligibility = new Dictionary<int, (TypeRef Type, TcoParamEligibility Eligibility)>();
+    foreach (int slot in tco.ParamSlots) { /* ... */ }
+
+    // Phase 2: profitability, reading every OTHER slot's already-computed Phase-1 eligibility
+    // (IsPermanentlyBlockingTcoSibling's exact question, unchanged) — this is the one place a
+    // parameter's own verdict depends on a sibling's, so it must run as a genuinely second pass
+    // over the same already-resolved set, not interleaved with Phase 1.
+    foreach (int slot in tco.ParamSlots)
+    {
+        // ... EscapesIndependently sourced from FunctionOwnershipSummary.TcoParamFacts[tco.SelfName][name]
+        tco.ParamOwnership[slot] = new TcoParamOwnership(name, slot, type, elig, profitability, escapes);
+    }
+}
+```
+
+`RuntimeManaged` is then a **derived, read-only property** (§13.4) — there is no `Clear`/`Demote`
+mutation anywhere in the design, which is a real structural difference from today's code (where
+`ClearOneRuntimeManagedTcoParam` mutates six different `TcoContext` sets after the fact) and matches
+§9.6's framing precisely.
+
+**One honest limit this re-expression does not remove**: the fundamental two-phase *temporal*
+structure (a provisional loop-entry pass with unresolved types, then an authoritative post-body
+refresh pass with resolved types) survives regardless of how the record is shaped, because — per
+§13.3 — it is forced by *when types resolve*, not by how the classifier code is organized. What this
+design does collapse is the **five/six separately-timed, separately-combined passes within each of
+those two moments** into one coherent `BuildTcoParamOwnership` call at loop-entry (provisional) and
+one at refresh (authoritative) — not the two-moment structure itself. A future implementer should not
+expect to remove the loop-entry-vs-refresh split; only the internal fragmentation *within* each of
+those two moments is what this record actually eliminates.
+
+### 13.6 Part 2 — sequencing versus Step 4, and the fork that needs a decision
+
+**If Step 3b is built as a pure repackaging** — keep `TcoContext`'s own `Collect*` AST walks exactly
+as they are today, and merely gather their existing outputs into one `TcoParamOwnership` record
+instead of leaving them as separate sets — **it does not advance Step 4 at all.** It is a real,
+useful cleanup (one query instead of a scattered OR at ~50 call sites, and a mechanical, `git
+blame`-able reduction in `TcoContext`'s own surface area), but classifier D's own escape question
+would still be answered by the exact same `CollectEscapingDirectPatternBindings` mechanism, at the
+exact same point in the pipeline, with the exact same twice-regressed fragility (§9.5) — the record
+would just be a new container the same old fact gets copied into.
+
+**If Step 3b is built by actually routing `TcoSelfCallArgumentShape`/`EscapesIndependently` through an
+extended `FunctionOwnershipSummary`** (§13.4) instead of leaving `Lowering.Reuse.cs`'s own walks in
+place, it **does make Step 4 more tractable**, for a reason grounded in what this session actually
+found rather than by analogy: doing so requires generalizing exactly the fail-closed,
+"every-occurrence-is-a-positively-verified-safe-shape" structural walk that `CollectEscapingDirectPatternBindings`/
+`IsSafeDirectPatternBindingUse` (§13.2) already is, from "a TCO-parameter-local pending table,
+consulted only by `ResolvePendingNestedTcoPatternAliasSites`" into "a first-class,
+pre-lowering-computed fact on `FunctionOwnershipSummary`, consulted the same way `ExpressionFreshness`
+already is." That is not a new liveness mechanism invented for Step 4's sake — it is Step 4's own
+prerequisite (§9.6: "a real liveness signal... does this specific pattern-extracted binding's own live
+range end before the iteration completes") being built one step early, under Step 3b's own name,
+while its scope is still bounded to the one classifier (A, via the self-call-argument-shape question)
+that has never regressed from an over-generalization the way D's escape check has (twice). Building it
+first against A — the classifier this document's own history shows is comparatively well-behaved — and
+then handing the *same* mechanism to D in Step 4, rather than building it for the first time directly
+against D, is the concrete way "3b makes 4 more tractable" cashes out: 4a's shadow-compare phase would
+be comparing D's existing syntactic enumeration against a mechanism *already soaked* on A's real
+production traffic (the full `challenges/` suite this document already re-runs at every step), not
+against a brand-new, unvalidated analysis making its first contact with real code on the single most
+historically fragile classifier in the compiler.
+
+**The genuine fork.** These two versions of Step 3b are not "the same step, done more or less
+carefully" — they are different-sized undertakings with different risk profiles, and picking between
+them is a scope decision the project owner should make explicitly rather than have it default to
+whichever a future session finds easier to start:
+
+- **Option A — repackaging.** Build `TcoParamOwnership` as a container over today's existing
+  `Collect*`-derived facts, unchanged. Genuinely close to single-session (it is a mechanical
+  reshaping of already-correct data into one dictionary, plus rewiring ~50 call sites to read one
+  field instead of testing several sets — real effort, but the *classification logic itself* does not
+  change, so the validation bar is "byte-identical compiled output everywhere," the same bar Steps
+  1-2 already cleared). Reduces `TcoContext`'s surface area and gives every future classifier-D
+  attempt (Step 4) one clean place to plug its eventual verdict into, but does not itself make Step 4
+  easier or safer to build.
+- **Option B — re-derivation through `FunctionOwnershipSummary`.** Additionally re-derive classifier
+  A's `FreshRebuiltListParams`/`AffineConsListParams`/`ConsumedListTailParams`/`FreshClosureParams`
+  logic (and, per the argument above, generalize `CollectEscapingDirectPatternBindings` into a
+  `FunctionOwnershipSummary`-hosted fact) from the AST-only fixpoint instead of `Lowering.Reuse.cs`'s
+  own separate walks. This is comparably sized to Phase 4/5 (each of *four* name-sets needs the same
+  exhaustive, category-by-category "do the old and new derivations actually agree" verification Step 1
+  needed for classifier A/B's overlap, §10) **plus** the `FunctionOwnershipSummary` extension itself
+  plus a shadow-compare soak (reusing §13.2's existing infrastructure) before cutover — realistically a
+  multi-session effort in its own right, not "Step 3b" as a single unit. It is the option that actually
+  fulfills §5 item 4's original vision and the one that pays forward into Step 4, but §9.6's own
+  "Step 3 is explicitly not single-session" caveat applies to it with more force than to Option A.
+
+Neither option is wrong; they trade off differently against this document's own repeatedly-stated
+priority ("a missed optimization is always acceptable, a regression or an unlanded multi-session
+effort is not automatically a failure — the honest bottom line matters more than a small-sounding
+first step"). Building Option A first and stopping there would be a legitimate, safe, landable slice
+that leaves Step 4 exactly as hard as it is today; building toward Option B is the only path that
+uses this design's own central finding (§13.3) to actually shrink Step 4's remaining work, but should
+not be scoped, budgeted, or promised as fitting in the same session as Option A's mechanical part.
+**Recommendation for whoever picks this up next**: do Option A's mechanical record-and-rewire first,
+on its own, validated exactly as Steps 1-2 were (byte-identical compiled output against the full
+`challenges/` suite) — it is real, safe, immediately landable value and de-risks the ~50-call-site
+rewiring independent of anything else. Then treat Option B's `FunctionOwnershipSummary` extension as
+its own, separately-scoped, separately-budgeted follow-up (plausibly one category at a time, the same
+cadence Phase 4/5 used for ADT/Tuple/List) — explicitly the prerequisite this section's own evidence
+says Step 4 needs, not a detour from it. Do not attempt Option B and Step 4 in the same session
+regardless of how Option B goes: per §9.5, D's own history (two regressions from two separately
+scoped, separately validated, full-suite-passing sessions) means Step 4 needs its own mandatory 4a
+shadow-compare soak (§9.6) no matter how solid Option B's foundation turns out to be.
+
+### 13.7 What remains open
+
+This section is a design, not an implementation, and per its own brief no code was written. What a
+future session would still need to settle before writing `BuildTcoParamOwnership` for real: the exact
+enumeration rule for `TcoSelfCallArgumentShape` (this section sketches the four cases at the level
+`FreshRebuiltListParams`/`ConsumedListTailParams`/etc. already draw them, but the precise AST-walk
+logic inside `ComputeResultReach`/`CallReach` needed to classify "which shape does self-call argument
+expression `E` at parameter slot `i` exhibit" was not written here, only motivated); whether
+`BorrowableConsumedListParams`'s own narrower "inspect-only" sub-case is a fifth `TcoSelfCallArgumentShape`
+value or a separate boolean orthogonal to shape (this section did not trace `IsBorrowableInspectOnlyList`
+closely enough to decide); and the exact rewiring diff for each of the ~50 consumer call sites §4
+catalogued (this section sketches the pattern via `IsRuntimeManagedTcoParamSlot` but does not enumerate
+all fifty). None of these change this section's central recommendation (§13.3) or its sequencing
+assessment (§13.6); they are the concrete work Option A/B would each still need to do.
