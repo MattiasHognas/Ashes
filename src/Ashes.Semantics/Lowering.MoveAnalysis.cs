@@ -34,14 +34,60 @@ namespace Ashes.Semantics;
 //      saturated direct call — so the call-site census is provably complete.
 public sealed partial class Lowering
 {
-    // Per top-level function: its curried parameter names (in order) and its innermost body.
-    private readonly Dictionary<string, (List<string> Params, Expr Body)> _maFuncs = new(StringComparer.Ordinal);
+    // Reference-identity key for one specific binding occurrence: its own Let/LetRecursive/LetResult
+    // node. Expr is a C# record (structural equality), so — exactly like this file's other Expr-keyed
+    // tables (_maExpressionFreshnessAll/_maExpressionFreshness below, both keyed by
+    // ReferenceEqualityComparer) — wrapping the node and comparing by reference is what lets two
+    // unrelated bindings that happen to share a bare name (e.g. two different functions each defining
+    // their own local `let recursive go = ...` helper) resolve to two distinct identities instead of
+    // colliding as dictionary keys.
+    private readonly struct FuncKey : IEquatable<FuncKey>
+    {
+        private readonly Expr _binder;
 
-    // Every top-level value binding's right-hand side (used to resolve accumulator seeds).
+        public FuncKey(Expr binder)
+        {
+            _binder = binder;
+        }
+
+        public bool Equals(FuncKey other) => ReferenceEquals(_binder, other._binder);
+
+        public override bool Equals(object? obj) => obj is FuncKey other && Equals(other);
+
+        public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_binder);
+    }
+
+    // Per top-level function: its curried parameter names (in order) and its innermost body. Keyed by
+    // the binding's own FuncKey (its defining Let/LetRecursive/LetResult node), not its bare name.
+    private readonly Dictionary<FuncKey, (List<string> Params, Expr Body)> _maFuncs = new();
+
+    // Every top-level value binding's right-hand side (used to resolve accumulator seeds). Stays
+    // name-keyed: a colliding plain (non-function) value binding staying conservatively unresolved
+    // under the existing bare-name/ambiguity mechanism is sound and out of scope for this change.
     private readonly Dictionary<string, Expr> _maValueRhs = new(StringComparer.Ordinal);
 
-    // Saturated direct call sites, keyed by callee name: (enclosing function name, flattened args).
-    private readonly Dictionary<string, List<(string Enclosing, List<Expr> Args)>> _maCallSites = new(StringComparer.Ordinal);
+    // Resolves a bare binding name to the one FuncKey a bare-name lookup denotes today: populated
+    // exactly when a name is registered unambiguously (see RegisterOneBinding), and pruned the moment a
+    // second binding of the same name is seen anywhere in the program (see AnalyzeReuseCopyElision), in
+    // lockstep with _maAmbiguous. Every internal lookup that used to key _maFuncs/_maCallSites/
+    // _maResultReach/_maNestedRecursive directly by a bare AST name (a Var, a call head, a binding name)
+    // resolves through this index first; a name absent here (never registered, or registered more than
+    // once) has no resolvable FuncKey, so callers fall back to exactly the same conservative
+    // "not visible" behavior a failed _maFuncs.ContainsKey(name) already produced. This is intentionally
+    // still a flat, whole-program index — not yet a live lexically-threaded scope — for every traversal
+    // except the self-recursion check in ComputeTcoParamFacts/TcoParamFactsWalk/TcoParamFactsWalkCall,
+    // which threads a genuinely lexical, shadowing-aware scope (see TcoParamFactsWalk's own doc).
+    private readonly Dictionary<string, FuncKey> _maNameIndex = new(StringComparer.Ordinal);
+
+    // The inverse of _maNameIndex: the one name a registered FuncKey was declared under. Needed wherever
+    // a FuncKey must be reported or looked up by name again — the string-keyed public surface
+    // (GetOwnershipSummary/AnalyzedFunctionNames/FormatOwnershipSummaries) and every external consumer of
+    // it stay name-based and unaffected by this internal re-keying.
+    private readonly Dictionary<FuncKey, string> _maKeyName = new();
+
+    // Saturated direct call sites, keyed by the callee's FuncKey: (enclosing function's FuncKey, or null
+    // at top level, flattened args).
+    private readonly Dictionary<FuncKey, List<(FuncKey? Enclosing, List<Expr> Args)>> _maCallSites = new();
 
     // Function names that appear anywhere other than as the head of a saturated direct call. Their
     // call-site census is not provably complete, so they are never treated as move-safe.
@@ -49,8 +95,8 @@ public sealed partial class Lowering
 
     // Memoization for the on-demand greatest fixpoint. A (func,param) currently being resolved is in
     // _maInProgress; re-encountering it (a cycle) yields "not proven" — the sound under-approximation.
-    private readonly Dictionary<(string, string), bool> _maMoveSafeMemo = new();
-    private readonly HashSet<(string, string)> _maInProgress = new();
+    private readonly Dictionary<(FuncKey, string), bool> _maMoveSafeMemo = new();
+    private readonly HashSet<(FuncKey, string)> _maInProgress = new();
 
     private bool _maAnalyzed;
 
@@ -80,14 +126,13 @@ public sealed partial class Lowering
     // to `x` is itself a move. A function whose result reaches {} and is not poisoned is result-fresh
     // (its result is a uniquely-owned freshly-allocated value for any arguments) — the higher-order-seed
     // case, subsumed here as the empty-reach special case.
-    private readonly Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> _maResultReach =
-        new(StringComparer.Ordinal);
+    private readonly Dictionary<FuncKey, (Dictionary<string, int> Counts, bool Poison)> _maResultReach = new();
 
     // Stable per-function ownership contracts materialized after the move-safety and result-reach
     // fixpoints converge. Later lowering passes read this table instead of reaching into the analysis
-    // dictionaries directly.
-    private readonly Dictionary<string, FunctionOwnershipSummary> _ownershipSummaries =
-        new(StringComparer.Ordinal);
+    // dictionaries directly, through the name-based GetOwnershipSummary surface below (resolved via
+    // _maNameIndex), not this dictionary directly.
+    private readonly Dictionary<FuncKey, FunctionOwnershipSummary> _ownershipSummaries = new();
 
     // Flat merge of every registered function's ExpressionFreshness map (see AnalyzeReuseCopyElision),
     // keyed by reference identity like the per-function maps it merges. Lets a shadow-compare hook
@@ -132,13 +177,12 @@ public sealed partial class Lowering
     // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRecursive / CallReach) with
     // the outer params held at identity and the accumulator bound to x. Maps registered name → the inner
     // recursive binder name, the outer parameter names, and the accumulator parameter name.
-    private readonly Dictionary<string, (string RecursiveName, List<string> Outer, string Acc)> _maNestedRecursive =
-        new(StringComparer.Ordinal);
+    private readonly Dictionary<FuncKey, (string RecursiveName, List<string> Outer, string Acc)> _maNestedRecursive = new();
 
     // The nested-rec context of the function currently being analyzed by ComputeResultReach (set per pass,
     // null for ordinary functions). Lets CallReach recognize the inner `go(x)` self-call and map it to the
-    // enclosing function's summary. Func is the registered (full-param) function name.
-    private (string Func, string RecursiveName, List<string> Outer, string Acc)? _maSelfRecursive;
+    // enclosing function's summary. Func is the registered (full-param) function's FuncKey.
+    private (FuncKey Func, string RecursiveName, List<string> Outer, string Acc)? _maSelfRecursive;
 
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
@@ -150,6 +194,8 @@ public sealed partial class Lowering
     {
         _maFuncs.Clear();
         _maValueRhs.Clear();
+        _maNameIndex.Clear();
+        _maKeyName.Clear();
         _maCallSites.Clear();
         _maEscaped.Clear();
         _maAmbiguous.Clear();
@@ -163,22 +209,28 @@ public sealed partial class Lowering
 
         RegisterBindings(desugaredBody);
 
-        // Duplicated names are unusable: drop them from the function table and mark escaped so no
-        // move-safety proof can rely on them.
+        // Duplicated names are unusable: drop them from the function table (and the name index a
+        // bare-name lookup resolves through) and mark escaped so no move-safety proof can rely on them.
         foreach (var name in _maAmbiguous)
         {
-            _maFuncs.Remove(name);
+            if (_maNameIndex.Remove(name, out var key))
+            {
+                _maFuncs.Remove(key);
+                _maKeyName.Remove(key);
+            }
+
             _maValueRhs.Remove(name);
             _maEscaped.Add(name);
         }
 
-        CollectCallsAndEscapes(desugaredBody, "");
+        CollectCallsAndEscapes(desugaredBody, null);
         ComputeResultReach();
         _maAnalyzed = true;
-        foreach (var function in _maFuncs.Keys.OrderBy(name => name, StringComparer.Ordinal))
+        foreach (var key in _maFuncs.Keys.OrderBy(k => _maKeyName[k], StringComparer.Ordinal))
         {
-            var summary = CreateOwnershipSummary(function, _maFuncs[function]);
-            _ownershipSummaries[function] = summary;
+            var functionName = _maKeyName[key];
+            var summary = CreateOwnershipSummary(key, functionName, _maFuncs[key]);
+            _ownershipSummaries[key] = summary;
 
             // Every Expr node is reference-unique across the whole desugared program (each function's
             // body is a distinct subtree), so merging every function's ExpressionFreshness map into one
@@ -221,17 +273,17 @@ public sealed partial class Lowering
         switch (e)
         {
             case Expr.Let l:
-                RegisterOneBinding(l.Name, l.Value);
+                RegisterOneBinding(l, l.Name, l.Value);
                 RegisterBindings(l.Value);
                 RegisterBindings(l.Body);
                 return;
             case Expr.LetRecursive lr:
-                RegisterOneBinding(lr.Name, lr.Value);
+                RegisterOneBinding(lr, lr.Name, lr.Value);
                 RegisterBindings(lr.Value);
                 RegisterBindings(lr.Body);
                 return;
             case Expr.LetResult lres:
-                RegisterOneBinding(lres.Name, lres.Value);
+                RegisterOneBinding(lres, lres.Name, lres.Value);
                 RegisterBindings(lres.Value);
                 RegisterBindings(lres.Body);
                 return;
@@ -269,9 +321,9 @@ public sealed partial class Lowering
         }
     }
 
-    private void RegisterOneBinding(string name, Expr value)
+    private void RegisterOneBinding(Expr binder, string name, Expr value)
     {
-        if (_maValueRhs.ContainsKey(name) || _maFuncs.ContainsKey(name))
+        if (_maValueRhs.ContainsKey(name) || _maNameIndex.ContainsKey(name))
         {
             _maAmbiguous.Add(name);
             return;
@@ -281,19 +333,23 @@ public sealed partial class Lowering
         _maValueRhs[name] = stripped;
         if (stripped is Expr.Lambda lam)
         {
+            var key = new FuncKey(binder);
             if (TryGetNestedRecursiveReturnShape(lam, out var outer, out var accParam, out var recursiveName, out var innerBody))
             {
                 // Register the Map.set-shape with the accumulator as a real trailing parameter and the
                 // inner recursive body as the function body, so its full (outer + accumulator) application
                 // is analyzable. The inner `go(x)` self-call is resolved in CallReach via _maSelfRecursive.
                 var full = new List<string>(outer) { accParam };
-                _maFuncs[name] = (full, innerBody);
-                _maNestedRecursive[name] = (recursiveName, outer, accParam);
+                _maFuncs[key] = (full, innerBody);
+                _maNestedRecursive[key] = (recursiveName, outer, accParam);
             }
             else
             {
-                _maFuncs[name] = (CollectLambdaParams(lam), GetInnermostBody(lam));
+                _maFuncs[key] = (CollectLambdaParams(lam), GetInnermostBody(lam));
             }
+
+            _maNameIndex[name] = key;
+            _maKeyName[key] = name;
         }
     }
 
@@ -432,7 +488,9 @@ public sealed partial class Lowering
     /// program has been analysed). Introspection surface for ownership summaries.
     /// </summary>
     internal IReadOnlyCollection<string> AnalyzedFunctionNames =>
-        _maAnalyzed ? _ownershipSummaries.Keys.OrderBy(name => name, StringComparer.Ordinal).ToList() : [];
+        _maAnalyzed
+            ? _ownershipSummaries.Keys.Select(key => _maKeyName[key]).OrderBy(name => name, StringComparer.Ordinal).ToList()
+            : [];
 
     /// <summary>
     /// Returns the materialized <see cref="FunctionOwnershipSummary"/> for a top-level function, or null if
@@ -442,7 +500,11 @@ public sealed partial class Lowering
     /// </summary>
     internal FunctionOwnershipSummary? GetOwnershipSummary(string function)
     {
-        return _maAnalyzed && _ownershipSummaries.TryGetValue(function, out var summary) ? summary : null;
+        return _maAnalyzed
+            && _maNameIndex.TryGetValue(function, out var key)
+            && _ownershipSummaries.TryGetValue(key, out var summary)
+            ? summary
+            : null;
     }
 
     private bool IsFreshOwnershipResultCall(Expr expression)
@@ -466,7 +528,8 @@ public sealed partial class Lowering
     }
 
     private FunctionOwnershipSummary CreateOwnershipSummary(
-        string function,
+        FuncKey function,
+        string functionName,
         (List<string> Params, Expr Body) info)
     {
         var unique = new HashSet<string>(StringComparer.Ordinal);
@@ -488,7 +551,7 @@ public sealed partial class Lowering
 
         var bound = new HashSet<string>(info.Params, StringComparer.Ordinal);
         var captures = FreeVars(info.Body, bound)
-            .Where(name => _maValueRhs.ContainsKey(name) && !_maFuncs.ContainsKey(name))
+            .Where(name => _maValueRhs.ContainsKey(name) && !_maNameIndex.ContainsKey(name))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
@@ -497,11 +560,11 @@ public sealed partial class Lowering
             : (new Dictionary<string, int>(StringComparer.Ordinal), false);
 
         var expressionFreshness = ComputeExpressionFreshness(function, info);
-        var provenance = ResolveFunctionResultProvenance(function);
-        var tcoParamFacts = ComputeTcoParamFacts(function, info, expressionFreshness);
+        var provenance = ResolveFunctionResultProvenance(functionName);
+        var tcoParamFacts = ComputeTcoParamFacts(function, functionName, info, expressionFreshness);
 
         return new FunctionOwnershipSummary(
-            function,
+            functionName,
             info.Params.ToList(),
             parameterOwnership,
             unique,
@@ -536,16 +599,25 @@ public sealed partial class Lowering
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
     /// </summary>
     private Dictionary<string, TcoParamStructuralFacts> ComputeTcoParamFacts(
-        string function,
+        FuncKey function,
+        string functionName,
         (List<string> Params, Expr Body) info,
         IReadOnlyDictionary<Expr, bool> expressionFreshness)
     {
         var paramNames = info.Params;
         var state = new TcoParamFactsState { Observed = new TcoSelfCallArgumentShape?[paramNames.Count] };
+
+        // Seeds the walk's own identity scope with exactly one entry: functionName resolves to
+        // function's own FuncKey. This is the base case a genuinely lexical, live-extended scope (see
+        // TcoParamFactsWalk) needs to answer "does this self-looking call actually denote ME" instead of
+        // comparing callee names as bare strings; no other name is ever looked up by this walk, so no
+        // wider (whole-program) base layer is needed here.
+        var scope = new Dictionary<string, FuncKey>(StringComparer.Ordinal) { [functionName] = function };
         TcoParamFactsWalk(
             info.Body,
             new Dictionary<string, string>(StringComparer.Ordinal),
             function,
+            scope,
             paramNames,
             expressionFreshness,
             state);
@@ -570,11 +642,19 @@ public sealed partial class Lowering
     // Walks the tail spine (If arms, Match case bodies, Let bodies) the same way
     // CollectConsumedListTailParams does, threading a tail-owner map (extracted binding name -> the
     // parameter it was pattern-matched out of, one Cons level deep) so a self-call argument that is
-    // just that extracted tail can be recognized as ConsumedTail.
+    // just that extracted tail can be recognized as ConsumedTail. Also threads a live, lexically-
+    // extended scope (name -> the FuncKey it currently denotes), copy-on-write extended at every
+    // Let/LetRecursive/LetResult crossed exactly the way ExtendEnv extends ResultReach's own env: a
+    // locally nested binding of the same name as one already in scope shadows it for the rest of this
+    // node's body, resolving to the newly-crossed binder's own FuncKey when that binder itself
+    // registered as a function, or to no function at all (removed from scope) when it did not —
+    // matching a bare _maFuncs.ContainsKey check's own verdict for that exact occurrence, not a
+    // whole-program name lookup.
     private void TcoParamFactsWalk(
         Expr expression,
         IReadOnlyDictionary<string, string> tailOwners,
-        string function,
+        FuncKey function,
+        IReadOnlyDictionary<string, FuncKey> scope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
@@ -582,8 +662,8 @@ public sealed partial class Lowering
         switch (expression)
         {
             case Expr.If iff:
-                TcoParamFactsWalk(iff.Then, tailOwners, function, paramNames, expressionFreshness, state);
-                TcoParamFactsWalk(iff.Else, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(iff.Then, tailOwners, function, scope, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(iff.Else, tailOwners, function, scope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Match match:
                 foreach (MatchCase matchCase in match.Cases)
@@ -599,23 +679,51 @@ public sealed partial class Lowering
                         };
                     }
 
-                    TcoParamFactsWalk(matchCase.Body, armTailOwners, function, paramNames, expressionFreshness, state);
+                    TcoParamFactsWalk(matchCase.Body, armTailOwners, function, scope, paramNames, expressionFreshness, state);
                 }
 
                 return;
             case Expr.Let let:
-                TcoParamFactsWalk(let.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(
+                    let.Body, tailOwners, function, ExtendFuncScope(scope, let, let.Name), paramNames, expressionFreshness, state);
                 return;
             case Expr.LetResult letResult:
-                TcoParamFactsWalk(letResult.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(
+                    letResult.Body, tailOwners, function, ExtendFuncScope(scope, letResult, letResult.Name), paramNames,
+                    expressionFreshness, state);
                 return;
             case Expr.LetRecursive letRecursive:
-                TcoParamFactsWalk(letRecursive.Body, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(
+                    letRecursive.Body, tailOwners, function, ExtendFuncScope(scope, letRecursive, letRecursive.Name), paramNames,
+                    expressionFreshness, state);
                 return;
             case Expr.Call:
-                TcoParamFactsWalkCall(expression, tailOwners, function, paramNames, expressionFreshness, state);
+                TcoParamFactsWalkCall(expression, tailOwners, function, scope, paramNames, expressionFreshness, state);
                 return;
         }
+    }
+
+    // A nested binder shadows `name` for everything in its own body: resolving to its own FuncKey when
+    // this exact occurrence registered as a function (RegisterOneBinding only does so for a lambda-
+    // valued RHS), or removed from scope (denoting no function at all, matching a fresh non-function
+    // local of the same name) otherwise. binder is the Let/LetRecursive/LetResult node itself, so
+    // constructing its FuncKey and checking _maFuncs is a check against THIS SPECIFIC occurrence, not a
+    // whole-program name lookup — sound regardless of whether `name` collides elsewhere in the program.
+    private IReadOnlyDictionary<string, FuncKey> ExtendFuncScope(
+        IReadOnlyDictionary<string, FuncKey> scope, Expr binder, string name)
+    {
+        var next = new Dictionary<string, FuncKey>(scope, StringComparer.Ordinal);
+        var key = new FuncKey(binder);
+        if (_maFuncs.ContainsKey(key))
+        {
+            next[name] = key;
+        }
+        else
+        {
+            next.Remove(name);
+        }
+
+        return next;
     }
 
     // The self-call site itself: classifies every argument position's local shape and narrows (or
@@ -623,7 +731,8 @@ public sealed partial class Lowering
     private void TcoParamFactsWalkCall(
         Expr expression,
         IReadOnlyDictionary<string, string> tailOwners,
-        string function,
+        FuncKey function,
+        IReadOnlyDictionary<string, FuncKey> scope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
@@ -631,7 +740,8 @@ public sealed partial class Lowering
         var arguments = new List<Expr>();
         Expr root = CollectCallArgs(expression, arguments);
         if (root is not Expr.Var callee
-            || !string.Equals(callee.Name, function, StringComparison.Ordinal)
+            || !scope.TryGetValue(callee.Name, out var calleeKey)
+            || !calleeKey.Equals(function)
             || arguments.Count != paramNames.Count)
         {
             return;
@@ -722,7 +832,7 @@ public sealed partial class Lowering
     /// function <paramref name="func"/> is uniquely owned at every invocation. Computed on demand
     /// with cycle-breaking (a cycle resolves to false — the sound under-approximation).
     /// </summary>
-    private bool IsParamMoveSafe(string func, string param)
+    private bool IsParamMoveSafe(FuncKey func, string param)
     {
         var key = (func, param);
         if (_maMoveSafeMemo.TryGetValue(key, out var cached))
@@ -741,11 +851,11 @@ public sealed partial class Lowering
         return result;
     }
 
-    private bool ComputeParamMoveSafe(string func, string param)
+    private bool ComputeParamMoveSafe(FuncKey func, string param)
     {
         // The function must be fully visible (never escapes as a value) and have a known parameter
         // list, otherwise its call sites are not provably complete.
-        if (_maEscaped.Contains(func) || !_maFuncs.TryGetValue(func, out var info))
+        if (!_maFuncs.TryGetValue(func, out var info) || _maEscaped.Contains(_maKeyName[func]))
         {
             return false;
         }
@@ -764,7 +874,7 @@ public sealed partial class Lowering
         bool sawExternal = false;
         foreach (var (enclosing, args) in sites)
         {
-            if (string.Equals(enclosing, func, StringComparison.Ordinal))
+            if (enclosing is { } enclosingKey && enclosingKey.Equals(func))
             {
                 continue; // self-recursion is the TCO back-edge, not an external entry
             }
@@ -785,11 +895,12 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// True when argument <paramref name="arg"/>, passed from function <paramref name="enclosing"/>,
-    /// denotes a uniquely-owned value that is moved (not retained) here: either a safe nullary seed,
-    /// or a move-linear reference to a move-safe accumulator parameter of the enclosing function.
+    /// True when argument <paramref name="arg"/>, passed from function <paramref name="enclosing"/>
+    /// (null at top level), denotes a uniquely-owned value that is moved (not retained) here: either a
+    /// safe nullary seed, or a move-linear reference to a move-safe accumulator parameter of the
+    /// enclosing function.
     /// </summary>
-    private bool ArgIsMove(Expr arg, string enclosing)
+    private bool ArgIsMove(Expr arg, FuncKey? enclosing)
     {
         if (IsNullarySeed(arg, new HashSet<string>(StringComparer.Ordinal)))
         {
@@ -832,16 +943,23 @@ public sealed partial class Lowering
     /// move-safe accumulator parameter of the enclosing function, or a let-bound fresh construction
     /// that is move-linear within its binding scope.
     /// </summary>
-    private bool ArgIsMoveVar(Expr.Var v, string enclosing)
+    private bool ArgIsMoveVar(Expr.Var v, FuncKey? enclosing)
     {
-        bool haveFunc = _maFuncs.TryGetValue(enclosing, out var encInfo);
+        FuncKey? encKey = null;
+        (List<string> Params, Expr Body)? encInfo = null;
+        if (enclosing is { } candidateKey && _maFuncs.TryGetValue(candidateKey, out var candidateInfo))
+        {
+            encKey = candidateKey;
+            encInfo = candidateInfo;
+        }
 
         // (i) A move-linear reference to a move-safe accumulator parameter of the enclosing
         // function (the transitive, interprocedural step).
-        if (haveFunc
-            && encInfo.Params.Contains(v.Name)
-            && IsMoveLinear(v.Name, encInfo.Body)
-            && IsParamMoveSafe(enclosing, v.Name))
+        if (encInfo is { } enc
+            && encKey is { } resolvedKey
+            && enc.Params.Contains(v.Name)
+            && IsMoveLinear(v.Name, enc.Body)
+            && IsParamMoveSafe(resolvedKey, v.Name))
         {
             return true;
         }
@@ -858,7 +976,7 @@ public sealed partial class Lowering
         // registered function frame) the enclosing body is the whole desugared program; a
         // top-level `let seed = <fresh>` lives on its spine and move-linearity over the whole
         // program is the stronger proof of unique ownership.
-        Expr? encBody = haveFunc ? encInfo.Body : (enclosing.Length == 0 ? _maBody : null);
+        Expr? encBody = encInfo?.Body ?? (enclosing is null ? _maBody : null);
         if (encBody is not null
             && !_maAmbiguous.Contains(v.Name)
             && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
@@ -1164,7 +1282,7 @@ public sealed partial class Lowering
     /// recording turned on, so it reproduces the converged pass's per-node verdicts rather than an
     /// earlier, not-yet-stable iteration's.
     /// </summary>
-    private Dictionary<Expr, bool> ComputeExpressionFreshness(string function, (List<string> Params, Expr Body) info)
+    private Dictionary<Expr, bool> ComputeExpressionFreshness(FuncKey function, (List<string> Params, Expr Body) info)
     {
         var env = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
         foreach (var p in info.Params)
@@ -1671,7 +1789,8 @@ public sealed partial class Lowering
 
         if (name is null
             || _maAmbiguous.Contains(name)
-            || !_maFuncs.TryGetValue(name, out var info))
+            || !_maNameIndex.TryGetValue(name, out var key)
+            || !_maFuncs.TryGetValue(key, out var info))
         {
             return ReachPoisoned();
         }
@@ -1685,14 +1804,14 @@ public sealed partial class Lowering
         // over "@i" argument-position markers; substitute each marker's argument's reach and sum.
         if (args.Count > info.Params.Count)
         {
-            return CallReachOverApplied(name, info, args, env);
+            return CallReachOverApplied(key, info, args, env);
         }
 
-        return CallReachRegistered(name, info, args, env);
+        return CallReachRegistered(key, info, args, env);
     }
 
     private (Dictionary<string, int> Counts, bool Poison) CallReachSelfRecursive(
-        (string Func, string RecursiveName, List<string> Outer, string Acc) sr,
+        (FuncKey Func, string RecursiveName, List<string> Outer, string Acc) sr,
         List<Expr> args,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
@@ -1751,12 +1870,12 @@ public sealed partial class Lowering
     }
 
     private (Dictionary<string, int> Counts, bool Poison) CallReachOverApplied(
-        string name,
+        FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
-        var over = OverApplicationReach(name, info, args);
+        var over = OverApplicationReach(key, info, args);
         if (over is not { } ov || ov.Poison)
         {
             return ReachPoisoned();
@@ -1778,13 +1897,13 @@ public sealed partial class Lowering
     }
 
     private (Dictionary<string, int> Counts, bool Poison) CallReachRegistered(
-        string name,
+        FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
     {
         if (args.Count != info.Params.Count
-            || !_maResultReach.TryGetValue(name, out var summary)
+            || !_maResultReach.TryGetValue(key, out var summary)
             || summary.Poison)
         {
             RecordUncoveredCallArgumentsFreshness(args, env, covered: null);
@@ -1854,7 +1973,7 @@ public sealed partial class Lowering
     /// <see cref="IsFullyFreshConstruction"/>); this is the non-constructor case that rule cannot see
     /// through.
     /// </summary>
-    private bool IsResultAliasMove(Expr arg, string enclosing)
+    private bool IsResultAliasMove(Expr arg, FuncKey? enclosing)
     {
         if (arg is not Expr.Call)
         {
@@ -1879,7 +1998,8 @@ public sealed partial class Lowering
 
         if (name is null
             || _maAmbiguous.Contains(name)
-            || !_maFuncs.TryGetValue(name, out var info))
+            || !_maNameIndex.TryGetValue(name, out var key)
+            || !_maFuncs.TryGetValue(key, out var info))
         {
             return false;
         }
@@ -1890,11 +2010,11 @@ public sealed partial class Lowering
         // capturing a retained value or a global is declined (poison / non-move argument).
         if (args.Count > info.Params.Count)
         {
-            return IsResultAliasMoveOverApplied(name, info, args, enclosing);
+            return IsResultAliasMoveOverApplied(key, info, args, enclosing);
         }
 
         if (args.Count != info.Params.Count
-            || !_maResultReach.TryGetValue(name, out var summary)
+            || !_maResultReach.TryGetValue(key, out var summary)
             || summary.Poison)
         {
             return false;
@@ -1913,12 +2033,12 @@ public sealed partial class Lowering
     }
 
     private bool IsResultAliasMoveOverApplied(
-        string name,
+        FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        string enclosing)
+        FuncKey? enclosing)
     {
-        var over = OverApplicationReach(name, info, args);
+        var over = OverApplicationReach(key, info, args);
         if (over is not { } ov || ov.Poison)
         {
             return false;
@@ -1938,7 +2058,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// (CO-2d) Symbolic result-reach of an <b>over-applied</b> call to registered function
-    /// <paramref name="name"/> — one whose surplus arguments are applied to a closure the callee
+    /// <paramref name="key"/> — one whose surplus arguments are applied to a closure the callee
     /// returns. Returns a reach over <c>"@i"</c> argument-position markers (with the callee's own
     /// parameters mapped to their argument markers, so capture of a parameter is tracked), plus a
     /// poison flag; <c>null</c> when not over-applied. Inlines the callee body one level, binding each
@@ -1948,7 +2068,7 @@ public sealed partial class Lowering
     /// tokens are stripped; the depth guard poisons a chain of nested over-applications.
     /// </summary>
     private (Dictionary<string, int> Counts, bool Poison)? OverApplicationReach(
-        string name,
+        FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args)
     {
@@ -2269,7 +2389,7 @@ public sealed partial class Lowering
     /// Records saturated direct call sites and marks any function name that appears in a non-call-head
     /// position (bare value, partial/over-application) as escaped.
     /// </summary>
-    private void CollectCallsAndEscapes(Expr e, string enclosing)
+    private void CollectCallsAndEscapes(Expr e, FuncKey? enclosing)
     {
         switch (e)
         {
@@ -2278,7 +2398,7 @@ public sealed partial class Lowering
                 return;
 
             case Expr.Var v:
-                if (_maFuncs.ContainsKey(v.Name))
+                if (_maNameIndex.ContainsKey(v.Name))
                 {
                     _maEscaped.Add(v.Name);
                 }
@@ -2286,7 +2406,7 @@ public sealed partial class Lowering
                 return;
 
             case Expr.QualifiedVar qv:
-                if (ResolveSpecializableCalleeName(qv) is { } qn && _maFuncs.ContainsKey(qn))
+                if (ResolveSpecializableCalleeName(qv) is { } qn && _maNameIndex.ContainsKey(qn))
                 {
                     _maEscaped.Add(qn);
                 }
@@ -2331,7 +2451,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void CollectCallsAndEscapesCall(Expr e, string enclosing)
+    private void CollectCallsAndEscapesCall(Expr e, FuncKey? enclosing)
     {
         var args = new List<Expr>();
         var root = CollectCallArgs(e, args);
@@ -2343,15 +2463,16 @@ public sealed partial class Lowering
         };
 
         if (calleeName is not null
-            && _maFuncs.TryGetValue(calleeName, out var callee)
+            && _maNameIndex.TryGetValue(calleeName, out var calleeKey)
+            && _maFuncs.TryGetValue(calleeKey, out var callee)
             && args.Count == callee.Params.Count)
         {
             // A complete, saturated call to a known function: record it and recurse into
             // the arguments only (the head is accounted for, not an escape).
-            if (!_maCallSites.TryGetValue(calleeName, out var list))
+            if (!_maCallSites.TryGetValue(calleeKey, out var list))
             {
-                list = new List<(string, List<Expr>)>();
-                _maCallSites[calleeName] = list;
+                list = new List<(FuncKey?, List<Expr>)>();
+                _maCallSites[calleeKey] = list;
             }
 
             list.Add((enclosing, args));
@@ -2375,7 +2496,7 @@ public sealed partial class Lowering
     // (its accumulator can then be proven uniquely owned) instead of escaping as a partially-applied
     // value. Sound by construction, fail-closed: any use of g that is not a completing call leaves f to
     // escape via the normal walk. Returns true when the binding was resolved and handled here.
-    private bool TryCollectPartialFoldBinding(Expr.Let l, string enclosing)
+    private bool TryCollectPartialFoldBinding(Expr.Let l, FuncKey? enclosing)
     {
         if (_maAmbiguous.Contains(l.Name))
         {
@@ -2385,7 +2506,8 @@ public sealed partial class Lowering
         var partialArgs = new List<Expr>();
         var root = CollectCallArgs(l.Value, partialArgs);
         if (root is not Expr.Var f
-            || !_maFuncs.TryGetValue(f.Name, out var callee)
+            || !_maNameIndex.TryGetValue(f.Name, out var fKey)
+            || !_maFuncs.TryGetValue(fKey, out var callee)
             || partialArgs.Count == 0
             || partialArgs.Count >= callee.Params.Count)
         {
@@ -2400,10 +2522,10 @@ public sealed partial class Lowering
         }
 
         // Record f's now-visible saturated call sites (partial args ++ each completing call's args).
-        if (!_maCallSites.TryGetValue(f.Name, out var sites))
+        if (!_maCallSites.TryGetValue(fKey, out var sites))
         {
-            sites = new List<(string, List<Expr>)>();
-            _maCallSites[f.Name] = sites;
+            sites = new List<(FuncKey?, List<Expr>)>();
+            _maCallSites[fKey] = sites;
         }
 
         foreach (var moreArgs in completing)
@@ -2559,7 +2681,7 @@ public sealed partial class Lowering
             && AllUsesAreCompletingCalls(b.Right, g, neededMore, completing);
     }
 
-    private void CollectCallsAndEscapesMatch(Expr.Match m, string enclosing)
+    private void CollectCallsAndEscapesMatch(Expr.Match m, FuncKey? enclosing)
     {
         CollectCallsAndEscapes(m.Value, enclosing);
         foreach (var c in m.Cases)
@@ -2572,7 +2694,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void CollectCallsAndEscapesOperators(Expr e, string enclosing)
+    private void CollectCallsAndEscapesOperators(Expr e, FuncKey? enclosing)
     {
         switch (e)
         {
@@ -2600,7 +2722,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void CollectCallsAndEscapesAggregates(Expr e, string enclosing)
+    private void CollectCallsAndEscapesAggregates(Expr e, FuncKey? enclosing)
     {
         switch (e)
         {
@@ -2653,7 +2775,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void CollectBinary(Expr left, Expr right, string enclosing)
+    private void CollectBinary(Expr left, Expr right, FuncKey? enclosing)
     {
         CollectCallsAndEscapes(left, enclosing);
         CollectCallsAndEscapes(right, enclosing);
@@ -2665,11 +2787,11 @@ public sealed partial class Lowering
     /// (so calls inside it resolve their <c>Var</c> arguments against that function's parameters);
     /// otherwise the value is walked under the current enclosing function.
     /// </summary>
-    private void WalkBindingValue(string name, Expr value, string enclosing)
+    private void WalkBindingValue(string name, Expr value, FuncKey? enclosing)
     {
-        if (!_maAmbiguous.Contains(name) && _maFuncs.TryGetValue(name, out var info))
+        if (!_maAmbiguous.Contains(name) && _maNameIndex.TryGetValue(name, out var key) && _maFuncs.TryGetValue(key, out var info))
         {
-            CollectCallsAndEscapes(info.Body, name);
+            CollectCallsAndEscapes(info.Body, key);
         }
         else
         {
