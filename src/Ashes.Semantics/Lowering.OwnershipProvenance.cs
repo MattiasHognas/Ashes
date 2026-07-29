@@ -78,7 +78,7 @@ public sealed partial class Lowering
     /// </summary>
     private FunctionResultProvenance ClassifyFunctionResultProvenance(string function)
     {
-        if (!_maFuncs.TryGetValue(function, out var info))
+        if (!_maNameIndex.TryGetValue(function, out var key) || !_maFuncs.TryGetValue(key, out var info))
         {
             return new FunctionResultProvenance(false, null);
         }
@@ -400,7 +400,7 @@ public sealed partial class Lowering
             _ => null,
         };
 
-        if (name is null || _maAmbiguous.Contains(name) || !_maFuncs.ContainsKey(name))
+        if (name is null || _maAmbiguous.Contains(name) || !_maNameIndex.ContainsKey(name))
         {
             return false;
         }

@@ -3849,3 +3849,185 @@ and a phased decomposition (§17.8) a future session can scope its own work agai
 document's own repeatedly-applied standard, and per this session's own brief, that is the responsible
 place to stop: the gap remains open, exactly as it was after §16.4, but the next attempt now has a real
 design and a real blast-radius map to start from instead of having to re-derive both from scratch.
+
+## 18. `_maFuncs` per-binding identity: Step A landed (`FuncKey` introduced, tables re-keyed, one traversal family genuinely scope-threaded)
+
+This section picks up §17.8's own phased plan and lands its Step A: introduce `FuncKey`, re-key the
+seven tables the plan named, and populate real scope-resolution machinery for at least one traversal
+family end to end, all without changing any function's already-computed facts. §17.7's three reasons to
+stop (scale, a live downstream consumer, an expensive validation bar) are exactly why this session
+scoped down further than "thread genuine lexical scope through all four families" the moment the full
+blast radius was read directly rather than re-estimated — the result below is smaller than §17.8's Step A
+as originally worded, landed deliberately narrower so every line of it could be verified with confidence
+rather than trusted on the strength of the test suite alone.
+
+### 18.1 What was built
+
+**`FuncKey`** (`Lowering.MoveAnalysis.cs`, alongside `_maFuncs`): a `readonly struct` wrapping a binding's
+own `Let`/`LetRecursive`/`LetResult` node and comparing by reference equality, the exact pattern
+`_maExpressionFreshnessAll`/`_maExpressionFreshness` already use for `Expr`-keyed tables (a C# record
+compares structurally, so wrapping the node is what gives two textually-identical bindings — e.g. two
+unrelated functions each with their own local `let recursive go = ...` helper — two distinct keys instead
+of one colliding key).
+
+**Re-keyed by `FuncKey`**, exactly the seven tables §17.8 named: `_maFuncs`, `_maCallSites`,
+`_maResultReach`, `_maNestedRecursive`, `_maMoveSafeMemo`, `_maInProgress`, `_ownershipSummaries`. Two
+small supporting tables were added to make the re-keying behavior-preserving: `_maNameIndex` (bare name
+→ the one `FuncKey` a bare-name lookup denotes today, populated/pruned in lockstep with `_maAmbiguous`)
+and its inverse `_maKeyName` (needed wherever a `FuncKey` must be reported or looked up by name again).
+`_maCallSites`'s own `Enclosing` field (previously a bare string, `""` meaning top level) became
+`FuncKey?` (`null` meaning top level) — the same identity swap, not a new resolution mechanism, since
+that field was already unambiguous by construction at the point it was recorded.
+
+The public, string-keyed surface every other file in the compiler consumes —
+`GetOwnershipSummary(string)`, `AnalyzedFunctionNames`, `FormatOwnershipSummaries`,
+`ReuseAccumulatorIsUnique`, `IsFreshOwnershipResultCall` — is **unchanged in signature and behavior**:
+every one of them resolves through `_maNameIndex` internally before touching the re-keyed tables, so
+every external caller (`Lowering.cs`, `Lowering.Borrow.cs`, `Lowering.OwnershipShadowCompare.cs`, and
+every C# test that calls `GetOwnershipSummary("someName")`) is unaffected.
+
+**Blast radius, re-verified directly rather than re-trusted from §17.6's own estimate**: reading the
+whole 2679-line file (not just the four traversal families §17.6 enumerated) found the seven tables are
+read or written throughout essentially the entire file — `IsParamMoveSafe`/`ComputeParamMoveSafe`,
+`CreateOwnershipSummary`, `AnalyzeReuseCopyElision`, `RegisterOneBinding`, and the public surface itself
+all touch them directly, not only the ~26 methods across the four named families. Splitting the re-keying
+itself into "families done" vs. "families not done" would have left the file in an inconsistent,
+half-migrated state — arguably a *larger* risk than migrating it as one coherent, carefully-verified pass,
+since a table re-keyed in one method but still read as a bare string in another would not even compile,
+let alone behave correctly. The re-keying was therefore done as a single pass across the whole file, with
+every one of its roughly 30 internal read/write sites updated together and the whole solution rebuilt
+after each cluster of edits.
+
+One forced, minimal, compile-preserving exception outside `Lowering.MoveAnalysis.cs`: §17.2's own finding
+— `Lowering.OwnershipProvenance.cs` reads `_maFuncs` directly at two sites
+(`ClassifyFunctionResultProvenance`'s `_maFuncs.TryGetValue(function, ...)` and
+`TryResolveForwardTarget`'s `_maFuncs.ContainsKey(name)`) — meant re-keying `_maFuncs` would otherwise not
+compile against that file. Both sites now resolve through `_maNameIndex` first (a one-line change each);
+`_maProvenanceMemo`/`_maProvenanceInProgress`, that file's own memoization, is untouched and remains
+string-keyed exactly as §17.8's Step C left it for a future session.
+
+### 18.2 The scope-threading machinery: built and wired for one family, not four
+
+§17.6's design calls for a live, lexically-extended `scope: IReadOnlyDictionary<string, FuncKey>`
+threaded through every traversal that resolves a bare AST name against one of the re-keyed tables, built
+the same copy-on-write way `ResultReach`'s own `env`/`ExtendEnv` already is. This session built and wired
+that machinery **only for the smallest, zero-live-consumer family** — `ComputeTcoParamFacts`/
+`TcoParamFactsWalk`/`TcoParamFactsWalkCall` — exactly the "warm-up" §17.8 itself suggested trying first.
+The other three families (`ResultReach`/`CallReach`, ~15 methods; `CollectCallsAndEscapes`, ~8 methods;
+`ArgIsMove`/`TryFindLocalLet`, ~6 methods, of which only `ArgIsMove`/`ArgIsMoveVar` actually touch a
+re-keyed table — `TryFindLocalLet` and its helpers are pure AST pattern-matching with no `_maFuncs`/name
+resolution at all, confirmed by reading them directly) got the mechanical `FuncKey` re-typing described
+above, but still resolve a bare name via the flat, whole-program `_maNameIndex` — provably the same
+answer a bare `_maFuncs.ContainsKey`/`TryGetValue` lookup gives today, not yet a per-scope lexical
+resolution. Building genuinely live-threaded scope for those three families — particularly
+`ResultReach`/`CallReach`, the fixpoint `ResultProvenance` is computed from — is exactly the piece this
+session judged unsafe to also finish with the level of confidence this document's own standard requires,
+and is left for a dedicated future session, per §17.8's own explicit permission to land the lowest-risk
+slice alone.
+
+**`TcoParamFactsWalk`'s scope, concretely**: `ComputeTcoParamFacts(FuncKey function, string functionName,
+...)` seeds `scope` with exactly one entry, `{ [functionName] = function }` — no wider (whole-program)
+base layer is needed, because this walk never looks up any other name. `TcoParamFactsWalk` extends
+`scope` via a new `ExtendFuncScope` helper (the same copy-on-write pattern as `ExtendEnv`) at every
+`Let`/`LetRecursive`/`LetResult` it crosses: the newly-bound name resolves to *that exact binder's own*
+`FuncKey` (constructed directly from the binder node — `new FuncKey(let)` — and checked against `_maFuncs`
+to see whether this specific occurrence registered as a function) when it did, or is removed from scope
+(denoting no function at all) when it did not. `TcoParamFactsWalkCall`'s self-recursion check —
+previously `string.Equals(callee.Name, function, StringComparison.Ordinal)` — is now
+`scope.TryGetValue(callee.Name, out var calleeKey) && calleeKey.Equals(function)`: a genuine
+identity-based resolution through live lexical scope, not a bare-name string comparison.
+
+### 18.3 Why this specific family's change is provably zero-behavior-change, not merely empirically so
+
+`ComputeTcoParamFacts` only ever runs on a `function` still present in `_maFuncs` after the ambiguous-name
+cleanup in `AnalyzeReuseCopyElision` — i.e., only on a function whose bare name is **already globally
+unique** across the entire desugared program (any second binding anywhere sharing that name would have
+tripped `_maAmbiguous` and removed both from `_maFuncs` before this code ever runs). That single invariant
+means no nested binding anywhere inside `function`'s own body can ever share `functionName` — the one
+shape that would let `scope[functionName]` be shadowed to something else partway through the walk. So for
+*every* function this method is ever invoked on, `scope.TryGetValue(functionName, ...)` returns
+`function`'s own key at every point in the walk, with no exception — the live-scope-based self-call check
+and the original bare-string-equality check are not just observed to agree on this session's test corpus,
+they are mathematically forced to agree, given the invariant `AnalyzeReuseCopyElision` already enforces
+upstream of every call into this family. (The one case where they *could* diverge — a function shadowing
+its own name with a nested same-named helper — is exactly the shape `_maAmbiguous` already intercepts
+before `ComputeTcoParamFacts` is ever reached for either binding, so it can never actually arise here.)
+This is a stronger and more defensible safety argument than "the test suite still passes": it is a
+correctness proof for the specific slice landed, not an empirical observation about the corpus this
+session happened to run.
+
+### 18.4 Per-function zero-behavior-change verification
+
+Per §17.8's own explicit instruction — "a specific per-function comparison, since a global pass/fail could
+hide a compensating pair of errors" — this session built a baseline compiler from this session's own
+starting commit (`f54c488`, itself a doc-only cherry-pick of §17's own commit onto `origin/main`, so
+**no production source file differs** between that baseline and `origin/main` at the point this session
+began) and ran `ASHES_EXPLAIN_OWNERSHIP=all` through both the baseline and the modified compiler for every
+`.ash` file in `tests/` (499 files) and `challenges/` (13 files, both `.ash` challenge programs and the two
+server variants), diffing the sorted `[ownership] ...` lines (both the `FormatOwnershipSummaries`
+per-function facts and `PerceusLifetimePlacement`'s own `[ownership] place ...` diagnostics, which share
+the same env var) file by file.
+
+Result: **zero differing files, zero differing lines, across all 512 files** — the full corpus, not a
+sample. The focused 50-file corpus §17.8 names explicitly (`tests/tco_*.ash`, `reuse_*.ash`,
+`ownership_*.ash`, `runtime_rc_*.ash`) alone produced 3296 `[ownership]` lines (including genuine
+`unique=...`/`result=...`/`provenance=...` `FormatOwnershipSummaries` output, not only placement
+diagnostics), confirming the diff methodology was exercising real content, not comparing two empty
+outputs.
+
+### 18.5 Validation results
+
+- `dotnet build Ashes.slnx`: clean, 0 warnings, 0 errors.
+- `dotnet run --project src/Ashes.Tests -- --no-progress`: **1722/1722 passed** (same total as §17.9's
+  baseline), including `OwnershipTests`, `OwnershipProvenanceTests`, `UniquenessSummaryTests` (which
+  exercises `GetOwnershipSummary`/`AnalyzedFunctionNames`/`FormatOwnershipSummaries` directly by name),
+  `NestedTcoPatternAliasTests`, `MatchScrutineeWrapperDropTests`, `TcoPromotionCostSignalTests`,
+  `TcoRcEligibilityPredicateTests`.
+- `dotnet run --project src/Ashes.Lsp.Tests -- --no-progress`: **52/52 passed**.
+- `dotnet run --project src/Ashes.Cli -- test tests`: **544 passed, 0 failed, 44 skipped** — identical to
+  §17.9's baseline.
+- `dotnet format Ashes.slnx --verify-no-changes`: clean.
+- The `ASHES_EXPLAIN_OWNERSHIP=all` per-function diff described in §18.4: zero differences across all 512
+  `tests/`+`challenges/` files.
+- Every challenge (`1brc`, `binary-trees`, `fannkuch-redux`, `fasta`, `k-nucleotide`, `mandelbrot`,
+  `n-body`, `pidigits`, `regex-redux`, `reverse-complement`, `server` (both `http_echo`/`tcp_echo`),
+  `spectral-norm`) compiled at **both `-O0` and `-O2`** with the baseline and the modified compiler,
+  compared with `cmp -s` (a whole-file byte comparison, not `objdump -d`, per this document's own
+  standing caution about that check's vacuity on this compiler's binaries): **all 26 binaries
+  byte-for-byte identical**. Since an identical binary is, by definition, the identical program, this
+  is stronger evidence than a runtime comparison could add on top — the compiled artifact itself proves
+  every backend-visible decision this session's change could have touched produced the same result, not
+  merely that the two programs happened to behave the same on one input. `fannkuch-redux` N=11 at `-O2`
+  measured 256 KB peak RSS (matching this document's own standing regression baseline) and `binary-trees`
+  N=21 at `-O2` measured a sane, unremarkable ~192 MB — both run directly against the (byte-identical)
+  compiled binary as a sanity check on the baseline's own continued health, not as a differential
+  comparison (there is nothing to differ: the two binaries are the same file).
+
+### 18.6 Honest summary and Step B readiness
+
+This session landed §17.8's Step A, narrower than originally scoped: `FuncKey` introduced and all seven
+named tables re-keyed by it across the whole file (not just the four traversal families), with the
+public string-keyed surface and every external consumer unaffected; genuine live lexical scope-threading
+built and wired for exactly one family (`TcoParamFactsWalk`), proven — not merely tested — to be
+zero-behavior-change for every function it is ever invoked on, given an invariant `AnalyzeReuseCopyElision`
+already enforces; the other three families still resolve through the flat, whole-program `_maNameIndex`,
+which is provably equivalent to today's `_maFuncs`-by-bare-name lookup but is not yet a per-scope
+resolution. The per-function `ASHES_EXPLAIN_OWNERSHIP` diff across the full 512-file `tests/`+
+`challenges/` corpus, the full C# (1722/1722) and LSP (52/52) suites, the e2e suite (544/0/44, matching
+baseline), and byte-identical compiled binaries for every challenge at both optimization levels all
+support the same conclusion: no function's already-computed facts changed.
+
+Is Step B (extending the collision-detection logic to treat a scope-resolvable name as resolved rather
+than ambiguous) now safely attemptable next? Partially. For the `TcoParamFactsWalk` family specifically,
+the live-scope machinery is now built, wired, and validated — but that family has, per §17.6's own
+enumeration, zero live consumers today, so extending its own collision behavior would not by itself close
+any of §15.3's real shadow-compare gaps. The family that would actually matter for Step B —
+`ResultReach`/`CallReach`, the fixpoint `ResultProvenance` is computed from — still has no live
+scope-threading built at all; a future session attempting Step B for that family starts from the same
+"~15 methods, most fixpoint-sensitive code in the file, one live cutover consumer downstream" risk profile
+§17.7 described, now with one fewer family to design the threading pattern for from scratch (this
+session's `ExtendFuncScope`/seeded-scope pattern generalizes directly), but with the harder, higher-stakes
+family's own threading still entirely unbuilt. The honest scoping for a future session is therefore
+unchanged from §17.8's own advice: attempt `CollectCallsAndEscapes` (the next-smallest family) as its own
+Step A sub-slice before `ResultReach`/`CallReach`, and re-run this exact validation gate — the full
+per-function `ASHES_EXPLAIN_OWNERSHIP` diff plus byte-identical challenge binaries — after each one.
