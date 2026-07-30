@@ -14,3 +14,14 @@ overrides:
   # applyPatch (GHSA-73rr-hh4g-fpgx, fixed in 8.0.3). mocha only uses diff to render
   # test-failure diffs. Drop once mocha depends on diff >= 8.0.3 itself.
   diff: ^8.0.3
+  # Mocha still uses minimatch 9. Keep its CommonJS-compatible brace-expansion
+  # dependency on the maintenance release that backports CVE-2026-14257.
+  "minimatch@9>brace-expansion": 2.1.4
+
+# The registry advisory currently describes every version <=5.0.7 as affected,
+# so pnpm reports the fixed 2.1.4 maintenance backport above as vulnerable.
+# Drop this exception with the override once the advisory recognizes the
+# backport or Mocha moves to a minimatch release that uses brace-expansion 5.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mh99-v99m-4gvg
