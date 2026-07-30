@@ -680,6 +680,36 @@ public sealed class ReuseTokenTests
             .ShouldBeTrue("a traversal whose tail escapes to another function must keep RC normalization");
     }
 
+    [Test]
+    public void Record_list_traversal_that_hands_tail_to_guard_function_still_normalizes()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let hasAny values =
+                match values with
+                    | [] -> false
+                    | _ :: _ -> true
+
+            let recursive walk bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | Body(x, mass) :: rest when hasAny(rest) ->
+                        walk(rest)(acc + x * mass)
+                    | Body(x, mass) :: rest ->
+                        walk(rest)(acc + x * mass)
+
+            Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
+            """);
+
+        program.Functions.Prepend(program.EntryFunction)
+            .Any(function => function.Instructions.Any(
+                instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
+            .ShouldBeTrue("a traversal whose tail escapes through a guard must keep RC normalization");
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();

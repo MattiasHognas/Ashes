@@ -1183,25 +1183,6 @@ public sealed partial class Lowering
             && Prune(list.Element) is TypeRef.TNamedType element
             && TryGetCopyOnlyRecordConstructor(element, out _);
 
-    private bool IsBorrowableInspectOnlyList(TcoContext tco, string name, TypeRef.TList list)
-    {
-        int paramIndex = tco.ParamNames is { } names ? IndexOfOrdinal(names, name) : -1;
-        return IsBorrowableInspectOnlyList(tco, paramIndex, list);
-    }
-
-    private static int IndexOfOrdinal(IReadOnlyList<string> names, string name)
-    {
-        for (int i = 0; i < names.Count; i++)
-        {
-            if (string.Equals(names[i], name, StringComparison.Ordinal))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
     private bool TryGetCopyOnlyRecordConstructor(
         TypeRef.TNamedType named,
         out ConstructorSymbol constructor)
@@ -5015,30 +4996,23 @@ public sealed partial class Lowering
         {
             var tcoParamNames = CollectLambdaParams(lam2);
             FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
-            IReadOnlySet<int> loopInvariantParamOrdinals =
-                GetTcoParameterOrdinals(
-                    ownershipFunction,
-                    TcoSelfCallArgumentShape.UnchangedPassthrough);
-            IReadOnlySet<int> affineConsListParamOrdinals =
-                GetTcoParameterOrdinals(
-                    ownershipFunction,
-                    TcoSelfCallArgumentShape.GrownCons);
+            var tcoParamOrdinalFacts = GetTcoParameterOrdinalFacts(ownershipFunction);
             var freshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name);
-            var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
             var freshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext(
                 selfName: letRecursive.Name,
                 paramCount: paramCount,
                 paramNames: tcoParamNames,
-                loopInvariantParamOrdinals: loopInvariantParamOrdinals,
+                loopInvariantParamOrdinals: tcoParamOrdinalFacts.LoopInvariant,
                 freshRebuiltListParams: freshRebuiltListParams,
-                affineConsListParamOrdinals: affineConsListParamOrdinals,
-                consumedListTailParams: consumedListTailParams,
-                borrowableConsumedListParams: CollectBorrowableConsumedListParams(
+                affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
+                consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
+                borrowableConsumedListParamOrdinals: CollectBorrowableConsumedListParams(
                     innermostBody,
                     tcoParamNames,
                     letRecursive.Name,
-                    consumedListTailParams),
+                    tcoParamOrdinalFacts.ConsumedListTail,
+                    ownershipFunction),
                 freshClosureParams: freshClosureParams,
                 affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
@@ -5052,7 +5026,6 @@ public sealed partial class Lowering
                 letRecursive.Name,
                 tcoParamNames,
                 freshRebuiltListParams,
-                consumedListTailParams,
                 freshClosureParams);
         }
         else
@@ -7669,7 +7642,7 @@ public sealed partial class Lowering
                     || ownership.AffineConsList
                     || ownership.ConsumedListTail
                         && !CanArenaReset(Prune(list.Element))
-                        && !IsBorrowableInspectOnlyList(tco, name, list));
+                        && !IsBorrowableInspectOnlyList(tco, index, list));
         if (!supported
             || _linearReuseNames.Contains(name)
             || _linearSpecializationAccumulators.Contains(name)
