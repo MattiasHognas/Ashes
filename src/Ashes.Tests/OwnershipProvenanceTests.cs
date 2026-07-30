@@ -751,6 +751,243 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
+    public void MutuallyRecursiveFreshBaseResults_ConvergeAcrossTheExactCycle()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first count =
+                if count <= 0
+                then Empty
+                else second(count - 1)
+            and second count =
+                if count <= 0
+                then Full(Empty)
+                else first(count - 1)
+            first(4)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultFresh.ShouldBeTrue();
+        first.ResultPoisoned.ShouldBeFalse();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        first.ResultProvenance.ForwardsTo.ShouldBe("second");
+        second.ShouldNotBeNull();
+        second.ResultFresh.ShouldBeTrue();
+        second.ResultPoisoned.ShouldBeFalse();
+        second.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+
+        OwnershipFactConsumption placement = lowering.OwnershipFactConsumptions.Single(
+            consumption =>
+                string.Equals(consumption.Function.SourceName, "first", StringComparison.Ordinal)
+                && consumption.Decision == OwnershipDecisionKind.RuntimeManagedCallResult);
+        placement.EvaluatedFacts.ShouldBe(
+            OwnershipDecisionFact.ResultProvenance
+                | OwnershipDecisionFact.RuntimeManageableResultType);
+        placement.PositiveFacts.ShouldBe(placement.EvaluatedFacts);
+        placement.Outcome.ShouldBeTrue();
+    }
+
+    [Test]
+    public void MutuallyRecursiveResults_CanConvergeThroughAnEligibleExternalDependency()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first count =
+                if count <= 0
+                then make(count)
+                else second(count - 1)
+            and second count = first(count - 1)
+            and make ignored = Full(Empty)
+            first(4)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        first.ResultProvenance.ForwardsTo.ShouldBeNull();
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+    }
+
+    [Test]
+    public void MutuallyRecursiveParameterBaseResult_KeepsTheWholeCycleConservative()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first value count =
+                if count <= 0
+                then value
+                else second(value)(count - 1)
+            and second value count =
+                if count <= 0
+                then Full(Empty)
+                else first(value)(count - 1)
+            first(Empty)(4)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultFresh.ShouldBeFalse();
+        first.ResultReaches("value").ShouldBeTrue();
+        first.ResultProvenance.RcEligible.ShouldBeFalse();
+        first.ResultProvenance.ForwardsTo.ShouldBe("second");
+        second.ShouldNotBeNull();
+        second.ResultFresh.ShouldBeFalse();
+        second.ResultReaches("value").ShouldBeTrue();
+        second.ResultProvenance.RcEligible.ShouldBeFalse();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+    }
+
+    [Test]
+    public void MutuallyRecursiveUnresolvedResult_KeepsTheWholeCycleConservative()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first produce count =
+                if count <= 0
+                then produce(Empty)
+                else second(produce)(count - 1)
+            and second produce count =
+                if count <= 0
+                then Full(Empty)
+                else first(produce)(count - 1)
+            first(given ignored -> Full(Empty))(4)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeFalse();
+        first.ResultProvenance.ForwardsTo.ShouldBe("second");
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeFalse();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+    }
+
+    [Test]
+    public void MutuallyRecursivePureForwardingCycle_HasNoVacuousEligibility()
+    {
+        const string source =
+            """
+            let recursive first value = second(value)
+            and second value = first(value)
+            first(0)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeFalse();
+        first.ResultProvenance.ForwardsTo.ShouldBe("second");
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeFalse();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+    }
+
+    [Test]
+    public void MutuallyRecursiveMultipleImmediateTargets_DoNotInventAComponentForward()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first count =
+                if count <= 0
+                then Empty
+                else if count == 1
+                then second(count - 1)
+                else third(count - 1)
+            and second count =
+                if count <= 0
+                then Full(Empty)
+                else first(count - 1)
+            and third count =
+                if count <= 0
+                then Empty
+                else first(count - 1)
+            first(3)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+        FunctionOwnershipSummary? third = lowering.GetOwnershipSummary("third");
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        first.ResultProvenance.ForwardsTo.ShouldBeNull();
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ResultProvenance.ForwardsTo.ShouldBe("first");
+        third.ShouldNotBeNull();
+        third.ResultProvenance.RcEligible.ShouldBeTrue();
+        third.ResultProvenance.ForwardsTo.ShouldBe("first");
+    }
+
+    [Test]
+    public void MutualFixpoint_DoesNotChangeAnUnrelatedAcyclicComponent()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first count =
+                if count <= 0
+                then Empty
+                else second(count - 1)
+            and second count =
+                if count <= 0
+                then Full(Empty)
+                else first(count - 1)
+            let standalone ignored = Full(Empty)
+            let forward ignored = standalone(ignored)
+            in (first(2), forward(0))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? standalone = lowering.GetOwnershipSummary("standalone");
+        FunctionOwnershipSummary? forward = lowering.GetOwnershipSummary("forward");
+
+        standalone.ShouldNotBeNull();
+        standalone.ResultProvenance.RcEligible.ShouldBeTrue();
+        standalone.ResultProvenance.ForwardsTo.ShouldBeNull();
+        forward.ShouldNotBeNull();
+        forward.ResultProvenance.RcEligible.ShouldBeTrue();
+        forward.ResultProvenance.ForwardsTo.ShouldBe("standalone");
+    }
+
+    [Test]
     public void Recursive_group_result_reach_converges_across_member_calls()
     {
         const string source =

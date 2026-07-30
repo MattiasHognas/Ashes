@@ -1894,6 +1894,41 @@ public sealed class OwnershipTests
             "shaped like this back to arena-managed.");
     }
 
+    [Test]
+    public void Mutually_recursive_fresh_adt_result_uses_proven_runtime_ownership_at_entry_call()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Box =
+                | Empty
+                | Full(Int)
+
+            let recursive first n =
+                if n <= 0
+                then Full(1)
+                else second(n - 1)
+            and second n =
+                if n <= 0
+                then Full(2)
+                else first(n - 1)
+
+            let result = first(2)
+            in match result with
+                | Empty -> 0
+                | Full(value) -> value
+            """);
+
+        ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue(
+            "the fresh base arms should allocate their Box results with runtime ownership.");
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue(
+            "the entry call should receive and release a proven runtime-managed Box result.");
+        ir.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.CopyOutArena).ShouldBeFalse(
+            "the SCC provenance proof should avoid the conditional arena-copy normalization path.");
+    }
+
     // --- Fresh-RC-producer whitelist: BuiltinRegistry-driven lookup replaces AST pattern matching ---
 
     // The exact call-site shapes the pre-refactor `IsRuntimeRcStringProducer` / `IsRuntimeRcBytesProducer`

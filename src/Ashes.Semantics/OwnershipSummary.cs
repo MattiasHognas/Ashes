@@ -102,9 +102,10 @@ internal sealed record OwnershipFactConsumption(
 /// function's body temp was produced by a literal <c>MakeClosure</c>/<c>MakeClosureStack</c> instruction
 /// found by scanning backward through already-emitted IR, so it could not see a result computed by
 /// CALLING another named function (a sibling helper) rather than directly constructing a value. This
-/// record is built by classifying the function's body once, resolving through <see cref="ForwardsTo"/>
-/// chains transitively (memoized, cycle-guarded), so it sees through arbitrarily deep sibling-helper
-/// forwarding, not just one hop.
+/// record is built by classifying each function's body once, then resolving exact saturated forwarding
+/// calls through a whole-program <c>FuncKey</c> graph fixpoint. Strongly-connected components converge
+/// together, so productive mutual recursion can inherit an independently eligible result construction
+/// while pure forwarding cycles and components with any conservative terminal arm fail closed.
 /// </summary>
 /// <param name="RcEligible">
 /// True when the function's fully-saturated result is provably an ordinary heap allocation eligible
@@ -116,9 +117,9 @@ internal sealed record OwnershipFactConsumption(
 /// all."
 /// </param>
 /// <param name="ForwardsTo">
-/// When the function's body is itself a call to another registered top-level/self-recursive function,
-/// the immediate (one-hop) target's name; null when the body is a direct construction, a parameter
-/// passthrough, or unresolved.
+/// The immediate (one-hop) target's name when all forwarding terminal arms name one exact registered
+/// function; null when there are no forwarding arms or when multiple distinct immediate targets occur.
+/// This diagnostic correlation is independent of <paramref name="RcEligible"/>.
 /// </param>
 internal sealed record FunctionResultProvenance(bool RcEligible, string? ForwardsTo);
 
