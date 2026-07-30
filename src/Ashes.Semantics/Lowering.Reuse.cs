@@ -241,19 +241,6 @@ public sealed partial class Lowering
     // tracking binders that shadow the accumulator name; each leaf must satisfy IsStableAccumulatorExpr
     // under the shadow set (a rebound accumulator name is no longer the accumulator). Used only when
     // recording a fold's stability, keyed by name — the caller side uses live-scope slots instead.
-    // Params rebuilt as a self-contained fresh list at every tail self-call. This is deliberately
-    // stricter than the ordinary list reset analysis: a cons onto the previous accumulator shares
-    // its tail and cannot be normalized and followed by a drop without explicit ownership transfer.
-    private static HashSet<string> CollectFreshRebuiltListParams(
-        Expr body,
-        IReadOnlyList<string> paramNames,
-        string selfName)
-        => CollectTcoParamsMatchingArguments(
-            body,
-            paramNames,
-            selfName,
-            (_, argument) => IsArenaSelfContainedListRebuildExpr(argument));
-
     /// <summary>
     /// Pattern-bound names extracted directly (one pattern level) off a bare reference to a declared TCO
     /// parameter — via any match on that parameter, not just a list cons — whose appearances in the arm

@@ -795,16 +795,23 @@ public sealed partial class Lowering
 
     private (
         IReadOnlySet<int> LoopInvariant,
+        IReadOnlySet<int> ArenaSelfContainedListRebuild,
         IReadOnlySet<int> AffineConsList,
         IReadOnlySet<int> ConsumedListTail) GetTcoParameterOrdinalFacts(FuncKey? function)
         => (
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
+            GetTcoParameterOrdinals(function, static facts => facts.ArenaSelfContainedListRebuild),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.GrownCons),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail));
 
     private IReadOnlySet<int> GetTcoParameterOrdinals(
         FuncKey? function,
         TcoSelfCallArgumentShape shape)
+        => GetTcoParameterOrdinals(function, facts => facts.Shape == shape);
+
+    private IReadOnlySet<int> GetTcoParameterOrdinals(
+        FuncKey? function,
+        Func<TcoParamStructuralFacts, bool> matches)
     {
         HashSet<int> result = [];
         if (function is not { } key || GetOwnershipSummary(key) is not { } summary)
@@ -828,7 +835,7 @@ public sealed partial class Lowering
         // duplicate-name slot.
         foreach (TcoParamStructuralFacts facts in summary.TcoParamFacts)
         {
-            if (facts.Shape == shape && !duplicateParameterNames.Contains(facts.ParameterName))
+            if (matches(facts) && !duplicateParameterNames.Contains(facts.ParameterName))
             {
                 result.Add(facts.ParameterOrdinal);
             }
@@ -1027,8 +1034,8 @@ public sealed partial class Lowering
     /// already-computed <paramref name="expressionFreshness"/> map, while arena self-containment uses
     /// the narrower reset-boundary predicate without redefining reference freshness. Together they
     /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s remaining
-    /// <c>CollectFreshRebuiltListParams</c>/<c>CollectFreshClosureParams</c> answer today by
-    /// re-walking a TCO loop's body a second time with their own, separate logic. A
+    /// <c>CollectFreshClosureParams</c> answers today by re-walking a TCO loop's body a second time
+    /// with its own, separate logic. A
     /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
     /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."

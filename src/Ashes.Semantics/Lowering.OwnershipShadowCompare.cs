@@ -62,20 +62,15 @@ public sealed partial class Lowering
     // decision now, not a comparison candidate.
 
     /// <summary>
-    /// Compares the TCO categories that still come from <c>Collect*</c> against
+    /// Compares the fresh-closure TCO category that still comes from <c>Collect*</c> against
     /// <c>FunctionOwnershipSummary.TcoParamFacts</c> for the same exact self-recursive function,
-    /// logging every disagreement. UnchangedPassthrough and GrownCons are no longer compared here
-    /// because they are the live LoopInvariant and AffineConsList sources. The live
-    /// fresh-list-rebuild set compares against <see
-    /// cref="TcoParamStructuralFacts.ArenaSelfContainedListRebuild"/> rather than <see
-    /// cref="TcoSelfCallArgumentShape.FreshRebuilt"/>: a helper result may be safe to copy across its
-    /// callee arena boundary while still retaining an input reference.
+    /// logging every disagreement. The other structural categories are no longer compared here
+    /// because they already source their live decisions from the canonical positional facts.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
         FuncKey? function,
         string selfName,
         IReadOnlyList<string> paramNames,
-        IReadOnlySet<string> freshRebuiltListParams,
         IReadOnlySet<string> freshClosureParams)
     {
         if (!ShouldExplainOwnership())
@@ -89,7 +84,6 @@ public sealed partial class Lowering
         for (int parameterOrdinal = 0; parameterOrdinal < paramNames.Count; parameterOrdinal++)
         {
             string name = paramNames[parameterOrdinal];
-            bool isArenaSelfContainedListRebuild = freshRebuiltListParams.Contains(name);
             bool isFreshClosure = freshClosureParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
@@ -103,7 +97,6 @@ public sealed partial class Lowering
                 name,
                 parameterOrdinal,
                 oldShape,
-                isArenaSelfContainedListRebuild,
                 haveNew,
                 newFacts);
         }
@@ -114,21 +107,10 @@ public sealed partial class Lowering
         string name,
         int parameterOrdinal,
         TcoSelfCallArgumentShape? oldShape,
-        bool oldArenaSelfContainedListRebuild,
         bool haveNew,
         TcoParamStructuralFacts? newFacts)
     {
         TcoSelfCallArgumentShape? newShape = haveNew ? newFacts!.Shape : null;
-        bool newArenaSelfContainedListRebuild =
-            newFacts?.ArenaSelfContainedListRebuild == true;
-        if (oldArenaSelfContainedListRebuild != newArenaSelfContainedListRebuild)
-        {
-            LogOwnershipShadowDisagreement(
-                "TcoParamArenaSelfContainedListRebuild",
-                $"function={selfName} param={name} ordinal={parameterOrdinal} "
-                    + $"old={oldArenaSelfContainedListRebuild} "
-                    + $"new={newArenaSelfContainedListRebuild}");
-        }
 
         if (oldShape is null && !haveNew)
         {
@@ -150,20 +132,18 @@ public sealed partial class Lowering
                 or TcoSelfCallArgumentShape.GrownCons
                 or TcoSelfCallArgumentShape.ConsumedTail)
         {
-            // LoopInvariant, AffineConsList, and ConsumedListTail already consume these canonical
-            // facts, so there is no remaining old classifier answer to compare them against.
+            // Every non-closure structural category now consumes canonical facts, so there is no
+            // remaining old classifier answer to compare it against.
             return;
         }
 
         if (oldShape is null
-            && oldArenaSelfContainedListRebuild
-            && newArenaSelfContainedListRebuild
-            && newShape == TcoSelfCallArgumentShape.FreshRebuilt)
+            && newShape == TcoSelfCallArgumentShape.FreshRebuilt
+            && newFacts!.ArenaSelfContainedListRebuild)
         {
-            // The live list classifier's positive result is represented by the separately
-            // compared arena-self-containment fact. A genuinely reference-fresh list literal
-            // also has FreshRebuilt shape, but there is no old list ownership-shape verdict to
-            // compare it against until the 2.2 cutover.
+            // FreshRebuilt describes both list literals and closures. A self-contained list now
+            // consumes the canonical arena fact and has no old verdict left to compare. A closure
+            // that the old fresh-closure collector missed must still reach the disagreement below.
             return;
         }
 

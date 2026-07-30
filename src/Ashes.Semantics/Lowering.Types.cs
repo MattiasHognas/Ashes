@@ -45,9 +45,11 @@ public sealed partial class Lowering
         // Bytes threaded unchanged through a fold).
         public bool LoopInvariant { get; init; }
 
-        // Param whose argument is a self-contained fresh list at every tail self-call. May use
-        // whole-spine runtime-RC normalization; cons-growing/shared-spine params must use the
-        // separate ownership-transfer path instead.
+        // Param whose argument is an arena-self-contained whole-list rebuild at every tail
+        // self-call. This is not reference freshness: a helper result may retain an input tail but
+        // still be independent of the helper's callee arena. Such parameters may use whole-spine
+        // runtime-RC normalization; cons-growing/shared-spine params must use the separate
+        // ownership-transfer path instead.
         public bool FreshRebuiltList { get; init; }
         public bool AffineConsList { get; init; }
         public bool ConsumedListTail { get; init; }
@@ -177,13 +179,13 @@ public sealed partial class Lowering
         public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
         public bool InTailPosition { get; set; }
 
-        // Raw AST-derived facts stashed at construction time (before ParamSlots is known) and consumed
-        // once by BuildParamOwnership below. Loop invariance, growing-cons shape, and consumed-tail
-        // shape are ordinal-keyed because they now come from the binding-identity-aware ownership
-        // summary; the categories awaiting their own 2.2 cutovers remain name-keyed until then. No
-        // other consumer reads these transport fields.
+        // Pre-slot facts stashed at construction time (before ParamSlots is known) and consumed once
+        // by BuildParamOwnership below. Loop invariance, whole-list rebuild, growing-cons, and
+        // consumed-tail shape are ordinal-keyed because they now come from the binding-identity-aware
+        // ownership summary; the fresh-closure category awaiting its own 2.2 cutover remains
+        // name-keyed until then. No other consumer reads these transport fields.
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
-        private readonly IReadOnlySet<string> _freshRebuiltListParams;
+        private readonly IReadOnlySet<int> _freshRebuiltListParamOrdinals;
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
         private readonly IReadOnlySet<int> _borrowableConsumedListParamOrdinals;
@@ -229,7 +231,7 @@ public sealed partial class Lowering
                 paramCount,
                 paramNames,
                 EmptyParameterOrdinals,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
@@ -244,7 +246,7 @@ public sealed partial class Lowering
             int paramCount,
             List<string> paramNames,
             IReadOnlySet<int> loopInvariantParamOrdinals,
-            IReadOnlySet<string> freshRebuiltListParams,
+            IReadOnlySet<int> freshRebuiltListParamOrdinals,
             IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowableConsumedListParamOrdinals,
@@ -256,7 +258,7 @@ public sealed partial class Lowering
             ParamCount = paramCount;
             ParamNames = paramNames;
             _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
-            _freshRebuiltListParams = freshRebuiltListParams;
+            _freshRebuiltListParamOrdinals = freshRebuiltListParamOrdinals;
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowableConsumedListParamOrdinals = borrowableConsumedListParamOrdinals;
@@ -281,7 +283,7 @@ public sealed partial class Lowering
                     ParamName = name,
                     Slot = slot,
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
-                    FreshRebuiltList = _freshRebuiltListParams.Contains(name),
+                    FreshRebuiltList = _freshRebuiltListParamOrdinals.Contains(i),
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
                     BorrowableConsumedList = _borrowableConsumedListParamOrdinals.Contains(i),

@@ -685,18 +685,20 @@ has the bounded whole-list rebuild shape recognized by
 when its result retains an input tail, because the returned list is made
 independent of the callee arena; directly consing onto the old accumulator does
 not. These facts are computed across exact `FuncKey` self-call identities.
-`TcoSelfCallArgumentShape.UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` are the live sources
-for `TcoParamOwnership.LoopInvariant`, `AffineConsList`, and `ConsumedListTail`; lowering transports
-unambiguous ordinals to parameter slots and rechecks individual back-edge values against resolved
-local slots. The narrower `BorrowableConsumedList` use-mode analysis is still structural, but its
+`TcoSelfCallArgumentShape.UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `GrownCons`, and
+`ConsumedTail` are the live sources for `TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`,
+`AffineConsList`, and `ConsumedListTail`; lowering transports unambiguous ordinals to parameter
+slots. Identity-sensitive edge shapes are rechecked against resolved local slots, while fresh-list
+reset legality reruns the arena-self-containment predicate for the concrete edge and combines it
+with the resolved representation. The narrower
+`BorrowableConsumedList` use-mode analysis is still structural, but its
 candidate and result boundary is ordinal rather than source-name keyed, and only a callee resolved
 through the same lexical `FuncKey` scope under the recursive binding's source name receives its
 non-escaping tail-transfer exception. Match guards are checked as executable uses. A tail call
 becomes a back edge only when its root resolves to the current curried function's generated label,
 or to the transported self slot of a synthesized coroutine loop; source spelling alone is
-insufficient. The
-fresh-list and fresh-closure categories remain shadow-compared with their lowering
-classifiers until their individual cutovers.
+insufficient. Only the fresh-closure category remains shadow-compared with its lowering classifier
+until its individual cutover.
 
 This structural summary does not replace the TCO back-edge storage query.
 Resolved argument layout, the concrete placement verdict, and per-edge facts

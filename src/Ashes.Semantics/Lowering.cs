@@ -4997,14 +4997,13 @@ public sealed partial class Lowering
             var tcoParamNames = CollectLambdaParams(lam2);
             FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
             var tcoParamOrdinalFacts = GetTcoParameterOrdinalFacts(ownershipFunction);
-            var freshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name);
             var freshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext(
                 selfName: letRecursive.Name,
                 paramCount: paramCount,
                 paramNames: tcoParamNames,
                 loopInvariantParamOrdinals: tcoParamOrdinalFacts.LoopInvariant,
-                freshRebuiltListParams: freshRebuiltListParams,
+                freshRebuiltListParamOrdinals: tcoParamOrdinalFacts.ArenaSelfContainedListRebuild,
                 affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowableConsumedListParamOrdinals: CollectBorrowableConsumedListParams(
@@ -5025,7 +5024,6 @@ public sealed partial class Lowering
                 _tcoCtx.OwnershipFunction,
                 letRecursive.Name,
                 tcoParamNames,
-                freshRebuiltListParams,
                 freshClosureParams);
         }
         else
