@@ -674,8 +674,10 @@ parameter ordinal used as its binding identity plus its diagnostic source name; 
 parameter names therefore remain distinct in the immutable summary. The analysis threads a lexical
 value scope through let and pattern binders instead of treating equal source spellings as equal
 bindings. The innermost lowering scope currently exposes only the last slot for duplicate parameter
-names, so migrated live consumers fail closed for every duplicated name rather than joining a
-positive fact to an ambiguous slot.
+names. TCO therefore records parameter labels and types by ordinal, gives every ordinal a distinct
+back-edge slot, and joins the visible binding to only its own slot. Earlier shadowed occurrences keep
+non-participating slots for positional parallel assignment, so their facts cannot bleed into the
+visible same-named binding.
 Reference shape and arena reset legality are deliberately separate:
 `ExpressionFreshness` and `TcoSelfCallArgumentShape.FreshRebuilt` answer whether
 the successor value reaches an input reference, while
@@ -690,8 +692,8 @@ reference freshness: a new closure may capture and therefore reach an input refe
 are computed across exact `FuncKey` self-call identities.
 `TcoSelfCallArgumentShape.UnchangedPassthrough`, `ArenaSelfContainedListRebuild`,
 `FreshClosureRebuild`, `GrownCons`, and `ConsumedTail` are the live sources for
-`TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`, `FreshClosureRebuild`, `AffineConsList`, and
-`ConsumedListTail`; lowering transports unambiguous ordinals to parameter slots. Closure promotion
+`TcoParamStaticFacts.LoopInvariant`, `FreshRebuiltList`, `FreshClosureRebuild`, `AffineConsList`, and
+`ConsumedListTail`; lowering transports ordinals to their distinct parameter slots. Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
 rechecked against resolved local slots, while fresh-list reset legality reruns the
@@ -703,14 +705,23 @@ through the same lexical `FuncKey` scope under the recursive binding's source na
 non-escaping tail-transfer exception. Match guards are checked as executable uses. A tail call
 becomes a back edge only when its root resolves to the current curried function's generated label,
 or to the transported self slot of a synthesized coroutine loop; source spelling alone is
-insufficient. Duplicate parameter names retain distinct summary facts but fail closed at the current
-name-to-slot lowering join.
+insufficient.
 
 This structural summary does not replace the TCO back-edge storage query.
-Resolved argument layout, the concrete placement verdict, and per-edge facts
-still determine whether `GetTcoCopyOutKind` and the `TcoBackEdge*` machinery can
-copy, reset, or compact that particular value. Arena self-containment is one
-input to that classifier-B decision, not a precomputed representation verdict.
+Immutable `TcoParamStaticFacts` stay separate from placement orchestration.
+One evaluator produces an immutable `TcoParamPlacementDecision` at provisional
+loop entry, each resolved back edge, and post-body type refresh. The decision
+records positional binding identity, ownership-shape and resolved-layout
+eligibility, dynamic-boundary restrictions, frame profitability and any
+blocking sibling, arena or runtime-RC representation, and the transition from
+earlier evidence. Final per-function traces keep those decisions in parameter
+order for compiler observability without affecting generated code.
+
+Classifier B consumes that placement decision as its representation authority.
+Resolved argument layout and concrete per-edge facts still determine whether
+`GetTcoCopyOutKind` and the `TcoBackEdge*` machinery can copy, reset, or compact
+that particular value. Arena self-containment is one input to this downstream
+reset decision, not a substitute ownership classifier.
 
 Reuse entry-copy elision and runtime-managed call-result placement retain
 immutable records of the decision facts they consumed and their outcome,

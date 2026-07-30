@@ -3,6 +3,91 @@ using Ashes.Frontend;
 
 namespace Ashes.Semantics;
 
+internal enum TcoPlacementResolutionPoint
+{
+    ProvisionalLoopEntry,
+    ResolvedBackEdge,
+    PostBodyRefresh,
+}
+
+internal enum TcoPlacementRepresentation
+{
+    Arena,
+    RuntimeRc,
+}
+
+internal enum TcoRuntimeManagedKind
+{
+    None,
+    Ordinary,
+    List,
+    Closure,
+}
+
+internal enum TcoRcEligibilityReason
+{
+    UnresolvedType,
+    ScalarTupleOrAdtLayout,
+    FreshListRebuild,
+    AffineConsList,
+    ConsumedListTail,
+    FreshClosureRebuild,
+    LateClosureDeferred,
+    UnsupportedListElementLayout,
+    MissingListOwnershipShape,
+    FreshClosureNotProven,
+    UnsupportedLayout,
+}
+
+internal enum TcoPlacementReason
+{
+    Eligible,
+    ShadowedBinding,
+    AsyncBoundary,
+    CoroutineBoundary,
+    DynamicCapabilityBoundary,
+    ReuseAccumulator,
+    SpecializationReuseAccumulator,
+    StableReuseAccumulator,
+    BlockingSiblingNotProfitable,
+    EarlierPlacementRetained,
+    NotEligible,
+}
+
+internal enum TcoPlacementTransitionKind
+{
+    Initial,
+    PromotedAfterResolution,
+    RePromotedAfterResolution,
+    DemotedByFrameProfitability,
+    Retained,
+}
+
+internal sealed record TcoRcEligibility(
+    bool OwnershipShapeEligible,
+    bool ResolvedLayoutEligible,
+    TcoRuntimeManagedKind RuntimeKind,
+    TcoRcEligibilityReason Reason);
+
+/// <summary>
+/// Immutable snapshot of a TCO placement decision. Parameter names are diagnostic metadata;
+/// ordinal and local slot carry binding identity.
+/// </summary>
+internal sealed record TcoParamPlacementDecision(
+    int ParameterOrdinal,
+    string ParameterName,
+    int Slot,
+    TcoPlacementResolutionPoint ResolutionPoint,
+    TcoPlacementRepresentation Representation,
+    TcoPlacementReason Reason,
+    TcoRcEligibility Eligibility,
+    string? ResolvedType,
+    bool DynamicBoundaryRestricted,
+    TcoPromotionVerdict? Profitability,
+    int? BlockingSiblingOrdinal,
+    TcoPlacementTransitionKind Transition,
+    TcoPlacementResolutionPoint? FirstPromotedAt);
+
 public sealed partial class Lowering
 {
     private sealed class DiagnosticContextScope(List<string> diagnosticContext) : IDisposable
@@ -29,15 +114,17 @@ public sealed partial class Lowering
         }
     }
 
-    // One TCO loop parameter's ownership facts: the static, AST-derived usage-shape signals a
-    // parameter can be classified by before its type is even resolved, plus the runtime-managed (RC)
-    // representation verdict that is decided once types are known and can be revised later by the
-    // frame-wide profitability veto. Replaces what used to be twelve separate name/slot-keyed sets and
-    // maps on TcoContext (see that class's own remarks) with one entry per parameter, keyed by slot.
-    private sealed class TcoParamOwnership
+    // One TCO loop parameter's immutable binding identity and ownership/usage-shape facts.
+    // Representation is evaluated separately as types resolve.
+    private sealed class TcoParamStaticFacts
     {
+        public required int ParameterOrdinal { get; init; }
         public required string ParamName { get; init; }
         public required int Slot { get; init; }
+        // A later same-named parameter in the curried chain shadows this binding completely. Its
+        // positional facts remain available for diagnostics, but runtime placement must not touch
+        // the synthetic slot retained for back-edge arity.
+        public required bool HasVisibleBinding { get; init; }
 
         // Param passed as its own unchanged Var at EVERY tail self-call — loop-invariant, so it
         // never holds a value allocated inside the loop and always points below the arena watermark.
@@ -73,15 +160,17 @@ public sealed partial class Lowering
         // reservation growth (ConcatStrTip). False when not computed (conservative).
         public bool AffineStr { get; init; }
 
-        // The runtime-managed (RC) representation verdict and its resolved type/shape. Mutated at the
-        // same points in the lowering pipeline the four separate collections this replaces used to be
-        // written: the loop-entry and post-body classifier-A passes, the resolved-argument-type
-        // promotion at each back-edge call site, and the frame-wide profitability veto's demotion. See
-        // TcoContext.MarkRuntimeManaged/ClearRuntimeManaged, the only writers.
-        public bool RuntimeManaged { get; set; }
-        public bool RuntimeManagedList { get; set; }
-        public bool RuntimeManagedClosure { get; set; }
+    }
+
+    // Mutable orchestration state is deliberately separate from the immutable facts. Current and
+    // historical decisions are immutable values; RuntimeManagedType is the accepted codegen type.
+    private sealed class TcoParamPlacementState
+    {
+        public TcoParamPlacementDecision? Current { get; set; }
         public TypeRef? RuntimeManagedType { get; set; }
+        public bool EverRuntimeManagedList { get; set; }
+        public bool EverRuntimeManagedClosure { get; set; }
+        public List<TcoParamPlacementDecision> History { get; } = [];
     }
 
     // TCO (tail call optimization) state
@@ -94,16 +183,14 @@ public sealed partial class Lowering
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; }
-        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
+        public Dictionary<int, string> ParamLabels { get; } = [];
+        public Dictionary<int, TypeRef> ParamTypes { get; } = [];
         public List<int> ParamSlots { get; init; } = [];
 
-        // One ownership record per parameter, keyed by slot — the single source of truth every
-        // consumer should read instead of testing membership in a scattered set. Populated once
-        // ParamSlots is known (see BuildParamOwnership) by joining ParamNames against the raw
-        // Collect*-derived facts below; the RuntimeManaged* fields on each entry are then written and
-        // revised in place by MarkRuntimeManaged/ClearRuntimeManaged as the lowering pipeline resolves
-        // types and evaluates profitability.
-        public Dictionary<int, TcoParamOwnership> ParamOwnership { get; } = [];
+        // Immutable ownership facts and mutable placement orchestration use the same positional slot
+        // identity but are separate authorities.
+        public Dictionary<int, TcoParamStaticFacts> ParamFacts { get; } = [];
+        public Dictionary<int, TcoParamPlacementState> ParamPlacements { get; } = [];
 
         // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership
         // sets this replaces (the old RuntimeManagedParamSlots/RuntimeManagedClosureParamSlots
@@ -111,7 +198,7 @@ public sealed partial class Lowering
         // runtime-managed parameter" and allocate a fresh local slot or emit an instruction per one
         // visited — changing that order would not change program behavior, but could change the exact
         // sequence of locals/instructions the backend emits. Kept as private, order-preserving backing
-        // state rather than folded into ParamOwnership's own (fixed, ParamSlots-order) iteration order.
+        // state rather than folded into ParamFacts' own (fixed, ParamSlots-order) iteration order.
         private readonly HashSet<int> _runtimeManagedOrder = [];
         private readonly HashSet<int> _runtimeManagedClosureOrder = [];
 
@@ -120,61 +207,72 @@ public sealed partial class Lowering
         public int RuntimeManagedSlotCount => _runtimeManagedOrder.Count;
 
         public bool IsRuntimeManagedSlot(int slot) =>
-            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManaged;
+            ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
+                && placement.Current?.Representation == TcoPlacementRepresentation.RuntimeRc;
 
         public bool IsRuntimeManagedListSlot(int slot) =>
-            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManagedList;
+            ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
+                && placement.EverRuntimeManagedList;
 
         public bool IsRuntimeManagedClosureSlot(int slot) =>
-            ParamOwnership.TryGetValue(slot, out var ownership) && ownership.RuntimeManagedClosure;
+            ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
+                && placement.EverRuntimeManagedClosure;
 
-        // Records that `slot` independently licenses runtime-managed representation as `type`
-        // (classifier A, at whichever pass currently has the most resolved view of the type available
-        // — loop entry, post-body refresh, or a specific back-edge call site). Monotonic like the
-        // HashSet.Add calls it replaces: never turns an already-true List/Closure flag back off just
-        // because this particular call's type doesn't match that branch.
-        public void MarkRuntimeManaged(int slot, TypeRef type)
+        public TypeRef GetRuntimeManagedType(int slot) =>
+            ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
+                && placement.RuntimeManagedType is { } type
+                ? type
+                : throw new InvalidOperationException($"TCO slot {slot} has no accepted runtime-managed type.");
+
+        // Applies one explicit placement decision while preserving the old order-sensitive,
+        // monotone List/Closure-kind behavior.
+        public void ApplyPlacementDecision(int slot, TcoParamPlacementDecision decision, TypeRef? acceptedType)
         {
-            if (!ParamOwnership.TryGetValue(slot, out var ownership))
+            if (!ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement))
             {
                 return;
             }
 
-            if (!ownership.RuntimeManaged)
+            bool wasRuntimeManaged =
+                placement.Current?.Representation == TcoPlacementRepresentation.RuntimeRc;
+            bool isRuntimeManaged =
+                decision.Representation == TcoPlacementRepresentation.RuntimeRc;
+            if (!wasRuntimeManaged && isRuntimeManaged)
             {
                 _runtimeManagedOrder.Add(slot);
             }
-
-            ownership.RuntimeManaged = true;
-            ownership.RuntimeManagedType = type;
-            if (type is TypeRef.TList)
+            else if (wasRuntimeManaged && !isRuntimeManaged)
             {
-                ownership.RuntimeManagedList = true;
+                _runtimeManagedOrder.Remove(slot);
+                _runtimeManagedClosureOrder.Remove(slot);
             }
-            else if (type is TypeRef.TFun)
+
+            if (isRuntimeManaged && acceptedType is { } type)
             {
-                if (!ownership.RuntimeManagedClosure)
+                placement.RuntimeManagedType = type;
+                if (type is TypeRef.TList)
                 {
-                    _runtimeManagedClosureOrder.Add(slot);
+                    placement.EverRuntimeManagedList = true;
                 }
+                else if (type is TypeRef.TFun)
+                {
+                    if (!placement.EverRuntimeManagedClosure)
+                    {
+                        _runtimeManagedClosureOrder.Add(slot);
+                    }
 
-                ownership.RuntimeManagedClosure = true;
+                    placement.EverRuntimeManagedClosure = true;
+                }
             }
-        }
-
-        // The frame-wide profitability veto's demotion: undoes MarkRuntimeManaged for one parameter.
-        public void ClearRuntimeManaged(int slot)
-        {
-            if (ParamOwnership.TryGetValue(slot, out var ownership))
+            else if (!isRuntimeManaged)
             {
-                ownership.RuntimeManaged = false;
-                ownership.RuntimeManagedList = false;
-                ownership.RuntimeManagedClosure = false;
-                ownership.RuntimeManagedType = null;
+                placement.RuntimeManagedType = null;
+                placement.EverRuntimeManagedList = false;
+                placement.EverRuntimeManagedClosure = false;
             }
 
-            _runtimeManagedOrder.Remove(slot);
-            _runtimeManagedClosureOrder.Remove(slot);
+            placement.Current = decision;
+            placement.History.Add(decision);
         }
 
         public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
@@ -182,7 +280,7 @@ public sealed partial class Lowering
         public bool InTailPosition { get; set; }
 
         // Pre-slot facts stashed at construction time (before ParamSlots is known) and consumed once
-        // by BuildParamOwnership below. Loop invariance, whole-list rebuild, direct closure rebuild,
+        // by BuildParamStaticFacts below. Loop invariance, whole-list rebuild, direct closure rebuild,
         // growing-cons, and consumed-tail shape are ordinal-keyed because they come from the
         // binding-identity-aware ownership summary. No other consumer reads these transport fields.
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
@@ -194,10 +292,29 @@ public sealed partial class Lowering
         private readonly IReadOnlySet<string> _affineStrParams;
 
         // Every affine-string param's own name, in CollectAffineAccumulators's own AST-walk order —
-        // exposed directly (not re-derived from ParamOwnership's fixed ParamSlots-order iteration)
+        // exposed directly (not re-derived from ParamFacts' fixed ParamSlots-order iteration)
         // because the one consumer (reservation-slot setup at loop entry) allocates a fresh pair of
         // locals per name visited, so it must keep visiting them in this collection's original order.
         public IEnumerable<string> AffineStrParamNames => _affineStrParams;
+
+        public bool IsVisibleParameterOrdinal(int ordinal)
+        {
+            if (ordinal < 0 || ordinal >= ParamNames.Count)
+            {
+                return false;
+            }
+
+            string name = ParamNames[ordinal];
+            for (int later = ordinal + 1; later < ParamNames.Count; later++)
+            {
+                if (string.Equals(ParamNames[later], name, System.StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter
         // whose only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a
@@ -210,8 +327,8 @@ public sealed partial class Lowering
         // function, ...) genuinely escapes the current iteration independently and needs its own
         // protective dup; see ResolvePendingNestedTcoPatternAliasSites, the only consumer. Keyed by
         // the EXTRACTED BINDING's own name (e.g. a pattern-matched "rest", not the parent parameter's
-        // own name), a distinct key space from ParamOwnership's per-parameter entries, so this stays a
-        // freestanding set rather than a field on TcoParamOwnership. Computed once, structurally, from
+        // own name), a distinct key space from ParamFacts' per-parameter entries, so this stays a
+        // freestanding set rather than a field on TcoParamStaticFacts. Computed once, structurally, from
         // the pre-lowering AST, so it is available before types are resolved. Empty when not computed
         // (conservative — nothing extra gets protected).
         public IReadOnlySet<string> EscapingDirectPatternBindings { get; }
@@ -268,21 +385,24 @@ public sealed partial class Lowering
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
         }
 
-        // Joins ParamNames against ParamSlots (only available once LowerLambdaCoreBindTcoParamSlots
-        // has run) with the raw static facts stashed at construction, producing one entry per
-        // parameter, keyed by its local slot. Called exactly once, right after ParamSlots is built.
-        public void BuildParamOwnership()
+        // Joins each parameter ordinal to the distinct slot established by
+        // LowerLambdaCoreBindTcoParamSlots and to the raw ordinal facts stashed at construction.
+        // Called exactly once, right after ParamSlots is built.
+        public void BuildParamStaticFacts()
         {
-            ParamOwnership.Clear();
+            ParamFacts.Clear();
+            ParamPlacements.Clear();
             int count = ParamNames.Count < ParamSlots.Count ? ParamNames.Count : ParamSlots.Count;
             for (int i = 0; i < count; i++)
             {
                 string name = ParamNames[i];
                 int slot = ParamSlots[i];
-                ParamOwnership[slot] = new TcoParamOwnership
+                ParamFacts[slot] = new TcoParamStaticFacts
                 {
+                    ParameterOrdinal = i,
                     ParamName = name,
                     Slot = slot,
+                    HasVisibleBinding = IsVisibleParameterOrdinal(i),
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParamOrdinals.Contains(i),
                     FreshClosureRebuild = _freshClosureRebuildParamOrdinals.Contains(i),
@@ -291,6 +411,7 @@ public sealed partial class Lowering
                     BorrowableConsumedList = _borrowableConsumedListParamOrdinals.Contains(i),
                     AffineStr = _affineStrParams.Contains(name),
                 };
+                ParamPlacements[slot] = new TcoParamPlacementState();
             }
         }
 

@@ -215,7 +215,7 @@ public sealed partial class Lowering
     // whole body's unification has run) — checking early can wrongly treat an about-to-be-Int binding as
     // heap-managed, and dup'ing a scalar value as if it were a refcounted pointer is a segfault, not just
     // a missed protection. The binding name is carried along so the resolution step can additionally
-    // consult the parent parameter's own TcoParamOwnership.EscapingDirectPatternBinding flag for a
+    // consult the parent parameter's own static escaping-pattern fact for a
     // binding whose immediate parent is itself a declared TCO parameter slot (see the comment there
     // for why that case needs its own check).
     private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType, string BindingName)> _pendingNestedTcoPatternAliasSites = new();
@@ -498,7 +498,7 @@ public sealed partial class Lowering
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
-    private readonly Dictionary<int, string> _pendingRuntimeArgumentFlags = [];
+    private readonly Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
     // an arbitrary closure value as known.
@@ -958,7 +958,7 @@ public sealed partial class Lowering
         bool[] ConsumedListTail,
         bool[] StableAccArg,
         int[] OldRuntimeParamTemps,
-        bool[] RuntimeManagedParams,
+        TcoParamPlacementDecision?[] ParamPlacements,
         int[] RuntimeManagedParamActiveSlots,
         int[] RuntimeManagedClosureActiveSlots,
         int[] ParamSlots,
@@ -1054,8 +1054,8 @@ public sealed partial class Lowering
                 .Select((runtimeManaged, index) =>
                     runtimeManaged || IsRuntimeManagedConcatStrTipResult(info.ArgTemps[index]))
                 .ToArray(),
-            RuntimeManagedParams = info.ParamSlots
-                .Select(info.Tco.IsRuntimeManagedSlot)
+            ParamPlacements = info.ParamSlots
+                .Select(slot => info.Tco.ParamPlacements[slot].Current)
                 .ToArray(),
             RuntimeManagedParamActiveSlots = info.ParamSlots
                 .Select(slot => info.Tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1))
@@ -1070,7 +1070,8 @@ public sealed partial class Lowering
         int tcoPreRestoreEndSlot)
     {
         if (info.CoroutineLoop
-            || !info.RuntimeManagedParams.Any(runtimeManaged => runtimeManaged)
+            || !info.ParamPlacements.Any(decision =>
+                decision?.Representation == TcoPlacementRepresentation.RuntimeRc)
             || Enumerable.Range(0, info.ArgTypes.Length).Any(i =>
                 !CanArenaReset(info.ArgTypes[i])
                 && !IsResourceHandleType(info.ArgTypes[i])
@@ -1119,7 +1120,8 @@ public sealed partial class Lowering
         var dropPredecessor = new bool[info.ArgTypes.Length];
         for (int i = 0; i < info.ArgTypes.Length; i++)
         {
-            if (!info.RuntimeManagedParams[i] || info.PassThrough[i])
+            if (info.ParamPlacements[i]?.Representation != TcoPlacementRepresentation.RuntimeRc
+                || info.PassThrough[i])
             {
                 continue;
             }
@@ -1173,13 +1175,13 @@ public sealed partial class Lowering
     /// <summary>
     /// True when the tail-consumed list parameter at <paramref name="paramIndex"/> is only inspected
     /// by the recursive body (nothing derived from it escapes — see
-    /// <see cref="TcoParamOwnership.BorrowableConsumedList"/>) AND its element is an all-inline-copy
+    /// <see cref="TcoParamStaticFacts.BorrowableConsumedList"/>) AND its element is an all-inline-copy
     /// record. Under both conditions the traversal reads only scalar fields and never retains a cell
     /// or head, so the caller's graph can be borrowed instead of RC-normalized into a private copy.
     /// </summary>
     private bool IsBorrowableInspectOnlyList(TcoContext tco, int paramIndex, TypeRef.TList list)
         => paramIndex >= 0
-            && tco.ParamOwnership[tco.ParamSlots[paramIndex]].BorrowableConsumedList
+            && tco.ParamFacts[tco.ParamSlots[paramIndex]].BorrowableConsumedList
             && Prune(list.Element) is TypeRef.TNamedType element
             && TryGetCopyOnlyRecordConstructor(element, out _);
 
@@ -1549,7 +1551,7 @@ public sealed partial class Lowering
 
     private bool TcoBackEdgeRuntimeManagedArgCanReset(PendingTcoReset info, int index)
     {
-        if (!info.RuntimeManagedParams[index])
+        if (info.ParamPlacements[index]?.Representation != TcoPlacementRepresentation.RuntimeRc)
         {
             return false;
         }
@@ -5273,7 +5275,7 @@ public sealed partial class Lowering
         var (free, captures, envPtrTemp, knownCaptureLabels) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
-        RecordTcoParamLabel(lam.ParamName, label);
+        RecordTcoParamIdentity(lam, paramTy, label);
         IrFunctionOrigin origin = CreateLambdaOrigin(lam, label, originSeed);
         IrFunctionOrigin? savedActiveFunctionOrigin = _activeFunctionOrigin;
         _activeFunctionOrigin = origin;
@@ -5493,27 +5495,25 @@ public sealed partial class Lowering
         LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
             _scopes.Peek(),
             tco,
+            TcoPlacementResolutionPoint.PostBodyRefresh,
             includeFreshClosures: false);
         foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
-            if (tco.ParamOwnership[slot].RuntimeManagedType is not TypeRef.TFun
+            if (tco.GetRuntimeManagedType(slot) is not TypeRef.TFun
                 && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
             {
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
         }
 
-        RecordTcoPromotionProfitability(_scopes.Peek(), tco);
+        RecordTcoPlacementSnapshot(tco);
     }
 
     private void ResolvePendingRuntimeArgumentFlags(TcoContext? tco)
     {
-        foreach ((int flagTemp, string parameterName) in _pendingRuntimeArgumentFlags)
+        foreach ((int flagTemp, int parameterSlot) in _pendingRuntimeArgumentFlags)
         {
-            int parameterIndex = tco?.ParamNames.IndexOf(parameterName) ?? -1;
-            bool runtimeManaged = parameterIndex >= 0
-                && parameterIndex < tco!.ParamSlots.Count
-                && tco.IsRuntimeManagedSlot(tco.ParamSlots[parameterIndex]);
+            bool runtimeManaged = tco?.IsRuntimeManagedSlot(parameterSlot) == true;
             if (runtimeManaged)
             {
                 continue;
@@ -5672,13 +5672,23 @@ public sealed partial class Lowering
         return reachable;
     }
 
-    private void RecordTcoParamLabel(string paramName, string label)
+    private void RecordTcoParamIdentity(Expr.Lambda lambda, TypeRef parameterType, string label)
     {
-        if (_tcoCtx is { DescendingChain: true } tco
-            && tco.ParamNames.Contains(paramName, StringComparer.Ordinal))
+        if (_tcoCtx is not { DescendingChain: true } tco)
         {
-            tco.ParamLabels[paramName] = label;
+            return;
         }
+
+        int ordinal = tco.ParamCount - CountLambdaChain(lambda);
+        if (ordinal < 0
+            || ordinal >= tco.ParamNames.Count
+            || !string.Equals(tco.ParamNames[ordinal], lambda.ParamName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        tco.ParamLabels[ordinal] = label;
+        tco.ParamTypes[ordinal] = parameterType;
     }
 
     private void LowerLambdaCoreSpliceTcoEntryOwnership(
@@ -5858,7 +5868,7 @@ public sealed partial class Lowering
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
         HashSet<int> RuntimeManagedResultTemps,
-        Dictionary<int, string> PendingRuntimeArgumentFlags,
+        Dictionary<int, int> PendingRuntimeArgumentFlags,
         Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
         HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
@@ -5904,7 +5914,7 @@ public sealed partial class Lowering
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
         var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
-        var savedPendingRuntimeArgumentFlags = new Dictionary<int, string>(_pendingRuntimeArgumentFlags);
+        var savedPendingRuntimeArgumentFlags = new Dictionary<int, int>(_pendingRuntimeArgumentFlags);
         var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
             SaveAndClearRuntimeManagedTcoPatternAliases();
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
@@ -6121,7 +6131,11 @@ public sealed partial class Lowering
         tco.ParamSlots.Clear();
 
         LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
-        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(scope, tco);
+        LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
+            scope,
+            tco,
+            TcoPlacementResolutionPoint.ProvisionalLoopEntry,
+            includeFreshClosures: true);
 
         var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
         int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
@@ -6135,164 +6149,25 @@ public sealed partial class Lowering
     private void LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
         IReadOnlyDictionary<string, Binding> scope,
         TcoContext tco,
-        bool includeFreshClosures = true,
-        IReadOnlySet<int>? excludedSlots = null)
-    {
-        if (_usesAsync || _inCoroutineBody || _programHasDynamicCapabilityDispatch)
-        {
-            return;
-        }
-
-        foreach (int slot in tco.ParamSlots)
-        {
-            if (excludedSlots?.Contains(slot) == true)
-            {
-                continue;
-            }
-
-            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
-                .FirstOrDefault(local => local.Slot == slot);
-            if (parameter is null)
-            {
-                continue;
-            }
-
-            TypeRef parameterType = Prune(parameter.T);
-            int paramIndex = tco.ParamSlots.IndexOf(slot);
-            if (IsIndependentlyRcEligibleTcoParam(parameterType, paramIndex, tco, includeFreshClosures))
-            {
-                tco.MarkRuntimeManaged(slot, parameterType);
-            }
-        }
-
-        LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(scope, tco);
-    }
-
-    /// <summary>
-    /// Classifier A (see the TCO section of the ownership-unification design doc): whether a TCO
-    /// parameter's own type/usage shape independently licenses runtime-managed (RC) representation,
-    /// with no regard for any other parameter in the same loop frame. Factored out of <see
-    /// cref="LowerLambdaCoreIdentifyRuntimeManagedTcoParams"/> so the promotion-profitability signal
-    /// (<see cref="RecordTcoPromotionProfitability"/>) can ask the identical question a second time —
-    /// e.g. after the frame-wide veto has cleared a parameter's runtime-managed verdict — without
-    /// re-deriving it as a second, potentially-diverging copy of the same condition.
-    /// </summary>
-    private bool IsIndependentlyRcEligibleTcoParam(
-        TypeRef parameterType,
-        int paramIndex,
-        TcoContext tco,
+        TcoPlacementResolutionPoint resolutionPoint,
         bool includeFreshClosures)
     {
-        TcoParamOwnership? ownership = paramIndex >= 0 && paramIndex < tco.ParamSlots.Count
-            ? tco.ParamOwnership.GetValueOrDefault(tco.ParamSlots[paramIndex])
-            : null;
-        bool freshRebuiltList = ownership?.FreshRebuiltList == true;
-        bool affineConsList = ownership?.AffineConsList == true;
-        bool consumedListTail = ownership?.ConsumedListTail == true;
-        bool freshClosureRebuild = ownership?.FreshClosureRebuild == true;
-        return IsRcEligibleScalarTupleOrAdtType(parameterType)
-            || parameterType is TypeRef.TList list
-                && CanRuntimeManageTcoListElement(list.Element)
-                && (freshRebuiltList
-                    || affineConsList
-                    || consumedListTail && !CanArenaReset(Prune(list.Element))
-                        && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
-            || includeFreshClosures && parameterType is TypeRef.TFun && freshClosureRebuild;
+        EvaluateTcoParamPlacements(
+            tco,
+            ResolveTcoParamTypes(scope, tco),
+            resolutionPoint,
+            includeFreshClosures,
+            applyReuseRestrictions: false);
     }
 
     /// <summary>
-    /// The scalar/tuple/ADT portion of "does this type's own shape independently license
-    /// runtime-managed (RC) representation" — shared by <see
-    /// cref="IsIndependentlyRcEligibleTcoParam"/>, <see
-    /// cref="LowerCallTcoPromoteResolvedRuntimeParam"/>'s resolved-argument-type check, and <see
-    /// cref="TcoBackEdgeRuntimeManagedArgCanReset"/>. All three previously re-derived this exact test
-    /// independently (one of them carrying a redundant extra disjunct, <c>CanRuntimeManageAdt</c>,
-    /// that <c>CanRuntimeManageTcoAdt</c> already subsumes as its own first disjunct). List and
-    /// closure eligibility are deliberately NOT covered here and remain separate at each of the three
-    /// call sites: two of them judge a list/closure parameter from a whole-loop-body, per-parameter
-    /// classification computed once before the loop is entered, while the third judges it from
-    /// per-back-edge, per-argument facts resolved fresh at each tail call — those are genuinely
-    /// different signals, not a duplicated derivation of the same one, so folding them into this
-    /// shared helper would either silently change behavior or be a no-op wrapper around already-
-    /// divergent inputs.
+    /// Canonical scalar/tuple/ADT layout predicate shared by placement and classifier B.
     /// </summary>
     private bool IsRcEligibleScalarTupleOrAdtType(TypeRef type)
         => type is TypeRef.TStr or TypeRef.TBigInt
             || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
             || type is TypeRef.TNamedType named
                 && (CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named));
-
-    // Detects whether ANY parameter in the frame permanently blocks a per-iteration arena reset
-    // (heap-typed, not a resource handle, not loop-invariant, not an arena-reclaimable consumed-list
-    // tail, and not itself already independently RC-eligible). This firing condition is unchanged from
-    // the frame's original all-or-nothing veto and is deliberately left byte-for-byte identical to it —
-    // only the CONSEQUENCE of firing has changed (see DemoteUnprofitableRuntimeManagedTcoParams below):
-    // rather than clearing every promoted parameter in the frame, only the ones whose own promotion the
-    // cost signal finds unprofitable in this frame shape are cleared.
-    private void LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame(
-        IReadOnlyDictionary<string, Binding> scope,
-        TcoContext tco)
-    {
-        bool hasPermanentlyBlockingParam = false;
-        foreach (int slot in tco.ParamSlots)
-        {
-            Binding.Local? parameter = scope.Values.OfType<Binding.Local>()
-                .FirstOrDefault(local => local.Slot == slot);
-            int index = tco.ParamSlots.IndexOf(slot);
-            if (parameter is null
-                || index < 0
-                || CanArenaReset(Prune(parameter.T))
-                || IsResourceHandleType(Prune(parameter.T))
-                || tco.ParamOwnership[slot].LoopInvariant
-                || Prune(parameter.T) is TypeRef.TList list
-                    && tco.ParamOwnership[slot].ConsumedListTail
-                    && (CanArenaReset(Prune(list.Element))
-                        || IsBorrowableInspectOnlyList(tco, index, list))
-                || tco.IsRuntimeManagedSlot(slot))
-            {
-                continue;
-            }
-
-            hasPermanentlyBlockingParam = true;
-            break;
-        }
-
-        if (hasPermanentlyBlockingParam)
-        {
-            DemoteUnprofitableRuntimeManagedTcoParams(tco, ResolveTcoParamTypes(scope, tco));
-        }
-    }
-
-    // Replaces the frame veto's original blanket clear: a permanently-blocking sibling means the frame
-    // can never fully reclaim per iteration, but that does not make every OTHER promoted parameter's own
-    // promotion worthless — only the ones whose own eligibility reason is only affordable when the frame
-    // CAN reclaim per iteration (see TcoPromotionVerdict.NotProfitable's own doc comment). Demotes only
-    // those; a parameter the cost signal finds Profitable keeps its runtime-managed representation even
-    // though a sibling in the same frame permanently blocks arena reset.
-    private void DemoteUnprofitableRuntimeManagedTcoParams(TcoContext tco, TypeRef?[] paramTypes)
-    {
-        foreach (int slot in tco.RuntimeManagedSlotsInOrder.ToArray())
-        {
-            int index = tco.ParamSlots.IndexOf(slot);
-            if (index < 0 || paramTypes[index] is not { } type)
-            {
-                ClearOneRuntimeManagedTcoParam(tco, slot);
-                continue;
-            }
-
-            if (ClassifyTcoParamPromotion(tco, paramTypes, index, type).Verdict != TcoPromotionVerdict.Profitable)
-            {
-                ClearOneRuntimeManagedTcoParam(tco, slot);
-            }
-        }
-    }
-
-    private static void ClearOneRuntimeManagedTcoParam(TcoContext tco, int slot)
-    {
-        tco.ClearRuntimeManaged(slot);
-        tco.RuntimeManagedParamActiveSlots.Remove(slot);
-        tco.RuntimeManagedClosureActiveSlots.Remove(slot);
-    }
 
     private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
     {
@@ -6331,26 +6206,45 @@ public sealed partial class Lowering
             }
         }
 
-        // Build ParamSlots in PARAMETER (declaration/application) order, so ParamSlots[i] is the slot
-        // of the i-th curried parameter — which is also the i-th collected back-edge argument. The
-        // captured params were just bound to fresh locals in capture-DISCOVERY order (the order free
-        // variables appear in the body), which need not match declaration order; indexing the slots by
-        // capture order stored each back-edge argument into the wrong parameter's slot (a swap that
-        // corrupts both when, e.g., a string and a list parameter are captured in reverse order).
-        // Every parameter — including the innermost, bound to argSlot — resolves through the scope.
-        foreach (var pname in tco.ParamNames)
+        LowerLambdaCoreBuildTcoParamSlots(scope, tco);
+        tco.BuildParamStaticFacts();
+    }
+
+    private void LowerLambdaCoreBuildTcoParamSlots(
+        IReadOnlyDictionary<string, Binding> scope,
+        TcoContext tco)
+    {
+        // Build in declaration/application order, not capture-discovery order. The innermost scope
+        // exposes the last binding for a duplicated source name; join that binding to its ordinal
+        // exactly once and retain distinct synthetic slots for shadowed, unobservable binders.
+        for (int ordinal = 0; ordinal < tco.ParamNames.Count; ordinal++)
         {
-            if (scope.TryGetValue(pname, out var pBinding) && pBinding is Binding.Local pLocal)
+            string parameterName = tco.ParamNames[ordinal];
+            bool visibleBinding = tco.IsVisibleParameterOrdinal(ordinal);
+            if (visibleBinding
+                && scope.TryGetValue(parameterName, out Binding? parameterBinding)
+                && parameterBinding is Binding.Local parameterLocal)
             {
-                tco.ParamSlots.Add(pLocal.Slot);
+                tco.ParamSlots.Add(parameterLocal.Slot);
+            }
+            else if (!visibleBinding)
+            {
+                int hiddenSlot = NewLocal();
+                tco.ParamSlots.Add(hiddenSlot);
+                int emptyValue = NewTemp();
+                Emit(new IrInst.LoadConstInt(emptyValue, 0));
+                Emit(new IrInst.StoreLocal(hiddenSlot, emptyValue));
+                if (tco.ParamTypes.TryGetValue(ordinal, out TypeRef? hiddenType))
+                {
+                    RecordLocalDebugInfo(hiddenSlot, parameterName, hiddenType);
+                }
             }
             else
             {
-                throw new InvalidOperationException($"TCO parameter '{pname}' has no local slot for the back-edge.");
+                throw new InvalidOperationException(
+                    $"TCO parameter {ordinal} ('{parameterName}') has no local slot for the back-edge.");
             }
         }
-
-        tco.BuildParamOwnership();
     }
 
     // In-place reuse: mark accumulators that are deconstructed in the loop body as
@@ -6656,8 +6550,8 @@ public sealed partial class Lowering
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             int normalizedTemp = slot == 1
-                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.ParamOwnership[slot].RuntimeManagedType!)
-                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.ParamOwnership[slot].RuntimeManagedType!);
+                ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.GetRuntimeManagedType(slot))
+                : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.GetRuntimeManagedType(slot));
             _runtimeManagedResultTemps.Add(normalizedTemp);
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
             int activeTemp = NewTemp();
@@ -6738,7 +6632,7 @@ public sealed partial class Lowering
 
         int paramIndex = tco.ParamSlots.IndexOf(slot);
         if (paramIndex >= 0
-            && tco.ParamLabels.TryGetValue(tco.ParamNames[paramIndex], out string? paramLabel))
+            && tco.ParamLabels.TryGetValue(paramIndex, out string? paramLabel))
         {
             _runtimeNormalizedFunctionArgumentLabels.Add(paramLabel);
         }
@@ -6819,7 +6713,7 @@ public sealed partial class Lowering
         string skipLabel = NewLabel("rc_tco_exit_drop_inactive");
         Emit(new IrInst.LoadLocal(activeTemp, tco.RuntimeManagedParamActiveSlots[slot]));
         Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
-        TypeRef type = tco.ParamOwnership[slot].RuntimeManagedType!;
+        TypeRef type = tco.GetRuntimeManagedType(slot);
         if (tco.IsRuntimeManagedListSlot(slot) && type is TypeRef.TList list)
         {
             EmitRuntimeManagedListDrop(sourceTemp, list.Element);
@@ -6935,9 +6829,9 @@ public sealed partial class Lowering
     private void RestoreRuntimeManagedFrameState(LowerLambdaCoreFrame frame)
     {
         _pendingRuntimeArgumentFlags.Clear();
-        foreach ((int temp, string parameter) in frame.PendingRuntimeArgumentFlags)
+        foreach ((int temp, int parameterSlot) in frame.PendingRuntimeArgumentFlags)
         {
-            _pendingRuntimeArgumentFlags[temp] = parameter;
+            _pendingRuntimeArgumentFlags[temp] = parameterSlot;
         }
     }
 
@@ -7608,86 +7502,27 @@ public sealed partial class Lowering
 
     private void LowerCallTcoPromoteResolvedRuntimeParams(TcoContext tco, TypeRef[] argTypes)
     {
-        if (_usesAsync || _inCoroutineBody || _programHasDynamicCapabilityDispatch)
+        var parameterTypes = new TypeRef?[tco.ParamSlots.Count];
+        int count = Math.Min(argTypes.Length, parameterTypes.Length);
+        for (int ordinal = 0; ordinal < count; ordinal++)
         {
-            return;
+            parameterTypes[ordinal] = Prune(argTypes[ordinal]);
         }
 
-        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
+        EvaluateTcoParamPlacements(
+            tco,
+            parameterTypes,
+            TcoPlacementResolutionPoint.ResolvedBackEdge,
+            includeFreshClosures: false,
+            applyReuseRestrictions: true);
+        foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
-            LowerCallTcoPromoteResolvedRuntimeParam(tco, index, Prune(argTypes[index]));
-        }
-
-        LowerCallTcoRejectPartialResolvedRuntimeManagedTcoFrame(tco, argTypes);
-    }
-
-    private void LowerCallTcoPromoteResolvedRuntimeParam(TcoContext tco, int index, TypeRef type)
-    {
-        int slot = tco.ParamSlots[index];
-        string name = tco.ParamNames[index];
-        TcoParamOwnership ownership = tco.ParamOwnership[slot];
-        bool supported = IsRcEligibleScalarTupleOrAdtType(type)
-            || type is TypeRef.TList list
-                && CanRuntimeManageTcoListElement(list.Element)
-                && (ownership.FreshRebuiltList
-                    || ownership.AffineConsList
-                    || ownership.ConsumedListTail
-                        && !CanArenaReset(Prune(list.Element))
-                        && !IsBorrowableInspectOnlyList(tco, index, list));
-        if (!supported
-            || _linearReuseNames.Contains(name)
-            || _linearSpecializationAccumulators.Contains(name)
-            || _resetSafeAccumulators.Contains(name))
-        {
-            return;
-        }
-
-        tco.MarkRuntimeManaged(slot, type);
-        if (type is not TypeRef.TFun
-            && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
-        {
-            tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
-        }
-    }
-
-    // Resolved-type-time counterpart of LowerLambdaCoreRejectPartialRuntimeManagedTcoFrame's firing
-    // check, re-run at every back-edge call site once argument types are concrete. Kept as a separate
-    // copy (rather than sharing one method) because it reads argTypes directly instead of walking scope
-    // bindings — see that method's own doc comment for why the consequence of firing is now a per-
-    // parameter demotion rather than a blanket clear.
-    private void LowerCallTcoRejectPartialResolvedRuntimeManagedTcoFrame(TcoContext tco, TypeRef[] argTypes)
-    {
-        bool hasPermanentlyBlockingParam = false;
-        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
-        {
-            TypeRef type = Prune(argTypes[index]);
-            int slot = tco.ParamSlots[index];
-            if (!CanArenaReset(type)
-                && !IsResourceHandleType(type)
-                && !tco.ParamOwnership[slot].LoopInvariant
-                && !(type is TypeRef.TList list
-                    && tco.ParamOwnership[slot].ConsumedListTail
-                    && (CanArenaReset(Prune(list.Element))
-                        || IsBorrowableInspectOnlyList(tco, index, list)))
-                && !tco.IsRuntimeManagedSlot(slot))
+            if (tco.GetRuntimeManagedType(slot) is not TypeRef.TFun
+                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
             {
-                hasPermanentlyBlockingParam = true;
-                break;
+                tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
         }
-
-        if (!hasPermanentlyBlockingParam)
-        {
-            return;
-        }
-
-        var paramTypes = new TypeRef?[tco.ParamSlots.Count];
-        for (int index = 0; index < argTypes.Length && index < tco.ParamSlots.Count; index++)
-        {
-            paramTypes[index] = Prune(argTypes[index]);
-        }
-
-        DemoteUnprofitableRuntimeManagedTcoParams(tco, paramTypes);
     }
 
     private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
@@ -7773,13 +7608,13 @@ public sealed partial class Lowering
         int? savedTcoTailSlot = _runtimeRcTcoListTailSlot;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
-            && tco.ParamOwnership[tco.ParamSlots[index]].AffineConsList
+            && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
             && argument is Expr.Cons { Tail: Expr.Var tail }
             && Lookup(tail.Name) is Binding.Local tailLocal
             && tailLocal.Slot == tco.ParamSlots[index];
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
-            && tco.ParamOwnership[tco.ParamSlots[index]].FreshClosureRebuild
+            && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
             && IsRuntimeRcCopyClosureProducer(argument)
             && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
         bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);
@@ -7845,7 +7680,7 @@ public sealed partial class Lowering
         if (index >= tco.ParamNames.Count
             || tco.FixedCursorSlot < 0
             || index >= tco.ParamSlots.Count
-            || !tco.ParamOwnership[tco.ParamSlots[index]].AffineStr
+            || !tco.ParamFacts[tco.ParamSlots[index]].AffineStr
             || argument is not Expr.Add)
         {
             return;
@@ -7882,13 +7717,18 @@ public sealed partial class Lowering
             // never endangers (or is endangered by) a reset. This is what lets a loop threading
             // a closure (fasta's randomFasta table), an invariant list, or any other heap value
             // alongside a growing accumulator keep the fixed mark instead of stranding every
-            // iteration's accumulator copy below an advancing one.
+            // iteration's accumulator copy below an advancing one. A shadowed earlier occurrence
+            // of a duplicate parameter has no live binding in this body, so its synthetic
+            // parallel-assignment slot is also reset-safe: no expression can observe it afterwards.
+            bool visibleBinding = i < tco.ParamSlots.Count
+                && tco.ParamFacts[tco.ParamSlots[i]].HasVisibleBinding;
             passThrough[i] = i < tco.ParamNames.Count
                 && i < tco.ParamSlots.Count
-                && tco.ParamOwnership[tco.ParamSlots[i]].LoopInvariant
-                && collectedArgs[i] is Expr.Var passVar
-                && Lookup(passVar.Name) is Binding.Local passLocal
-                && passLocal.Slot == tco.ParamSlots[i];
+                && (!visibleBinding
+                    || tco.ParamFacts[tco.ParamSlots[i]].LoopInvariant
+                        && collectedArgs[i] is Expr.Var passVar
+                        && Lookup(passVar.Name) is Binding.Local passLocal
+                        && passLocal.Slot == tco.ParamSlots[i]);
 
             // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
             // tail already lives below the watermark — which holds only for literally
@@ -7936,10 +7776,10 @@ public sealed partial class Lowering
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
-            tco.ParamSlots.Select(slot => tco.ParamOwnership[slot].ConsumedListTail).ToArray(),
+            tco.ParamSlots.Select(slot => tco.ParamFacts[slot].ConsumedListTail).ToArray(),
             facts.StableAccArg,
             oldRuntimeParamTemps,
-            tco.ParamSlots.Select(tco.IsRuntimeManagedSlot).ToArray(),
+            tco.ParamSlots.Select(slot => tco.ParamPlacements[slot].Current).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.ToArray(),
@@ -8766,7 +8606,7 @@ public sealed partial class Lowering
         ref int argumentTemp)
     {
         if (borrowsOnly
-            || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out string? pendingParameter))
+            || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out int pendingParameterSlot))
         {
             return -1;
         }
@@ -8781,9 +8621,9 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
         int flagTemp = NewTemp();
         Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
-        if (pendingParameter is not null)
+        if (pendingParameterSlot >= 0)
         {
-            _pendingRuntimeArgumentFlags[flagTemp] = pendingParameter;
+            _pendingRuntimeArgumentFlags[flagTemp] = pendingParameterSlot;
         }
         if (!transfersFreshRuntimeArgument)
         {
@@ -8823,9 +8663,9 @@ public sealed partial class Lowering
     private bool TryGetRuntimeManagedCallArgument(
         Expr argument,
         int argumentTemp,
-        out string? pendingParameter)
+        out int pendingParameterSlot)
     {
-        pendingParameter = null;
+        pendingParameterSlot = -1;
         if (IsRuntimeManagedResultTemp(argumentTemp)
             || argument is Expr.Var variable
                 && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
@@ -8838,13 +8678,14 @@ public sealed partial class Lowering
             return false;
         }
 
-        int parameterIndex = tco.ParamNames.IndexOf(localVariable.Name);
-        if (parameterIndex < 0 || parameterIndex >= tco.ParamSlots.Count)
+        if (Lookup(localVariable.Name) is not Binding.Local parameter
+            || !tco.ParamFacts.TryGetValue(parameter.Slot, out TcoParamStaticFacts? ownership)
+            || !ownership.HasVisibleBinding)
         {
             return false;
         }
 
-        if (tco.IsRuntimeManagedSlot(tco.ParamSlots[parameterIndex]))
+        if (tco.IsRuntimeManagedSlot(parameter.Slot))
         {
             return true;
         }
@@ -8852,7 +8693,7 @@ public sealed partial class Lowering
         // Eligibility can resolve only after this call's surrounding tail self-call constrains the
         // parameter types. Emit the ownership flag now and replace it with zero during finalization
         // if the completed TCO frame does not admit this parameter to runtime RC.
-        pendingParameter = localVariable.Name;
+        pendingParameterSlot = parameter.Slot;
         return true;
     }
 

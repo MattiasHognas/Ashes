@@ -22,6 +22,204 @@ public sealed class TcoPromotionCostSignalTests
         return lowering;
     }
 
+    private static TcoParamPlacementTrace GetPlacement(
+        Lowering lowering,
+        string functionName,
+        string parameterName)
+    {
+        IReadOnlyList<TcoParamPlacementTrace> decisions =
+            lowering.GetTcoPlacementDecisions(functionName)
+            ?? throw new InvalidOperationException($"No TCO placement snapshot for '{functionName}'.");
+        return decisions.Single(trace =>
+            string.Equals(trace.Current.ParameterName, parameterName, StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Annotated_string_parameter_is_placed_at_provisional_loop_entry()
+    {
+        const string source =
+            """
+            let recursive loop : Int -> Str -> Str = given n -> given acc ->
+                if n <= 0
+                then acc
+                else loop(n - 1)(acc + "x")
+
+            Ashes.IO.print(loop(4)(""))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "loop", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.ProvisionalLoopEntry);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.ProvisionalLoopEntry
+            && decision.Representation == TcoPlacementRepresentation.RuntimeRc
+            && decision.Eligibility.OwnershipShapeEligible
+            && decision.Eligibility.ResolvedLayoutEligible);
+        TcoFunctionPlacementSnapshot snapshot = lowering.GetTcoPlacementSnapshots()
+            .Single(candidate =>
+                string.Equals(candidate.FunctionName, "loop", StringComparison.Ordinal));
+        snapshot.FunctionLabel.ShouldNotBeNullOrWhiteSpace();
+        snapshot.Parameters.Select(trace => trace.Current.ParameterOrdinal)
+            .ShouldBe(snapshot.Parameters.Select(trace => trace.Current.ParameterOrdinal).Order());
+    }
+
+    [Test]
+    public void Pass_through_parameter_is_promoted_by_post_body_type_resolution()
+    {
+        const string source =
+            """
+            let recursive loop n acc =
+                if n > 0
+                then loop(n - 1)(acc)
+                else Ashes.Text.byteLength(acc)
+
+            Ashes.IO.print(Ashes.Text.fromInt(loop(4)("done")))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "loop", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.PostBodyRefresh);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.ProvisionalLoopEntry
+            && decision.Eligibility.Reason == TcoRcEligibilityReason.UnresolvedType);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.PostBodyRefresh
+            && decision.Transition == TcoPlacementTransitionKind.PromotedAfterResolution);
+    }
+
+    [Test]
+    public void Grounded_tail_argument_promotes_parameter_at_resolved_back_edge()
+    {
+        const string source =
+            """
+            let recursive loop n acc =
+                if n > 0
+                then loop(n - 1)(acc + "x")
+                else Ashes.Text.byteLength(acc)
+
+            Ashes.IO.print(Ashes.Text.fromInt(loop(4)("")))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "loop", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.ResolvedBackEdge);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.ResolvedBackEdge
+            && decision.Transition == TcoPlacementTransitionKind.PromotedAfterResolution
+            && decision.ResolvedType == "Str");
+    }
+
+    [Test]
+    public void Dynamic_capability_boundary_records_a_stable_arena_reason()
+    {
+        const string source =
+            """
+            capability Log =
+                | log : Str -> Unit
+
+            let recursive loop : Int -> Str -> Str = given n -> given acc ->
+                if n <= 0
+                then acc
+                else loop(n - 1)(acc + "x")
+
+            let runLogged =
+                given (u) ->
+                    handle Log.log("hi") with
+                        | Log.log(msg) -> resume(Unit)
+
+            let _ = runLogged(Unit) in
+            Ashes.IO.print(loop(4)(""))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "loop", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.Arena);
+        placement.Current.Reason.ShouldBe(TcoPlacementReason.DynamicCapabilityBoundary);
+        placement.Current.DynamicBoundaryRestricted.ShouldBeTrue();
+        placement.History.ShouldAllBe(decision =>
+            decision.Representation == TcoPlacementRepresentation.Arena);
+    }
+
+    [Test]
+    public void Unresolved_post_body_refresh_preserves_resolved_edge_runtime_type()
+    {
+        const string source =
+            """
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) -> Body(x = x + dt * velocity, velocity = velocity) :: moveBodies(dt)(rest)
+
+            let advance dt _ = moveBodies(dt)(makeBodies(3))
+
+            let recursive run turns bodies =
+                if turns == 0
+                then bodies
+                else run(turns - 1)(advance(1.0)(bodies))
+
+            run(10)([])
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "run", "bodies");
+
+        placement.Current.ResolutionPoint.ShouldBe(TcoPlacementResolutionPoint.PostBodyRefresh);
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.Reason.ShouldBe(TcoPlacementReason.EarlierPlacementRetained);
+        placement.Current.ResolvedType.ShouldBe("List<Body>");
+        placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.ResolvedBackEdge);
+    }
+
+    [Test]
+    public void Shadowed_duplicate_parameter_records_its_decisive_arena_reason()
+    {
+        const string source =
+            """
+            let recursive build value value remaining =
+                if remaining <= 0
+                then value
+                else build(["x"])(value)(remaining - 1)
+
+            build([])([])(2)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoFunctionPlacementSnapshot snapshot = lowering.GetTcoPlacementSnapshots()
+            .Single(candidate =>
+                string.Equals(candidate.FunctionName, "build", StringComparison.Ordinal));
+        TcoParamPlacementTrace shadowed = snapshot.Parameters.Single(trace =>
+            trace.Current.ParameterOrdinal == 0);
+        TcoParamPlacementTrace visible = snapshot.Parameters.Single(trace =>
+            trace.Current.ParameterOrdinal == 1);
+
+        shadowed.Current.ParameterName.ShouldBe("value");
+        visible.Current.ParameterName.ShouldBe("value");
+        shadowed.Current.Slot.ShouldNotBe(visible.Current.Slot);
+        shadowed.Current.Representation.ShouldBe(TcoPlacementRepresentation.Arena);
+        shadowed.Current.Reason.ShouldBe(TcoPlacementReason.ShadowedBinding);
+        shadowed.History.ShouldAllBe(decision =>
+            decision.Representation == TcoPlacementRepresentation.Arena
+            && decision.Reason == TcoPlacementReason.ShadowedBinding);
+    }
+
     [Test]
     public void Consumed_list_tail_alongside_a_self_recursive_multi_constructor_tree_is_not_profitable()
     {
@@ -68,6 +266,10 @@ public sealed class TcoPromotionCostSignalTests
         verdicts.ShouldNotBeNull();
         verdicts.ShouldContainKey("entries");
         verdicts["entries"].Verdict.ShouldBe(TcoPromotionVerdict.NotProfitable);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "mergeEntries", "entries");
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.Arena);
+        placement.Current.Reason.ShouldBe(TcoPlacementReason.BlockingSiblingNotProfitable);
+        placement.Current.BlockingSiblingOrdinal.ShouldBe(1);
     }
 
     [Test]
