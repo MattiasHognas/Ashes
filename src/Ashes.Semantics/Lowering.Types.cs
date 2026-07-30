@@ -277,6 +277,24 @@ public sealed partial class Lowering
 
         public Dictionary<int, int> RuntimeManagedParamActiveSlots { get; } = [];
         public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
+        // Closure placement may become concrete only after the loop body has been lowered. Those
+        // active locals are allocated during the post-body refresh and initialized retroactively at
+        // the same one-time entry insertion point as the other TCO ownership setup.
+        public HashSet<int> RuntimeManagedClosureSlotsNeedingEntryInitialization { get; } = [];
+
+        public bool TryGetRuntimeManagedActiveSlot(int slot, out int activeSlot)
+        {
+            activeSlot = -1;
+            if (!IsRuntimeManagedSlot(slot))
+            {
+                return false;
+            }
+
+            return IsRuntimeManagedClosureSlot(slot)
+                ? RuntimeManagedClosureActiveSlots.TryGetValue(slot, out activeSlot)
+                : RuntimeManagedParamActiveSlots.TryGetValue(slot, out activeSlot);
+        }
+
         public bool InTailPosition { get; set; }
 
         // Pre-slot facts stashed at construction time (before ParamSlots is known) and consumed once

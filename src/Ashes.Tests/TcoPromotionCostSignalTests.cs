@@ -116,6 +116,33 @@ public sealed class TcoPromotionCostSignalTests
     }
 
     [Test]
+    public void Fresh_closure_parameter_is_promoted_after_post_body_type_resolution()
+    {
+        const string source =
+            """
+            let recursive loop n text transform =
+                if n <= 0
+                then transform(text)
+                else loop(n - 1)(text + "x")(given value -> value + Ashes.Text.fromInt(n))
+
+            Ashes.IO.print(loop(4)("")(given value -> value))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "loop", "transform");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.Eligibility.Reason.ShouldBe(TcoRcEligibilityReason.FreshClosureRebuild);
+        placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.PostBodyRefresh);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.ProvisionalLoopEntry
+            && decision.Eligibility.Reason == TcoRcEligibilityReason.UnresolvedType);
+        placement.History.ShouldContain(decision =>
+            decision.ResolutionPoint == TcoPlacementResolutionPoint.PostBodyRefresh
+            && decision.Transition == TcoPlacementTransitionKind.PromotedAfterResolution);
+    }
+
+    [Test]
     public void Dynamic_capability_boundary_records_a_stable_arena_reason()
     {
         const string source =

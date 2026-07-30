@@ -127,8 +127,10 @@ The following is already implemented and is not part of the backlog:
   `Shape = Mixed`; the separate boolean records only that every relevant edge directly constructs a
   closure or selects between direct constructions. It is the live source for
   `TcoParamStaticFacts.FreshClosureRebuild`, combined with the resolved `TFun` gate and the existing
-  per-edge producer/capture-safety checks. Late-resolved closure promotion remains disabled pending
-  task 2.4;
+  per-edge producer/capture-safety checks. A closure first resolved at post-body refresh receives its
+  active local there, while its inactive initialization is spliced back into the one-time TCO entry
+  prologue. Exit and deferred back-edge consumers consult the explicit placement and tolerate an
+  absent active local conservatively;
 - positional `TcoParamStructuralFacts` identity. Facts retain both the parameter ordinal used by
   consumers and the source name used for diagnostics, so duplicate curried parameter names remain
   distinct in the immutable summary. `TcoParamFactsWalk` resolves live value names to those ordinals
@@ -224,33 +226,10 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.3 are complete. Fourteen
-implementation tasks remain; Milestone 2.4 is next.
+teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.4 are complete. Thirteen
+implementation tasks remain; Milestone 2.5 is next.
 
 ### Milestone 2 — separate TCO ownership, placement, and reuse refinements
-
-#### 2.4 Retrofit late-resolved closure parameters
-
-An ordinary unannotated TCO closure parameter is still effectively excluded at the post-body refresh:
-`LowerLambdaCoreRefreshRuntimeManagedTcoParams` calls
-`LowerLambdaCoreIdentifyRuntimeManagedTcoParams(..., includeFreshClosures: false)`. Flipping that flag
-alone is known to be invalid. The loop-entry pass allocates
-`RuntimeManagedClosureActiveSlots` and emits entry normalization before the parameter’s `TFun` type is
-known; a closure first discovered at refresh therefore has neither, while later exit/back-edge code
-indexes the missing active slot.
-
-Design the late-promotion path as part of the explicit three-time placement model:
-
-- allocate an active slot for a closure first proven eligible after body inference;
-- splice the required entry normalization/prologue at the same stable insertion point used for other
-  late ownership setup;
-- make exit and back-edge consumers read the explicit placement record and handle “not active” without
-  a direct missing-key failure;
-- only then enable fresh closures in the refresh classifier.
-
-Pin the previously investigated synthetic shape: a TCO frame with a string accumulator and an
-unannotated closure accumulator whose type resolves in the body. The compiler must not throw, the
-closure must be normalized exactly once, and its exit/back-edge drops must balance.
 
 #### 2.5 Consolidate the remaining reuse refinements
 

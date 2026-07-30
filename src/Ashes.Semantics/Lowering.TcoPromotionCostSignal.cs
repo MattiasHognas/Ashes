@@ -292,6 +292,7 @@ public sealed partial class Lowering
     {
         tco.RuntimeManagedParamActiveSlots.Remove(slot);
         tco.RuntimeManagedClosureActiveSlots.Remove(slot);
+        tco.RuntimeManagedClosureSlotsNeedingEntryInitialization.Remove(slot);
     }
 
     private static TcoPlacementReason GetFinalTcoPlacementReason(
