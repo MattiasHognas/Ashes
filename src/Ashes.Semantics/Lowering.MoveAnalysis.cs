@@ -970,14 +970,18 @@ public sealed partial class Lowering
     private sealed class TcoParamFactsState
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
+        public required bool?[] ArenaSelfContainedListRebuild { get; init; }
         public bool SawSelfCall { get; set; }
     }
 
     /// <summary>
     /// Classifies every parameter of <paramref name="function"/> that some self-recursive call site
-    /// supplies an argument for, into the <see cref="TcoSelfCallArgumentShape"/> that argument's shape
-    /// takes across ALL such call sites — re-deriving, from this same fixpoint's own already-computed
-    /// <paramref name="expressionFreshness"/> map, the question <c>Lowering.Reuse.cs</c>'s
+    /// supplies an argument for, into both the <see cref="TcoSelfCallArgumentShape"/> that argument's
+    /// reference-ownership shape takes and the independently aggregated arena-self-contained list
+    /// rebuild fact across ALL such call sites. The shape is re-derived from this same fixpoint's own
+    /// already-computed <paramref name="expressionFreshness"/> map, while arena self-containment uses
+    /// the narrower reset-boundary predicate without redefining reference freshness. Together they
+    /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s
     /// <c>CollectLoopInvariantParams</c>/<c>CollectFreshRebuiltListParams</c>/
     /// <c>CollectFreshClosureParams</c>/<c>CollectConsumedListTailParams</c>/<c>CollectAffineConsListParams</c>
     /// answer today by re-walking a TCO loop's body a second time with their own, separate logic. A
@@ -991,7 +995,11 @@ public sealed partial class Lowering
         IReadOnlyDictionary<Expr, bool> expressionFreshness)
     {
         var paramNames = info.Params;
-        var state = new TcoParamFactsState { Observed = new TcoSelfCallArgumentShape?[paramNames.Count] };
+        var state = new TcoParamFactsState
+        {
+            Observed = new TcoSelfCallArgumentShape?[paramNames.Count],
+            ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
+        };
 
         // Use the same body-entry scope recorded by call census. It contains this binding's own name
         // only for recursive definitions; a plain local function whose body refers to an outer
@@ -1017,7 +1025,9 @@ public sealed partial class Lowering
         {
             if (state.Observed[i] is { } shape)
             {
-                result[paramNames[i]] = new TcoParamStructuralFacts(shape);
+                result[paramNames[i]] = new TcoParamStructuralFacts(
+                    shape,
+                    state.ArenaSelfContainedListRebuild[i] == true);
             }
         }
 
@@ -1182,6 +1192,8 @@ public sealed partial class Lowering
         for (int i = 0; i < paramNames.Count; i++)
         {
             Expr argument = arguments[i];
+            bool arenaSelfContainedListRebuild =
+                IsArenaSelfContainedListRebuildExpr(argument);
             TcoSelfCallArgumentShape local =
                 argument is Expr.Var argVar && string.Equals(argVar.Name, paramNames[i], StringComparison.Ordinal)
                     ? TcoSelfCallArgumentShape.UnchangedPassthrough
@@ -1199,6 +1211,9 @@ public sealed partial class Lowering
             state.Observed[i] = state.Observed[i] is { } already && already != local
                 ? TcoSelfCallArgumentShape.Mixed
                 : state.Observed[i] ?? local;
+            state.ArenaSelfContainedListRebuild[i] =
+                (state.ArenaSelfContainedListRebuild[i] ?? true)
+                && arenaSelfContainedListRebuild;
         }
     }
 

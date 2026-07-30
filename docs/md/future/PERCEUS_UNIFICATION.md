@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `7ba5a1f` on 2026-07-30, together with the Milestone 1.8
+Audited against `main` at `0184019` on 2026-07-30, together with the Milestone 2.1
 implementation in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -115,6 +115,12 @@ The following is already implemented and is not part of the backlog:
   repackaging;
 - `TcoSelfCallArgumentShape.GrownCons` and complete expression-freshness recording for self-call
   arguments;
+- `TcoParamStructuralFacts.ArenaSelfContainedListRebuild`, computed across every exact self-call
+  argument independently of `ExpressionFreshness`. It preserves the arena/reset question answered
+  by `IsArenaSelfContainedListRebuildExpr`: a helper-call result can be self-contained relative to
+  the callee arena even when it retains an input tail and is therefore not reference-fresh, while a
+  direct `head :: oldAccumulator` remains rejected. Shadow comparison now treats this fact
+  separately from the reference-fresh `FreshRebuilt` shape;
 - `FuncKey` identity and re-keying of the seven main move-analysis tables, with genuine lexical scope
   resolution in `TcoParamFactsWalk`, `CollectCallsAndEscapes`, `ResultReach`, move analysis, and
   result provenance; function-body and per-call-argument scopes follow sequential let/letrec rules,
@@ -168,8 +174,7 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| TCO structural facts | `FunctionOwnershipSummary.TcoParamFacts` records unchanged, fresh, consumed-tail, and grown-cons shapes. | It is read only by `ShadowCompareTcoParamFacts`; live TCO decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
-| TCO “fresh rebuild” | Old `IsFreshListRebuildExpr` treats any call result as self-contained after the callee’s arena copy-out. | `ExpressionFreshness` correctly rejects helper results that still alias an input. These are different facts; 33 previously measured disagreements cannot be fixed by broadening either predicate. |
+| TCO structural facts | `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. | It is read only by `ShadowCompareTcoParamFacts`; live TCO decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
 | Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
@@ -181,28 +186,14 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1 is complete. Seventeen implementation tasks remain;
-Milestone 2.1 is next.
+teardown prerequisites are in place. Milestone 1 and task 2.1 are complete. Sixteen implementation
+tasks remain; Milestone 2.2 is next.
 
 ### Milestone 2 — make `TcoParamFacts` complete, then cut classifier A over
 
-#### 2.1 Represent arena self-containment separately from reference freshness
-
-Do not redefine `ExpressionFreshness`. Its current answer is correct: a helper result that retains an
-input tail is not reference-fresh.
-
-Extend `TcoParamStructuralFacts` with a separately named fact for the question
-`IsFreshListRebuildExpr` actually answers: was the back-edge value rebuilt in the current iteration and
-made independent of the callee’s arena extent, so a whole-list copy/reset is bounded and legal? A call
-result may answer yes even when `ExpressionFreshness` answers no.
-
-Compute and shadow-compare that fact through the now scope-correct call graph. The comparison must
-eliminate the known helper-call disagreement category without treating shared-tail construction
-(`head :: oldAccumulator`) as a fresh rebuild.
-
 #### 2.2 Cut over one structural fact at a time
 
-After Milestone 1 and 2.1:
+With Milestone 2.1 complete:
 
 1. source `LoopInvariant` from `UnchangedPassthrough`;
 2. source `AffineConsList` from `GrownCons`;

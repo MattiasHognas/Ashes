@@ -929,13 +929,13 @@ public sealed partial class Lowering
     /// to construct it, so the clone at most doubles that. Anything else (bare var, pattern tail,
     /// cons onto the accumulator param) may share unbounded structure with the previous iteration.
     /// </summary>
-    private static bool IsFreshListRebuildExpr(Expr expr)
+    private static bool IsArenaSelfContainedListRebuildExpr(Expr expr)
         => expr switch
         {
             Expr.Call => true,
             Expr.ListLit => true,
-            Expr.Cons cons => IsFreshListRebuildExpr(cons.Tail),
-            Expr.Let let => IsFreshListRebuildExpr(let.Body),
+            Expr.Cons cons => IsArenaSelfContainedListRebuildExpr(cons.Tail),
+            Expr.Let let => IsArenaSelfContainedListRebuildExpr(let.Body),
             _ => false,
         };
 
@@ -7906,8 +7906,8 @@ public sealed partial class Lowering
 
             // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
             // licensed only when the list was freshly REBUILT this iteration (see
-            // IsFreshListRebuildExpr); a threaded/consumed shape falls back to no reset.
-            freshListRebuild[i] = IsFreshListRebuildExpr(argExpr);
+            // IsArenaSelfContainedListRebuildExpr); a threaded/consumed shape falls back to no reset.
+            freshListRebuild[i] = IsArenaSelfContainedListRebuildExpr(argExpr);
 
             // A fully-reusing specialized accumulator is rewritten in place below the
             // watermark, so it survives a plain reset.
