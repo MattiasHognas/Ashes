@@ -3532,7 +3532,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = $$"""
             import Ashes.IO
             import Ashes.Net.Tls
@@ -3626,7 +3627,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = HttpRoutingServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -3733,7 +3735,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = HttpKeepAliveMemoryServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -3938,7 +3941,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = SigtermShutdownServerSource(port);
 
         // Single reactor keeps the signal/exit deterministic (no worker/pdeathsig race in the test).
@@ -4002,7 +4006,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = StopCapabilityServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4055,7 +4060,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = DrainShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4132,7 +4138,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = WorkerForwardShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4211,7 +4218,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ForceExitShutdownServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4282,7 +4290,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = QueryParsingServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4342,7 +4351,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ChunkedResponseServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4399,7 +4409,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ChunkedRequestServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4466,7 +4477,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ChunkedFramesServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source), BackendCompileOptions.Default with { ParallelWorkerCap = 1 });
@@ -4555,7 +4567,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ConcurrentHttpServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4650,7 +4663,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         string source = ConcurrentHttpServerSource(port).Replace(
             "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(3)",
             "serveParallel(" + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")(1)",
@@ -4687,7 +4701,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ServeParallelEchoServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4760,7 +4775,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ParkingReceiveServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4840,7 +4856,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = ConcurrentConnectionsServerSource(port);
 
         var elfBytes = new LinuxX64LlvmBackend().Compile(LowerProgramWithImports(source));
@@ -4951,7 +4968,8 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = $$"""
             import Ashes.IO
             import Ashes.Net.Tcp
@@ -4997,7 +5015,7 @@ public sealed class LinuxBackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
         string source = $$"""
             import Ashes.IO
             import Ashes.Net.Tcp
@@ -5010,7 +5028,7 @@ public sealed class LinuxBackendCoverageTests
                         match await Ashes.Net.Tcp.send(client)(msg) with
                             | Error(e2) -> Error(e2)
                             | Ok(_n) -> await Ashes.Net.Tcp.close(client))
-            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{port}})(onClient)) with
+            in match Ashes.Task.run(Ashes.Net.Tcp.Server.serve({{portLease.Port}})(onClient)) with
                 | Ok(_u) -> Ashes.IO.print("stopped")
                 | Error(e) -> Ashes.IO.print(e)
             """;
@@ -5024,13 +5042,13 @@ public sealed class LinuxBackendCoverageTests
         try
         {
             proc = await StartServerProcessAsync(exePath, tmpDir, elfBytes).ConfigureAwait(false);
-            (await ConnectSendReceiveWithRetryAsync(port, "warmup").ConfigureAwait(false)).ShouldBe("warmup");
+            (await ConnectSendReceiveWithRetryAsync(portLease.Port, "warmup").ConfigureAwait(false)).ShouldBe("warmup");
 
             long faultsBefore = ReadMinorFaults(proc.Id);
             const int requestCount = 300;
             for (int request = 0; request < requestCount; request++)
             {
-                (await ConnectSendReceiveWithRetryAsync(port, "x").ConfigureAwait(false)).ShouldBe("x");
+                (await ConnectSendReceiveWithRetryAsync(portLease.Port, "x").ConfigureAwait(false)).ShouldBe("x");
             }
 
             // Correctness above (every echo matched) is the primary guarantee; the fault ceiling is a
@@ -5108,15 +5126,6 @@ public sealed class LinuxBackendCoverageTests
         return ir;
     }
 
-    private static int GetFreeLoopbackPort()
-    {
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
-
     private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
     {
         var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -5133,6 +5142,11 @@ public sealed class LinuxBackendCoverageTests
                     await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
                     var buffer = new byte[4096];
                     int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        throw new IOException("The loopback server disconnected before sending a response.");
+                    }
+
                     return Encoding.UTF8.GetString(buffer, 0, read);
                 }
             }
@@ -7761,8 +7775,7 @@ public sealed class LinuxBackendCoverageTests
 
     private static async Task<ExecutionResult> CompileRunWithLinuxLlvmLoopbackAsync(string sourceTemplate, Func<TcpClient, Task> handleClientAsync, string host = "127.0.0.1")
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var serverTask = RunLoopbackServerAsync(listener, handleClientAsync);
@@ -7782,8 +7795,7 @@ public sealed class LinuxBackendCoverageTests
         bool allowServerHandshakeFailure = false,
         bool tolerateClientDisconnect = false)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host).ConfigureAwait(false);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);

@@ -348,8 +348,7 @@ Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
 
     private static async Task RunPathWithServerAsync(string sourcePath, int expectedClientCount, Func<TcpClient, Task> handleClientAsync, string expectedStdout)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port).ConfigureAwait(false);
         var startInfo = await CliTestHost.CreateStartInfoAsync("run", "--target", BackendFactory.DefaultForCurrentOS(), tempSourcePath).ConfigureAwait(false);
@@ -376,8 +375,7 @@ Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
 
     private static async Task RunPathWithTlsServerAsync(string sourcePath, int expectedClientCount, Func<SslStream, Task> handleClientAsync, string expectedStdout)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var tempSourcePath = await CreatePortSpecificExampleAsync(sourcePath, port).ConfigureAwait(false);
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync("localhost").ConfigureAwait(false);
