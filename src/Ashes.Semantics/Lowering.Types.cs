@@ -84,6 +84,8 @@ public sealed partial class Lowering
     private sealed class TcoContext
     {
         public string SelfName { get; init; }
+        public string SelfLabel { get; set; } = "";
+        public int? SelfSlot { get; set; }
         public FuncKey? OwnershipFunction { get; init; }
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
@@ -176,12 +178,13 @@ public sealed partial class Lowering
         public bool InTailPosition { get; set; }
 
         // Raw AST-derived facts stashed at construction time (before ParamSlots is known) and consumed
-        // once by BuildParamOwnership below. Loop invariance is ordinal-keyed because it now comes
-        // from the binding-identity-aware ownership summary; the categories awaiting their own 2.2
-        // cutovers remain name-keyed until then. No other consumer reads these transport fields.
+        // once by BuildParamOwnership below. Loop invariance and growing-cons shape are ordinal-keyed
+        // because they now come from the binding-identity-aware ownership summary; the categories
+        // awaiting their own 2.2 cutovers remain name-keyed until then. No other consumer reads these
+        // transport fields.
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
         private readonly IReadOnlySet<string> _freshRebuiltListParams;
-        private readonly IReadOnlySet<string> _affineConsListParams;
+        private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<string> _consumedListTailParams;
         private readonly IReadOnlySet<string> _borrowableConsumedListParams;
         private readonly IReadOnlySet<string> _freshClosureParams;
@@ -227,7 +230,7 @@ public sealed partial class Lowering
                 paramNames,
                 EmptyParameterOrdinals,
                 EmptyStaticFacts,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
                 EmptyStaticFacts,
                 EmptyStaticFacts,
                 EmptyStaticFacts,
@@ -242,7 +245,7 @@ public sealed partial class Lowering
             List<string> paramNames,
             IReadOnlySet<int> loopInvariantParamOrdinals,
             IReadOnlySet<string> freshRebuiltListParams,
-            IReadOnlySet<string> affineConsListParams,
+            IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<string> consumedListTailParams,
             IReadOnlySet<string> borrowableConsumedListParams,
             IReadOnlySet<string> freshClosureParams,
@@ -254,7 +257,7 @@ public sealed partial class Lowering
             ParamNames = paramNames;
             _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
             _freshRebuiltListParams = freshRebuiltListParams;
-            _affineConsListParams = affineConsListParams;
+            _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParams = consumedListTailParams;
             _borrowableConsumedListParams = borrowableConsumedListParams;
             _freshClosureParams = freshClosureParams;
@@ -279,7 +282,7 @@ public sealed partial class Lowering
                     Slot = slot,
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParams.Contains(name),
-                    AffineConsList = _affineConsListParams.Contains(name),
+                    AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParams.Contains(name),
                     BorrowableConsumedList = _borrowableConsumedListParams.Contains(name),
                     FreshClosure = _freshClosureParams.Contains(name),

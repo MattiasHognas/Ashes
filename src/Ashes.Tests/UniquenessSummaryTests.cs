@@ -550,7 +550,7 @@ public sealed class UniquenessSummaryTests
                 | Hold(A)
             let recursive loop state =
                 match state with
-                    | Hold(loop) -> loop(state)
+                    | Hold(loop) -> loop(0)
             in loop(Hold(given value -> value))
             """;
 
@@ -807,6 +807,67 @@ public sealed class UniquenessSummaryTests
         TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
         values.ArenaSelfContainedListRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Let_shadowed_cons_tail_is_not_classified_as_the_original_parameter()
+    {
+        const string source =
+            """
+            let recursive loop values replacement remaining =
+                if remaining <= 0
+                then values
+                else
+                    let values = replacement
+                    in loop(remaining :: values)(replacement)(remaining - 1)
+            in loop([])([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+    }
+
+    [Test]
+    public void Pattern_shadowed_cons_tail_is_not_classified_as_the_original_parameter()
+    {
+        const string source =
+            """
+            type Holder(A) =
+                | Hold(A)
+            let recursive loop values holder remaining =
+                if remaining <= 0
+                then values
+                else
+                    match holder with
+                        | Hold(values) -> loop(remaining :: values)(holder)(remaining - 1)
+            in loop([])(Hold([]))(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+    }
+
+    [Test]
+    public void Duplicate_parameter_name_cons_tail_resolves_to_the_live_ordinal()
+    {
+        const string source =
+            """
+            let recursive loop value value remaining =
+                if remaining <= 0
+                then value
+                else loop(value)(remaining :: value)(remaining - 1)
+            in loop([])([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
     }
 
     [Test]

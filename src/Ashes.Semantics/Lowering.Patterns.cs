@@ -1298,7 +1298,7 @@ public sealed partial class Lowering
         // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
         // the assert below), so `runtimeManaged` only ever governs the FRESH-allocation branch; it must
         // never also drive the post-emission bookkeeping when the reuse branch actually ran. Before this
-        // fix, the bookkeeping below keyed only off `runtimeManaged` (and `_runtimeRcTcoListTailBinding`),
+        // fix, the bookkeeping below keyed only off `runtimeManaged` (and `_runtimeRcTcoListTailSlot`),
         // independent of which branch emitted the cell — so a reuse-token hit could mark a cell that was
         // just given a plain arena AllocReusing (RuntimeManaged: false, no RC header) as runtime-managed
         // anyway, which would make a later RcDup/RcDrop read/write a bogus header at that address. Track
@@ -1328,7 +1328,7 @@ public sealed partial class Lowering
         }
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
-        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailBinding is not null)
+        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailSlot is not null)
         {
             _runtimeManagedResultTemps.Add(nodeTemp);
         }

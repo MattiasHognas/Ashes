@@ -564,7 +564,7 @@ public sealed partial class Lowering
     private bool _runtimeRcListAllocationRequested;
     private string? _runtimeRcListTailBinding;
     private bool _runtimeRcListTailShared;
-    private string? _runtimeRcTcoListTailBinding;
+    private int? _runtimeRcTcoListTailSlot;
 
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
@@ -5016,9 +5016,14 @@ public sealed partial class Lowering
             var tcoParamNames = CollectLambdaParams(lam2);
             FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
             IReadOnlySet<int> loopInvariantParamOrdinals =
-                GetLoopInvariantTcoParameterOrdinals(ownershipFunction);
+                GetTcoParameterOrdinals(
+                    ownershipFunction,
+                    TcoSelfCallArgumentShape.UnchangedPassthrough);
+            IReadOnlySet<int> affineConsListParamOrdinals =
+                GetTcoParameterOrdinals(
+                    ownershipFunction,
+                    TcoSelfCallArgumentShape.GrownCons);
             var freshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name);
-            var affineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name);
             var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
             var freshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext(
@@ -5027,7 +5032,7 @@ public sealed partial class Lowering
                 paramNames: tcoParamNames,
                 loopInvariantParamOrdinals: loopInvariantParamOrdinals,
                 freshRebuiltListParams: freshRebuiltListParams,
-                affineConsListParams: affineConsListParams,
+                affineConsListParamOrdinals: affineConsListParamOrdinals,
                 consumedListTailParams: consumedListTailParams,
                 borrowableConsumedListParams: CollectBorrowableConsumedListParams(
                     innermostBody,
@@ -5047,7 +5052,6 @@ public sealed partial class Lowering
                 letRecursive.Name,
                 tcoParamNames,
                 freshRebuiltListParams,
-                affineConsListParams,
                 consumedListTailParams,
                 freshClosureParams);
         }
@@ -5357,6 +5361,14 @@ public sealed partial class Lowering
         LowerLambdaCoreSetupTco(Expr.Lambda lam, string label, IReadOnlyList<string> captures)
     {
         bool isChainLambda = _tcoCtx?.DescendingChain ?? false;
+        if (isChainLambda && _tcoCtx!.SelfLabel.Length == 0)
+        {
+            // The curried self reference captured by inner chain lambdas resolves back to this
+            // outermost label. Keep that stable identity so a same-named lexical binding cannot be
+            // mistaken for the recursive root at a live back edge.
+            _tcoCtx.SelfLabel = label;
+        }
+
         var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
         var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
         var directReuseSlots = new HashSet<int>();
@@ -6233,8 +6245,8 @@ public sealed partial class Lowering
     /// independently (one of them carrying a redundant extra disjunct, <c>CanRuntimeManageAdt</c>,
     /// that <c>CanRuntimeManageTcoAdt</c> already subsumes as its own first disjunct). List and
     /// closure eligibility are deliberately NOT covered here and remain separate at each of the three
-    /// call sites: two of them judge a list/closure parameter from a whole-loop-body, per-parameter-
-    /// name classification computed once before the loop is entered, while the third judges it from
+    /// call sites: two of them judge a list/closure parameter from a whole-loop-body, per-parameter
+    /// classification computed once before the loop is entered, while the third judges it from
     /// per-back-edge, per-argument facts resolved fresh at each tail call — those are genuinely
     /// different signals, not a duplicated derivation of the same one, so folding them into this
     /// shared helper would either silently change behavior or be a no-op wrapper around already-
@@ -7191,10 +7203,8 @@ public sealed partial class Lowering
             return reuseInlineResult;
         }
 
-        // TCO: detect tail-position self-call chain: f(a1)(a2)...(aN)
         if (_tcoCtx is { InTailPosition: true } tco
-            && rootExpr is Expr.Var selfVar
-            && string.Equals(selfVar.Name, tco.SelfName, StringComparison.Ordinal)
+            && IsTcoSelfCallRoot(rootExpr, tco)
             && collectedArgs.Count == tco.ParamCount)
         {
             return LowerCallTcoSelfCall(tco, collectedArgs);
@@ -7222,6 +7232,30 @@ public sealed partial class Lowering
         }
 
         return LowerCallGeneral(call, rootExpr, collectedArgs);
+    }
+
+    // Ordinary curried recursion must resolve back to the outermost generated label. A synthesized
+    // coroutine loop instead transports its captured self slot; a few intrinsic restart loops
+    // deliberately leave the marker name unbound, which is the final fallback.
+    private bool IsTcoSelfCallRoot(Expr rootExpr, TcoContext tco)
+    {
+        if (rootExpr is not Expr.Var selfVar
+            || !string.Equals(selfVar.Name, tco.SelfName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (TryResolveKnownFunctionLabel(rootExpr, out string selfLabel))
+        {
+            return string.Equals(selfLabel, tco.SelfLabel, StringComparison.Ordinal);
+        }
+
+        return Lookup(selfVar.Name) switch
+        {
+            Binding.Local local => tco.SelfSlot == local.Slot,
+            null => true,
+            _ => false,
+        };
     }
 
     // Direct call forms resolved from the root expression alone: constructor application, the
@@ -7772,12 +7806,13 @@ public sealed partial class Lowering
         bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
         bool savedTcoAdtRequest = _runtimeRcTcoAdtAllocationRequested;
         Dictionary<string, bool>? savedAdtChildBindings = _runtimeRcAdtChildBindings;
-        string? savedTcoTailBinding = _runtimeRcTcoListTailBinding;
+        int? savedTcoTailSlot = _runtimeRcTcoListTailSlot;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamOwnership[tco.ParamSlots[index]].AffineConsList
             && argument is Expr.Cons { Tail: Expr.Var tail }
-            && string.Equals(tail.Name, tco.ParamNames[index], StringComparison.Ordinal);
+            && Lookup(tail.Name) is Binding.Local tailLocal
+            && tailLocal.Slot == tco.ParamSlots[index];
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamOwnership[tco.ParamSlots[index]].FreshClosure
@@ -7788,7 +7823,7 @@ public sealed partial class Lowering
         if (affineConsList)
         {
             _runtimeRcListAllocationRequested = true;
-            _runtimeRcTcoListTailBinding = tco.ParamNames[index];
+            _runtimeRcTcoListTailSlot = tco.ParamSlots[index];
         }
         if (freshClosure)
         {
@@ -7816,7 +7851,7 @@ public sealed partial class Lowering
             _runtimeRcClosureAllocationRequested = savedClosureRequest;
             _runtimeRcTcoAdtAllocationRequested = savedTcoAdtRequest;
             _runtimeRcAdtChildBindings = savedAdtChildBindings;
-            _runtimeRcTcoListTailBinding = savedTcoTailBinding;
+            _runtimeRcTcoListTailSlot = savedTcoTailSlot;
         }
     }
 
@@ -7904,7 +7939,8 @@ public sealed partial class Lowering
 
             singleFreshCons[i] = argExpr is Expr.Cons cons
                 && cons.Tail is Expr.Var tailVar
-                && tco.ParamNames.Contains(tailVar.Name);
+                && Lookup(tailVar.Name) is Binding.Local tailLocal
+                && tco.ParamSlots.Contains(tailLocal.Slot);
 
             // A back-edge DeepAdt clone of a LIST costs O(length) per iteration, so it is
             // licensed only when the list was freshly REBUILT this iteration (see
@@ -7931,7 +7967,8 @@ public sealed partial class Lowering
             newArgTypes,
             newArgTemps.Select(IsRuntimeManagedResultTemp).ToArray(),
             collectedArgs.Select(argument => argument is Expr.Var variable
-                && tco.ParamNames.Contains(variable.Name)).ToArray(),
+                && Lookup(variable.Name) is Binding.Local local
+                && tco.ParamSlots.Contains(local.Slot)).ToArray(),
             facts.PassThrough,
             facts.SingleFreshCons,
             facts.FreshListRebuild,
@@ -9417,7 +9454,7 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type) NormalizeRuntimeManagedListElement((int Temp, TypeRef Type) lowered)
     {
         if (!_runtimeRcListAllocationRequested
-            || _runtimeRcTcoListTailBinding is null
+            || _runtimeRcTcoListTailSlot is null
             || IsRuntimeManagedResultTemp(lowered.Temp))
         {
             return lowered;
@@ -9602,8 +9639,9 @@ public sealed partial class Lowering
     private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
     {
         if (tailExpression is Expr.Var tcoTail
-            && _runtimeRcTcoListTailBinding is not null
-            && string.Equals(tcoTail.Name, _runtimeRcTcoListTailBinding, StringComparison.Ordinal))
+            && _runtimeRcTcoListTailSlot is { } tcoTailSlot
+            && Lookup(tcoTail.Name) is Binding.Local tcoTailLocal
+            && tcoTailLocal.Slot == tcoTailSlot)
         {
             return tailTemp;
         }

@@ -671,8 +671,11 @@ substitutes an arbitrary component representative.
 
 Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
 parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried
-parameter names therefore remain distinct. The analysis threads a lexical value scope through let
-and pattern binders instead of treating equal source spellings as equal bindings.
+parameter names therefore remain distinct in the immutable summary. The analysis threads a lexical
+value scope through let and pattern binders instead of treating equal source spellings as equal
+bindings. The innermost lowering scope currently exposes only the last slot for duplicate parameter
+names, so migrated live consumers fail closed for every duplicated name rather than joining a
+positive fact to an ambiguous slot.
 Reference shape and arena reset legality are deliberately separate:
 `ExpressionFreshness` and `TcoSelfCallArgumentShape.FreshRebuilt` answer whether
 the successor value reaches an input reference, while
@@ -682,10 +685,14 @@ has the bounded whole-list rebuild shape recognized by
 when its result retains an input tail, because the returned list is made
 independent of the callee arena; directly consing onto the old accumulator does
 not. These facts are computed across exact `FuncKey` self-call identities.
-`TcoSelfCallArgumentShape.UnchangedPassthrough` is the live source for
-`TcoParamOwnership.LoopInvariant`; lowering joins the fact to the parameter slot by ordinal and
-rechecks an individual back-edge pass-through against the resolved local slot. The other structural
-categories remain shadow-compared with their lowering classifiers until their individual cutovers.
+`TcoSelfCallArgumentShape.UnchangedPassthrough` and `GrownCons` are the live sources for
+`TcoParamOwnership.LoopInvariant` and `AffineConsList`; lowering transports unambiguous ordinals to
+parameter slots and rechecks individual back-edge values against resolved local slots. A tail call
+becomes a back edge only when its root resolves to the current curried function's generated label,
+or to the transported self slot of a synthesized coroutine loop; source spelling alone is
+insufficient. The
+fresh-list, consumed-tail, and fresh-closure categories remain shadow-compared with their lowering
+classifiers until their individual cutovers.
 
 This structural summary does not replace the TCO back-edge storage query.
 Resolved argument layout, the concrete placement verdict, and per-edge facts
