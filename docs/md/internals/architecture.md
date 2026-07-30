@@ -684,21 +684,27 @@ has the bounded whole-list rebuild shape recognized by
 `IsArenaSelfContainedListRebuildExpr`. A helper call can satisfy the latter even
 when its result retains an input tail, because the returned list is made
 independent of the callee arena; directly consing onto the old accumulator does
-not. These facts are computed across exact `FuncKey` self-call identities.
-`TcoSelfCallArgumentShape.UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `GrownCons`, and
-`ConsumedTail` are the live sources for `TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`,
-`AffineConsList`, and `ConsumedListTail`; lowering transports unambiguous ordinals to parameter
-slots. Identity-sensitive edge shapes are rechecked against resolved local slots, while fresh-list
-reset legality reruns the arena-self-containment predicate for the concrete edge and combines it
-with the resolved representation. The narrower
+not. `FreshClosureRebuild` separately answers whether every exact self-call argument directly
+constructs a closure or selects between direct closure constructions. It cannot be folded into
+reference freshness: a new closure may capture and therefore reach an input reference. These facts
+are computed across exact `FuncKey` self-call identities.
+`TcoSelfCallArgumentShape.UnchangedPassthrough`, `ArenaSelfContainedListRebuild`,
+`FreshClosureRebuild`, `GrownCons`, and `ConsumedTail` are the live sources for
+`TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`, `FreshClosureRebuild`, `AffineConsList`, and
+`ConsumedListTail`; lowering transports unambiguous ordinals to parameter slots. Closure promotion
+also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
+capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
+rechecked against resolved local slots, while fresh-list reset legality reruns the
+arena-self-containment predicate for the concrete edge and combines it with the resolved
+representation. The narrower
 `BorrowableConsumedList` use-mode analysis is still structural, but its
 candidate and result boundary is ordinal rather than source-name keyed, and only a callee resolved
 through the same lexical `FuncKey` scope under the recursive binding's source name receives its
 non-escaping tail-transfer exception. Match guards are checked as executable uses. A tail call
 becomes a back edge only when its root resolves to the current curried function's generated label,
 or to the transported self slot of a synthesized coroutine loop; source spelling alone is
-insufficient. Only the fresh-closure category remains shadow-compared with its lowering classifier
-until its individual cutover.
+insufficient. Duplicate parameter names retain distinct summary facts but fail closed at the current
+name-to-slot lowering join.
 
 This structural summary does not replace the TCO back-edge storage query.
 Resolved argument layout, the concrete placement verdict, and per-edge facts
