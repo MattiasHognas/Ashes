@@ -713,15 +713,18 @@ public sealed class ArenaDeallocationTests
     {
         // TList(TStr): each iteration creates a string and prepends it to acc.
         // The cons cell and String head form one runtime-owned graph.
-        IrProgram ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive build = given (n) -> given (acc) ->
                 if n == 0 then acc
                 else build (n - 1) ("x" :: acc)
             in build 5 []
             """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
             HeadCopy: IrInst.ListHeadCopyKind.String,
@@ -733,6 +736,89 @@ public sealed class ArenaDeallocationTests
             TypeName: "String",
             RuntimeManaged: true,
         }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void TCO_shadowed_cons_tail_does_not_enable_runtime_list_ownership()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build n acc replacement =
+                if n <= 0
+                then acc
+                else
+                    let acc = replacement
+                    in build(n - 1)("x" :: acc)(replacement)
+            in build(5)([])([])
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "A cons ending in a same-named rebound local must not make the original parameter RC-owned.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell).ShouldBeFalse(
+            "A shallow top-cell copy would leave the fresh rebound tail above the reclaimed watermark.");
+        HasTcoBackEdgeReclaim(instructions).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_duplicate_parameter_names_keep_positional_facts_but_fail_closed_in_lowering()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build value value remaining =
+                if remaining <= 0
+                then value
+                else build(value)("x" :: value)(remaining - 1)
+            in build([])([])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
+        instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "The innermost lowering scope cannot distinguish duplicate-name parameter slots, so migrated positive facts must fail closed.");
+    }
+
+    [Test]
+    public void TCO_shadowed_self_name_call_remains_an_ordinary_call()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build n acc replacement =
+                if n <= 0
+                then acc
+                else if n == 1
+                then build(n - 1)("x" :: acc)(replacement)
+                else
+                    let build a b c = b
+                    in build(n - 1)(replacement)(replacement)
+            in build(3)([])([])
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("build")
+            .Single(candidate => candidate.TcoParamFacts.Any(fact =>
+                fact.Shape == TcoSelfCallArgumentShape.GrownCons));
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
+
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+        int backEdgeCount = instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal));
+        backEdgeCount.ShouldBe(1,
+            "Only the exact recursive self-call may become a TCO back edge; a same-named local function call must remain ordinary.");
     }
 
     [Test]

@@ -47,16 +47,29 @@ public sealed partial class Lowering
         return body;
     }
 
-    /// <summary>Check if an expression has any tail-position calls to the named function with the expected arg count.</summary>
+    /// <summary>
+    /// Check if an expression has any tail-position calls to the named function with the expected
+    /// argument count. Lexical binders named <paramref name="selfName"/> shadow the recursive
+    /// function and therefore cannot make the enclosing function TCO-eligible.
+    /// </summary>
     private static bool HasTailSelfCalls(Expr body, string selfName, int paramCount)
     {
         return body switch
         {
             Expr.If iff => HasTailSelfCalls(iff.Then, selfName, paramCount) || HasTailSelfCalls(iff.Else, selfName, paramCount),
-            Expr.Match m => m.Cases.Any(c => HasTailSelfCalls(c.Body, selfName, paramCount)),
-            Expr.Let l => HasTailSelfCalls(l.Body, selfName, paramCount),
-            Expr.LetResult l => HasTailSelfCalls(l.Body, selfName, paramCount),
-            Expr.LetRecursive l => HasTailSelfCalls(l.Body, selfName, paramCount),
+            Expr.Match m => m.Cases.Any(c =>
+            {
+                HashSet<string> binders = new(StringComparer.Ordinal);
+                CollectPatternBinders(c.Pattern, binders);
+                return !binders.Contains(selfName)
+                    && HasTailSelfCalls(c.Body, selfName, paramCount);
+            }),
+            Expr.Let l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTailSelfCalls(l.Body, selfName, paramCount),
+            Expr.LetResult l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTailSelfCalls(l.Body, selfName, paramCount),
+            Expr.LetRecursive l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTailSelfCalls(l.Body, selfName, paramCount),
             Expr.Call c => IsSelfCallChain(c, selfName, paramCount),
             _ => false
         };
@@ -240,17 +253,6 @@ public sealed partial class Lowering
             paramNames,
             selfName,
             (_, argument) => IsArenaSelfContainedListRebuildExpr(argument));
-
-    private static HashSet<string> CollectAffineConsListParams(
-        Expr body,
-        IReadOnlyList<string> paramNames,
-        string selfName)
-        => CollectTcoParamsMatchingArguments(
-            body,
-            paramNames,
-            selfName,
-            (index, argument) => argument is Expr.Cons { Tail: Expr.Var tail }
-                && string.Equals(tail.Name, paramNames[index], StringComparison.Ordinal));
 
     private static HashSet<string> CollectConsumedListTailParams(
         Expr body,

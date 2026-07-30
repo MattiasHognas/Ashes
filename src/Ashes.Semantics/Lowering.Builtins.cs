@@ -2105,12 +2105,14 @@ public sealed partial class Lowering
         string restartLabel,
         bool loopResetEligible)
     {
+        int? selfSlot = Lookup(info.Name) is Binding.Local self ? self.Slot : null;
         var loopTco = new TcoContext(info.Name, info.ParamNames.Count, new List<string>(info.ParamNames))
         {
             ParamSlots = orderedParamSlots,
             BodyLabel = restartLabel,
             InTailPosition = true,
-            DescendingChain = false
+            DescendingChain = false,
+            SelfSlot = selfSlot,
         };
         loopTco.BuildParamOwnership();
         if (loopResetEligible)

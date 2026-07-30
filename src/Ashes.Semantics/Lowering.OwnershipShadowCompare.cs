@@ -64,20 +64,18 @@ public sealed partial class Lowering
     /// <summary>
     /// Compares the TCO categories that still come from <c>Collect*</c> against
     /// <c>FunctionOwnershipSummary.TcoParamFacts</c> for the same exact self-recursive function,
-    /// logging every disagreement. UnchangedPassthrough is no longer compared here because it is the
-    /// live LoopInvariant source. The live fresh-list-rebuild set compares against <see
+    /// logging every disagreement. UnchangedPassthrough and GrownCons are no longer compared here
+    /// because they are the live LoopInvariant and AffineConsList sources. The live
+    /// fresh-list-rebuild set compares against <see
     /// cref="TcoParamStructuralFacts.ArenaSelfContainedListRebuild"/> rather than <see
     /// cref="TcoSelfCallArgumentShape.FreshRebuilt"/>: a helper result may be safe to copy across its
-    /// callee arena boundary while still retaining an input reference. <paramref
-    /// name="affineConsListParams"/> (the growing-cons-accumulator shape) compares against <see
-    /// cref="TcoSelfCallArgumentShape.GrownCons"/> like the other ownership-shape sets.
+    /// callee arena boundary while still retaining an input reference.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
         FuncKey? function,
         string selfName,
         IReadOnlyList<string> paramNames,
         IReadOnlySet<string> freshRebuiltListParams,
-        IReadOnlySet<string> affineConsListParams,
         IReadOnlySet<string> consumedListTailParams,
         IReadOnlySet<string> freshClosureParams)
     {
@@ -95,12 +93,10 @@ public sealed partial class Lowering
             bool isArenaSelfContainedListRebuild = freshRebuiltListParams.Contains(name);
             bool isFreshClosure = freshClosureParams.Contains(name);
             bool isConsumedTail = consumedListTailParams.Contains(name);
-            bool isGrownCons = affineConsListParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
                 isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt
                 : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
-                : isGrownCons ? TcoSelfCallArgumentShape.GrownCons
                 : null;
 
             TcoParamStructuralFacts? newFacts = tcoParamFacts?.FirstOrDefault(
@@ -152,10 +148,13 @@ public sealed partial class Lowering
             return;
         }
 
-        if (oldShape is null && haveNew && newShape == TcoSelfCallArgumentShape.UnchangedPassthrough)
+        if (oldShape is null
+            && haveNew
+            && newShape is TcoSelfCallArgumentShape.UnchangedPassthrough
+                or TcoSelfCallArgumentShape.GrownCons)
         {
-            // LoopInvariant already consumes this canonical fact, so there is no remaining old
-            // classifier answer to compare it against.
+            // LoopInvariant and AffineConsList already consume these canonical facts, so there is no
+            // remaining old classifier answer to compare them against.
             return;
         }
 

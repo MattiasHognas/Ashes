@@ -793,7 +793,9 @@ public sealed partial class Lowering
         return _maFuncs.ContainsKey(key) ? key : null;
     }
 
-    private IReadOnlySet<int> GetLoopInvariantTcoParameterOrdinals(FuncKey? function)
+    private IReadOnlySet<int> GetTcoParameterOrdinals(
+        FuncKey? function,
+        TcoSelfCallArgumentShape shape)
     {
         HashSet<int> result = [];
         if (function is not { } key || GetOwnershipSummary(key) is not { } summary)
@@ -801,9 +803,23 @@ public sealed partial class Lowering
             return result;
         }
 
+        HashSet<string> seenParameterNames = new(StringComparer.Ordinal);
+        HashSet<string> duplicateParameterNames = new(StringComparer.Ordinal);
+        foreach (string parameterName in summary.Parameters)
+        {
+            if (!seenParameterNames.Add(parameterName))
+            {
+                duplicateParameterNames.Add(parameterName);
+            }
+        }
+
+        // The summary preserves distinct ordinals, but the innermost lowering scope contains only
+        // the last same-named curried binding. Until TcoContext transports the hidden outer slots
+        // independently of source lookup, no migrated positive fact may be joined to an ambiguous
+        // duplicate-name slot.
         foreach (TcoParamStructuralFacts facts in summary.TcoParamFacts)
         {
-            if (facts.Shape == TcoSelfCallArgumentShape.UnchangedPassthrough)
+            if (facts.Shape == shape && !duplicateParameterNames.Contains(facts.ParameterName))
             {
                 result.Add(facts.ParameterOrdinal);
             }
@@ -1002,8 +1018,8 @@ public sealed partial class Lowering
     /// the narrower reset-boundary predicate without redefining reference freshness. Together they
     /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s remaining
     /// <c>CollectFreshRebuiltListParams</c>/<c>CollectFreshClosureParams</c>/
-    /// <c>CollectConsumedListTailParams</c>/<c>CollectAffineConsListParams</c> answer today by
-    /// re-walking a TCO loop's body a second time with their own, separate logic. A
+    /// <c>CollectConsumedListTailParams</c> answer today by re-walking a TCO loop's body a second
+    /// time with their own, separate logic. A
     /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
     /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
