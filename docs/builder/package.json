@@ -11,7 +11,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.18.0",
   "type": "module",
   "devDependencies": {
     "@mdit-vue/shared": "^3.0.2",

@@ -4,7 +4,7 @@
   "description": "Ashes programming language support",
   "version": "1.3.0",
   "publisher": "mattiashognas",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.18.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/MattiasHognas/Ashes"
