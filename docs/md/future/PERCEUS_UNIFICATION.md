@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `586def0` on 2026-07-30, together with the third Milestone 2.2
+Audited against `main` at `d4795ac` on 2026-07-30, together with the fourth Milestone 2.2
 cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -122,14 +122,17 @@ The following is already implemented and is not part of the backlog:
   by `IsArenaSelfContainedListRebuildExpr`: a helper-call result can be self-contained relative to
   the callee arena even when it retains an input tail and is therefore not reference-fresh, while a
   direct `head :: oldAccumulator` remains rejected. Shadow comparison now treats this fact
-  separately from the reference-fresh `FreshRebuilt` shape;
+  separately from the reference-fresh `FreshRebuilt` shape. The positional fact is now the live
+  source for `TcoParamOwnership.FreshRebuiltList`; the concrete per-edge reset classifier still
+  rechecks the actual lowered argument;
 - positional `TcoParamStructuralFacts` identity. Facts retain both the parameter ordinal used by
   consumers and the source name used for diagnostics, so duplicate curried parameter names remain
   distinct in the immutable summary. `TcoParamFactsWalk` resolves live value names to those ordinals
-  across let and pattern scopes. `TcoParamOwnership.LoopInvariant`, `AffineConsList`, and
-  `ConsumedListTail` now consume `UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` through that
-  boundary; the superseded `CollectLoopInvariantParams`, `CollectAffineConsListParams`, and
-  `CollectConsumedListTailParams` walks have been deleted. The narrower
+  across let and pattern scopes. `TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`,
+  `AffineConsList`, and `ConsumedListTail` now consume `UnchangedPassthrough`,
+  `ArenaSelfContainedListRebuild`, `GrownCons`, and `ConsumedTail` through that boundary; the
+  superseded `CollectLoopInvariantParams`, `CollectFreshRebuiltListParams`,
+  `CollectAffineConsListParams`, and `CollectConsumedListTailParams` walks have been deleted. The narrower
   `BorrowableConsumedList` refinement remains separate but now receives and returns parameter
   ordinals instead of rejoining the canonical fact through source names. Its permitted tail
   self-transfer requires both the recursive binding's source name and the same lexical `FuncKey` as
@@ -192,7 +195,7 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| TCO structural facts | Positional `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. `UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` now feed live `LoopInvariant`, `AffineConsList`, and `ConsumedListTail` decisions. | The fresh-list and fresh-closure decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. Duplicate-name live consumers remain conservatively disabled until 2.3 removes the name-based slot join. |
+| TCO structural facts | Positional `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `GrownCons`, and `ConsumedTail` now feed live `LoopInvariant`, `FreshRebuiltList`, `AffineConsList`, and `ConsumedListTail` decisions. | Only the fresh-closure decision still comes from a `Lowering.Reuse.cs` `Collect*` walk. Duplicate-name live consumers remain conservatively disabled until 2.3 removes the name-based slot join. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
 | Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
@@ -211,15 +214,15 @@ tasks remain; Milestone 2.2 is in progress.
 
 #### 2.2 Cut over one structural fact at a time
 
-`LoopInvariant`, `AffineConsList`, and `ConsumedListTail` now come from positional,
-binding-identity-aware `UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` facts. Live TCO call
+`LoopInvariant`, `FreshRebuiltList`, `AffineConsList`, and `ConsumedListTail` now come from
+positional, binding-identity-aware `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`,
+`GrownCons`, and `ConsumedTail` facts. Live TCO call
 recognition resolves the curried
 self-reference back to its generated root label, or to the transported self slot in a synthesized
 coroutine loop, so a same-spelled local function cannot become a back edge or inherit those facts.
-The remaining category cutovers are:
+The remaining category cutover is:
 
-1. source `FreshRebuiltList` from the arena-self-contained fact;
-2. source `FreshClosure` from the appropriate fresh shape plus the resolved `TFun` type.
+1. source `FreshClosure` from the appropriate fresh shape plus the resolved `TFun` type.
 
 For each category:
 

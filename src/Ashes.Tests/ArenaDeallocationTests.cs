@@ -570,7 +570,7 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Runtime_managed_TCO_result_is_retained_for_the_next_normalized_call()
     {
-        IrProgram ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive prepend = given (n) -> given (acc) ->
                 if n == 0 then acc
@@ -581,11 +581,17 @@ public sealed class ArenaDeallocationTests
                     else lines(n - 1)(prepend(60)(acc))
                 in lines(5)([])
             """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("lines");
 
-        List<IrInst> allInstructions = ir.Functions
-            .SelectMany(function => function.Instructions)
-            .ToList();
-        allInstructions.Any(instruction => instruction is IrInst.CallClosure
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[1].ArenaSelfContainedListRebuild.ShouldBeTrue(
+            "A helper result can rebuild an arena-self-contained list while retaining an input tail.");
+        IrFunction linesTcoFunction = ir.Functions.Single(function =>
+            string.Equals(function.Origin?.Source?.SourceName, "lines", StringComparison.Ordinal)
+            && function.Instructions.Any(instruction => instruction is IrInst.Jump jump
+                && jump.Target.Contains("_body", StringComparison.Ordinal)));
+        linesTcoFunction.Instructions.Any(instruction => instruction is IrInst.CallClosure
         {
             RuntimeManagedArgumentFlagTemp: >= 0,
         } or IrInst.CallKnown
@@ -594,10 +600,91 @@ public sealed class ArenaDeallocationTests
         }).ShouldBeTrue(
             "An already RC-owned accumulator must be retained for a normalizing parameter " +
             "instead of being cloned again at every outer-loop call.");
-        allInstructions.Any(instruction => instruction is IrInst.LoadArgumentOwnership)
+        linesTcoFunction.Instructions.Any(instruction => instruction is IrInst.LoadArgumentOwnership)
             .ShouldBeTrue(
                 "The normalized function entry must select between adopting a transferred RC " +
                 "argument and copying an unknown arena argument.");
+    }
+
+    [Test]
+    public void TCO_same_named_non_self_call_does_not_disqualify_exact_fresh_list_rebuild()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build remaining values replacement =
+                if remaining <= 0
+                then values
+                else if remaining == 1
+                then build(remaining - 1)(["x"])(replacement)
+                else
+                    let build a b c = b
+                    in build(remaining - 1)(replacement)(replacement)
+            in build(2)([])([])
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("build")
+            .Single(candidate => candidate.TcoParamFacts.Any(fact =>
+                fact.ArenaSelfContainedListRebuild));
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[1].ArenaSelfContainedListRebuild.ShouldBeTrue();
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(1,
+            "Only the exact recursive call participates in TCO and the whole-loop rebuild fact.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The exact fresh-list edge should enable runtime list ownership despite an ordinary same-named call.");
+    }
+
+    [Test]
+    public void TCO_duplicate_parameter_names_keep_fresh_list_rebuild_positional_but_fail_closed_in_lowering()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build value value remaining =
+                if remaining <= 0
+                then value
+                else build(value)(["x"])(remaining - 1)
+            in build([])([])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].ArenaSelfContainedListRebuild.ShouldBeFalse();
+        summary.TcoParamFacts[1].ArenaSelfContainedListRebuild.ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "The lowering scope cannot distinguish duplicate-name slots, so migrated positives must fail closed.");
+    }
+
+    [Test]
+    public void TCO_mixed_fresh_and_shared_list_edges_do_not_enable_whole_loop_rebuild_ownership()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build values remaining =
+                if remaining <= 0
+                then values
+                else if remaining == 1
+                then build(["fresh"])(remaining - 1)
+                else build("shared" :: values)(remaining - 1)
+            in build([])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].ArenaSelfContainedListRebuild.ShouldBeFalse(
+            "One shared-spine edge must make the whole-loop rebuild fact fail closed.");
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "A per-edge fresh list must not promote the parameter when another edge retains the previous spine.");
     }
 
     [Test]
