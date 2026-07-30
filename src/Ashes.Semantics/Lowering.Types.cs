@@ -84,6 +84,7 @@ public sealed partial class Lowering
     private sealed class TcoContext
     {
         public string SelfName { get; init; }
+        public FuncKey? OwnershipFunction { get; init; }
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; }

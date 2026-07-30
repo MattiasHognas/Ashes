@@ -436,7 +436,9 @@ public sealed partial class Lowering
     /// Only used to build the registry copy; the original declaration value is left intact for normal
     /// lowering. Throws on an unhandled Expr shape so the caller can skip registration (never miscompile).
     /// </summary>
-    private static Expr StripModuleAliasPrefix(Expr value)
+    private static Expr StripModuleAliasPrefix(
+        Expr value,
+        Action<Expr, Expr>? recordRebuiltBinder = null)
     {
         var renames = new Dictionary<string, string>(StringComparer.Ordinal);
         Expr body = value;
@@ -446,6 +448,8 @@ public sealed partial class Lowering
             body = aliasLet.Body;
         }
 
-        return renames.Count == 0 ? value : SubstituteVars(body, renames);
+        return renames.Count == 0
+            ? value
+            : SubstituteVars(body, renames, recordRebuiltBinder);
     }
 }

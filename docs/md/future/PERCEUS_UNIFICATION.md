@@ -114,7 +114,18 @@ The following is already implemented and is not part of the backlog:
 - `TcoSelfCallArgumentShape.GrownCons` and complete expression-freshness recording for self-call
   arguments;
 - `FuncKey` identity and re-keying of the seven main move-analysis tables, with genuine lexical scope
-  resolution in `TcoParamFactsWalk`.
+  resolution in `TcoParamFactsWalk`, `CollectCallsAndEscapes`, `ResultReach`, move analysis, and
+  result provenance; function-body and per-call-argument scopes follow sequential let/letrec rules,
+  respect lambda/pattern shadowing, preserve partial-application completion scopes, and map
+  module-alias-normalized binder copies back to the registered identity. Result provenance also keeps
+  immutable per-arm alias/scope snapshots and distinguishes exact recursive identities;
+- every lambda-valued binding remains registered even when source names collide. `_maNameIndex` is
+  only a globally-unambiguous compatibility index; normalized copied binders map explicitly back to
+  their original identity, and lowering uses exact label/TCO identities where they are available;
+- `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
+  member body is analyzed, and share one complete sibling scope. Declarations after a group remain
+  visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
+  source ownership summary.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -123,10 +134,8 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Function identity | `FuncKey` keys `_maFuncs`, `_maCallSites`, `_maResultReach`, `_maNestedRecursive`, `_maMoveSafeMemo`, `_maInProgress`, and `_ownershipSummaries`. | Only `TcoParamFactsWalk` resolves through a live lexical function scope. Other traversal families still use `_maNameIndex`; duplicate function names are still removed through `_maAmbiguous`. |
-| Result provenance | `FunctionResultProvenance` is a live RC decision. | `_maProvenanceMemo`/`_maProvenanceInProgress` and forwarding resolution remain string-keyed, so they cannot distinguish colliding local function names. |
-| Mutual recursion | `RecursiveGroupExpr` is lowered by `Lowering.TopLevel.cs`. | `RegisterBindings` and the move-analysis traversal do not visit `RecursiveGroupExpr`; the group and everything after it on the declaration spine are absent from ownership summaries. |
 | TCO structural facts | `FunctionOwnershipSummary.TcoParamFacts` records unchanged, fresh, consumed-tail, and grown-cons shapes. | It is read only by `ShadowCompareTcoParamFacts`; live TCO decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
+| Recursive result provenance | Mutual-recursion members now have exact identities, shared scopes, and converged `ResultReach`, but `FunctionResultProvenance` uses a recursion guard rather than an SCC fixpoint. | A genuine mutual cycle remains conservatively `RcEligible=false` even when every terminal arm constructs a fresh RC-eligible result. |
 | TCO “fresh rebuild” | Old `IsFreshListRebuildExpr` treats any call result as self-contained after the callee’s arena copy-out. | `ExpressionFreshness` correctly rejects helper results that still alias an input. These are different facts; 33 previously measured disagreements cannot be fixed by broadening either predicate. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
@@ -134,110 +143,23 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
-| Observability | `FunctionOwnershipSummary` is structured and `IrInst` has `SourceLocation`. `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | `IrFunction` has only a generated label, ownership/placement debug output is environment-driven and emitted inside semantic passes, and reuse/representation reasons are mostly transient booleans or reconstructed instruction counts. There is no immutable compilation-decision handoff to pair with the final optimized IR. |
+| Observability | `FunctionOwnershipSummary` is structured and `IrInst` has `SourceLocation`. `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. Colliding summaries are retained internally. | `IrFunction` has only a generated label, the compatibility ownership formatter cannot identify colliding summaries, ownership/placement debug output is environment-driven and emitted inside semantic passes, and reuse/representation reasons are mostly transient booleans or reconstructed instruction counts. There is no immutable compilation-decision handoff to pair with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
 teardown prerequisites are in place.
 
-### Milestone 1 — finish per-binding function identity
+### Milestone 1 — complete the reportable ownership boundary
 
-This is the immediate continuation from `ae46a2d`. Its purpose is to make
-`FunctionOwnershipSummary` trustworthy for idiomatic programs containing repeated local names before
-any shadow-only ownership fact is cut over.
-
-#### 1.1 Scope-thread `CollectCallsAndEscapes`
-
-Add a live `IReadOnlyDictionary<string, FuncKey>` to the traversal rooted at:
-
-- `CollectCallsAndEscapes`;
-- `CollectCallsAndEscapesCall`;
-- `TryCollectPartialFoldBinding`;
-- `CollectCallsAndEscapesMatch`;
-- `CollectCallsAndEscapesOperators`;
-- `CollectCallsAndEscapesAggregates`;
-- `CollectBinary`;
-- `WalkBindingValue`.
-
-The scope must follow Ashes’ actual sequential binding rules:
-
-- a plain `Let`/`LetResult` binding is visible in its body, not its value;
-- a `LetRecursive` function is visible in both its value and body;
-- a non-function binding shadows a same-named function by removing that name from the function scope.
-
-First land this as an inert change: for names not in `_maAmbiguous`, resolution must select exactly the
-same `FuncKey` as `_maNameIndex`.
-
-#### 1.2 Scope-thread `ResultReach` and move analysis
-
-Apply the same scope to the `ResultReach`/`CallReach` family and the call-resolution parts of
-`ArgIsMove`/`IsResultAliasMove`. This is the highest-risk part of the identity migration because it
-feeds:
-
-- `_maResultReach`;
-- `UniqueParameters` and move-safe reuse;
-- `ExpressionFreshness`;
-- the summaries consulted by existing borrow/reuse and TCO decisions.
-
-`FunctionResultProvenance` is computed by its own AST walk rather than by `ResultReach`, but it shares
-the same registration and function-resolution problem and already controls real RC-vs-arena decisions;
-that live path is handled separately in 1.3.
-
-Keep `TryFindLocalLet`’s local AST lookup separate unless a concrete function-resolution read requires
-the new scope. Do not expand this milestone into re-keying conservative plain-value seed analysis
-without a failing case.
-
-#### 1.3 Re-key result provenance
-
-Change `_maProvenanceMemo` and `_maProvenanceInProgress` to `FuncKey`, and make:
-
-- `ResolveFunctionResultProvenance`;
-- `ClassifyFunctionResultProvenance`;
-- `IsSelfRecursiveArm`;
-- `TryResolveForwardTarget`
-
-resolve callees through the live lexical scope. Keep the public/test introspection surface
-`GetOwnershipSummary(string)` as a compatibility lookup for globally unambiguous names, but add/use a
-key- or binder-based internal lookup wherever lowering already knows the binding identity.
-
-#### 1.4 Stop discarding colliding functions
-
-Only after 1.1–1.3 are shadow-clean:
-
-- retain every lambda-valued binding in `_maFuncs`;
-- stop deleting both entries merely because their source names collide;
-- make `_maNameIndex` a compatibility index for globally unambiguous external/introspection lookups,
-  not the internal resolver;
-- keep `_maAmbiguous`’s conservative behavior for non-function value bindings unless separately
-  proven unnecessary.
-
-Add direct regressions for:
-
-- two unrelated local `go` functions;
-- a nested function shadowing an outer function;
-- a non-function local shadowing a function name;
-- same-named helpers where one result forwards and the other does not;
-- a caller whose ownership summary previously became conservative because its callee’s name collided.
-
-#### 1.5 Register `RecursiveGroupExpr`
-
-Teach registration, call census, result reach, provenance, and summary materialization to traverse
-`RecursiveGroupExpr.Bindings` and `RecursiveGroupExpr.Body`.
-
-One group node contains several bindings, so `FuncKey` needs a distinct identity per group member
-(for example, group-node identity plus binding ordinal, or the member lambda’s reference identity);
-the group node alone is insufficient. Seed the group’s lexical scope with all members before walking
-any member value, then continue into the trailing body.
-
-Pin both the group summaries and the fact that declarations after a mutual-recursion group are still
-analyzed. Reuse `MutualRecursionTests`/`MutualRecursionTcoTests`, but add ownership-summary assertions;
-the existing tests only prove lowering/runtime behavior.
+Per-binding registration and lexical resolution identity are complete. Conservative escape state is
+still name-keyed until 1.7. The remaining work makes ownership facts deterministic and
+self-describing for later cutovers and the follow-on `--explain` facility.
 
 #### 1.6 Add stable reportable function origins
 
 `FuncKey` is the correct internal lookup identity, but its reference identity cannot be sorted,
-filtered, serialized, or shown to users. While finishing registration, materialize a separate stable
+filtered, serialized, or shown to users. With registration complete, materialize a separate stable
 origin for every analyzed/lowered function:
 
 - source and qualified source name where known;
@@ -261,9 +183,9 @@ must not require users to know them.
 
 Do not leave future consumers to infer “why not unique/fresh” from absence in a positive set:
 
-- re-key `_maEscaped` by `FuncKey` during the identity migration and retain whether the function
-  escaped, had an incomplete direct-call census, or fell back because resolution was ambiguous or
-  unknown;
+- re-key `_maEscaped` by `FuncKey` now that per-binding identity is available, and retain whether the
+  function escaped, had an incomplete direct-call census, or fell back because resolution was
+  ambiguous or unknown;
 - supplement `UniqueParameters` with an immutable per-parameter proof outcome that distinguishes the
   actual failed preconditions already checked by `IsParamMoveSafe` (escape/census completeness,
   move-linearity, capture, transitive parameter safety, and seed safety);
@@ -275,11 +197,25 @@ The positive `UniqueParameters`, `ResultFresh`, and `ResultPoisoned` compatibili
 while live callers migrate. This task does not weaken the fail-closed default or invent a reason when
 the current analysis cannot distinguish one; use an explicit conservative/unknown code.
 
+#### 1.8 Complete mutual-recursion result provenance
+
+Replace `FunctionResultProvenance`'s recursion guard with an SCC-aware monotone fixpoint over exact
+`FuncKey` call edges. A mutually-recursive component may be RC-eligible only when every reachable
+terminal result arm is independently RC-eligible or forwards within/to a proven component. Any
+unmodelled result, parameter passthrough, unresolved call, or escaping edge keeps the affected
+component conservative.
+
+Preserve the current one-hop `ForwardsTo` value only when there is one unambiguous immediate target;
+do not invent a single forward target for a component with several member edges. Add focused tests
+for a genuinely cyclic group with fresh base arms, a cycle whose base returns a parameter, and a
+mixed or unresolved cycle. This is analysis precision only and must not weaken the dynamic
+representation fallback.
+
 #### Milestone 1 acceptance
 
-- Per-function `ASHES_EXPLAIN_OWNERSHIP=all` output is identical for every previously unambiguous
-  function in `tests/` and `challenges/`.
-- New collision and mutual-group tests show the expected additional summaries/facts.
+- Per-function `ASHES_EXPLAIN_OWNERSHIP=all` output is identical for functions unaffected by lexical
+  shadowing/normalized-body visibility; every difference is tied to a focused regression and reviewed
+  for its downstream copy/placement effect.
 - No ownership fact changes for unrelated callers.
 - Every `FunctionOwnershipSummary` and every generated `IrFunction` can be mapped to one deterministic
   report origin, including reuse specializations, recursive helpers, synthesized type droppers, and
@@ -287,6 +223,8 @@ the current analysis cannot distinguish one; use an explicit conservative/unknow
 - Escape/call-census, move-safety failure, result-poison, and internal-sharing outcomes are available
   as structured causes; consumers do not have to parse `FormatOwnershipSummaries` or inspect private
   analysis sets.
+- Exact mutual-recursion result provenance converges across SCCs while unresolved or
+  parameter-returning cycles remain fail-closed.
 - Every challenge binary remains byte-identical at `-O0` and `-O2` unless an explicitly reviewed
   collision fix is expected to change placement; in that case compare IR, output, RSS, and lifetime
   operations instead of accepting a broad binary diff.
@@ -319,6 +257,9 @@ After Milestone 1 and 2.1:
 
 For each category:
 
+- first replace the remaining name-only parameter/value comparisons with binding identity so a
+  let-, lambda-, or pattern-bound name shadowing a parameter cannot be classified as that parameter’s
+  unchanged value;
 - shadow-compare old and new on the full ownership/TCO corpus;
 - cut over only that category;
 - verify emitted IR and challenge binaries;

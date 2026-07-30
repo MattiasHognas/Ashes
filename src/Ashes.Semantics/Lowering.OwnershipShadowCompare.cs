@@ -69,6 +69,7 @@ public sealed partial class Lowering
     /// like every other old name-set compares against its own positive shape.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
+        FuncKey? function,
         string selfName,
         IReadOnlyList<string> paramNames,
         IReadOnlySet<string> loopInvariantParams,
@@ -82,7 +83,9 @@ public sealed partial class Lowering
             return;
         }
 
-        var tcoParamFacts = GetOwnershipSummary(selfName)?.TcoParamFacts;
+        var tcoParamFacts = (function is { } key
+            ? GetOwnershipSummary(key)
+            : GetOwnershipSummary(selfName))?.TcoParamFacts;
 
         foreach (string name in paramNames)
         {

@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -22,10 +21,26 @@ namespace Ashes.Semantics;
 // IsKnownRuntimeNormalizedFunctionArgument's unrelated TCO-argument-normalization question.
 public sealed partial class Lowering
 {
-    private readonly Dictionary<string, FunctionResultProvenance> _maProvenanceMemo =
-        new(StringComparer.Ordinal);
+    private sealed record ResolvedFunctionResultProvenance(bool RcEligible, FuncKey? ForwardsTo);
 
-    private readonly HashSet<string> _maProvenanceInProgress = new(StringComparer.Ordinal);
+    private sealed record ProvenanceLetBinding(
+        Expr Value,
+        IReadOnlyDictionary<string, ProvenanceLetBinding> LetBindings,
+        IReadOnlyDictionary<string, FuncKey> FunctionScope);
+
+    private sealed record ProvenanceArm(
+        Expr Expression,
+        IReadOnlyDictionary<string, ProvenanceLetBinding> LetBindings,
+        IReadOnlyDictionary<string, FuncKey> FunctionScope);
+
+    private readonly Dictionary<FuncKey, ResolvedFunctionResultProvenance> _maProvenanceMemo = new();
+
+    private readonly HashSet<FuncKey> _maProvenanceInProgress = new();
+
+    // Canonical alias-stripped body for provenance only. Other summary facts intentionally retain their
+    // registered AST bodies and node identities; provenance needs the normalized body so its lexical
+    // function scope and call heads describe the same tree.
+    private readonly Dictionary<FuncKey, Expr> _maProvenanceBodies = new();
 
     /// <summary>
     /// The result provenance of registered function <paramref name="function"/>, resolved transitively
@@ -34,7 +49,7 @@ public sealed partial class Lowering
     /// (not RC-eligible, no forward target) — the sound under-approximation, matching this file's own
     /// "default is always conservative" convention (see Lowering.MoveAnalysis.cs's header comment).
     /// </summary>
-    private FunctionResultProvenance ResolveFunctionResultProvenance(string function)
+    private ResolvedFunctionResultProvenance ResolveFunctionResultProvenance(FuncKey function)
     {
         if (_maProvenanceMemo.TryGetValue(function, out var cached))
         {
@@ -43,7 +58,7 @@ public sealed partial class Lowering
 
         if (!_maProvenanceInProgress.Add(function))
         {
-            return new FunctionResultProvenance(false, null);
+            return new ResolvedFunctionResultProvenance(false, null);
         }
 
         var result = ClassifyFunctionResultProvenance(function);
@@ -76,12 +91,14 @@ public sealed partial class Lowering
     /// target function, that target is reported; disagreement (or no forwarding arm at all) reports no
     /// single hop, even when every arm is independently RC-eligible some other way.
     /// </summary>
-    private FunctionResultProvenance ClassifyFunctionResultProvenance(string function)
+    private ResolvedFunctionResultProvenance ClassifyFunctionResultProvenance(FuncKey function)
     {
-        if (!_maNameIndex.TryGetValue(function, out var key) || !_maFuncs.TryGetValue(key, out var info))
+        if (!_maFuncs.TryGetValue(function, out var info))
         {
-            return new FunctionResultProvenance(false, null);
+            return new ResolvedFunctionResultProvenance(false, null);
         }
+
+        Expr body = _maProvenanceBodies.GetValueOrDefault(function) ?? info.Body;
 
         // A function whose innermost body is DIRECTLY (with zero unwrapping — not through a let, if, or
         // match) a bare string literal is unconditionally normalized to a fresh RC string by
@@ -90,30 +107,31 @@ public sealed partial class Lowering
         // narrower guarantee than "any string literal terminal arm" — a literal reached through a let
         // binding, or as one arm of an if/match, is NOT unconditionally normalized this way (a match arm
         // only normalizes when a SIBLING arm is a genuine fresh producer; an if-arm never does) — so this
-        // check must run on info.Body directly, before any let-substitution/arm-collection unwraps it.
-        if (info.Body is Expr.StrLit)
+        // check must run on the canonical body directly, before any let-substitution/arm collection.
+        if (body is Expr.StrLit)
         {
-            return new FunctionResultProvenance(true, null);
+            return new ResolvedFunctionResultProvenance(true, null);
         }
 
-        var letBindings = new Dictionary<string, Expr>(StringComparer.Ordinal);
-        var arms = new List<Expr>();
-        CollectResultProvenanceTerminalArms(info.Body, arms, letBindings);
-        return ClassifyFunctionResultProvenanceFromArms(function, arms, letBindings);
+        var letBindings = new Dictionary<string, ProvenanceLetBinding>(StringComparer.Ordinal);
+        var arms = new List<ProvenanceArm>();
+        IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
+            ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+        CollectResultProvenanceTerminalArms(body, arms, letBindings, scope);
+        return ClassifyFunctionResultProvenanceFromArms(function, arms);
     }
 
-    private FunctionResultProvenance ClassifyFunctionResultProvenanceFromArms(
-        string function,
-        List<Expr> arms,
-        Dictionary<string, Expr> letBindings)
+    private ResolvedFunctionResultProvenance ClassifyFunctionResultProvenanceFromArms(
+        FuncKey function,
+        List<ProvenanceArm> arms)
     {
         bool allEligible = true;
         bool sawForward = false;
         bool forwardAmbiguous = false;
-        string? commonForward = null;
+        FuncKey? commonForward = null;
         int consideredArms = 0;
 
-        foreach (Expr arm in arms)
+        foreach (ProvenanceArm arm in arms)
         {
             if (IsSelfRecursiveArm(arm, function))
             {
@@ -121,7 +139,7 @@ public sealed partial class Lowering
             }
 
             consideredArms++;
-            var armProvenance = ClassifyExpressionProvenance(arm, letBindings);
+            var armProvenance = ClassifyExpressionProvenance(arm);
             if (!armProvenance.RcEligible)
             {
                 allEligible = false;
@@ -134,7 +152,7 @@ public sealed partial class Lowering
                     commonForward = armTarget;
                     sawForward = true;
                 }
-                else if (!string.Equals(commonForward, armTarget, StringComparison.Ordinal))
+                else if (commonForward is not { } existingForward || !existingForward.Equals(armTarget))
                 {
                     forwardAmbiguous = true;
                 }
@@ -145,61 +163,101 @@ public sealed partial class Lowering
         // there is no base case to found eligibility on): conservative default, not a vacuous true.
         if (consideredArms == 0)
         {
-            return new FunctionResultProvenance(false, null);
+            return new ResolvedFunctionResultProvenance(false, null);
         }
 
-        return new FunctionResultProvenance(allEligible, forwardAmbiguous ? null : commonForward);
+        return new ResolvedFunctionResultProvenance(allEligible, forwardAmbiguous ? null : commonForward);
     }
 
     /// <summary>
     /// Collects the terminal (non-control-flow) arms of <paramref name="body"/>: recurses through
-    /// If/Match/Let/LetResult (accumulating each let's bound name and value into
-    /// <paramref name="letBindings"/> as it descends) and LetRecursive (body only — a let-recursive
-    /// binding is its own separate recursive definition, not a plain forwarding alias, so its value is
-    /// never substituted through). A terminal bare variable reference is, in turn, substituted through
-    /// <paramref name="letBindings"/> when it names a local let binding already seen on the way down —
-    /// this is what lets "let result = ‹fresh construction› in result" classify by the construction, not
-    /// by the intervening variable name. <paramref name="letBindings"/> is shared and mutated across the
-    /// whole walk (including across If/Match sibling branches) rather than scoped per-branch: safe
-    /// because Model-A sequential scoping guarantees a name is always (re)bound by an enclosing let
-    /// before any well-typed reference to it, so a stale entry from an already-processed sibling can
-    /// never be read by a later sibling that does not itself rebind the name. A plain (non-recursive)
-    /// let's value can never reference its own bound name (self-recursion requires <c>let recursive</c>),
-    /// so this substitution cannot cycle.
+    /// If/Match/Let/LetResult while carrying immutable snapshots of plain-let aliases and the lexical
+    /// function scope. LetRecursive contributes only its body: a recursive binding is a separate
+    /// definition, not a forwarding alias. Match-pattern binders shadow both snapshots in their arm.
+    /// A terminal bare variable substitutes the plain-let value captured for it, using the alias and
+    /// function scopes from the binding's value site rather than its later use site. This makes
+    /// "let result = ‹fresh construction› in result" transparent without leaking a sibling branch's
+    /// bindings or resolving a substituted call under a shadow introduced after it was evaluated.
     /// </summary>
-    private void CollectResultProvenanceTerminalArms(Expr body, List<Expr> arms, Dictionary<string, Expr> letBindings)
+    private void CollectResultProvenanceTerminalArms(
+        Expr body,
+        List<ProvenanceArm> arms,
+        IReadOnlyDictionary<string, ProvenanceLetBinding> letBindings,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         switch (body)
         {
             case Expr.If iff:
-                CollectResultProvenanceTerminalArms(iff.Then, arms, letBindings);
-                CollectResultProvenanceTerminalArms(iff.Else, arms, letBindings);
+                CollectResultProvenanceTerminalArms(iff.Then, arms, letBindings, scope);
+                CollectResultProvenanceTerminalArms(iff.Else, arms, letBindings, scope);
                 break;
             case Expr.Match match:
                 foreach (MatchCase matchCase in match.Cases)
                 {
-                    CollectResultProvenanceTerminalArms(matchCase.Body, arms, letBindings);
+                    var binders = new HashSet<string>(StringComparer.Ordinal);
+                    CollectPatternBinders(matchCase.Pattern, binders);
+                    CollectResultProvenanceTerminalArms(
+                        matchCase.Body,
+                        arms,
+                        RemoveProvenanceLetBindings(letBindings, binders),
+                        RemoveFuncNames(scope, binders));
                 }
 
                 break;
             case Expr.Let let:
-                letBindings[let.Name] = let.Value;
-                CollectResultProvenanceTerminalArms(let.Body, arms, letBindings);
+                CollectResultProvenanceTerminalArms(
+                    let.Body,
+                    arms,
+                    ExtendProvenanceLetBindings(letBindings, let.Name, let.Value, scope),
+                    ExtendFuncScope(scope, let, let.Name));
                 break;
             case Expr.LetResult letResult:
-                letBindings[letResult.Name] = letResult.Value;
-                CollectResultProvenanceTerminalArms(letResult.Body, arms, letBindings);
+                CollectResultProvenanceTerminalArms(
+                    letResult.Body,
+                    arms,
+                    ExtendProvenanceLetBindings(letBindings, letResult.Name, letResult.Value, scope),
+                    ExtendFuncScope(scope, letResult, letResult.Name));
                 break;
             case Expr.LetRecursive letRecursive:
-                CollectResultProvenanceTerminalArms(letRecursive.Body, arms, letBindings);
+                CollectResultProvenanceTerminalArms(
+                    letRecursive.Body,
+                    arms,
+                    RemoveProvenanceLetBindings(letBindings, [letRecursive.Name]),
+                    ExtendFuncScope(scope, letRecursive, letRecursive.Name));
                 break;
-            case Expr.Var v when letBindings.TryGetValue(v.Name, out Expr? boundValue):
-                CollectResultProvenanceTerminalArms(boundValue, arms, letBindings);
+            case Expr.Var v when letBindings.TryGetValue(v.Name, out ProvenanceLetBinding? binding):
+                CollectResultProvenanceTerminalArms(
+                    binding.Value, arms, binding.LetBindings, binding.FunctionScope);
                 break;
             default:
-                arms.Add(body);
+                arms.Add(new ProvenanceArm(body, letBindings, scope));
                 break;
         }
+    }
+
+    private static IReadOnlyDictionary<string, ProvenanceLetBinding> ExtendProvenanceLetBindings(
+        IReadOnlyDictionary<string, ProvenanceLetBinding> letBindings,
+        string name,
+        Expr value,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        return new Dictionary<string, ProvenanceLetBinding>(letBindings, StringComparer.Ordinal)
+        {
+            [name] = new ProvenanceLetBinding(value, letBindings, scope),
+        };
+    }
+
+    private static IReadOnlyDictionary<string, ProvenanceLetBinding> RemoveProvenanceLetBindings(
+        IReadOnlyDictionary<string, ProvenanceLetBinding> letBindings,
+        IEnumerable<string> names)
+    {
+        var next = new Dictionary<string, ProvenanceLetBinding>(letBindings, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
     }
 
     /// <summary>
@@ -216,36 +274,55 @@ public sealed partial class Lowering
     /// passthrough, a call to an unregistered/foreign function, an unmodeled node) is the conservative
     /// default.
     /// </summary>
-    private FunctionResultProvenance ClassifyExpressionProvenance(
-        Expr expression,
-        Dictionary<string, Expr> letBindings)
+    private ResolvedFunctionResultProvenance ClassifyExpressionProvenance(ProvenanceArm arm)
     {
-        if (IsDirectRcConstruction(expression, letBindings)
-            || IsRuntimeRcFreshBuiltinProducer(expression)
-            || expression is Expr.Add)
+        if (IsDirectRcConstruction(arm.Expression, arm.LetBindings)
+            || IsRuntimeRcFreshBuiltinProducer(arm.Expression)
+            || arm.Expression is Expr.Add)
         {
-            return new FunctionResultProvenance(true, null);
+            return new ResolvedFunctionResultProvenance(true, null);
         }
 
-        if (TryResolveForwardTarget(expression, out string? target))
+        if (TryResolveForwardTarget(arm.Expression, arm.FunctionScope, out FuncKey target))
         {
             var targetProvenance = ResolveFunctionResultProvenance(target);
-            return new FunctionResultProvenance(targetProvenance.RcEligible, target);
+            return new ResolvedFunctionResultProvenance(targetProvenance.RcEligible, target);
         }
 
-        return new FunctionResultProvenance(false, null);
+        return new ResolvedFunctionResultProvenance(false, null);
     }
 
-    private static bool IsSelfRecursiveArm(Expr arm, string function)
+    private bool IsSelfRecursiveArm(ProvenanceArm arm, FuncKey function)
     {
-        if (arm is not Expr.Call)
+        if (arm.Expression is not Expr.Call)
         {
             return false;
         }
 
         var arguments = new List<Expr>();
-        Expr head = CollectCallArgs(arm, arguments);
-        return head is Expr.Var variable && string.Equals(variable.Name, function, StringComparison.Ordinal);
+        Expr head = CollectCallArgs(arm.Expression, arguments);
+        string? name = head switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(head),
+            _ => null,
+        };
+        if (name is null
+            || TryResolveFunctionKey(head, name, arm.FunctionScope) is not { } target)
+        {
+            return false;
+        }
+
+        if (target.Equals(function)
+            && _maFuncs.TryGetValue(function, out var current)
+            && arguments.Count == current.Params.Count)
+        {
+            return true;
+        }
+
+        return _maNestedRecursive.TryGetValue(function, out var nested)
+            && target.Equals(nested.Recursive)
+            && arguments.Count == 1;
     }
 
     /// <summary>
@@ -281,7 +358,9 @@ public sealed partial class Lowering
     /// IsConcretelyRuntimeManageableResultType's own TFun case for why that fallback is what actually
     /// matters for a closure result today).
     /// </summary>
-    private bool IsDirectRcConstruction(Expr body, Dictionary<string, Expr> letBindings)
+    private bool IsDirectRcConstruction(
+        Expr body,
+        IReadOnlyDictionary<string, ProvenanceLetBinding> letBindings)
     {
         if (body is Expr.Cons or Expr.ListLit)
         {
@@ -365,7 +444,9 @@ public sealed partial class Lowering
     /// direction: a genuinely fresh forwarding-call argument is missed (falls to false), never the
     /// reverse.
     /// </summary>
-    private bool IsFreshConstructionArgument(Expr argument, Dictionary<string, Expr> letBindings)
+    private bool IsFreshConstructionArgument(
+        Expr argument,
+        IReadOnlyDictionary<string, ProvenanceLetBinding> letBindings)
     {
         return argument switch
         {
@@ -375,9 +456,12 @@ public sealed partial class Lowering
         };
     }
 
-    private bool TryResolveForwardTarget(Expr body, [NotNullWhen(true)] out string? target)
+    private bool TryResolveForwardTarget(
+        Expr body,
+        IReadOnlyDictionary<string, FuncKey> scope,
+        out FuncKey target)
     {
-        target = null;
+        target = default;
         if (body is not Expr.Call)
         {
             return false;
@@ -400,12 +484,22 @@ public sealed partial class Lowering
             _ => null,
         };
 
-        if (name is null || _maAmbiguous.Contains(name) || !_maNameIndex.ContainsKey(name))
+        if (name is null
+            || TryResolveFunctionKey(head, name, scope) is not { } key
+            || !_maFuncs.TryGetValue(key, out var function)
+            || arguments.Count != function.Params.Count)
         {
             return false;
         }
 
-        target = name;
+        target = key;
         return true;
+    }
+
+    private void ClearResultProvenanceAnalysis()
+    {
+        _maProvenanceMemo.Clear();
+        _maProvenanceInProgress.Clear();
+        _maProvenanceBodies.Clear();
     }
 }

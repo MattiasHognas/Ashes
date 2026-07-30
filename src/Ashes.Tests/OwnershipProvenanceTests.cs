@@ -118,6 +118,370 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
+    public void Function_parameter_shadow_does_not_forward_to_global_helper()
+    {
+        const string source =
+            """
+            let helper value = value + 1
+            let invoke helper value = helper(value)
+            in invoke(helper)(1)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("invoke");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Shadowed_self_name_is_not_treated_as_recursive_arm()
+    {
+        const string source =
+            """
+            type Holder(A) =
+                | Hold(A)
+            let recursive choose holder depth =
+                match holder with
+                    | Hold(choose) ->
+                        if depth <= 0
+                        then depth + 1
+                        else choose(depth - 1)
+            in choose(Hold(given value -> value))(1)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("choose");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Branch_local_result_alias_does_not_leak_into_sibling_arm()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let passthrough value = value
+            let fresh ignored = Full(Empty)
+            let choose flag =
+                let result = passthrough(Empty)
+                in if flag
+                    then let result = fresh(0) in result
+                    else result
+            in choose(true)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("choose");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Result_alias_uses_its_binding_scope_before_pattern_shadow()
+    {
+        const string source =
+            """
+            type Holder =
+                | Hold(Int)
+            let helper value = value + 1
+            let invoke holder =
+                let result = helper(0)
+                in match holder with
+                    | Hold(helper) -> result
+            in invoke(Hold(1))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("invoke");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+        summary.ResultProvenance.ForwardsTo.ShouldBe("helper");
+    }
+
+    [Test]
+    public void Nested_recursive_return_uses_exact_self_identity()
+    {
+        const string source =
+            """
+            type Nat =
+                | Zero
+                | Succ(Nat)
+            let make seed =
+                (let recursive go depth =
+                    if depth <= 0
+                    then Zero
+                    else go(depth - 1)
+                in go)
+            in make(Zero)(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("make");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Colliding_nested_recursive_names_keep_exact_self_provenance()
+    {
+        const string source =
+            """
+            type Nat =
+                | Zero
+                | Succ(Nat)
+            let first seed =
+                (let recursive go depth =
+                    if depth <= 0
+                    then Zero
+                    else go(depth - 1)
+                in go)
+            let second seed =
+                (let recursive go depth =
+                    if depth <= 0
+                    then Zero
+                    else go(depth - 1)
+                in go)
+            in second(first(Zero)(1))(1)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        first.ResultProvenance.ForwardsTo.ShouldBeNull();
+
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Unrelated_same_named_helpers_keep_distinct_result_provenance()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let first input =
+                let go value = value
+                in go(input)
+            let second input =
+                let go ignored = Full(Empty)
+                in go(input)
+            in (first(Empty), second(Empty))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        IReadOnlyList<FunctionOwnershipSummary> helpers = lowering.GetOwnershipSummaries("go");
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        helpers.Count.ShouldBe(2);
+        lowering.GetOwnershipSummary("go").ShouldBeNull();
+        helpers.Single(summary => summary.Parameters.Contains("value", StringComparer.Ordinal))
+            .ResultProvenance.RcEligible.ShouldBeFalse();
+        helpers.Single(summary => summary.Parameters.Contains("ignored", StringComparer.Ordinal))
+            .ResultProvenance.RcEligible.ShouldBeTrue();
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeFalse();
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_function_shadowing_outer_function_resolves_to_inner_identity()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let go value = value
+            let caller input =
+                let go ignored = Full(Empty)
+                in go(input)
+            in caller(Empty)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        IReadOnlyList<FunctionOwnershipSummary> helpers = lowering.GetOwnershipSummaries("go");
+        FunctionOwnershipSummary? caller = lowering.GetOwnershipSummary("caller");
+
+        helpers.Count.ShouldBe(2);
+        helpers.Single(summary => summary.Parameters.Contains("value", StringComparer.Ordinal))
+            .ResultProvenance.RcEligible.ShouldBeFalse();
+        helpers.Single(summary => summary.Parameters.Contains("ignored", StringComparer.Ordinal))
+            .ResultProvenance.RcEligible.ShouldBeTrue();
+        caller.ShouldNotBeNull();
+        caller.ResultProvenance.RcEligible.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Non_function_shadow_keeps_function_summary_but_does_not_resolve_to_it()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let helper ignored = Full(Empty)
+            let caller input =
+                let helper = input
+                in helper
+            in caller(Empty)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        IReadOnlyList<FunctionOwnershipSummary> helpers = lowering.GetOwnershipSummaries("helper");
+        FunctionOwnershipSummary? caller = lowering.GetOwnershipSummary("caller");
+
+        helpers.Count.ShouldBe(1);
+        helpers[0].ResultProvenance.RcEligible.ShouldBeTrue();
+        lowering.GetOwnershipSummary("helper").ShouldBeNull();
+
+        caller.ShouldNotBeNull();
+        caller.ResultReaches("input").ShouldBeTrue();
+        caller.ResultProvenance.RcEligible.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Alias_stripped_colliding_helpers_keep_original_binding_identity()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let helper ignored = Full(Empty)
+            let first =
+                let helperAlias = helper
+                in given input ->
+                    let go value = helperAlias(value)
+                    in go(input)
+            let second =
+                let helperAlias = helper
+                in given input ->
+                    let go value = value
+                    in go(input)
+            in (first(Empty), second(Empty))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        IReadOnlyList<FunctionOwnershipSummary> helpers = lowering.GetOwnershipSummaries("go");
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        helpers.Count.ShouldBe(2);
+        helpers.Single(summary => summary.ResultProvenance.RcEligible)
+            .ResultProvenance.ForwardsTo.ShouldBe("helper");
+        helpers.Single(summary => !summary.ResultProvenance.RcEligible)
+            .ResultProvenance.ForwardsTo.ShouldBeNull();
+
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Nested_alias_stripping_canonicalizes_rebuilt_binders_transitively()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let helper ignored = Full(Empty)
+            let first =
+                let outerAlias = helper
+                in given seed ->
+                    let container =
+                        let innerAlias = outerAlias
+                        in given input ->
+                            let go value = innerAlias(value)
+                            in go(input)
+                    in container(seed)
+            let second =
+                let outerAlias = helper
+                in given seed ->
+                    let container =
+                        let innerAlias = outerAlias
+                        in given input ->
+                            let go value = value
+                            in go(input)
+                    in container(seed)
+            in (first(Empty), second(Empty))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        IReadOnlyList<FunctionOwnershipSummary> helpers = lowering.GetOwnershipSummaries("go");
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        helpers.Count.ShouldBe(2);
+        helpers.Single(summary => summary.ResultProvenance.RcEligible)
+            .ResultProvenance.ForwardsTo.ShouldBe("helper");
+        helpers.Single(summary => !summary.ResultProvenance.RcEligible)
+            .ResultProvenance.ForwardsTo.ShouldBeNull();
+        first.ShouldNotBeNull();
+        first.ResultProvenance.RcEligible.ShouldBeTrue();
+        second.ShouldNotBeNull();
+        second.ResultProvenance.RcEligible.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Partial_forward_call_is_not_result_provenance()
+    {
+        const string source =
+            """
+            let maker left right = left + right
+            let partial left = maker(left)
+            in partial(1)(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("partial");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeFalse();
+        summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Alias_stripped_nested_function_uses_its_canonical_provenance_body()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let helper ignored = Full(Empty)
+            let wrapper =
+                let helperAlias = helper
+                in given seed ->
+                    let local item = helperAlias(item)
+                    in local(seed)
+            in wrapper(Empty)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("local");
+
+        summary.ShouldNotBeNull();
+        summary.ResultProvenance.RcEligible.ShouldBeTrue();
+        summary.ResultProvenance.ForwardsTo.ShouldBe("helper");
+    }
+
+    [Test]
     public void Self_recursive_arm_never_conflicts_with_a_fresh_base_case()
     {
         // Mirrors the CO-38 precedent ("a recursive call... never conflicts"): without excluding the
@@ -346,5 +710,75 @@ public sealed class OwnershipProvenanceTests
         summary.ShouldNotBeNull();
         summary.ResultProvenance.RcEligible.ShouldBeFalse();
         summary.ResultProvenance.ForwardsTo.ShouldBeNull();
+    }
+
+    [Test]
+    public void Recursive_group_members_and_following_declarations_receive_ownership_summaries()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive forward seed = fresh(seed)
+            and fresh ignored = Full(Empty)
+            let after seed = forward(seed)
+            in after(Empty)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? forward = lowering.GetOwnershipSummary("forward");
+        FunctionOwnershipSummary? fresh = lowering.GetOwnershipSummary("fresh");
+        FunctionOwnershipSummary? after = lowering.GetOwnershipSummary("after");
+
+        forward.ShouldNotBeNull();
+        forward.Parameters.ShouldBe(["seed"]);
+        forward.ResultFresh.ShouldBeTrue();
+        forward.ResultProvenance.ForwardsTo.ShouldBe("fresh");
+        forward.ResultProvenance.RcEligible.ShouldBeTrue();
+
+        fresh.ShouldNotBeNull();
+        fresh.Parameters.ShouldBe(["ignored"]);
+        fresh.ResultFresh.ShouldBeTrue();
+        fresh.ResultProvenance.ForwardsTo.ShouldBeNull();
+        fresh.ResultProvenance.RcEligible.ShouldBeTrue();
+
+        after.ShouldNotBeNull();
+        after.Parameters.ShouldBe(["seed"]);
+        after.ResultFresh.ShouldBeTrue();
+        after.ResultProvenance.ForwardsTo.ShouldBe("forward");
+        after.ResultProvenance.RcEligible.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Recursive_group_result_reach_converges_across_member_calls()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive first value =
+                match value with
+                    | Empty -> value
+                    | Full(_) -> second(value)
+            and second value =
+                match value with
+                    | Empty -> value
+                    | Full(_) -> first(value)
+            first(Empty)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        first.ResultPoisoned.ShouldBeFalse();
+        first.ResultReaches("value").ShouldBeTrue();
+
+        second.ShouldNotBeNull();
+        second.ResultPoisoned.ShouldBeFalse();
+        second.ResultReaches("value").ShouldBeTrue();
     }
 }
