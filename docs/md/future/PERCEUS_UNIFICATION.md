@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `fad5b95` on 2026-07-30, together with the Milestone 1.7
+Audited against `main` at `7ba5a1f` on 2026-07-30, together with the Milestone 1.8
 implementation in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -140,6 +140,14 @@ The following is already implemented and is not part of the backlog:
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
   source ownership summary;
+- `FunctionResultProvenance` is computed by a whole-program SCC-aware monotone fixpoint over exact
+  `FuncKey` forwarding edges. A mutually-recursive component is RC-eligible only when every considered
+  terminal result is either an independently eligible construction or a saturated forward to another
+  admitted function, and the component is grounded by a reachable independently eligible result.
+  Saturated exact self-recursive arms are neutral: they neither establish nor reject eligibility. Pure
+  forwarding cycles, parameter results, unresolved calls, and unmodelled terminal results therefore
+  remain fail-closed. `ForwardsTo` retains one immediate target only when that function has exactly one
+  exact forwarding target; it is not synthesized from an SCC representative;
 - `SourceFunctionOrigin` is the stable ownership-report boundary: source and module-qualified names
   where known, declaration location, and deterministic combined-source offset. Project stitching
   retains original names while rewriting module bindings;
@@ -161,7 +169,6 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Area | Current implementation | Remaining gap |
 |---|---|---|
 | TCO structural facts | `FunctionOwnershipSummary.TcoParamFacts` records unchanged, fresh, consumed-tail, and grown-cons shapes. | It is read only by `ShadowCompareTcoParamFacts`; live TCO decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
-| Recursive result provenance | Mutual-recursion members now have exact identities, shared scopes, and converged `ResultReach`, but `FunctionResultProvenance` uses a recursion guard rather than an SCC fixpoint. | A genuine mutual cycle remains conservatively `RcEligible=false` even when every terminal arm constructs a fresh RC-eligible result. |
 | TCO “fresh rebuild” | Old `IsFreshListRebuildExpr` treats any call result as self-contained after the callee’s arena copy-out. | `ExpressionFreshness` correctly rejects helper results that still alias an input. These are different facts; 33 previously measured disagreements cannot be fixed by broadening either predicate. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
@@ -174,38 +181,8 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1.8 is the next implementation task.
-
-### Milestone 1 — complete the reportable ownership boundary
-
-Per-binding registration, lexical resolution identity, and stable reportable source/IR origins are
-complete, and conservative outcomes now retain structured causes. The only remaining work in this
-milestone is exact mutual-recursion result provenance for later cutovers and the follow-on
-`--explain` facility.
-
-#### 1.8 Complete mutual-recursion result provenance
-
-Replace `FunctionResultProvenance`'s recursion guard with an SCC-aware monotone fixpoint over exact
-`FuncKey` call edges. A mutually-recursive component may be RC-eligible only when every reachable
-terminal result arm is independently RC-eligible or forwards within/to a proven component. Any
-unmodelled result, parameter passthrough, unresolved call, or escaping edge keeps the affected
-component conservative.
-
-Preserve the current one-hop `ForwardsTo` value only when there is one unambiguous immediate target;
-do not invent a single forward target for a component with several member edges. Add focused tests
-for a genuinely cyclic group with fresh base arms, a cycle whose base returns a parameter, and a
-mixed or unresolved cycle. This is analysis precision only and must not weaken the dynamic
-representation fallback.
-
-#### Milestone 1 acceptance
-
-- Exact mutual-recursion result provenance converges across SCCs while unresolved or
-  parameter-returning cycles remain fail-closed.
-- No ownership or placement fact changes for callers outside the affected mutual-recursion
-  components.
-- Every challenge binary remains byte-identical at `-O0` and `-O2` unless an explicitly reviewed
-  provenance-precision fix is expected to change placement; in that case compare IR, output, RSS, and
-  lifetime operations instead of accepting a broad binary diff.
+teardown prerequisites are in place. Milestone 1 is complete. Seventeen implementation tasks remain;
+Milestone 2.1 is next.
 
 ### Milestone 2 — make `TcoParamFacts` complete, then cut classifier A over
 

@@ -258,7 +258,22 @@ public sealed partial class Lowering
 
         CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
         ComputeResultReach();
+        ComputeFunctionResultProvenanceFixpoint();
         _maAnalyzed = true;
+        BuildOwnershipSummaries();
+
+        string? explainSelection = Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP");
+        if (explainSelection is not null)
+        {
+            foreach (var line in FormatOwnershipSummaries(explainSelection))
+            {
+                Console.Error.WriteLine(line);
+            }
+        }
+    }
+
+    private void BuildOwnershipSummaries()
+    {
         foreach (FuncKey key in _maFuncs.Keys
             .OrderBy(key => _maFunctionOrigins[key].QualifiedName, StringComparer.Ordinal)
             .ThenBy(key => _maFunctionOrigins[key].SourceName, StringComparer.Ordinal)
@@ -275,15 +290,6 @@ public sealed partial class Lowering
             foreach (var (expr, fresh) in summary.ExpressionFreshness)
             {
                 _maExpressionFreshnessAll.TryAdd(expr, fresh);
-            }
-        }
-
-        string? explainSelection = Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP");
-        if (explainSelection is not null)
-        {
-            foreach (var line in FormatOwnershipSummaries(explainSelection))
-            {
-                Console.Error.WriteLine(line);
             }
         }
     }

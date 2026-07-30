@@ -657,6 +657,18 @@ flags for global or unmodelled reach and internal sharing. The existing
 `UniqueParameters`, `ResultFresh`, and `ResultPoisoned` values are compatibility
 projections of those facts.
 
+Interprocedural result provenance uses a whole-program SCC-aware monotone
+fixpoint over exact lexical `FuncKey` forwarding edges. A mutually-recursive
+component is eligible for the static runtime-RC result path only when every
+considered terminal result is an independently eligible construction or a
+saturated forward to another admitted function, and at least one independently
+eligible result is reachable. Saturated exact self-recursive arms are neutral:
+they neither establish nor reject eligibility. Pure forwarding cycles,
+parameter passthrough, unresolved calls, and unmodelled results stay
+conservative. The reportable `ForwardsTo` field names one immediate target only
+when the source function has exactly one exact forwarding target; it never
+substitutes an arbitrary component representative.
+
 Reuse entry-copy elision and runtime-managed call-result placement retain
 immutable records of the decision facts they consumed and their outcome,
 including the concrete runtime-manageable result-type predicate used by the

@@ -12,9 +12,10 @@ namespace Ashes.Semantics;
 // does not look like a closure-producing instruction even though its callee, at runtime, returns one.
 //
 // This pass instead classifies each registered function's innermost (fully curried, per _maFuncs)
-// body once, at the AST level, before lowering. A body that is itself a call to another registered
-// function is resolved transitively (memoized, cycle-guarded) through as many sibling-helper hops as
-// the program actually has — not just one. Phase 3 wired this directly into the real decision path
+// body once, at the AST level, before lowering. Exact saturated calls to other registered functions
+// form a FuncKey graph whose strongly-connected components converge together: productive mutual
+// recursion inherits a fresh result base, while ungrounded or mixed components fail closed. Phase 3
+// wired this directly into the real decision path
 // (TryResolveKnownFunctionResultOwnership/IsDirectRuntimeManagedFunctionCall in Lowering.cs) and
 // retired _runtimeManagedFunctionResultLabels/RecordFunctionResultProvenance entirely;
 // _functionReturnedClosureLabels/RecordReturnedClosureLabel remain, but now serve only
@@ -22,6 +23,18 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
     private sealed record ResolvedFunctionResultProvenance(bool RcEligible, FuncKey? ForwardsTo);
+
+    private sealed record ProvenanceFunctionNode(
+        bool HasDirectEligibleResult,
+        bool HasRejectedResult,
+        int ConsideredArmCount,
+        IReadOnlySet<FuncKey> ForwardTargets,
+        FuncKey? UnambiguousForwardTarget);
+
+    private sealed record ProvenanceComponent(
+        bool HasDirectEligibleResult,
+        bool HasRejectedResult,
+        IReadOnlySet<int> Dependencies);
 
     private sealed record ProvenanceLetBinding(
         Expr Value,
@@ -35,7 +48,7 @@ public sealed partial class Lowering
 
     private readonly Dictionary<FuncKey, ResolvedFunctionResultProvenance> _maProvenanceMemo = new();
 
-    private readonly HashSet<FuncKey> _maProvenanceInProgress = new();
+    private bool _maProvenanceAnalysisComplete;
 
     // Canonical alias-stripped body for provenance only. Other summary facts intentionally retain their
     // registered AST bodies and node identities; provenance needs the normalized body so its lexical
@@ -43,74 +56,244 @@ public sealed partial class Lowering
     private readonly Dictionary<FuncKey, Expr> _maProvenanceBodies = new();
 
     /// <summary>
-    /// The result provenance of registered function <paramref name="function"/>, resolved transitively
-    /// through any chain of sibling-helper forwarding. A cycle (mutual or self forwarding through the
-    /// function's own bare body, an unusual shape) resolves to the conservative default
-    /// (not RC-eligible, no forward target) — the sound under-approximation, matching this file's own
-    /// "default is always conservative" convention (see Lowering.MoveAnalysis.cs's header comment).
+    /// The result provenance of registered function <paramref name="function"/>, resolved by one
+    /// whole-program, exact-<see cref="FuncKey"/> fixpoint. Mutually-recursive components are eligible
+    /// only when every result arm stays inside the candidate set and the component can reach an
+    /// independently eligible construction. A pure forwarding cycle therefore remains conservative,
+    /// while a cycle with a fresh base arm converges independent of dictionary or query order.
     /// </summary>
     private ResolvedFunctionResultProvenance ResolveFunctionResultProvenance(FuncKey function)
     {
-        if (_maProvenanceMemo.TryGetValue(function, out var cached))
+        if (!_maProvenanceAnalysisComplete)
         {
-            return cached;
+            ComputeFunctionResultProvenanceFixpoint();
         }
 
-        if (!_maProvenanceInProgress.Add(function))
+        return _maProvenanceMemo.GetValueOrDefault(
+            function,
+            new ResolvedFunctionResultProvenance(false, null));
+    }
+
+    private void ComputeFunctionResultProvenanceFixpoint()
+    {
+        var nodes = new Dictionary<FuncKey, ProvenanceFunctionNode>();
+        foreach (FuncKey function in _maFuncs.Keys)
         {
-            return new ResolvedFunctionResultProvenance(false, null);
+            nodes[function] = BuildProvenanceFunctionNode(function);
         }
 
-        var result = ClassifyFunctionResultProvenance(function);
-        _maProvenanceInProgress.Remove(function);
-        _maProvenanceMemo[function] = result;
+        _maProvenanceMemo.Clear();
+        if (nodes.Count == 0)
+        {
+            _maProvenanceAnalysisComplete = true;
+            return;
+        }
+
+        Dictionary<FuncKey, int> componentByFunction =
+            ComputeProvenanceStronglyConnectedComponents(nodes);
+        IReadOnlyList<ProvenanceComponent> components =
+            BuildProvenanceComponents(nodes, componentByFunction);
+        HashSet<int> eligibleComponents = ComputeEligibleProvenanceComponents(components);
+
+        foreach ((FuncKey function, ProvenanceFunctionNode node) in nodes)
+        {
+            _maProvenanceMemo[function] = new ResolvedFunctionResultProvenance(
+                eligibleComponents.Contains(componentByFunction[function]),
+                node.UnambiguousForwardTarget);
+        }
+
+        _maProvenanceAnalysisComplete = true;
+    }
+
+    private static Dictionary<FuncKey, int> ComputeProvenanceStronglyConnectedComponents(
+        IReadOnlyDictionary<FuncKey, ProvenanceFunctionNode> nodes)
+    {
+        var postOrder = new List<FuncKey>(nodes.Count);
+        var visited = new HashSet<FuncKey>();
+        foreach (FuncKey function in nodes.Keys)
+        {
+            AppendProvenancePostOrder(function, nodes, visited, postOrder);
+        }
+
+        Dictionary<FuncKey, List<FuncKey>> reverseEdges = BuildReverseProvenanceEdges(nodes);
+        var componentByFunction = new Dictionary<FuncKey, int>();
+        int component = 0;
+        for (int i = postOrder.Count - 1; i >= 0; i--)
+        {
+            FuncKey function = postOrder[i];
+            if (componentByFunction.ContainsKey(function))
+            {
+                continue;
+            }
+
+            AssignProvenanceComponent(
+                function,
+                component,
+                reverseEdges,
+                componentByFunction);
+            component++;
+        }
+
+        return componentByFunction;
+    }
+
+    private static void AppendProvenancePostOrder(
+        FuncKey function,
+        IReadOnlyDictionary<FuncKey, ProvenanceFunctionNode> nodes,
+        HashSet<FuncKey> visited,
+        List<FuncKey> postOrder)
+    {
+        var pending = new Stack<(FuncKey Function, bool Expanded)>();
+        pending.Push((function, false));
+        while (pending.TryPop(out var item))
+        {
+            if (item.Expanded)
+            {
+                postOrder.Add(item.Function);
+                continue;
+            }
+
+            if (!visited.Add(item.Function))
+            {
+                continue;
+            }
+
+            pending.Push((item.Function, true));
+            foreach (FuncKey target in nodes[item.Function].ForwardTargets)
+            {
+                pending.Push((target, false));
+            }
+        }
+    }
+
+    private static Dictionary<FuncKey, List<FuncKey>> BuildReverseProvenanceEdges(
+        IReadOnlyDictionary<FuncKey, ProvenanceFunctionNode> nodes)
+    {
+        var reverseEdges = nodes.Keys.ToDictionary(
+            function => function,
+            _ => new List<FuncKey>());
+        foreach ((FuncKey function, ProvenanceFunctionNode node) in nodes)
+        {
+            foreach (FuncKey target in node.ForwardTargets)
+            {
+                reverseEdges[target].Add(function);
+            }
+        }
+
+        return reverseEdges;
+    }
+
+    private static void AssignProvenanceComponent(
+        FuncKey function,
+        int component,
+        IReadOnlyDictionary<FuncKey, List<FuncKey>> reverseEdges,
+        Dictionary<FuncKey, int> componentByFunction)
+    {
+        var pending = new Stack<FuncKey>();
+        pending.Push(function);
+        while (pending.TryPop(out FuncKey current))
+        {
+            if (!componentByFunction.TryAdd(current, component))
+            {
+                continue;
+            }
+
+            foreach (FuncKey predecessor in reverseEdges[current])
+            {
+                pending.Push(predecessor);
+            }
+        }
+    }
+
+    private static IReadOnlyList<ProvenanceComponent> BuildProvenanceComponents(
+        IReadOnlyDictionary<FuncKey, ProvenanceFunctionNode> nodes,
+        IReadOnlyDictionary<FuncKey, int> componentByFunction)
+    {
+        int componentCount = componentByFunction.Values.Max() + 1;
+        var direct = new bool[componentCount];
+        var rejected = new bool[componentCount];
+        var considered = new int[componentCount];
+        var dependencies = Enumerable.Range(0, componentCount)
+            .Select(_ => new HashSet<int>())
+            .ToArray();
+        foreach ((FuncKey function, ProvenanceFunctionNode node) in nodes)
+        {
+            int component = componentByFunction[function];
+            direct[component] |= node.HasDirectEligibleResult;
+            rejected[component] |= node.HasRejectedResult;
+            considered[component] += node.ConsideredArmCount;
+            foreach (FuncKey target in node.ForwardTargets)
+            {
+                int dependency = componentByFunction[target];
+                if (dependency != component)
+                {
+                    dependencies[component].Add(dependency);
+                }
+            }
+        }
+
+        var result = new List<ProvenanceComponent>(componentCount);
+        for (int component = 0; component < componentCount; component++)
+        {
+            result.Add(new ProvenanceComponent(
+                direct[component],
+                rejected[component] || considered[component] == 0,
+                dependencies[component]));
+        }
+
         return result;
     }
 
+    private static HashSet<int> ComputeEligibleProvenanceComponents(
+        IReadOnlyList<ProvenanceComponent> components)
+    {
+        var eligible = new HashSet<int>();
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int component = 0; component < components.Count; component++)
+            {
+                ProvenanceComponent node = components[component];
+                bool grounded = node.HasDirectEligibleResult
+                    || node.Dependencies.Any(eligible.Contains);
+                if (!eligible.Contains(component)
+                    && !node.HasRejectedResult
+                    && grounded
+                    && node.Dependencies.All(eligible.Contains))
+                {
+                    eligible.Add(component);
+                    changed = true;
+                }
+            }
+        }
+        while (changed);
+
+        return eligible;
+    }
+
     /// <summary>
-    /// Classifies a registered function's result by its TERMINAL arms — recursing through
-    /// If/Match/Let/LetResult/LetRecursive, additionally substituting a terminal bare variable reference
-    /// through any local let-binding that produced it (see <see cref="CollectResultProvenanceTerminalArms"/>)
-    /// — rather than inspecting only the body's outermost node. This matters concretely: the idiomatic
-    /// shape for a recursive function in this language (fannkuch's <c>nextPerm</c>/<c>loop</c> included)
-    /// is exactly "match on my own accumulator, then branch to either a fresh construction or a
-    /// forwarding call to a sibling helper" — a single-node inspection would default nearly every real
-    /// recursive function to conservative-false and silently fail to classify the case this field exists
-    /// for. Likewise, the equally idiomatic "let result = ‹fresh construction› in result" shape (binding
-    /// the result to a name before returning it, extremely common style) would default to
-    /// conservative-false without the let-substitution, since the terminal arm is then a bare variable
-    /// reference, not the construction itself.
-    ///
-    /// A terminal arm that recurses into <paramref name="function"/> itself never conflicts (the
-    /// CO-38 precedent: "a recursive call... never conflicts") — by induction, its eventual value IS
-    /// whatever this very classification concludes, so it neither confirms nor denies eligibility and
-    /// is excluded from the agreement requirement below. Every OTHER terminal arm must independently be
-    /// RC-eligible for the function as a whole to be RC-eligible (mixing an eligible arm with an
-    /// ineligible sibling is exactly the CO-38/PR #299 hazard — silently mixed representations across
-    /// arms of the same function). If every non-self-recursive forwarding arm agrees on the same single
-    /// target function, that target is reported; disagreement (or no forwarding arm at all) reports no
-    /// single hop, even when every arm is independently RC-eligible some other way.
+    /// Classifies a registered function's result by its terminal arms without resolving forward targets
+    /// recursively. Directly eligible constructions seed the later fixpoint; exact saturated forwarding
+    /// calls become graph edges; any other terminal result rejects the node. Exact self-recursive arms
+    /// remain neutral, as before, because they cannot produce a representation different from the
+    /// function whose result is being classified.
     /// </summary>
-    private ResolvedFunctionResultProvenance ClassifyFunctionResultProvenance(FuncKey function)
+    private ProvenanceFunctionNode BuildProvenanceFunctionNode(FuncKey function)
     {
         if (!_maFuncs.TryGetValue(function, out var info))
         {
-            return new ResolvedFunctionResultProvenance(false, null);
+            return new ProvenanceFunctionNode(false, true, 0, new HashSet<FuncKey>(), null);
         }
 
         Expr body = _maProvenanceBodies.GetValueOrDefault(function) ?? info.Body;
 
-        // A function whose innermost body is DIRECTLY (with zero unwrapping — not through a let, if, or
-        // match) a bare string literal is unconditionally normalized to a fresh RC string by
-        // LowerEscapingResult's own top-level normalizeStaticString check (LowerLambdaCoreLowerBody
-        // always passes normalizeStaticString: true for a function's own innermost body). This is a much
-        // narrower guarantee than "any string literal terminal arm" — a literal reached through a let
-        // binding, or as one arm of an if/match, is NOT unconditionally normalized this way (a match arm
-        // only normalizes when a SIBLING arm is a genuine fresh producer; an if-arm never does) — so this
-        // check must run on the canonical body directly, before any let-substitution/arm collection.
+        // A directly returned string literal is normalized to a fresh RC string by LowerEscapingResult.
+        // The same literal behind control flow or a let is not unconditionally normalized, so retain the
+        // existing exact-body special case before terminal-arm collection.
         if (body is Expr.StrLit)
         {
-            return new ResolvedFunctionResultProvenance(true, null);
+            return new ProvenanceFunctionNode(true, false, 1, new HashSet<FuncKey>(), null);
         }
 
         var letBindings = new Dictionary<string, ProvenanceLetBinding>(StringComparer.Ordinal);
@@ -118,18 +301,17 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
             ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
         CollectResultProvenanceTerminalArms(body, arms, letBindings, scope);
-        return ClassifyFunctionResultProvenanceFromArms(function, arms);
+        return BuildProvenanceFunctionNodeFromArms(function, arms);
     }
 
-    private ResolvedFunctionResultProvenance ClassifyFunctionResultProvenanceFromArms(
+    private ProvenanceFunctionNode BuildProvenanceFunctionNodeFromArms(
         FuncKey function,
-        List<ProvenanceArm> arms)
+        IReadOnlyList<ProvenanceArm> arms)
     {
-        bool allEligible = true;
-        bool sawForward = false;
-        bool forwardAmbiguous = false;
-        FuncKey? commonForward = null;
-        int consideredArms = 0;
+        bool hasDirectEligibleResult = false;
+        bool hasRejectedResult = false;
+        int consideredArmCount = 0;
+        var forwardTargets = new HashSet<FuncKey>();
 
         foreach (ProvenanceArm arm in arms)
         {
@@ -138,35 +320,35 @@ public sealed partial class Lowering
                 continue;
             }
 
-            consideredArms++;
-            var armProvenance = ClassifyExpressionProvenance(arm);
-            if (!armProvenance.RcEligible)
+            consideredArmCount++;
+            if (IsDirectRcConstruction(arm.Expression, arm.LetBindings)
+                || IsRuntimeRcFreshBuiltinProducer(arm.Expression)
+                || arm.Expression is Expr.Add)
             {
-                allEligible = false;
+                hasDirectEligibleResult = true;
             }
-
-            if (armProvenance.ForwardsTo is { } armTarget)
+            else if (TryResolveForwardTarget(
+                arm.Expression,
+                arm.FunctionScope,
+                out FuncKey target))
             {
-                if (!sawForward)
-                {
-                    commonForward = armTarget;
-                    sawForward = true;
-                }
-                else if (commonForward is not { } existingForward || !existingForward.Equals(armTarget))
-                {
-                    forwardAmbiguous = true;
-                }
+                forwardTargets.Add(target);
+            }
+            else
+            {
+                hasRejectedResult = true;
             }
         }
 
-        // No non-self-recursive terminal arm at all (every arm recurses into this very function, so
-        // there is no base case to found eligibility on): conservative default, not a vacuous true.
-        if (consideredArms == 0)
-        {
-            return new ResolvedFunctionResultProvenance(false, null);
-        }
-
-        return new ResolvedFunctionResultProvenance(allEligible, forwardAmbiguous ? null : commonForward);
+        FuncKey? unambiguousForwardTarget = forwardTargets.Count == 1
+            ? forwardTargets.Single()
+            : null;
+        return new ProvenanceFunctionNode(
+            hasDirectEligibleResult,
+            hasRejectedResult,
+            consideredArmCount,
+            forwardTargets,
+            unambiguousForwardTarget);
     }
 
     /// <summary>
@@ -258,38 +440,6 @@ public sealed partial class Lowering
         }
 
         return next;
-    }
-
-    /// <summary>
-    /// Classifies one terminal arm expression in isolation: a saturated data-constructor application or
-    /// aggregate literal is direct RC-eligible construction; a fully applied call to a builtin declared
-    /// fresh-RC-producing (<see cref="BuiltinRegistry.FreshRcResultKind"/>, e.g. <c>Ashes.Text.fromInt</c>)
-    /// is likewise direct RC-eligible construction — a call INTO the builtin is itself the fresh-result-
-    /// producing expression, exactly like a constructor application; an <see cref="Expr.Add"/> node is
-    /// also treated as fresh construction, matching <c>IsRuntimeRcStringProducer</c>'s own unconditional
-    /// treatment of it (string `+` always allocates a fresh concatenated result — when the node's
-    /// resolved type turns out to be a copy type like Int/Float instead, marking it RC-eligible here is
-    /// inert, since only heap-shaped results ever consult this fact downstream); a call to another
-    /// registered function is forwarding, resolved transitively; anything else (a bare parameter
-    /// passthrough, a call to an unregistered/foreign function, an unmodeled node) is the conservative
-    /// default.
-    /// </summary>
-    private ResolvedFunctionResultProvenance ClassifyExpressionProvenance(ProvenanceArm arm)
-    {
-        if (IsDirectRcConstruction(arm.Expression, arm.LetBindings)
-            || IsRuntimeRcFreshBuiltinProducer(arm.Expression)
-            || arm.Expression is Expr.Add)
-        {
-            return new ResolvedFunctionResultProvenance(true, null);
-        }
-
-        if (TryResolveForwardTarget(arm.Expression, arm.FunctionScope, out FuncKey target))
-        {
-            var targetProvenance = ResolveFunctionResultProvenance(target);
-            return new ResolvedFunctionResultProvenance(targetProvenance.RcEligible, target);
-        }
-
-        return new ResolvedFunctionResultProvenance(false, null);
     }
 
     private bool IsSelfRecursiveArm(ProvenanceArm arm, FuncKey function)
@@ -499,7 +649,7 @@ public sealed partial class Lowering
     private void ClearResultProvenanceAnalysis()
     {
         _maProvenanceMemo.Clear();
-        _maProvenanceInProgress.Clear();
+        _maProvenanceAnalysisComplete = false;
         _maProvenanceBodies.Clear();
     }
 }
