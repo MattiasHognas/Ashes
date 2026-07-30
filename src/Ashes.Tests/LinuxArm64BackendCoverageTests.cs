@@ -285,7 +285,8 @@ public sealed class LinuxArm64BackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = $$"""
             import Ashes.IO
             import Ashes.Net.Tls
@@ -386,7 +387,8 @@ public sealed class LinuxArm64BackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = $$"""
             import Ashes.IO
             import Ashes.Net.Http.Server
@@ -471,7 +473,8 @@ public sealed class LinuxArm64BackendCoverageTests
             return;
         }
 
-        int port = GetFreeLoopbackPort();
+        using LoopbackPortLease portLease = LoopbackPortLease.Create();
+        int port = portLease.Port;
         var source = $$"""
             import Ashes.IO
             import Ashes.Net.Tcp
@@ -520,15 +523,6 @@ public sealed class LinuxArm64BackendCoverageTests
         }
     }
 
-    private static int GetFreeLoopbackPort()
-    {
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
-
     private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
     {
         var deadline = DateTime.UtcNow + SocketTestConstants.AcceptTimeout;
@@ -545,6 +539,11 @@ public sealed class LinuxArm64BackendCoverageTests
                     await stream.WriteAsync(outBytes).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
                     var buffer = new byte[4096];
                     int read = await stream.ReadAsync(buffer).AsTask().WaitAsync(SocketTestConstants.SocketTimeout).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        throw new IOException("The loopback server disconnected before sending a response.");
+                    }
+
                     return Encoding.UTF8.GetString(buffer, 0, read);
                 }
             }
@@ -630,8 +629,7 @@ public sealed class LinuxArm64BackendCoverageTests
         int expectedClientCount = 1,
         bool tolerateClientDisconnect = false)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var serverTask = RunHttpLoopbackServerAsync(listener, expectedClientCount, handleClientAsync, tolerateClientDisconnect);
@@ -706,8 +704,7 @@ public sealed class LinuxArm64BackendCoverageTests
         bool allowServerHandshakeFailure = false,
         bool tolerateClientDisconnect = false)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+        using TcpListener listener = LoopbackPortLease.StartListener();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host).ConfigureAwait(false);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var source = sourceTemplate.Replace("__HOST__", host, StringComparison.Ordinal).Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
