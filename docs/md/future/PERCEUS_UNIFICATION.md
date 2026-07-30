@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `d4795ac` on 2026-07-30, together with the fourth Milestone 2.2
+Audited against `main` at `4e24fc1` on 2026-07-30, together with the fifth and final Milestone 2.2
 cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -102,9 +102,7 @@ The following is already implemented and is not part of the backlog:
 - `PerceusLifetimePlacement`, which moves ordinary-value lifetime markers to CFG-aware last uses while
   leaving resource cleanup alone;
 - `FunctionOwnershipSummary` with parameter borrow/consume facts, uniqueness, result reach,
-  `ExpressionFreshness`, `FunctionResultProvenance`, and positional `TcoParamFacts`; the
-  `UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` shapes are the live sources for TCO loop
-  invariance, growing-list RC eligibility, and consumed-list-tail ownership;
+  `ExpressionFreshness`, `FunctionResultProvenance`, and positional `TcoParamFacts`;
 - builtin fresh-result metadata (`BuiltinRegistry.BuiltinModuleMember.ProducesFreshRcResult`) for
   owned `Str`, `Bytes`, and `BigInt` producers, including use by interprocedural result provenance;
 - shared top-cell freshness traversal for ADTs, tuples, and lists, including mixed-arm
@@ -121,18 +119,28 @@ The following is already implemented and is not part of the backlog:
   argument independently of `ExpressionFreshness`. It preserves the arena/reset question answered
   by `IsArenaSelfContainedListRebuildExpr`: a helper-call result can be self-contained relative to
   the callee arena even when it retains an input tail and is therefore not reference-fresh, while a
-  direct `head :: oldAccumulator` remains rejected. Shadow comparison now treats this fact
-  separately from the reference-fresh `FreshRebuilt` shape. The positional fact is now the live
-  source for `TcoParamOwnership.FreshRebuiltList`; the concrete per-edge reset classifier still
-  rechecks the actual lowered argument;
+  direct `head :: oldAccumulator` remains rejected. The fact stays separate from the
+  reference-fresh `FreshRebuilt` shape and is the live source for
+  `TcoParamOwnership.FreshRebuiltList`; the concrete per-edge reset classifier still rechecks the
+  actual lowered argument;
+- `TcoParamStructuralFacts.FreshClosureRebuild`, computed across every exact self-call independently
+  of `ExpressionFreshness`. A new closure can capture an input reference and therefore retain
+  `Shape = Mixed`; the separate boolean records only that every relevant edge directly constructs a
+  closure or selects between direct constructions. It is the live source for
+  `TcoParamOwnership.FreshClosureRebuild`, combined with the resolved `TFun` gate and the existing
+  per-edge producer/capture-safety checks. Late-resolved closure promotion remains disabled pending
+  task 2.4;
 - positional `TcoParamStructuralFacts` identity. Facts retain both the parameter ordinal used by
   consumers and the source name used for diagnostics, so duplicate curried parameter names remain
   distinct in the immutable summary. `TcoParamFactsWalk` resolves live value names to those ordinals
   across let and pattern scopes. `TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`,
-  `AffineConsList`, and `ConsumedListTail` now consume `UnchangedPassthrough`,
-  `ArenaSelfContainedListRebuild`, `GrownCons`, and `ConsumedTail` through that boundary; the
+  `FreshClosureRebuild`, `AffineConsList`, and `ConsumedListTail` now consume
+  `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `FreshClosureRebuild`, `GrownCons`, and
+  `ConsumedTail` through that boundary; the
   superseded `CollectLoopInvariantParams`, `CollectFreshRebuiltListParams`,
-  `CollectAffineConsListParams`, and `CollectConsumedListTailParams` walks have been deleted. The narrower
+  `CollectFreshClosureParams`, `CollectAffineConsListParams`, and `CollectConsumedListTailParams`
+  walks have been deleted, together with the now-unused shared collector and TCO structural shadow
+  comparator. The narrower
   `BorrowableConsumedList` refinement remains separate but now receives and returns parameter
   ordinals instead of rejoining the canonical fact through source names. Its permitted tail
   self-transfer requires both the recursive binding's source name and the same lexical `FuncKey` as
@@ -195,7 +203,6 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| TCO structural facts | Positional `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `GrownCons`, and `ConsumedTail` now feed live `LoopInvariant`, `FreshRebuiltList`, `AffineConsList`, and `ConsumedListTail` decisions. | Only the fresh-closure decision still comes from a `Lowering.Reuse.cs` `Collect*` walk. Duplicate-name live consumers remain conservatively disabled until 2.3 removes the name-based slot join. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
 | Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
@@ -207,36 +214,10 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1 and task 2.1 are complete. Sixteen implementation
-tasks remain; Milestone 2.2 is in progress.
+teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.2 are complete. Fifteen
+implementation tasks remain; Milestone 2.3 is next.
 
-### Milestone 2 — make `TcoParamFacts` complete, then cut classifier A over
-
-#### 2.2 Cut over one structural fact at a time
-
-`LoopInvariant`, `FreshRebuiltList`, `AffineConsList`, and `ConsumedListTail` now come from
-positional, binding-identity-aware `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`,
-`GrownCons`, and `ConsumedTail` facts. Live TCO call
-recognition resolves the curried
-self-reference back to its generated root label, or to the transported self slot in a synthesized
-coroutine loop, so a same-spelled local function cannot become a back edge or inherit those facts.
-The remaining category cutover is:
-
-1. source `FreshClosure` from the appropriate fresh shape plus the resolved `TFun` type.
-
-For each category:
-
-- first replace the remaining name-only parameter/value comparisons with binding identity so a
-  let-, lambda-, or pattern-bound name shadowing a parameter cannot be classified as that parameter’s
-  unchanged value;
-- shadow-compare old and new on the full ownership/TCO corpus;
-- cut over only that category;
-- verify emitted IR and challenge binaries;
-- delete the corresponding `Collect*` derivation only after no live reader remains.
-
-`BorrowableConsumedList` and `AffineStr` answer narrower reuse/profitability questions. They may remain
-downstream subanalyses initially; do not mislabel them as duplicate semantic ownership facts merely to
-reduce a field count.
+### Milestone 2 — separate TCO ownership, placement, and reuse refinements
 
 #### 2.3 Separate TCO ownership facts from TCO placement state
 
@@ -293,7 +274,7 @@ closure must be normalized exactly once, and its exit/back-edge drops must balan
 
 #### 2.5 Consolidate the remaining reuse refinements
 
-After the base shape cutover is stable, move the two retained refinements onto the canonical
+The base structural cutovers are complete. Move the two retained refinements onto the canonical
 per-parameter facts without forcing either into `TcoSelfCallArgumentShape`:
 
 - `CollectBorrowableConsumedListParams` answers an inspect-only/does-not-escape property orthogonal to
@@ -304,8 +285,8 @@ per-parameter facts without forcing either into `TcoSelfCallArgumentShape`:
   to the same uniqueness/affinity result used by Perceus reuse legality.
 
 Shadow-compare and cut these over independently, then delete their `Lowering.Reuse.cs` walks if no
-other representation-specific reader remains. Keeping them separate during 2.2 is a sequencing
-decision, not their permanent architecture.
+other representation-specific reader remains. Their separation from the five completed base
+structural facts is not their permanent architecture.
 
 When the reuse path generates or rejects a specialization, retains/elides a defensive entry copy,
 requires a runtime uniqueness check, accepts/rejects a layout, produces/consumes a token, or leaves a
@@ -317,10 +298,6 @@ parameter/value, location, and positive or conservative reason.
 
 #### Milestone 2 acceptance
 
-- `TcoParamFacts` has live consumers and `ShadowCompareTcoParamFacts` can be deleted after the final
-  category cutover.
-- The old loop-invariant/fresh-list/fresh-closure/consumed-tail/grown-cons `Collect*` tables have no live
-  ownership consumer.
 - `fannkuch-redux` N=8–11 remains constant-memory with unchanged checksum/result.
 - `1brc` (10M and 100M rows), `reverse-complement`, and `binary-trees` retain their baseline peak RSS
   and output. These are mandatory because earlier “safe” TCO cleanups regressed them despite passing

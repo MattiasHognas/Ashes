@@ -787,6 +787,78 @@ public sealed class UniquenessSummaryTests
         TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.FreshRebuilt);
         values.ArenaSelfContainedListRebuild.ShouldBeTrue();
+        values.FreshClosureRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void FreshClosureRebuildIsSeparateFromReferenceFreshness()
+    {
+        const string source =
+            """
+            let recursive loop fn remaining =
+                if remaining <= 0
+                then fn(0)
+                else loop(given value -> value + remaining)(remaining - 1)
+            in loop(given value -> value)(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts function = summary.TcoParamFacts[0];
+        function.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed,
+            "A closure that captures an input is not reference-fresh.");
+        function.FreshClosureRebuild.ShouldBeTrue(
+            "The closure allocation itself is rebuilt on every exact self edge.");
+        function.ArenaSelfContainedListRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ConditionalFreshClosureRebuildAcceptsClosureConstructionInBothArms()
+    {
+        const string source =
+            """
+            let recursive loop fn remaining =
+                if remaining <= 0
+                then fn(0)
+                else
+                    loop(
+                        if remaining > 1
+                        then given value -> value + remaining
+                        else given value -> value - remaining
+                    )(remaining - 1)
+            in loop(given value -> value)(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts function = summary.TcoParamFacts[0];
+        function.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        function.FreshClosureRebuild.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ConditionalFreshClosureRebuildRejectsANonClosureArm()
+    {
+        const string source =
+            """
+            let recursive loop fn remaining =
+                if remaining <= 0
+                then fn(0)
+                else
+                    loop(
+                        if remaining > 1
+                        then given value -> value + remaining
+                        else fn
+                    )(remaining - 1)
+            in loop(given value -> value)(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].FreshClosureRebuild.ShouldBeFalse();
     }
 
     [Test]

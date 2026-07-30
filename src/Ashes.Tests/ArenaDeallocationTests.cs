@@ -1422,15 +1422,19 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void TCO_loop_with_fresh_closure_arg_uses_runtime_ownership()
     {
-        IrProgram ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
                 if n == 0 then f 0
                 else build (n - 1) (given (x) -> x + n)
             in build 5 (given (x) -> x)
             """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[1].FreshClosureRebuild.ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.MakeClosure
         {
             RuntimeManaged: true,
@@ -1450,7 +1454,7 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void TCO_loop_with_arena_capture_closure_declines_relocation()
     {
-        IrProgram ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive build : Int -> (Int -> Int) -> Int = given n -> given f ->
                 if n == 0 then f 0
@@ -1459,14 +1463,101 @@ public sealed class ArenaDeallocationTests
                     in build(n - 1)(given x -> x + Ashes.Text.byteLength(text))
             in build(5)(given x -> x)
             """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].FreshClosureRebuild.ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.CopyOutClosure).ShouldBeFalse(
             "An arena-backed capture graph has no licensed RC transfer at this back-edge.");
         instructions.Any(instruction => instruction is IrInst.MakeClosure
         {
             RuntimeManaged: true,
         }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_mixed_closure_rebuild_and_passthrough_edges_do_not_enable_runtime_closure_ownership()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build : (Int -> Int) -> Int -> Int = given fn -> given remaining ->
+                if remaining <= 0
+                then fn(0)
+                else if remaining == 1
+                then build(given value -> value + remaining)(remaining - 1)
+                else build(fn)(remaining - 1)
+            in build(given value -> value)(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].FreshClosureRebuild.ShouldBeFalse(
+            "Every exact self edge must rebuild the closure.");
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_same_named_non_self_call_does_not_disqualify_exact_fresh_closure_rebuild()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build :
+                Int -> (Int -> Int) -> (Int -> Int) -> Int =
+                given remaining -> given fn -> given replacement ->
+                    if remaining <= 0
+                    then fn(0)
+                    else if remaining == 1
+                    then build(remaining - 1)(given value -> value + remaining)(replacement)
+                    else
+                        let build a b c = b(0)
+                        in build(remaining - 1)(replacement)(replacement)
+            in build(2)(given value -> value)(given value -> value + 1)
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("build")
+            .Single(candidate => candidate.TcoParamFacts.Count > 1
+                && candidate.TcoParamFacts[1].FreshClosureRebuild);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(1,
+            "Only the exact recursive call participates in the TCO loop.");
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The ordinary same-named call must not disqualify the exact closure-rebuild edge.");
+    }
+
+    [Test]
+    public void TCO_duplicate_parameter_names_keep_fresh_closure_rebuild_positional_but_fail_closed_in_lowering()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build :
+                (Int -> Int) -> (Int -> Int) -> Int -> Int =
+                given fn -> given fn -> given remaining ->
+                    if remaining <= 0
+                    then fn(0)
+                    else build(fn)(given value -> value + remaining)(remaining - 1)
+            in build(given value -> value)(given value -> value + 1)(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].FreshClosureRebuild.ShouldBeFalse();
+        summary.TcoParamFacts[1].FreshClosureRebuild.ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBeFalse(
+            "The lowering scope cannot distinguish duplicate-name slots, so migrated positives must fail closed.");
     }
 
     [Test]

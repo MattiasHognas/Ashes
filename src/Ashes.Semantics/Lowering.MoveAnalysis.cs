@@ -796,11 +796,13 @@ public sealed partial class Lowering
     private (
         IReadOnlySet<int> LoopInvariant,
         IReadOnlySet<int> ArenaSelfContainedListRebuild,
+        IReadOnlySet<int> FreshClosureRebuild,
         IReadOnlySet<int> AffineConsList,
         IReadOnlySet<int> ConsumedListTail) GetTcoParameterOrdinalFacts(FuncKey? function)
         => (
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
             GetTcoParameterOrdinals(function, static facts => facts.ArenaSelfContainedListRebuild),
+            GetTcoParameterOrdinals(function, static facts => facts.FreshClosureRebuild),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.GrownCons),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail));
 
@@ -1014,28 +1016,29 @@ public sealed partial class Lowering
         return (unique, proofs);
     }
 
-    // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i] narrows
-    // from "unclassified" to one shape, or locks into Mixed the first time two self-call sites at the
-    // same position disagree; SawSelfCall distinguishes "no self-call found at all" (an empty result)
-    // from "self-calls found, every position landed on Mixed."
+    // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i]
+    // narrows from "unclassified" to one shape, or locks into Mixed the first time two self-call
+    // sites at the same position disagree. The two orthogonal booleans are ANDed across those exact
+    // edges. SawSelfCall distinguishes "no self-call found at all" (an empty result) from
+    // "self-calls found, every position landed on Mixed."
     private sealed class TcoParamFactsState
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
+        public required bool?[] FreshClosureRebuild { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
     }
 
     /// <summary>
     /// Classifies every parameter of <paramref name="function"/> that some self-recursive call site
-    /// supplies an argument for, into both the <see cref="TcoSelfCallArgumentShape"/> that argument's
-    /// reference-ownership shape takes and the independently aggregated arena-self-contained list
-    /// rebuild fact across ALL such call sites. The shape is re-derived from this same fixpoint's own
-    /// already-computed <paramref name="expressionFreshness"/> map, while arena self-containment uses
-    /// the narrower reset-boundary predicate without redefining reference freshness. Together they
-    /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s remaining
-    /// <c>CollectFreshClosureParams</c> answers today by re-walking a TCO loop's body a second time
-    /// with its own, separate logic. A
+    /// supplies an argument for, into the <see cref="TcoSelfCallArgumentShape"/> that argument's
+    /// reference-ownership shape takes plus independently aggregated arena-self-contained-list and
+    /// direct-closure-rebuild facts across ALL such call sites. The shape is re-derived from this
+    /// same fixpoint's already-computed <paramref name="expressionFreshness"/> map. Arena
+    /// self-containment uses the narrower reset-boundary predicate, while closure construction stays
+    /// separate because a new closure may capture an input reference and therefore is not reference
+    /// fresh. A
     /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
     /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
@@ -1050,6 +1053,7 @@ public sealed partial class Lowering
         {
             Observed = new TcoSelfCallArgumentShape?[paramNames.Count],
             ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
+            FreshClosureRebuild = new bool?[paramNames.Count],
             SelfName = _maKeyName[function],
         };
 
@@ -1082,7 +1086,8 @@ public sealed partial class Lowering
                     i,
                     paramNames[i],
                     shape,
-                    state.ArenaSelfContainedListRebuild[i] == true));
+                    state.ArenaSelfContainedListRebuild[i] == true,
+                    state.FreshClosureRebuild[i] == true));
             }
         }
 
@@ -1315,6 +1320,7 @@ public sealed partial class Lowering
             Expr argument = arguments[i];
             bool arenaSelfContainedListRebuild =
                 IsArenaSelfContainedListRebuildExpr(argument);
+            bool freshClosureRebuild = IsFreshClosureRebuildExpr(argument);
             TcoSelfCallArgumentShape local =
                 argument is Expr.Var argVar
                     && parameterScope.TryGetValue(argVar.Name, out int parameterOrdinal)
@@ -1338,8 +1344,17 @@ public sealed partial class Lowering
             state.ArenaSelfContainedListRebuild[i] =
                 (state.ArenaSelfContainedListRebuild[i] ?? true)
                 && arenaSelfContainedListRebuild;
+            state.FreshClosureRebuild[i] =
+                (state.FreshClosureRebuild[i] ?? true)
+                && freshClosureRebuild;
         }
     }
+
+    private static bool IsFreshClosureRebuildExpr(Expr expression)
+        => expression is Expr.Lambda
+            || expression is Expr.If conditional
+                && IsFreshClosureRebuildExpr(conditional.Then)
+                && IsFreshClosureRebuildExpr(conditional.Else);
 
     /// <summary>
     /// Formats stable, single-line ownership summaries. <paramref name="selection"/> may be a

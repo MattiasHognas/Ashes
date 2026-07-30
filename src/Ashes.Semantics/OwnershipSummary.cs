@@ -125,10 +125,10 @@ internal sealed record FunctionResultProvenance(bool RcEligible, string? Forward
 
 /// <summary>
 /// The shape a self-recursive function's own tail-call argument takes at a given parameter position,
-/// across every self-call site found in its body. Re-derives, from the same whole-program AST-only
-/// fixpoint that already computes <see cref="FunctionOwnershipSummary.ExpressionFreshness"/>, the
-/// question the TCO loop's own local <c>Collect*</c> classifiers (<c>Lowering.Reuse.cs</c>) answer by
-/// re-walking the body a second time.
+/// across every exact self-call site found in its body. It is computed by the canonical
+/// binding-identity-aware ownership walk, using the same whole-program AST-only fixpoint that
+/// computes <see cref="FunctionOwnershipSummary.ExpressionFreshness"/>. Orthogonal list-reset and
+/// closure-construction facts live on <see cref="TcoParamStructuralFacts"/>.
 /// </summary>
 internal enum TcoSelfCallArgumentShape
 {
@@ -179,11 +179,17 @@ internal enum TcoSelfCallArgumentShape
 /// bounded whole-list copy at the TCO reset boundary; it does not claim reference freshness. In
 /// particular, a helper call result may be arena-self-contained while still retaining an input tail.
 /// </param>
+/// <param name="FreshClosureRebuild">
+/// True when every exact self-call argument at this position directly constructs a closure, or
+/// selects between direct closure constructions. This is separate from <paramref name="Shape"/>
+/// because a new closure may legitimately capture and therefore reach an input reference.
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
     TcoSelfCallArgumentShape Shape,
-    bool ArenaSelfContainedListRebuild);
+    bool ArenaSelfContainedListRebuild,
+    bool FreshClosureRebuild);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

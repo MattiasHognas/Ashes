@@ -4997,13 +4997,13 @@ public sealed partial class Lowering
             var tcoParamNames = CollectLambdaParams(lam2);
             FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
             var tcoParamOrdinalFacts = GetTcoParameterOrdinalFacts(ownershipFunction);
-            var freshClosureParams = CollectFreshClosureParams(innermostBody, tcoParamNames, letRecursive.Name);
             _tcoCtx = new TcoContext(
                 selfName: letRecursive.Name,
                 paramCount: paramCount,
                 paramNames: tcoParamNames,
                 loopInvariantParamOrdinals: tcoParamOrdinalFacts.LoopInvariant,
                 freshRebuiltListParamOrdinals: tcoParamOrdinalFacts.ArenaSelfContainedListRebuild,
+                freshClosureRebuildParamOrdinals: tcoParamOrdinalFacts.FreshClosureRebuild,
                 affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowableConsumedListParamOrdinals: CollectBorrowableConsumedListParams(
@@ -5012,19 +5012,12 @@ public sealed partial class Lowering
                     letRecursive.Name,
                     tcoParamOrdinalFacts.ConsumedListTail,
                     ownershipFunction),
-                freshClosureParams: freshClosureParams,
                 affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
                 OwnershipFunction = ownershipFunction,
             };
-
-            ShadowCompareTcoParamFacts(
-                _tcoCtx.OwnershipFunction,
-                letRecursive.Name,
-                tcoParamNames,
-                freshClosureParams);
         }
         else
         {
@@ -6196,7 +6189,7 @@ public sealed partial class Lowering
         bool freshRebuiltList = ownership?.FreshRebuiltList == true;
         bool affineConsList = ownership?.AffineConsList == true;
         bool consumedListTail = ownership?.ConsumedListTail == true;
-        bool freshClosure = ownership?.FreshClosure == true;
+        bool freshClosureRebuild = ownership?.FreshClosureRebuild == true;
         return IsRcEligibleScalarTupleOrAdtType(parameterType)
             || parameterType is TypeRef.TList list
                 && CanRuntimeManageTcoListElement(list.Element)
@@ -6204,7 +6197,7 @@ public sealed partial class Lowering
                     || affineConsList
                     || consumedListTail && !CanArenaReset(Prune(list.Element))
                         && !IsBorrowableInspectOnlyList(tco, paramIndex, list))
-            || includeFreshClosures && parameterType is TypeRef.TFun && freshClosure;
+            || includeFreshClosures && parameterType is TypeRef.TFun && freshClosureRebuild;
     }
 
     /// <summary>
@@ -7786,7 +7779,7 @@ public sealed partial class Lowering
             && tailLocal.Slot == tco.ParamSlots[index];
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
-            && tco.ParamOwnership[tco.ParamSlots[index]].FreshClosure
+            && tco.ParamOwnership[tco.ParamSlots[index]].FreshClosureRebuild
             && IsRuntimeRcCopyClosureProducer(argument)
             && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
         bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);

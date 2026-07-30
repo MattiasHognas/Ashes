@@ -63,7 +63,9 @@ public sealed partial class Lowering
         // pointer-bearing analogue of the inline-element borrowed cursor). Gated additionally on an
         // all-inline-copy-field record element type at the runtime-managed decision site.
         public bool BorrowableConsumedList { get; init; }
-        public bool FreshClosure { get; init; }
+        // Every exact self-call edge directly constructs a closure (or selects between direct
+        // constructions). Resolved TFun layout and per-edge capture safety remain separate gates.
+        public bool FreshClosureRebuild { get; init; }
 
         // Param proven AFFINE across the loop (consumed at most once along every loop-continuing
         // path, and only as the leftmost leaf of the `+` chain producing its own tail-call argument).
@@ -180,16 +182,15 @@ public sealed partial class Lowering
         public bool InTailPosition { get; set; }
 
         // Pre-slot facts stashed at construction time (before ParamSlots is known) and consumed once
-        // by BuildParamOwnership below. Loop invariance, whole-list rebuild, growing-cons, and
-        // consumed-tail shape are ordinal-keyed because they now come from the binding-identity-aware
-        // ownership summary; the fresh-closure category awaiting its own 2.2 cutover remains
-        // name-keyed until then. No other consumer reads these transport fields.
+        // by BuildParamOwnership below. Loop invariance, whole-list rebuild, direct closure rebuild,
+        // growing-cons, and consumed-tail shape are ordinal-keyed because they come from the
+        // binding-identity-aware ownership summary. No other consumer reads these transport fields.
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
         private readonly IReadOnlySet<int> _freshRebuiltListParamOrdinals;
+        private readonly IReadOnlySet<int> _freshClosureRebuildParamOrdinals;
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
         private readonly IReadOnlySet<int> _borrowableConsumedListParamOrdinals;
-        private readonly IReadOnlySet<string> _freshClosureParams;
         private readonly IReadOnlySet<string> _affineStrParams;
 
         // Every affine-string param's own name, in CollectAffineAccumulators's own AST-walk order —
@@ -235,7 +236,7 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
                 EmptyStaticFacts,
                 EmptyStaticFacts)
         {
@@ -247,10 +248,10 @@ public sealed partial class Lowering
             List<string> paramNames,
             IReadOnlySet<int> loopInvariantParamOrdinals,
             IReadOnlySet<int> freshRebuiltListParamOrdinals,
+            IReadOnlySet<int> freshClosureRebuildParamOrdinals,
             IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowableConsumedListParamOrdinals,
-            IReadOnlySet<string> freshClosureParams,
             IReadOnlySet<string> affineStrParams,
             IReadOnlySet<string> escapingDirectPatternBindings)
         {
@@ -259,10 +260,10 @@ public sealed partial class Lowering
             ParamNames = paramNames;
             _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
             _freshRebuiltListParamOrdinals = freshRebuiltListParamOrdinals;
+            _freshClosureRebuildParamOrdinals = freshClosureRebuildParamOrdinals;
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowableConsumedListParamOrdinals = borrowableConsumedListParamOrdinals;
-            _freshClosureParams = freshClosureParams;
             _affineStrParams = affineStrParams;
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
         }
@@ -284,10 +285,10 @@ public sealed partial class Lowering
                     Slot = slot,
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParamOrdinals.Contains(i),
+                    FreshClosureRebuild = _freshClosureRebuildParamOrdinals.Contains(i),
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
                     BorrowableConsumedList = _borrowableConsumedListParamOrdinals.Contains(i),
-                    FreshClosure = _freshClosureParams.Contains(name),
                     AffineStr = _affineStrParams.Contains(name),
                 };
             }
