@@ -174,11 +174,13 @@ public sealed class Parser
         }
 
         // A flat top-level binding, terminated by EOF or the next declaration.
-        items.Add(new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
+        var declaration = new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
         {
             SugarParams = header.SugarParams,
             TypeAnnotation = header.TypeAnnotation
-        });
+        };
+        AstSpans.Set(declaration, header.NameToken.Span);
+        items.Add(declaration);
         return null;
     }
 
@@ -195,17 +197,25 @@ public sealed class Parser
         }
 
         var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
+        var bindingNameSpans = new List<TextSpan> { header.NameToken.Span };
         var sugarParams = new List<IReadOnlyList<string>> { header.SugarParams };
         while (_current.Kind == TokenKind.And)
         {
             var andStart = _current.Position;
             Consume(TokenKind.And);
-            var (_, name, value, andSugarParams, _, _) = ParseLetBinding(andStart, topLevel: true);
+            var (nameToken, name, value, andSugarParams, _, _) = ParseLetBinding(andStart, topLevel: true);
             bindings.Add((name, value));
+            bindingNameSpans.Add(nameToken.Span);
             sugarParams.Add(andSugarParams);
         }
 
-        return new TopLevelItem.RecursiveGroup(bindings) { SugarParams = sugarParams };
+        var group = new TopLevelItem.RecursiveGroup(bindings)
+        {
+            SugarParams = sugarParams
+        };
+        AstSpans.Set(group, header.NameToken.Span);
+        AstSpans.SetRecursiveGroupBindingNames(group, bindingNameSpans);
+        return group;
     }
 
     private ExternalDecl ParseExternalDecl()

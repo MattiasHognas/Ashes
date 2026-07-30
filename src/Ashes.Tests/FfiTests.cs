@@ -270,6 +270,22 @@ public sealed class FfiTests
         // Layer 1 (inner) loads from env and issues CallExternal.
         var innerLayer = thunkFuncs.First(f => f.Label.Contains("_1_", StringComparison.Ordinal));
         innerLayer.Instructions.OfType<IrInst.CallExternal>().Count().ShouldBe(1);
+
+        foreach (IrFunction thunk in thunkFuncs)
+        {
+            IrFunctionOrigin origin = thunk.Origin
+                ?? throw new InvalidOperationException("Missing external thunk origin.");
+            origin.Kind.ShouldBe(IrFunctionOriginKind.ExternalThunk);
+            CompilerFunctionOwner owner = origin.CompilerOwner
+                ?? throw new InvalidOperationException("Missing external thunk owner.");
+            owner.Kind.ShouldBe(CompilerFunctionOwnerKind.External);
+            owner.Name.ShouldBe("add");
+            origin.StableDiscriminator.ShouldBe(
+                ReferenceEquals(thunk, outerLayer) ? "layer:0" : "layer:1");
+        }
+
+        outerLayer.Origin!.ParentGeneratedLabel.ShouldBe("_start_main");
+        innerLayer.Origin!.ParentGeneratedLabel.ShouldBe(outerLayer.Label);
     }
 
     [Test]

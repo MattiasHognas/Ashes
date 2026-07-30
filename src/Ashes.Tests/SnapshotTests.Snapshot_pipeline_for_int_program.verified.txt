@@ -178,6 +178,14 @@
       },
       LocalTypes: {
         2: {}
+      },
+      Origin: {
+        GeneratedLabel: _start_main,
+        Kind: ProgramEntry,
+        CompilerOwner: {
+          Kind: Program,
+          Name: program entry
+        }
       }
     },
     UsesPrintInt: true,

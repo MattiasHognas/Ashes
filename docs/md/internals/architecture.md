@@ -585,7 +585,35 @@ flowchart TD
 ```
 
 Each `IrFunction` contains a flat list of `IrInst` records, a local-slot
-count, and a temporary-register count.
+count, a temporary-register count, optional debug maps, and stable reporting
+metadata in `IrFunction.Origin`.
+
+### Stable function identity and lineage
+
+Ownership analysis uses exact binder identities internally, but those identities
+are deliberately not exposed to report consumers. Each
+`FunctionOwnershipSummary` instead carries a `SourceFunctionOrigin`: the source
+declaration name, its module-qualified name when project stitching knows it, its
+declaration location, and a deterministic combined-source offset. The project
+stitcher retains the original and qualified names when it rewrites module
+bindings into compiler names.
+
+Lowering gives every production `IrFunction` an `IrFunctionOrigin` when the
+function is created. It records the unique generated label and an enum describing
+the actual generated kind. Source-derived helpers also retain their
+`SourceFunctionOrigin` and immediate parent label; shared type, runtime-layout,
+external, mutual-recursion-group, and program helpers use a typed compiler owner
+instead. Stable discriminators and generation locations distinguish
+specializations and anonymous/generated sites without exposing AST identities,
+object hashes, or traversal order.
+
+The model covers ordinary source functions and closure layers as well as reuse
+and parallel specializations, mutual-recursion dispatchers and wrappers,
+coroutines, external thunks, closure-layout normalizers, structural droppers,
+and deep-copy helpers. Optimizer and lifetime-placement rewrites preserve the
+init-only origin metadata through record copies. LLVM code generation does not
+read it: origins correlate ownership decisions with final semantic IR for
+diagnostics and do not affect executable output.
 
 ### Instruction categories
 

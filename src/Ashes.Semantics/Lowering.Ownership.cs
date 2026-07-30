@@ -863,12 +863,20 @@ public sealed partial class Lowering
 
         SynthesizedBodyState saved = BeginSynthesizedBody();
         EmitRuntimeManagedAdtDropperBody(label, named);
-        _funcs.Add(new IrFunction(
-            Label: label,
-            Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocalSlot,
-            TempCount: _nextTempSlot,
-            HasEnvAndArgParams: true));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.RuntimeManagedAdtDropper,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    key),
+                StableDiscriminator: key));
         RestoreEnclosingBodyState(saved);
         return label;
     }
@@ -1181,12 +1189,20 @@ public sealed partial class Lowering
 
         var saved = BeginSynthesizedBody();
         EmitAdtResourceDropperBody(named);
-        _funcs.Add(new IrFunction(
-            Label: label,
-            Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocalSlot,
-            TempCount: _nextTempSlot,
-            HasEnvAndArgParams: true));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.ResourceAdtDropper,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    key),
+                StableDiscriminator: key));
         RestoreEnclosingBodyState(saved);
 
         _adtDropperInProgress.Remove(key);
@@ -2877,7 +2893,9 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadFuncAddr(resultTemp, dropperLabel));
         }
         Emit(new IrInst.Return(resultTemp));
-        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        AddFunction(
+            new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true),
+            CreateClosureNormalizerOrigin(label, closureLabel, captures));
         RestoreEnclosingBodyState(saved);
         _runtimeManagedResultTemps.Clear();
         _runtimeManagedResultTemps.UnionWith(savedRuntimeManagedTemps);
@@ -2910,7 +2928,15 @@ public sealed partial class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(resultTemp, 0));
         Emit(new IrInst.Return(resultTemp));
-        _funcs.Add(new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true));
+        AddFunction(
+            new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.RuntimeManagedClosureDropper,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.RuntimeLayout,
+                    key),
+                StableDiscriminator: key));
         RestoreEnclosingBodyState(saved);
         return label;
     }
@@ -2980,12 +3006,20 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(retTemp, 0));
         Emit(new IrInst.Return(retTemp));
 
-        _funcs.Add(new IrFunction(
-            Label: label,
-            Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocalSlot,
-            TempCount: _nextTempSlot,
-            HasEnvAndArgParams: true));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.ResourceClosureDropper,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.RuntimeLayout,
+                    key),
+                StableDiscriminator: key));
 
         // Restore the enclosing function's state.
         RestoreEnclosingBodyState(saved);
@@ -3108,12 +3142,20 @@ public sealed partial class Lowering
 
         EmitAdtCopierBody(label, named, typeParamMap);
 
-        _funcs.Add(new IrFunction(
-            Label: label,
-            Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocalSlot,
-            TempCount: _nextTempSlot,
-            HasEnvAndArgParams: true));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.AdtDeepCopier,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    key),
+                StableDiscriminator: key));
 
         // Restore the enclosing function's state.
         RestoreEnclosingBodyState(saved);
@@ -3201,12 +3243,20 @@ public sealed partial class Lowering
 
         EmitListDeepCopierBody(label, elementType);
 
-        _funcs.Add(new IrFunction(
-            Label: label,
-            Instructions: new List<IrInst>(_inst),
-            LocalCount: _nextLocalSlot,
-            TempCount: _nextTempSlot,
-            HasEnvAndArgParams: true));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.ListDeepCopier,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    $"List({key})"),
+                StableDiscriminator: key));
 
         // Restore the enclosing function's state.
         RestoreEnclosingBodyState(saved);

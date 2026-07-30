@@ -103,6 +103,101 @@ public abstract record TypeRef
 /// <param name="Column">1-based source column.</param>
 public readonly record struct SourceLocation(string FilePath, int Line, int Column);
 
+/// <summary>
+/// Stable source identity for a function declaration. Unlike the ownership analysis' internal
+/// binder keys, this value can be sorted, filtered, serialized, and shown in compiler reports.
+/// </summary>
+/// <param name="SourceName">The declaration name as written by the user.</param>
+/// <param name="QualifiedName">The module-qualified source name when the module is known.</param>
+/// <param name="DeclarationLocation">The declaration identifier's source location when source spans
+/// are available.</param>
+/// <param name="DeclarationOffset">The declaration identifier's absolute offset in the combined
+/// frontend source. This remains deterministic even when no file/line context was configured.</param>
+public sealed record SourceFunctionOrigin(
+    string SourceName,
+    string? QualifiedName,
+    SourceLocation? DeclarationLocation,
+    int DeclarationOffset);
+
+/// <summary>The way a lowered IR function came into existence.</summary>
+public enum IrFunctionOriginKind
+{
+    /// <summary>The compiler-generated program entry point.</summary>
+    ProgramEntry = 1,
+    /// <summary>The outer lifted function for a named source declaration.</summary>
+    SourceFunction,
+    /// <summary>A nested, curried, or anonymous lifted closure function.</summary>
+    ClosureHelper,
+    /// <summary>An in-place-reuse specialization.</summary>
+    ReuseSpecialization,
+    /// <summary>A monomorphic parallel-combinator specialization.</summary>
+    ParallelSpecialization,
+    /// <summary>The shared dispatch loop for a mutual-recursion group.</summary>
+    MutualRecursionDispatch,
+    /// <summary>A source-member wrapper around a mutual-recursion dispatch loop.</summary>
+    MutualRecursionWrapper,
+    /// <summary>An async coroutine state-machine function.</summary>
+    Coroutine,
+    /// <summary>A curried wrapper layer for a first-class external function.</summary>
+    ExternalThunk,
+    /// <summary>A runtime-RC recursive ADT drop helper.</summary>
+    RuntimeManagedAdtDropper,
+    /// <summary>A recursive resource-bearing ADT drop helper.</summary>
+    ResourceAdtDropper,
+    /// <summary>A closure-environment normalization helper.</summary>
+    ClosureEnvironmentNormalizer,
+    /// <summary>A runtime-managed closure-capture drop helper.</summary>
+    RuntimeManagedClosureDropper,
+    /// <summary>A resource-bearing closure-capture drop helper.</summary>
+    ResourceClosureDropper,
+    /// <summary>A recursive ADT deep-copy helper.</summary>
+    AdtDeepCopier,
+    /// <summary>A recursive list deep-copy helper.</summary>
+    ListDeepCopier,
+}
+
+/// <summary>The non-source namespace that owns a shared generated function.</summary>
+public enum CompilerFunctionOwnerKind
+{
+    /// <summary>The compiled program as a whole.</summary>
+    Program = 1,
+    /// <summary>A concrete semantic type or type layout.</summary>
+    Type,
+    /// <summary>An external function declaration.</summary>
+    External,
+    /// <summary>A shared runtime capture or storage layout.</summary>
+    RuntimeLayout,
+    /// <summary>A whole mutual-recursion source group.</summary>
+    MutualRecursionGroup,
+}
+
+/// <summary>A typed, stable owner for an artifact that has no single source-function parent.</summary>
+public sealed record CompilerFunctionOwner(CompilerFunctionOwnerKind Kind, string Name);
+
+/// <summary>
+/// Stable reportable identity for one lowered function. Source-derived artifacts retain
+/// <see cref="Source"/> and normally identify their immediate generated parent; helpers shared by
+/// type or runtime layout instead use <see cref="CompilerOwner"/>.
+/// </summary>
+/// <param name="GeneratedLabel">The unique IR label emitted for this function.</param>
+/// <param name="Kind">The compiler transformation that produced the function.</param>
+/// <param name="Source">The originating source declaration, when there is one.</param>
+/// <param name="ParentGeneratedLabel">The immediate generated parent label, when applicable.</param>
+/// <param name="CompilerOwner">A stable program, type, external, or runtime-layout owner when no
+/// single source declaration owns the helper.</param>
+/// <param name="StableDiscriminator">A stable specialization, layer, type, or layout key when the
+/// source and kind alone do not distinguish several generated artifacts.</param>
+/// <param name="GenerationLocation">The originating expression site for generated artifacts that do
+/// not correspond to a named source declaration.</param>
+public sealed record IrFunctionOrigin(
+    string GeneratedLabel,
+    IrFunctionOriginKind Kind,
+    SourceFunctionOrigin? Source = null,
+    string? ParentGeneratedLabel = null,
+    CompilerFunctionOwner? CompilerOwner = null,
+    string? StableDiscriminator = null,
+    SourceLocation? GenerationLocation = null);
+
 /// <summary>Base of the linear intermediate representation. Each nested case is one IR instruction,
 /// most producing a value into a numbered <c>Target</c> temp and reading operand temps; the backend
 /// lowers the instruction stream to LLVM. Semantics lowering emits these, and
@@ -1787,7 +1882,14 @@ public sealed record IrFunction(
     CoroutineInfo? Coroutine = null, // non-null for async coroutine functions
     IReadOnlyDictionary<int, string>? LocalNames = null, // slot → source name (debug info)
     IReadOnlyDictionary<int, TypeRef>? LocalTypes = null // slot → inferred type (debug info)
-);
+)
+{
+    /// <summary>
+    /// Stable source/generated lineage for compiler reports. It is metadata only: semantic passes
+    /// preserve it through record copies and the backend deliberately does not inspect it.
+    /// </summary>
+    public IrFunctionOrigin? Origin { get; init; }
+}
 
 /// <summary>The whole lowered program handed to the backend: the entry function, every other function,
 /// interned string literals, external declarations, and feature flags telling codegen which runtime

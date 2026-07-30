@@ -133,6 +133,7 @@ public sealed partial class Lowering
     private Expr? _currentSourceExpr;
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
     private int[][]? _moduleLineStarts;
+    private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
 
     private readonly bool _hasAshesIO;
     private readonly IReadOnlyDictionary<string, string> _moduleAliases;
@@ -859,6 +860,8 @@ public sealed partial class Lowering
     /// </summary>
     public IrProgram Lower(Expr expr)
     {
+        IrFunctionOrigin entryOrigin = PrepareFunctionOrigins(expr);
+
         // Async syntax may occur after a pure helper in source order. Establish the program-wide
         // boundary before lowering that helper so it cannot be admitted to synchronous-only RC.
         _usesAsync |= ExprContainsAwait(expr)
@@ -892,7 +895,10 @@ public sealed partial class Lowering
             HasEnvAndArgParams: false,
             LocalNames: new Dictionary<int, string>(_localNames),
             LocalTypes: SnapshotLocalTypes()
-        );
+        )
+        {
+            Origin = entryOrigin
+        };
 
         var loweredProgram = new IrProgram(
             EntryFunction: entry,
@@ -5272,7 +5278,15 @@ public sealed partial class Lowering
         return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure, selfAliases);
     }
 
-    private (int, TypeRef) LowerLambdaCore(Expr.Lambda lam, string? selfName, TypeRef? selfType, bool stackAllocateClosure, IReadOnlyList<string>? selfAliases = null, RecursiveGroupContext? recursiveGroup = null, string? forcedLabel = null)
+    private (int, TypeRef) LowerLambdaCore(
+        Expr.Lambda lam,
+        string? selfName,
+        TypeRef? selfType,
+        bool stackAllocateClosure,
+        IReadOnlyList<string>? selfAliases = null,
+        RecursiveGroupContext? recursiveGroup = null,
+        string? forcedLabel = null,
+        IrFunctionOriginSeed? originSeed = null)
     {
         _usesClosures = true;
 
@@ -5291,6 +5305,9 @@ public sealed partial class Lowering
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
         RecordTcoParamLabel(lam.ParamName, label);
+        IrFunctionOrigin origin = CreateLambdaOrigin(lam, label, originSeed);
+        IrFunctionOrigin? savedActiveFunctionOrigin = _activeFunctionOrigin;
+        _activeFunctionOrigin = origin;
 
         // Build function body IR in isolation
         var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
@@ -5324,8 +5341,9 @@ public sealed partial class Lowering
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
-        LowerLambdaCoreFinishFunction(label);
+        LowerLambdaCoreFinishFunction(label, origin);
         LowerLambdaCoreRestoreFrame(savedFrame);
+        _activeFunctionOrigin = savedActiveFunctionOrigin;
 
         int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged);
         return (closureTemp, funTy);
@@ -6883,7 +6901,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreFinishFunction(string label)
+    private void LowerLambdaCoreFinishFunction(string label, IrFunctionOrigin origin)
     {
         var func = new IrFunction(
             Label: label,
@@ -6895,7 +6913,7 @@ public sealed partial class Lowering
             LocalTypes: SnapshotLocalTypes()
         );
 
-        _funcs.Add(func);
+        AddFunction(func, origin);
     }
 
     // restore state
@@ -9133,7 +9151,7 @@ public sealed partial class Lowering
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
 
-        EmitExternalFunctionThunkLayers(externalFunc, layerLabels);
+        EmitExternalFunctionThunkLayers(externalFunc, layerLabels, referenceSpan);
 
         // Restore outer compilation state.
         _inst.Clear();
@@ -9160,7 +9178,10 @@ public sealed partial class Lowering
 
     // Build from innermost layer (n-1) outward to layer 0 so each layer can reference the
     // label of the next-inner layer.
-    private void EmitExternalFunctionThunkLayers(IrExternalFunction externalFunc, string[] layerLabels)
+    private void EmitExternalFunctionThunkLayers(
+        IrExternalFunction externalFunc,
+        string[] layerLabels,
+        TextSpan referenceSpan)
     {
         int n = externalFunc.ParameterTypes.Count;
         for (int layer = n - 1; layer >= 0; layer--)
@@ -9195,7 +9216,22 @@ public sealed partial class Lowering
                 LocalNames: new Dictionary<int, string>(_localNames),
                 LocalTypes: SnapshotLocalTypes()
             );
-            _funcs.Add(func);
+            IrFunctionOrigin? parent = _activeFunctionOrigin;
+            string? parentGeneratedLabel = layer == 0
+                ? parent?.GeneratedLabel
+                : layerLabels[layer - 1];
+            AddFunction(
+                func,
+                new IrFunctionOrigin(
+                    layerLabels[layer],
+                    IrFunctionOriginKind.ExternalThunk,
+                    parent?.Source,
+                    parentGeneratedLabel,
+                    new CompilerFunctionOwner(
+                        CompilerFunctionOwnerKind.External,
+                        externalFunc.Name),
+                    $"layer:{layer}",
+                    ResolveSourceLocation(referenceSpan)));
         }
     }
 

@@ -1429,7 +1429,7 @@ public sealed partial class Lowering
         // current _inst; we don't need that closure (we build our own at each call site), so discard
         // the emitted instructions after the function is registered.
         int instBefore = _inst.Count;
-        LowerLambdaCore(lam: spec.Lambda, selfName: name, selfType: funcType, stackAllocateClosure: false, forcedLabel: label);
+        LowerReuseSpecializationLambda(spec.Lambda, name, funcType, label, cacheKey);
         if (_inst.Count > instBefore)
         {
             _inst.RemoveRange(instBefore, _inst.Count - instBefore);
@@ -2117,7 +2117,7 @@ public sealed partial class Lowering
         _lambdaDepth = savedLambdaDepth == 0 ? 1 : savedLambdaDepth;
 
         int instBefore = _inst.Count;
-        LowerLambdaCore(lam: lambda, selfName: name, selfType: funcType, stackAllocateClosure: false, forcedLabel: label);
+        LowerParallelSpecializationLambda(lambda, name, funcType, label, cacheKey);
         if (_inst.Count > instBefore)
         {
             _inst.RemoveRange(instBefore, _inst.Count - instBefore);
