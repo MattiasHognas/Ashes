@@ -115,6 +115,63 @@ public sealed class MutualRecursionTests
     }
 
     [Test]
+    public void Degenerate_group_and_following_declaration_are_both_analyzed()
+    {
+        var diagnostics = new Diagnostics();
+        Program parsedGroup =
+            new Parser("let recursive only = given (value) -> value", diagnostics).ParseProgram();
+        Program parsedAfter =
+            new Parser("let after = given (value) -> only(value)", diagnostics).ParseProgram();
+        Expr trailing = new Parser("after(42)", diagnostics).ParseProgram().Body;
+        diagnostics.ThrowIfAny();
+
+        TopLevelItem.LetDecl groupDeclaration =
+            parsedGroup.Items.OfType<TopLevelItem.LetDecl>().Single();
+        TopLevelItem.LetDecl afterDeclaration =
+            parsedAfter.Items.OfType<TopLevelItem.LetDecl>().Single();
+        var group = new TopLevelItem.RecursiveGroup(
+            new[] { (groupDeclaration.Name, groupDeclaration.Value) });
+        var program = new Program(new TopLevelItem[] { group, afterDeclaration }, trailing);
+        var lowering = new Lowering(diagnostics);
+
+        _ = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+
+        lowering.GetOwnershipSummary("only").ShouldNotBeNull();
+        FunctionOwnershipSummary? after = lowering.GetOwnershipSummary("after");
+        after.ShouldNotBeNull();
+        after.ResultPoisoned.ShouldBeFalse();
+        after.ResultReaches("value").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Group_members_remain_distinct_when_a_hand_built_program_reuses_one_value_node()
+    {
+        var sharedValue = new Expr.Lambda("value", new Expr.Var("value"));
+        var group = new TopLevelItem.RecursiveGroup(
+            new[]
+            {
+                ("first", (Expr)sharedValue),
+                ("second", (Expr)sharedValue),
+            });
+        var program = new Program(
+            new TopLevelItem[] { group },
+            new Expr.Call(new Expr.Var("first"), new Expr.IntLit(1)));
+        var diagnostics = new Diagnostics();
+        var lowering = new Lowering(diagnostics);
+
+        _ = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+        first.ShouldNotBeNull();
+        second.ShouldNotBeNull();
+        first.Function.ShouldBe("first");
+        second.Function.ShouldBe("second");
+    }
+
+    [Test]
     public void And_without_let_rec_is_rejected()
     {
         // Parser-level guard: `and` is only valid after `let recursive`.

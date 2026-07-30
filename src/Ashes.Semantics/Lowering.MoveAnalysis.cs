@@ -35,7 +35,8 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
     // Reference-identity key for one specific binding occurrence: its own Let/LetRecursive/LetResult
-    // node. Expr is a C# record (structural equality), so — exactly like this file's other Expr-keyed
+    // node, or a RecursiveGroupExpr plus member ordinal. Expr is a C# record (structural equality), so
+    // — exactly like this file's other Expr-keyed
     // tables (_maExpressionFreshnessAll/_maExpressionFreshness below, both keyed by
     // ReferenceEqualityComparer) — wrapping the node and comparing by reference is what lets two
     // unrelated bindings that happen to share a bare name (e.g. two different functions each defining
@@ -43,51 +44,68 @@ public sealed partial class Lowering
     // colliding as dictionary keys.
     private readonly struct FuncKey : IEquatable<FuncKey>
     {
-        private readonly Expr _binder;
+        private readonly Expr _owner;
+        private readonly int _memberOrdinal;
 
         public FuncKey(Expr binder)
+            : this(binder, -1)
         {
-            _binder = binder;
         }
 
-        public bool Equals(FuncKey other) => ReferenceEquals(_binder, other._binder);
+        public FuncKey(Expr owner, int memberOrdinal)
+        {
+            _owner = owner;
+            _memberOrdinal = memberOrdinal;
+        }
+
+        public bool Equals(FuncKey other) =>
+            ReferenceEquals(_owner, other._owner) && _memberOrdinal == other._memberOrdinal;
 
         public override bool Equals(object? obj) => obj is FuncKey other && Equals(other);
 
-        public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_binder);
+        public override int GetHashCode() => HashCode.Combine(
+            System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_owner),
+            _memberOrdinal);
     }
+
+    private sealed record MoveCallSite(
+        FuncKey? Enclosing,
+        IReadOnlyList<Expr> Args,
+        IReadOnlyList<IReadOnlyDictionary<string, FuncKey>> ArgumentScopes);
 
     // Per top-level function: its curried parameter names (in order) and its innermost body. Keyed by
     // the binding's own FuncKey (its defining Let/LetRecursive/LetResult node), not its bare name.
     private readonly Dictionary<FuncKey, (List<string> Params, Expr Body)> _maFuncs = new();
 
-    // Every top-level value binding's right-hand side (used to resolve accumulator seeds). Stays
-    // name-keyed: a colliding plain (non-function) value binding staying conservatively unresolved
-    // under the existing bare-name/ambiguity mechanism is sound and out of scope for this change.
+    // The lexical function scope at the entry of each registered function body. Populated by the same
+    // normalized-body walk that collects calls, so ResultReach and move analysis resolve copied binders
+    // to the same FuncKey as the call census.
+    private readonly Dictionary<FuncKey, IReadOnlyDictionary<string, FuncKey>> _maFunctionScopes = new();
+
+    // Every globally-unambiguous value binding's right-hand side (used to resolve accumulator seeds).
+    // Colliding plain values stay conservatively unresolved under the bare-name compatibility lookup.
     private readonly Dictionary<string, Expr> _maValueRhs = new(StringComparer.Ordinal);
 
-    // Resolves a bare binding name to the one FuncKey a bare-name lookup denotes today: populated
-    // exactly when a name is registered unambiguously (see RegisterOneBinding), and pruned the moment a
-    // second binding of the same name is seen anywhere in the program (see AnalyzeReuseCopyElision), in
-    // lockstep with _maAmbiguous. Every internal lookup that used to key _maFuncs/_maCallSites/
-    // _maResultReach/_maNestedRecursive directly by a bare AST name (a Var, a call head, a binding name)
-    // resolves through this index first; a name absent here (never registered, or registered more than
-    // once) has no resolvable FuncKey, so callers fall back to exactly the same conservative
-    // "not visible" behavior a failed _maFuncs.ContainsKey(name) already produced. This is intentionally
-    // still a flat, whole-program index — not yet a live lexically-threaded scope — for every traversal
-    // except the self-recursion check in ComputeTcoParamFacts/TcoParamFactsWalk/TcoParamFactsWalkCall,
-    // which threads a genuinely lexical, shadowing-aware scope (see TcoParamFactsWalk's own doc).
+    // Compatibility/global index for names seen exactly once across every value binding, removed when
+    // a second binding of the same name is found. Bare-name call/escape collection, ResultReach/move
+    // analysis, provenance, and TcoParamFactsWalk resolve through their own live lexical scopes.
+    // Qualified module references and compatibility/introspection lookups still use this index.
     private readonly Dictionary<string, FuncKey> _maNameIndex = new(StringComparer.Ordinal);
 
-    // The inverse of _maNameIndex: the one name a registered FuncKey was declared under. Needed wherever
-    // a FuncKey must be reported or looked up by name again — the string-keyed public surface
-    // (GetOwnershipSummary/AnalyzedFunctionNames/FormatOwnershipSummaries) and every external consumer of
-    // it stay name-based and unaffected by this internal re-keying.
+    // The source name each registered FuncKey was declared under. Unlike _maNameIndex, this retains an
+    // entry for every colliding function so internal analysis and later stable-origin materialization
+    // never lose the binding identity.
     private readonly Dictionary<FuncKey, string> _maKeyName = new();
+
+    // StripModuleAliasPrefix substitutes stitched aliases by rebuilding the remaining AST. Preserve an
+    // explicit link from every rebuilt binding node to its original binding occurrence; name lookup
+    // cannot recover this identity once two local functions legitimately share a source name.
+    private readonly Dictionary<Expr, Expr> _maOriginalBinderByCopy =
+        new(ReferenceEqualityComparer.Instance);
 
     // Saturated direct call sites, keyed by the callee's FuncKey: (enclosing function's FuncKey, or null
     // at top level, flattened args).
-    private readonly Dictionary<FuncKey, List<(FuncKey? Enclosing, List<Expr> Args)>> _maCallSites = new();
+    private readonly Dictionary<FuncKey, List<MoveCallSite>> _maCallSites = new();
 
     // Function names that appear anywhere other than as the head of a saturated direct call. Their
     // call-site census is not provably complete, so they are never treated as move-safe.
@@ -106,9 +124,9 @@ public sealed partial class Lowering
     // whole program is the (stronger) proof that no other live reference exists.
     private Expr? _maBody;
 
-    // Names bound by more than one let/letrec in the desugared tree. A duplicated name cannot be
-    // resolved unambiguously, so such names are never treated as move-safe (their pooled call sites
-    // would be unsound); they are also treated as escaped.
+    // Names bound by more than one let/letrec in the desugared tree. Internal function resolution is
+    // lexical and does not consult this set. Name-keyed value/partial-application compatibility paths
+    // remain conservative when a duplicated name cannot identify one binding occurrence.
     private readonly HashSet<string> _maAmbiguous = new(StringComparer.Ordinal);
 
     // Result-reachability (may-alias) summary (CO-2 result-alias elision): per registered function, a
@@ -175,14 +193,15 @@ public sealed partial class Lowering
     // function. Such a function is registered in _maFuncs with the FULL parameter list (outer params +
     // acc) and body B, so its saturated (outerCount+1)-arg application is analyzable; the inner recursive
     // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRecursive / CallReach) with
-    // the outer params held at identity and the accumulator bound to x. Maps registered name → the inner
-    // recursive binder name, the outer parameter names, and the accumulator parameter name.
-    private readonly Dictionary<FuncKey, (string RecursiveName, List<string> Outer, string Acc)> _maNestedRecursive = new();
+    // the outer params held at identity and the accumulator bound to x. Retains the exact inner recursive
+    // binder identity and name, the outer parameter names, and the accumulator parameter name.
+    private readonly Dictionary<FuncKey, (FuncKey Recursive, string RecursiveName, List<string> Outer, string Acc)>
+        _maNestedRecursive = new();
 
     // The nested-rec context of the function currently being analyzed by ComputeResultReach (set per pass,
     // null for ordinary functions). Lets CallReach recognize the inner `go(x)` self-call and map it to the
     // enclosing function's summary. Func is the registered (full-param) function's FuncKey.
-    private (FuncKey Func, string RecursiveName, List<string> Outer, string Acc)? _maSelfRecursive;
+    private (FuncKey Func, FuncKey Recursive, string RecursiveName, List<string> Outer, string Acc)? _maSelfRecursive;
 
     /// <summary>
     /// Builds the whole-program call-site census and function tables used by
@@ -196,11 +215,12 @@ public sealed partial class Lowering
         _maValueRhs.Clear();
         _maNameIndex.Clear();
         _maKeyName.Clear();
+        _maOriginalBinderByCopy.Clear();
+        _maFunctionScopes.Clear();
         _maCallSites.Clear();
         _maEscaped.Clear();
         _maAmbiguous.Clear();
-        _maMoveSafeMemo.Clear();
-        _maInProgress.Clear();
+        ClearOwnershipMemoization();
         _maResultReach.Clear();
         _maNestedRecursive.Clear();
         _ownershipSummaries.Clear();
@@ -209,21 +229,16 @@ public sealed partial class Lowering
 
         RegisterBindings(desugaredBody);
 
-        // Duplicated names are unusable: drop them from the function table (and the name index a
-        // bare-name lookup resolves through) and mark escaped so no move-safety proof can rely on them.
+        // Duplicated names remain unavailable through the global compatibility/value indexes. Every
+        // lambda-valued binding itself stays registered and is resolved internally through lexical
+        // FuncKey scopes.
         foreach (var name in _maAmbiguous)
         {
-            if (_maNameIndex.Remove(name, out var key))
-            {
-                _maFuncs.Remove(key);
-                _maKeyName.Remove(key);
-            }
-
+            _maNameIndex.Remove(name);
             _maValueRhs.Remove(name);
-            _maEscaped.Add(name);
         }
 
-        CollectCallsAndEscapes(desugaredBody, null);
+        CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
         ComputeResultReach();
         _maAnalyzed = true;
         foreach (var key in _maFuncs.Keys.OrderBy(k => _maKeyName[k], StringComparer.Ordinal))
@@ -252,11 +267,20 @@ public sealed partial class Lowering
         }
     }
 
-    private static Expr StripOrSelf(Expr value)
+    private void ClearOwnershipMemoization()
+    {
+        _maMoveSafeMemo.Clear();
+        _maInProgress.Clear();
+        ClearResultProvenanceAnalysis();
+    }
+
+    private Expr StripOrSelf(Expr value)
     {
         try
         {
-            return StripModuleAliasPrefix(value);
+            return StripModuleAliasPrefix(
+                value,
+                (original, rebuilt) => _maOriginalBinderByCopy[rebuilt] = GetCanonicalBinder(original));
         }
         catch (System.NotSupportedException)
         {
@@ -286,6 +310,9 @@ public sealed partial class Lowering
                 RegisterOneBinding(lres, lres.Name, lres.Value);
                 RegisterBindings(lres.Value);
                 RegisterBindings(lres.Body);
+                return;
+            case RecursiveGroupExpr group:
+                RegisterRecursiveGroupBindings(group);
                 return;
             case Expr.Lambda lam:
                 RegisterBindings(lam.Body);
@@ -321,36 +348,98 @@ public sealed partial class Lowering
         }
     }
 
+    private void RegisterRecursiveGroupBindings(RecursiveGroupExpr group)
+    {
+        // A group is one AST node containing several simultaneous bindings. Register every member
+        // first so subsequent traversal can seed the complete sibling scope.
+        for (int i = 0; i < group.Bindings.Count; i++)
+        {
+            (string name, Expr value) = group.Bindings[i];
+            RegisterOneBinding(GetRecursiveGroupMemberKey(group, i), name, value);
+        }
+
+        foreach ((_, Expr value) in group.Bindings)
+        {
+            RegisterBindings(value);
+        }
+
+        RegisterBindings(group.Body);
+    }
+
     private void RegisterOneBinding(Expr binder, string name, Expr value)
     {
-        if (_maValueRhs.ContainsKey(name) || _maNameIndex.ContainsKey(name))
+        RegisterOneBinding(GetCanonicalFuncKey(binder), name, value);
+    }
+
+    private void RegisterOneBinding(FuncKey key, string name, Expr value)
+    {
+        bool duplicate = _maAmbiguous.Contains(name)
+            || _maValueRhs.ContainsKey(name)
+            || _maNameIndex.ContainsKey(name);
+        if (duplicate)
         {
             _maAmbiguous.Add(name);
-            return;
+            _maValueRhs.Remove(name);
+            _maNameIndex.Remove(name);
         }
 
         var stripped = StripOrSelf(value);
-        _maValueRhs[name] = stripped;
+        if (!duplicate)
+        {
+            _maValueRhs[name] = stripped;
+        }
+
         if (stripped is Expr.Lambda lam)
         {
-            var key = new FuncKey(binder);
-            if (TryGetNestedRecursiveReturnShape(lam, out var outer, out var accParam, out var recursiveName, out var innerBody))
+            if (TryGetNestedRecursiveReturnShape(
+                lam, out var outer, out var accParam, out var recursiveBinder, out var recursiveName, out var innerBody))
             {
                 // Register the Map.set-shape with the accumulator as a real trailing parameter and the
                 // inner recursive body as the function body, so its full (outer + accumulator) application
                 // is analyzable. The inner `go(x)` self-call is resolved in CallReach via _maSelfRecursive.
                 var full = new List<string>(outer) { accParam };
                 _maFuncs[key] = (full, innerBody);
-                _maNestedRecursive[key] = (recursiveName, outer, accParam);
+                _maNestedRecursive[key] = (
+                    GetCanonicalFuncKey(recursiveBinder),
+                    recursiveName,
+                    outer,
+                    accParam);
             }
             else
             {
                 _maFuncs[key] = (CollectLambdaParams(lam), GetInnermostBody(lam));
             }
 
-            _maNameIndex[name] = key;
+            if (!duplicate)
+            {
+                _maNameIndex[name] = key;
+            }
+
             _maKeyName[key] = name;
         }
+    }
+
+    private FuncKey GetCanonicalFuncKey(Expr binder)
+    {
+        return new FuncKey(GetCanonicalBinder(binder));
+    }
+
+    private static FuncKey GetRecursiveGroupMemberKey(RecursiveGroupExpr group, int memberOrdinal)
+    {
+        return new FuncKey(group, memberOrdinal);
+    }
+
+    private Expr GetCanonicalBinder(Expr binder)
+    {
+        var visited = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+        Expr canonical = binder;
+        while (visited.Add(canonical)
+            && _maOriginalBinderByCopy.TryGetValue(canonical, out Expr? original))
+        {
+            canonical = original;
+        }
+
+        return canonical;
     }
 
     /// <summary>
@@ -363,11 +452,13 @@ public sealed partial class Lowering
         Expr.Lambda lam,
         out List<string> outer,
         out string accParam,
+        out Expr.LetRecursive recursiveBinder,
         out string recursiveName,
         out Expr innerBody)
     {
         outer = new List<string>();
         accParam = string.Empty;
+        recursiveBinder = null!;
         recursiveName = string.Empty;
         innerBody = lam;
         Expr body = lam;
@@ -382,6 +473,7 @@ public sealed partial class Lowering
             && recursiveValue.Body is not Expr.Lambda)
         {
             accParam = recursiveValue.ParamName;
+            recursiveBinder = letRecursive;
             recursiveName = letRecursive.Name;
             innerBody = recursiveValue.Body;
             return true;
@@ -476,12 +568,20 @@ public sealed partial class Lowering
     /// The authoritative reuse-elision predicate: the prologue deep-copy of accumulator parameter
     /// <paramref name="accParam"/> of fold <paramref name="funcName"/> can be safely elided exactly
     /// when the accumulator is a unique parameter of the fold's ownership summary (proven uniquely
-    /// owned at every external call site). Read through <see cref="GetOwnershipSummary"/> so the
+    /// owned at every external call site). Read through <see cref="GetOwnershipSummary(string)"/> so the
     /// summary is the single source of truth for the decision. Conservative — false on any uncertainty
     /// (no summary, or the parameter not proven unique).
     /// </summary>
-    private bool ReuseAccumulatorIsUnique(string funcName, string accParam)
-        => GetOwnershipSummary(funcName) is { } summary && summary.UniqueParameters.Contains(accParam);
+    private bool ReuseAccumulatorIsUnique(
+        FuncKey? function,
+        string funcName,
+        string accParam)
+    {
+        FunctionOwnershipSummary? summary = function is { } key
+            ? GetOwnershipSummary(key)
+            : GetOwnershipSummary(funcName);
+        return summary is not null && summary.UniqueParameters.Contains(accParam);
+    }
 
     /// <summary>
     /// The names of every top-level function the ownership analysis registered (empty until the
@@ -502,9 +602,85 @@ public sealed partial class Lowering
     {
         return _maAnalyzed
             && _maNameIndex.TryGetValue(function, out var key)
-            && _ownershipSummaries.TryGetValue(key, out var summary)
-            ? summary
+            ? GetOwnershipSummary(key)
             : null;
+    }
+
+    private FunctionOwnershipSummary? GetOwnershipSummary(FuncKey function)
+    {
+        return _maAnalyzed
+            && _ownershipSummaries.TryGetValue(function, out FunctionOwnershipSummary? summary)
+                ? summary
+                : null;
+    }
+
+    private FuncKey? GetRegisteredFunctionKey(Expr binder)
+    {
+        FuncKey key = GetCanonicalFuncKey(binder);
+        return _maFuncs.ContainsKey(key) ? key : null;
+    }
+
+    private void RegisterOwnershipFunctionLabel(string label, Expr binder)
+    {
+        if (GetRegisteredFunctionKey(binder) is { } key)
+        {
+            RegisterOwnershipFunctionLabel(label, key);
+        }
+    }
+
+    private void RegisterOwnershipFunctionLabel(string label, FuncKey function)
+    {
+        if (_maFuncs.ContainsKey(function))
+        {
+            _functionKeyByLabel[label] = function;
+        }
+    }
+
+    private FunctionOwnershipSummary? GetOwnershipSummaryForLabel(string label)
+    {
+        if (_functionKeyByLabel.TryGetValue(label, out FuncKey key))
+        {
+            return GetOwnershipSummary(key);
+        }
+
+        return _functionNameByLabel.TryGetValue(label, out string? function)
+            ? GetOwnershipSummary(function)
+            : null;
+    }
+
+    private FunctionOwnershipSummary? GetOwnershipSummaryForCallRoot(Expr root)
+    {
+        if (TryResolveKnownFunctionLabel(root, out string label)
+            && GetOwnershipSummaryForLabel(label) is { } exact)
+        {
+            return exact;
+        }
+
+        if (root is Expr.Var variable && Lookup(variable.Name) is not null)
+        {
+            return null;
+        }
+
+        string? function = root switch
+        {
+            Expr.Var unboundVariable => unboundVariable.Name,
+            Expr.QualifiedVar => ResolveSpecializableCalleeName(root),
+            _ => null,
+        };
+        return function is null ? null : GetOwnershipSummary(function);
+    }
+
+    // Collision-aware introspection for focused compiler tests. A bare-name compatibility lookup must
+    // remain null when the name is ambiguous; this surface deliberately returns every retained binding
+    // so tests can prove their distinct facts without weakening source-name resolution.
+    internal IReadOnlyList<FunctionOwnershipSummary> GetOwnershipSummaries(string function)
+    {
+        return _maAnalyzed
+            ? _ownershipSummaries
+                .Where(entry => string.Equals(_maKeyName[entry.Key], function, StringComparison.Ordinal))
+                .Select(entry => entry.Value)
+                .ToList()
+            : [];
     }
 
     private bool IsFreshOwnershipResultCall(Expr expression)
@@ -516,14 +692,7 @@ public sealed partial class Lowering
 
         var arguments = new List<Expr>();
         Expr root = CollectCallArgs(expression, arguments);
-        string? name = root switch
-        {
-            Expr.Var variable => variable.Name,
-            Expr.QualifiedVar => ResolveSpecializableCalleeName(root),
-            _ => null,
-        };
-        return name is not null
-            && GetOwnershipSummary(name) is { ResultFresh: true } summary
+        return GetOwnershipSummaryForCallRoot(root) is { ResultFresh: true } summary
             && arguments.Count == summary.Parameters.Count;
     }
 
@@ -560,8 +729,13 @@ public sealed partial class Lowering
             : (new Dictionary<string, int>(StringComparer.Ordinal), false);
 
         var expressionFreshness = ComputeExpressionFreshness(function, info);
-        var provenance = ResolveFunctionResultProvenance(functionName);
-        var tcoParamFacts = ComputeTcoParamFacts(function, functionName, info, expressionFreshness);
+        ResolvedFunctionResultProvenance resolvedProvenance = ResolveFunctionResultProvenance(function);
+        string? forwardName = resolvedProvenance.ForwardsTo is { } forward
+            && _maKeyName.TryGetValue(forward, out string? targetName)
+                ? targetName
+                : null;
+        var provenance = new FunctionResultProvenance(resolvedProvenance.RcEligible, forwardName);
+        var tcoParamFacts = ComputeTcoParamFacts(function, info, expressionFreshness);
 
         return new FunctionOwnershipSummary(
             functionName,
@@ -600,19 +774,17 @@ public sealed partial class Lowering
     /// </summary>
     private Dictionary<string, TcoParamStructuralFacts> ComputeTcoParamFacts(
         FuncKey function,
-        string functionName,
         (List<string> Params, Expr Body) info,
         IReadOnlyDictionary<Expr, bool> expressionFreshness)
     {
         var paramNames = info.Params;
         var state = new TcoParamFactsState { Observed = new TcoSelfCallArgumentShape?[paramNames.Count] };
 
-        // Seeds the walk's own identity scope with exactly one entry: functionName resolves to
-        // function's own FuncKey. This is the base case a genuinely lexical, live-extended scope (see
-        // TcoParamFactsWalk) needs to answer "does this self-looking call actually denote ME" instead of
-        // comparing callee names as bare strings; no other name is ever looked up by this walk, so no
-        // wider (whole-program) base layer is needed here.
-        var scope = new Dictionary<string, FuncKey>(StringComparer.Ordinal) { [functionName] = function };
+        // Use the same body-entry scope recorded by call census. It contains this binding's own name
+        // only for recursive definitions; a plain local function whose body refers to an outer
+        // same-named function must not be mistaken for self-recursion.
+        IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
+            ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
         TcoParamFactsWalk(
             info.Body,
             new Dictionary<string, string>(StringComparer.Ordinal),
@@ -666,35 +838,35 @@ public sealed partial class Lowering
                 TcoParamFactsWalk(iff.Else, tailOwners, function, scope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Match match:
-                foreach (MatchCase matchCase in match.Cases)
-                {
-                    var armTailOwners = tailOwners;
-                    if (match.Value is Expr.Var source
-                        && IndexOfOrdinal(paramNames, source.Name) >= 0
-                        && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
-                    {
-                        armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal)
-                        {
-                            [tail.Name] = source.Name,
-                        };
-                    }
-
-                    TcoParamFactsWalk(matchCase.Body, armTailOwners, function, scope, paramNames, expressionFreshness, state);
-                }
-
+                TcoParamFactsWalkMatch(
+                    match, tailOwners, function, scope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Let let:
                 TcoParamFactsWalk(
-                    let.Body, tailOwners, function, ExtendFuncScope(scope, let, let.Name), paramNames, expressionFreshness, state);
+                    let.Body,
+                    RemoveTailOwnerNames(tailOwners, [let.Name]),
+                    function,
+                    ExtendFuncScope(scope, let, let.Name),
+                    paramNames,
+                    expressionFreshness,
+                    state);
                 return;
             case Expr.LetResult letResult:
                 TcoParamFactsWalk(
-                    letResult.Body, tailOwners, function, ExtendFuncScope(scope, letResult, letResult.Name), paramNames,
+                    letResult.Body,
+                    RemoveTailOwnerNames(tailOwners, [letResult.Name]),
+                    function,
+                    ExtendFuncScope(scope, letResult, letResult.Name),
+                    paramNames,
                     expressionFreshness, state);
                 return;
             case Expr.LetRecursive letRecursive:
                 TcoParamFactsWalk(
-                    letRecursive.Body, tailOwners, function, ExtendFuncScope(scope, letRecursive, letRecursive.Name), paramNames,
+                    letRecursive.Body,
+                    RemoveTailOwnerNames(tailOwners, [letRecursive.Name]),
+                    function,
+                    ExtendFuncScope(scope, letRecursive, letRecursive.Name),
+                    paramNames,
                     expressionFreshness, state);
                 return;
             case Expr.Call:
@@ -703,18 +875,64 @@ public sealed partial class Lowering
         }
     }
 
-    // A nested binder shadows `name` for everything in its own body: resolving to its own FuncKey when
-    // this exact occurrence registered as a function (RegisterOneBinding only does so for a lambda-
-    // valued RHS), or removed from scope (denoting no function at all, matching a fresh non-function
-    // local of the same name) otherwise. binder is the Let/LetRecursive/LetResult node itself, so
-    // constructing its FuncKey and checking _maFuncs is a check against THIS SPECIFIC occurrence, not a
-    // whole-program name lookup — sound regardless of whether `name` collides elsewhere in the program.
+    private void TcoParamFactsWalkMatch(
+        Expr.Match match,
+        IReadOnlyDictionary<string, string> tailOwners,
+        FuncKey function,
+        IReadOnlyDictionary<string, FuncKey> scope,
+        IReadOnlyList<string> paramNames,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        TcoParamFactsState state)
+    {
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            var armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
+            foreach (string binder in binders)
+            {
+                armTailOwners.Remove(binder);
+            }
+
+            if (match.Value is Expr.Var source
+                && IndexOfOrdinal(paramNames, source.Name) >= 0
+                && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
+            {
+                armTailOwners[tail.Name] = source.Name;
+            }
+
+            TcoParamFactsWalk(
+                matchCase.Body,
+                armTailOwners,
+                function,
+                RemoveFuncNames(scope, binders),
+                paramNames,
+                expressionFreshness,
+                state);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> RemoveTailOwnerNames(
+        IReadOnlyDictionary<string, string> tailOwners,
+        IEnumerable<string> names)
+    {
+        var next = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
+    }
+
+    // A nested binder shadows `name` for everything in its own body. Original and
+    // StripModuleAliasPrefix-rebuilt binders both resolve through their canonical reference identity;
+    // a non-function binder removes the name.
     private IReadOnlyDictionary<string, FuncKey> ExtendFuncScope(
         IReadOnlyDictionary<string, FuncKey> scope, Expr binder, string name)
     {
         var next = new Dictionary<string, FuncKey>(scope, StringComparer.Ordinal);
-        var key = new FuncKey(binder);
-        if (_maFuncs.ContainsKey(key))
+        if (TryResolveBindingFunctionKey(binder, out FuncKey key))
         {
             next[name] = key;
         }
@@ -872,20 +1090,20 @@ public sealed partial class Lowering
         }
 
         bool sawExternal = false;
-        foreach (var (enclosing, args) in sites)
+        foreach (MoveCallSite site in sites)
         {
-            if (enclosing is { } enclosingKey && enclosingKey.Equals(func))
+            if (site.Enclosing is { } enclosingKey && enclosingKey.Equals(func))
             {
                 continue; // self-recursion is the TCO back-edge, not an external entry
             }
 
-            if (paramIndex >= args.Count)
+            if (paramIndex >= site.Args.Count)
             {
                 return false; // under-applied at this site — cannot map the argument
             }
 
             sawExternal = true;
-            if (!ArgIsMove(args[paramIndex], enclosing))
+            if (!ArgIsMove(site.Args[paramIndex], site.Enclosing, site.ArgumentScopes[paramIndex]))
             {
                 return false;
             }
@@ -900,7 +1118,10 @@ public sealed partial class Lowering
     /// safe nullary seed, or a move-linear reference to a move-safe accumulator parameter of the
     /// enclosing function.
     /// </summary>
-    private bool ArgIsMove(Expr arg, FuncKey? enclosing)
+    private bool ArgIsMove(
+        Expr arg,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (IsNullarySeed(arg, new HashSet<string>(StringComparer.Ordinal)))
         {
@@ -925,14 +1146,14 @@ public sealed partial class Lowering
         // result-fresh callee reaches {} and is admitted unconditionally (the empty-reach special case,
         // subsuming the earlier higher-order-seed rule); a `wrap`-style builder that returns a parameter
         // is admitted exactly when that parameter's argument is a move.
-        if (IsResultAliasMove(arg, enclosing))
+        if (IsResultAliasMove(arg, enclosing, scope))
         {
             return true;
         }
 
         if (arg is Expr.Var v)
         {
-            return ArgIsMoveVar(v, enclosing);
+            return ArgIsMoveVar(v, enclosing, scope);
         }
 
         return false;
@@ -943,7 +1164,10 @@ public sealed partial class Lowering
     /// move-safe accumulator parameter of the enclosing function, or a let-bound fresh construction
     /// that is move-linear within its binding scope.
     /// </summary>
-    private bool ArgIsMoveVar(Expr.Var v, FuncKey? enclosing)
+    private bool ArgIsMoveVar(
+        Expr.Var v,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         FuncKey? encKey = null;
         (List<string> Params, Expr Body)? encInfo = null;
@@ -985,7 +1209,7 @@ public sealed partial class Lowering
             // Fresh by construction, or (CO-2 result-alias) the result of a builder call that is a
             // move here (result-reach not poisoned, and every reached parameter's argument is itself
             // a move) — both give a uniquely-owned, internally-unshared bound value.
-            && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing))
+            && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing, scope))
             // Move-linear within the binding's own scope (its `let` body): used at most once on
             // any path there, never captured. Counting in the scope — not the whole enclosing
             // body — is essential: the whole-body count would stop at this very definition
@@ -1038,6 +1262,9 @@ public sealed partial class Lowering
 
                 return FirstFound(TryFindLocalLet(name, lrec.Value), () => TryFindLocalLet(name, lrec.Body));
 
+            case RecursiveGroupExpr group:
+                return TryFindLocalLetInRecursiveGroup(name, group);
+
             case Expr.If i:
                 return FirstFound(
                     TryFindLocalLet(name, i.Cond),
@@ -1057,6 +1284,30 @@ public sealed partial class Lowering
             default:
                 return TryFindLocalLetInChildren(name, body);
         }
+    }
+
+    private static (Expr? Rhs, Expr? Scope) TryFindLocalLetInRecursiveGroup(
+        string name,
+        RecursiveGroupExpr group)
+    {
+        // Every member name is recursively in scope in all member values and in the continuation,
+        // so a matching member shadows the searched outer binding throughout.
+        if (group.Bindings.Any(
+            binding => string.Equals(binding.Name, name, StringComparison.Ordinal)))
+        {
+            return (null, null);
+        }
+
+        foreach ((_, Expr value) in group.Bindings)
+        {
+            var found = TryFindLocalLet(name, value);
+            if (found.Rhs is not null)
+            {
+                return found;
+            }
+        }
+
+        return TryFindLocalLet(name, group.Body);
     }
 
     private static (Expr? Rhs, Expr? Scope) TryFindLocalLetInMatch(string name, Expr.Match m)
@@ -1260,9 +1511,11 @@ public sealed partial class Lowering
 
                 _maReachToken = 0;
                 _maSelfRecursive = _maNestedRecursive.TryGetValue(name, out var nr)
-                    ? (name, nr.RecursiveName, nr.Outer, nr.Acc)
+                    ? (name, nr.Recursive, nr.RecursiveName, nr.Outer, nr.Acc)
                     : null;
-                var computed = StripSyntheticTokens(ResultReach(info.Body, env));
+                IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(name)
+                    ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+                var computed = StripSyntheticTokens(ResultReach(info.Body, env, scope));
                 _maSelfRecursive = null;
                 var merged = ReachJoin(_maResultReach[name], computed);
                 if (!ReachEquals(_maResultReach[name], merged))
@@ -1294,9 +1547,11 @@ public sealed partial class Lowering
         _maExpressionFreshness = map;
         _maReachToken = 0;
         _maSelfRecursive = _maNestedRecursive.TryGetValue(function, out var nr)
-            ? (function, nr.RecursiveName, nr.Outer, nr.Acc)
+            ? (function, nr.Recursive, nr.RecursiveName, nr.Outer, nr.Acc)
             : null;
-        ResultReach(info.Body, env);
+        IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
+            ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+        ResultReach(info.Body, env, scope);
         _maSelfRecursive = null;
         _maExpressionFreshness = null;
         return map;
@@ -1498,9 +1753,10 @@ public sealed partial class Lowering
     /// </summary>
     private (Dictionary<string, int> Counts, bool Poison) ResultReach(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        var result = ResultReachCore(e, env);
+        var result = ResultReachCore(e, env, scope);
         RecordExpressionFreshness(e, result);
         return result;
     }
@@ -1523,7 +1779,8 @@ public sealed partial class Lowering
 
     private (Dictionary<string, int> Counts, bool Poison) ResultReachCore(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (ResultReachIsCopyScalar(e))
         {
@@ -1541,30 +1798,39 @@ public sealed partial class Lowering
             // Control flow: the returned value is one of the arms; the scrutinee/condition is not part
             // of the returned value (but a match's scrutinee reach flows into its pattern bindings).
             case Expr.If i:
-                return ReachMax(ResultReach(i.Then, env), ResultReach(i.Else, env));
+                return ReachMax(ResultReach(i.Then, env, scope), ResultReach(i.Else, env, scope));
             case Expr.Match m:
-                return MatchReach(m, env);
+                return MatchReach(m, env, scope);
 
             case Expr.Let l:
-                return ResultReach(l.Body, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
+                return ResultReach(
+                    l.Body,
+                    ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env, scope), TokenReach())),
+                    ExtendFuncScope(scope, l, l.Name));
             case Expr.LetResult lr:
-                return ResultReach(lr.Body, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
+                return ResultReach(
+                    lr.Body,
+                    ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env, scope), TokenReach())),
+                    ExtendFuncScope(scope, lr, lr.Name));
             case Expr.LetRecursive lrec:
                 // A self-referential local binding is not modeled; treat any use of it as poison.
-                return ResultReach(lrec.Body, ExtendEnv(env, lrec.Name, ReachPoisoned()));
+                return ResultReach(
+                    lrec.Body,
+                    ExtendEnv(env, lrec.Name, ReachPoisoned()),
+                    ExtendFuncScope(scope, lrec, lrec.Name));
 
             // Aggregate/list literals: every element is simultaneously live, so reach sums.
             case Expr.Cons cons:
-                return ReachSum(ResultReach(cons.Head, env), ResultReach(cons.Tail, env));
+                return ReachSum(ResultReach(cons.Head, env, scope), ResultReach(cons.Tail, env, scope));
             case Expr.ListLit lst:
-                return SumReach(lst.Elements, env);
+                return SumReach(lst.Elements, env, scope);
             case Expr.TupleLit t:
-                return SumReach(t.Elements, env);
+                return SumReach(t.Elements, env, scope);
             case Expr.RecordLit rec:
-                return ResultReachRecordLit(rec, env);
+                return ResultReachRecordLit(rec, env, scope);
 
             case Expr.Call:
-                return CallReach(e, env);
+                return CallReach(e, env, scope);
 
             default:
                 // Unmodeled node (Lambda, Await, RecordUpdate, Result pipes, …): not provably confined.
@@ -1608,7 +1874,8 @@ public sealed partial class Lowering
 
     private (Dictionary<string, int> Counts, bool Poison) ResultReachRecordLit(
         Expr.RecordLit rec,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         ConstructorSymbol? constructor = _constructorSymbols.GetValueOrDefault(rec.TypeName);
         IReadOnlyList<string> fieldNames = constructor?.DeclaringSyntax.FieldNames ?? [];
@@ -1630,7 +1897,7 @@ public sealed partial class Lowering
                 && BuiltinRegistry.IsCopyType(constructor.ParameterTypes[fieldIndex]);
             if (!copyField)
             {
-                acc = ReachSum(acc, ResultReach(fieldValue, env));
+                acc = ReachSum(acc, ResultReach(fieldValue, env, scope));
             }
         }
 
@@ -1639,12 +1906,13 @@ public sealed partial class Lowering
 
     private (Dictionary<string, int> Counts, bool Poison) SumReach(
         IReadOnlyList<Expr> exprs,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var acc = ReachBottom();
         foreach (var el in exprs)
         {
-            acc = ReachSum(acc, ResultReach(el, env));
+            acc = ReachSum(acc, ResultReach(el, env, scope));
         }
 
         return acc;
@@ -1671,14 +1939,17 @@ public sealed partial class Lowering
     /// </summary>
     private (Dictionary<string, int> Counts, bool Poison) MatchReach(
         Expr.Match m,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        var scrut = ResultReach(m.Value, env);
+        var scrut = ResultReach(m.Value, env, scope);
         (Dictionary<string, int> Counts, bool Poison)? acc = null;
         foreach (var c in m.Cases)
         {
             var env2 = BindPatternReach(c.Pattern, scrut, env);
-            var arm = ResultReach(c.Body, env2);
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(c.Pattern, binders);
+            var arm = ResultReach(c.Body, env2, RemoveFuncNames(scope, binders));
             acc = acc is null ? arm : ReachMax(acc.Value, arm);
         }
 
@@ -1757,7 +2028,8 @@ public sealed partial class Lowering
     /// </summary>
     private (Dictionary<string, int> Counts, bool Poison) CallReach(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var args = new List<Expr>();
         var head = CollectCallArgs(e, args);
@@ -1769,15 +2041,16 @@ public sealed partial class Lowering
         // through the standard monotone fixpoint (the self summary starts at bottom and only grows).
         if (_maSelfRecursive is { } sr
             && head is Expr.Var rv
-            && string.Equals(rv.Name, sr.RecursiveName, StringComparison.Ordinal)
+            && scope.TryGetValue(rv.Name, out FuncKey recursiveKey)
+            && recursiveKey.Equals(sr.Recursive)
             && args.Count == 1)
         {
-            return CallReachSelfRecursive(sr, args, env);
+            return CallReachSelfRecursive(sr, args, env, scope);
         }
 
         if (head is Expr.Var hv && _constructorSymbols.TryGetValue(hv.Name, out var ctor))
         {
-            return CallReachConstructor(ctor, args, env);
+            return CallReachConstructor(ctor, args, env, scope);
         }
 
         string? name = head switch
@@ -1788,8 +2061,7 @@ public sealed partial class Lowering
         };
 
         if (name is null
-            || _maAmbiguous.Contains(name)
-            || !_maNameIndex.TryGetValue(name, out var key)
+            || TryResolveFunctionKey(head, name, scope) is not { } key
             || !_maFuncs.TryGetValue(key, out var info))
         {
             return ReachPoisoned();
@@ -1804,16 +2076,17 @@ public sealed partial class Lowering
         // over "@i" argument-position markers; substitute each marker's argument's reach and sum.
         if (args.Count > info.Params.Count)
         {
-            return CallReachOverApplied(key, info, args, env);
+            return CallReachOverApplied(key, info, args, env, scope);
         }
 
-        return CallReachRegistered(key, info, args, env);
+        return CallReachRegistered(key, info, args, env, scope);
     }
 
     private (Dictionary<string, int> Counts, bool Poison) CallReachSelfRecursive(
-        (FuncKey Func, string RecursiveName, List<string> Outer, string Acc) sr,
+        (FuncKey Func, FuncKey Recursive, string RecursiveName, List<string> Outer, string Acc) sr,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
         {
@@ -1826,7 +2099,7 @@ public sealed partial class Lowering
             (Dictionary<string, int> Counts, bool Poison) paramReach;
             if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
             {
-                paramReach = ResultReach(args[0], env);
+                paramReach = ResultReach(args[0], env, scope);
             }
             else if (env.TryGetValue(paramName, out var outerReach))
             {
@@ -1846,7 +2119,8 @@ public sealed partial class Lowering
     private (Dictionary<string, int> Counts, bool Poison) CallReachConstructor(
         ConstructorSymbol ctor,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (args.Count != ctor.Arity)
         {
@@ -1863,7 +2137,7 @@ public sealed partial class Lowering
                 continue; // inline scalar — cannot alias a heap cell the fold overwrites
             }
 
-            acc = ReachSum(acc, ResultReach(args[i], env));
+            acc = ReachSum(acc, ResultReach(args[i], env, scope));
         }
 
         return acc;
@@ -1873,7 +2147,8 @@ public sealed partial class Lowering
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var over = OverApplicationReach(key, info, args);
         if (over is not { } ov || ov.Poison)
@@ -1890,7 +2165,7 @@ public sealed partial class Lowering
                 return ReachPoisoned();
             }
 
-            acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env), mult));
+            acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env, scope), mult));
         }
 
         return acc;
@@ -1900,13 +2175,14 @@ public sealed partial class Lowering
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(key, out var summary)
             || summary.Poison)
         {
-            RecordUncoveredCallArgumentsFreshness(args, env, covered: null);
+            RecordUncoveredCallArgumentsFreshness(args, env, scope, covered: null);
             return ReachPoisoned();
         }
 
@@ -1920,11 +2196,11 @@ public sealed partial class Lowering
                 return ReachPoisoned();
             }
 
-            result = ReachSum(result, ReachScale(ResultReach(args[idx], env), mult));
+            result = ReachSum(result, ReachScale(ResultReach(args[idx], env, scope), mult));
             covered?.Add(idx);
         }
 
-        RecordUncoveredCallArgumentsFreshness(args, env, covered);
+        RecordUncoveredCallArgumentsFreshness(args, env, scope, covered);
         return result;
     }
 
@@ -1946,6 +2222,7 @@ public sealed partial class Lowering
     private void RecordUncoveredCallArgumentsFreshness(
         List<Expr> args,
         Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope,
         HashSet<int>? covered)
     {
         if (_maExpressionFreshness is null)
@@ -1957,7 +2234,7 @@ public sealed partial class Lowering
         {
             if (covered is null || !covered.Contains(i))
             {
-                ResultReach(args[i], env);
+                ResultReach(args[i], env, scope);
             }
         }
     }
@@ -1973,7 +2250,10 @@ public sealed partial class Lowering
     /// <see cref="IsFullyFreshConstruction"/>); this is the non-constructor case that rule cannot see
     /// through.
     /// </summary>
-    private bool IsResultAliasMove(Expr arg, FuncKey? enclosing)
+    private bool IsResultAliasMove(
+        Expr arg,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (arg is not Expr.Call)
         {
@@ -1997,8 +2277,7 @@ public sealed partial class Lowering
         };
 
         if (name is null
-            || _maAmbiguous.Contains(name)
-            || !_maNameIndex.TryGetValue(name, out var key)
+            || TryResolveFunctionKey(head, name, scope) is not { } key
             || !_maFuncs.TryGetValue(key, out var info))
         {
             return false;
@@ -2010,7 +2289,7 @@ public sealed partial class Lowering
         // capturing a retained value or a global is declined (poison / non-move argument).
         if (args.Count > info.Params.Count)
         {
-            return IsResultAliasMoveOverApplied(key, info, args, enclosing);
+            return IsResultAliasMoveOverApplied(key, info, args, enclosing, scope);
         }
 
         if (args.Count != info.Params.Count
@@ -2023,7 +2302,7 @@ public sealed partial class Lowering
         foreach (var (paramName, _) in summary.Counts)
         {
             int idx = info.Params.IndexOf(paramName);
-            if (idx < 0 || idx >= args.Count || !ArgIsMove(args[idx], enclosing))
+            if (idx < 0 || idx >= args.Count || !ArgIsMove(args[idx], enclosing, scope))
             {
                 return false;
             }
@@ -2036,7 +2315,8 @@ public sealed partial class Lowering
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        FuncKey? enclosing)
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var over = OverApplicationReach(key, info, args);
         if (over is not { } ov || ov.Poison)
@@ -2047,7 +2327,7 @@ public sealed partial class Lowering
         foreach (var (marker, _) in ov.Counts)
         {
             int ai = ArgMarkerIndex(marker);
-            if (ai < 0 || ai >= args.Count || !ArgIsMove(args[ai], enclosing))
+            if (ai < 0 || ai >= args.Count || !ArgIsMove(args[ai], enclosing, scope))
             {
                 return false;
             }
@@ -2095,7 +2375,9 @@ public sealed partial class Lowering
         }
 
         _maOverAppDepth++;
-        var reach = OverApplyReachSym(info.Body, extra, 0, symEnv);
+        IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(key)
+            ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+        var reach = OverApplyReachSym(info.Body, extra, 0, symEnv, scope);
         _maOverAppDepth--;
         return StripSyntheticTokens(reach);
     }
@@ -2112,12 +2394,13 @@ public sealed partial class Lowering
         Expr body,
         List<string> extra,
         int idx,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (idx >= extra.Count)
         {
             // All surplus arguments consumed — the value is the terminal (ADT) result.
-            return ResultReach(body, env);
+            return ResultReach(body, env, scope);
         }
 
         switch (body)
@@ -2128,43 +2411,67 @@ public sealed partial class Lowering
                         env,
                         lam.ParamName,
                         (new Dictionary<string, int>(StringComparer.Ordinal) { [extra[idx]] = 1 }, false));
-                    return OverApplyReachSym(lam.Body, extra, idx + 1, env2);
+                    return OverApplyReachSym(
+                        lam.Body, extra, idx + 1, env2, RemoveFuncNames(scope, [lam.ParamName]));
                 }
 
             case Expr.If i:
                 return ReachMax(
-                    OverApplyReachSym(i.Then, extra, idx, env),
-                    OverApplyReachSym(i.Else, extra, idx, env));
+                    OverApplyReachSym(i.Then, extra, idx, env, scope),
+                    OverApplyReachSym(i.Else, extra, idx, env, scope));
 
             case Expr.Match m:
-                {
-                    var scrut = ResultReach(m.Value, env);
-                    (Dictionary<string, int> Counts, bool Poison)? acc = null;
-                    foreach (var c in m.Cases)
-                    {
-                        var env2 = BindPatternReach(c.Pattern, scrut, env);
-                        var arm = OverApplyReachSym(c.Body, extra, idx, env2);
-                        acc = acc is null ? arm : ReachMax(acc.Value, arm);
-                    }
-
-                    return acc ?? ReachPoisoned();
-                }
+                return OverApplyMatchReachSym(m, extra, idx, env, scope);
 
             case Expr.Let l:
                 return OverApplyReachSym(
-                    l.Body, extra, idx, ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env), TokenReach())));
+                    l.Body,
+                    extra,
+                    idx,
+                    ExtendEnv(env, l.Name, ReachSum(ResultReach(l.Value, env, scope), TokenReach())),
+                    ExtendFuncScope(scope, l, l.Name));
             case Expr.LetResult lr:
                 return OverApplyReachSym(
-                    lr.Body, extra, idx, ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env), TokenReach())));
+                    lr.Body,
+                    extra,
+                    idx,
+                    ExtendEnv(env, lr.Name, ReachSum(ResultReach(lr.Value, env, scope), TokenReach())),
+                    ExtendFuncScope(scope, lr, lr.Name));
             case Expr.LetRecursive lrec:
                 return OverApplyReachSym(
-                    lrec.Body, extra, idx, ExtendEnv(env, lrec.Name, ReachPoisoned()));
+                    lrec.Body,
+                    extra,
+                    idx,
+                    ExtendEnv(env, lrec.Name, ReachPoisoned()),
+                    ExtendFuncScope(scope, lrec, lrec.Name));
 
             default:
                 // A closure produced by anything else (a nested call result, an unmodeled node) — not
                 // provably confined; poison keeps the copy.
                 return ReachPoisoned();
         }
+    }
+
+    private (Dictionary<string, int> Counts, bool Poison) OverApplyMatchReachSym(
+        Expr.Match match,
+        List<string> extra,
+        int idx,
+        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        var scrut = ResultReach(match.Value, env, scope);
+        (Dictionary<string, int> Counts, bool Poison)? acc = null;
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            var env2 = BindPatternReach(matchCase.Pattern, scrut, env);
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            var arm = OverApplyReachSym(
+                matchCase.Body, extra, idx, env2, RemoveFuncNames(scope, binders));
+            acc = acc is null ? arm : ReachMax(acc.Value, arm);
+        }
+
+        return acc ?? ReachPoisoned();
     }
 
     // Parses an "@i" argument-position marker back to its index, or -1 when not a marker.
@@ -2236,6 +2543,9 @@ public sealed partial class Lowering
                     ? 0
                     : MaxPathOccurrences(name, lrec.Value) + MaxPathOccurrences(name, lrec.Body);
 
+            case RecursiveGroupExpr group:
+                return MaxPathOccurrencesInRecursiveGroup(name, group);
+
             case Expr.Lambda lam:
                 // A capture keeps the value live beyond a single evaluation and may alias it.
                 if (string.Equals(lam.ParamName, name, StringComparison.Ordinal))
@@ -2251,6 +2561,25 @@ public sealed partial class Lowering
             default:
                 return MaxPathOccurrencesOperators(name, e);
         }
+    }
+
+    private static int MaxPathOccurrencesInRecursiveGroup(string name, RecursiveGroupExpr group)
+    {
+        // Every group name is recursively in scope in every member value and the continuation.
+        // Otherwise all member definitions are evaluated before the body.
+        if (group.Bindings.Any(
+            binding => string.Equals(binding.Name, name, StringComparison.Ordinal)))
+        {
+            return 0;
+        }
+
+        int total = MaxPathOccurrences(name, group.Body);
+        foreach ((_, Expr value) in group.Bindings)
+        {
+            total += MaxPathOccurrences(name, value);
+        }
+
+        return total;
     }
 
     private static int MaxPathOccurrencesMatch(string name, Expr.Match m)
@@ -2389,69 +2718,125 @@ public sealed partial class Lowering
     /// Records saturated direct call sites and marks any function name that appears in a non-call-head
     /// position (bare value, partial/over-application) as escaped.
     /// </summary>
-    private void CollectCallsAndEscapes(Expr e, FuncKey? enclosing)
+    private void CollectCallsAndEscapes(
+        Expr e,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         switch (e)
         {
             case Expr.Call:
-                CollectCallsAndEscapesCall(e, enclosing);
+                CollectCallsAndEscapesCall(e, enclosing, scope);
                 return;
 
             case Expr.Var v:
-                if (_maNameIndex.ContainsKey(v.Name))
-                {
-                    _maEscaped.Add(v.Name);
-                }
-
+                CollectFunctionValueEscape(v, scope);
                 return;
 
             case Expr.QualifiedVar qv:
-                if (ResolveSpecializableCalleeName(qv) is { } qn && _maNameIndex.ContainsKey(qn))
+                if (ResolveSpecializableCalleeName(qv) is { } qualifiedName
+                    && _maNameIndex.TryGetValue(qualifiedName, out FuncKey qualifiedKey))
                 {
-                    _maEscaped.Add(qn);
+                    MarkFunctionEscaped(qualifiedKey);
                 }
 
                 return;
 
             case Expr.If i:
-                CollectCallsAndEscapes(i.Cond, enclosing);
-                CollectCallsAndEscapes(i.Then, enclosing);
-                CollectCallsAndEscapes(i.Else, enclosing);
+                CollectCallsAndEscapes(i.Cond, enclosing, scope);
+                CollectCallsAndEscapes(i.Then, enclosing, scope);
+                CollectCallsAndEscapes(i.Else, enclosing, scope);
                 return;
 
             case Expr.Match m:
-                CollectCallsAndEscapesMatch(m, enclosing);
+                CollectCallsAndEscapesMatch(m, enclosing, scope);
                 return;
 
-            case Expr.Let l when TryCollectPartialFoldBinding(l, enclosing):
+            case Expr.Let l when TryCollectPartialFoldBinding(l, enclosing, scope):
                 return;
 
             case Expr.Let l:
-                WalkBindingValue(l.Name, l.Value, enclosing);
-                CollectCallsAndEscapes(l.Body, enclosing);
+                WalkBindingValue(l, l.Name, l.Value, enclosing, scope);
+                CollectCallsAndEscapes(l.Body, enclosing, ExtendFuncScope(scope, l, l.Name));
                 return;
 
             case Expr.LetResult lr:
-                WalkBindingValue(lr.Name, lr.Value, enclosing);
-                CollectCallsAndEscapes(lr.Body, enclosing);
+                WalkBindingValue(lr, lr.Name, lr.Value, enclosing, scope);
+                CollectCallsAndEscapes(lr.Body, enclosing, ExtendFuncScope(scope, lr, lr.Name));
                 return;
 
             case Expr.LetRecursive lrec:
-                WalkBindingValue(lrec.Name, lrec.Value, enclosing);
-                CollectCallsAndEscapes(lrec.Body, enclosing);
+                CollectCallsAndEscapesRecursiveBinding(lrec, enclosing, scope);
+                return;
+
+            case RecursiveGroupExpr group:
+                CollectCallsAndEscapesRecursiveGroup(group, enclosing, scope);
                 return;
 
             case Expr.Lambda lam:
-                CollectCallsAndEscapes(lam.Body, enclosing);
+                CollectCallsAndEscapes(lam.Body, enclosing, RemoveFuncNames(scope, [lam.ParamName]));
                 return;
 
             default:
-                CollectCallsAndEscapesOperators(e, enclosing);
+                CollectCallsAndEscapesOperators(e, enclosing, scope);
                 return;
         }
     }
 
-    private void CollectCallsAndEscapesCall(Expr e, FuncKey? enclosing)
+    private void CollectFunctionValueEscape(
+        Expr.Var variable,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        if (scope.TryGetValue(variable.Name, out FuncKey key))
+        {
+            MarkFunctionEscaped(key);
+        }
+    }
+
+    private void CollectCallsAndEscapesRecursiveBinding(
+        Expr.LetRecursive binding,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        IReadOnlyDictionary<string, FuncKey> recursiveScope =
+            ExtendFuncScope(scope, binding, binding.Name);
+        WalkBindingValue(binding, binding.Name, binding.Value, enclosing, recursiveScope);
+        CollectCallsAndEscapes(binding.Body, enclosing, recursiveScope);
+    }
+
+    private void CollectCallsAndEscapesRecursiveGroup(
+        RecursiveGroupExpr group,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        var groupScope = new Dictionary<string, FuncKey>(scope, StringComparer.Ordinal);
+        for (int i = 0; i < group.Bindings.Count; i++)
+        {
+            (string name, _) = group.Bindings[i];
+            FuncKey key = GetRecursiveGroupMemberKey(group, i);
+            if (_maFuncs.ContainsKey(key))
+            {
+                groupScope[name] = key;
+            }
+            else
+            {
+                groupScope.Remove(name);
+            }
+        }
+
+        for (int i = 0; i < group.Bindings.Count; i++)
+        {
+            (string name, Expr value) = group.Bindings[i];
+            WalkBindingValue(GetRecursiveGroupMemberKey(group, i), name, value, groupScope);
+        }
+
+        CollectCallsAndEscapes(group.Body, enclosing, groupScope);
+    }
+
+    private void CollectCallsAndEscapesCall(
+        Expr e,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var args = new List<Expr>();
         var root = CollectCallArgs(e, args);
@@ -2461,9 +2846,8 @@ public sealed partial class Lowering
             Expr.QualifiedVar qv => ResolveSpecializableCalleeName(qv),
             _ => null,
         };
-
         if (calleeName is not null
-            && _maNameIndex.TryGetValue(calleeName, out var calleeKey)
+            && TryResolveFunctionKey(root, calleeName, scope) is { } calleeKey
             && _maFuncs.TryGetValue(calleeKey, out var callee)
             && args.Count == callee.Params.Count)
         {
@@ -2471,14 +2855,17 @@ public sealed partial class Lowering
             // the arguments only (the head is accounted for, not an escape).
             if (!_maCallSites.TryGetValue(calleeKey, out var list))
             {
-                list = new List<(FuncKey?, List<Expr>)>();
+                list = new List<MoveCallSite>();
                 _maCallSites[calleeKey] = list;
             }
 
-            list.Add((enclosing, args));
+            list.Add(new MoveCallSite(
+                enclosing,
+                args,
+                Enumerable.Repeat(scope, args.Count).ToList()));
             foreach (var a in args)
             {
-                CollectCallsAndEscapes(a, enclosing);
+                CollectCallsAndEscapes(a, enclosing, scope);
             }
 
             return;
@@ -2487,8 +2874,8 @@ public sealed partial class Lowering
         // Not a complete saturated call to a known function: fall through to the generic
         // walk, which will surface any known-function name as an escape.
         var call = (Expr.Call)e;
-        CollectCallsAndEscapes(call.Func, enclosing);
-        CollectCallsAndEscapes(call.Arg, enclosing);
+        CollectCallsAndEscapes(call.Func, enclosing, scope);
+        CollectCallsAndEscapes(call.Arg, enclosing, scope);
     }
 
     // `let g = f(partialArgs) in body` where f is a known function and g is used ONLY as saturated
@@ -2496,7 +2883,10 @@ public sealed partial class Lowering
     // (its accumulator can then be proven uniquely owned) instead of escaping as a partially-applied
     // value. Sound by construction, fail-closed: any use of g that is not a completing call leaves f to
     // escape via the normal walk. Returns true when the binding was resolved and handled here.
-    private bool TryCollectPartialFoldBinding(Expr.Let l, FuncKey? enclosing)
+    private bool TryCollectPartialFoldBinding(
+        Expr.Let l,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (_maAmbiguous.Contains(l.Name))
         {
@@ -2506,7 +2896,7 @@ public sealed partial class Lowering
         var partialArgs = new List<Expr>();
         var root = CollectCallArgs(l.Value, partialArgs);
         if (root is not Expr.Var f
-            || !_maNameIndex.TryGetValue(f.Name, out var fKey)
+            || !scope.TryGetValue(f.Name, out var fKey)
             || !_maFuncs.TryGetValue(fKey, out var callee)
             || partialArgs.Count == 0
             || partialArgs.Count >= callee.Params.Count)
@@ -2515,8 +2905,9 @@ public sealed partial class Lowering
         }
 
         int neededMore = callee.Params.Count - partialArgs.Count;
-        var completing = new List<List<Expr>>();
-        if (!AllUsesAreCompletingCalls(l.Body, l.Name, neededMore, completing))
+        var completing = new List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)>();
+        IReadOnlyDictionary<string, FuncKey> bodyScope = ExtendFuncScope(scope, l, l.Name);
+        if (!AllUsesAreCompletingCalls(l.Body, l.Name, neededMore, completing, bodyScope))
         {
             return false;
         }
@@ -2524,15 +2915,17 @@ public sealed partial class Lowering
         // Record f's now-visible saturated call sites (partial args ++ each completing call's args).
         if (!_maCallSites.TryGetValue(fKey, out var sites))
         {
-            sites = new List<(FuncKey?, List<Expr>)>();
+            sites = new List<MoveCallSite>();
             _maCallSites[fKey] = sites;
         }
 
-        foreach (var moreArgs in completing)
+        foreach (var completion in completing)
         {
             var combined = new List<Expr>(partialArgs);
-            combined.AddRange(moreArgs);
-            sites.Add((enclosing, combined));
+            combined.AddRange(completion.Args);
+            var argumentScopes = Enumerable.Repeat(scope, partialArgs.Count).ToList();
+            argumentScopes.AddRange(Enumerable.Repeat(completion.Scope, completion.Args.Count));
+            sites.Add(new MoveCallSite(enclosing, combined, argumentScopes));
         }
 
         // The partial args live in the binding value (not walked below); account for them. The body
@@ -2540,17 +2933,22 @@ public sealed partial class Lowering
         // so it never escapes anything.
         foreach (var a in partialArgs)
         {
-            CollectCallsAndEscapes(a, enclosing);
+            CollectCallsAndEscapes(a, enclosing, scope);
         }
 
-        CollectCallsAndEscapes(l.Body, enclosing);
+        CollectCallsAndEscapes(l.Body, enclosing, bodyScope);
         return true;
     }
 
     // Fail-closed: true only when every occurrence of g in e is the root of a saturated completing call
     // g(exactly neededMore args); each call's arg list is collected into completing. Any bare use, wrong
     // arity, closure capture, shadowing binder, or unhandled node yields false.
-    private bool AllUsesAreCompletingCalls(Expr e, string g, int neededMore, List<List<Expr>> completing)
+    private bool AllUsesAreCompletingCalls(
+        Expr e,
+        string g,
+        int neededMore,
+        List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)> completing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         switch (e)
         {
@@ -2562,42 +2960,62 @@ public sealed partial class Lowering
                 return !string.Equals(v.Name, g, StringComparison.Ordinal);
 
             case Expr.Call:
-                return CallUsesGOnlyAsCompleting(e, g, neededMore, completing);
+                return CallUsesGOnlyAsCompleting(e, g, neededMore, completing, scope);
 
             case Expr.If i:
-                return AllUsesAreCompletingCalls(i.Cond, g, neededMore, completing)
-                    && AllUsesAreCompletingCalls(i.Then, g, neededMore, completing)
-                    && AllUsesAreCompletingCalls(i.Else, g, neededMore, completing);
+                return AllUsesAreCompletingCalls(i.Cond, g, neededMore, completing, scope)
+                    && AllUsesAreCompletingCalls(i.Then, g, neededMore, completing, scope)
+                    && AllUsesAreCompletingCalls(i.Else, g, neededMore, completing, scope);
 
-            case Expr.Let l: return CompletingLetLike(l.Name, l.Value, l.Body, g, neededMore, completing);
-            case Expr.LetResult lr: return CompletingLetLike(lr.Name, lr.Value, lr.Body, g, neededMore, completing);
-            case Expr.LetRecursive lc: return CompletingLetLike(lc.Name, lc.Value, lc.Body, g, neededMore, completing);
+            case Expr.Let l:
+                return CompletingLetLike(l, l.Name, l.Value, l.Body, recursive: false, g, neededMore, completing, scope);
+            case Expr.LetResult lr:
+                return CompletingLetLike(lr, lr.Name, lr.Value, lr.Body, recursive: false, g, neededMore, completing, scope);
+            case Expr.LetRecursive lc:
+                return CompletingLetLike(lc, lc.Name, lc.Value, lc.Body, recursive: true, g, neededMore, completing, scope);
 
             case Expr.Lambda lam:
                 return string.Equals(lam.ParamName, g, StringComparison.Ordinal) || !MentionsVar(lam.Body, g);
 
             case Expr.Match m:
-                return CompletingMatch(m, g, neededMore, completing);
+                return CompletingMatch(m, g, neededMore, completing, scope);
 
-            case Expr.TupleLit t: return t.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing));
-            case Expr.ListLit ls: return ls.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing));
+            case Expr.TupleLit t:
+                return t.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing, scope));
+            case Expr.ListLit ls:
+                return ls.Elements.All(x => AllUsesAreCompletingCalls(x, g, neededMore, completing, scope));
 
             case Expr.Cons cons:
-                return AllUsesAreCompletingCalls(cons.Head, g, neededMore, completing)
-                    && AllUsesAreCompletingCalls(cons.Tail, g, neededMore, completing);
+                return AllUsesAreCompletingCalls(cons.Head, g, neededMore, completing, scope)
+                    && AllUsesAreCompletingCalls(cons.Tail, g, neededMore, completing, scope);
 
             case Expr.Await aw:
-                return AllUsesAreCompletingCalls(aw.Task, g, neededMore, completing);
+                return AllUsesAreCompletingCalls(aw.Task, g, neededMore, completing, scope);
 
             case Expr.BitwiseNot bn:
-                return AllUsesAreCompletingCalls(bn.Operand, g, neededMore, completing);
+                return AllUsesAreCompletingCalls(bn.Operand, g, neededMore, completing, scope);
 
             default:
-                return CompletingBinary(e, g, neededMore, completing);
+                return CompletingBinary(e, g, neededMore, completing, scope);
         }
     }
 
-    private bool CallUsesGOnlyAsCompleting(Expr call, string g, int neededMore, List<List<Expr>> completing)
+    private FuncKey? TryResolveFunctionKey(
+        Expr root,
+        string calleeName,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        IReadOnlyDictionary<string, FuncKey> source =
+            root is Expr.QualifiedVar ? _maNameIndex : scope;
+        return source.TryGetValue(calleeName, out FuncKey key) ? key : null;
+    }
+
+    private bool CallUsesGOnlyAsCompleting(
+        Expr call,
+        string g,
+        int neededMore,
+        List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)> completing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         var args = new List<Expr>();
         var root = CollectCallArgs(call, args);
@@ -2609,36 +3027,62 @@ public sealed partial class Lowering
                 return false;
             }
 
-            if (!args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing)))
+            if (!args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing, scope)))
             {
                 return false;
             }
 
-            completing.Add(args);
+            completing.Add((args, scope));
             return true;
         }
 
-        return AllUsesAreCompletingCalls(root, g, neededMore, completing)
-            && args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing));
+        return AllUsesAreCompletingCalls(root, g, neededMore, completing, scope)
+            && args.All(a => AllUsesAreCompletingCalls(a, g, neededMore, completing, scope));
     }
 
-    private bool CompletingLetLike(string boundName, Expr value, Expr body, string g, int neededMore, List<List<Expr>> completing)
-        => !string.Equals(boundName, g, StringComparison.Ordinal)
-            && AllUsesAreCompletingCalls(value, g, neededMore, completing)
-            && AllUsesAreCompletingCalls(body, g, neededMore, completing);
-
-    private bool CompletingMatch(Expr.Match m, string g, int neededMore, List<List<Expr>> completing)
+    private bool CompletingLetLike(
+        Expr binder,
+        string boundName,
+        Expr value,
+        Expr body,
+        bool recursive,
+        string g,
+        int neededMore,
+        List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)> completing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        if (!AllUsesAreCompletingCalls(m.Value, g, neededMore, completing))
+        if (string.Equals(boundName, g, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        IReadOnlyDictionary<string, FuncKey> bodyScope = ExtendFuncScope(scope, binder, boundName);
+        IReadOnlyDictionary<string, FuncKey> valueScope = recursive ? bodyScope : scope;
+        return AllUsesAreCompletingCalls(value, g, neededMore, completing, valueScope)
+            && AllUsesAreCompletingCalls(body, g, neededMore, completing, bodyScope);
+    }
+
+    private bool CompletingMatch(
+        Expr.Match m,
+        string g,
+        int neededMore,
+        List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)> completing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        if (!AllUsesAreCompletingCalls(m.Value, g, neededMore, completing, scope))
         {
             return false;
         }
 
         foreach (var c in m.Cases)
         {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(c.Pattern, binders);
+            IReadOnlyDictionary<string, FuncKey> armScope = RemoveFuncNames(scope, binders);
             if (PatternBinds(c.Pattern, g)
-                || !AllUsesAreCompletingCalls(c.Body, g, neededMore, completing)
-                || (c.Guard is not null && !AllUsesAreCompletingCalls(c.Guard, g, neededMore, completing)))
+                || !AllUsesAreCompletingCalls(c.Body, g, neededMore, completing, armScope)
+                || (c.Guard is not null
+                    && !AllUsesAreCompletingCalls(c.Guard, g, neededMore, completing, armScope)))
             {
                 return false;
             }
@@ -2647,7 +3091,12 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool CompletingBinary(Expr e, string g, int neededMore, List<List<Expr>> completing)
+    private bool CompletingBinary(
+        Expr e,
+        string g,
+        int neededMore,
+        List<(List<Expr> Args, IReadOnlyDictionary<string, FuncKey> Scope)> completing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         (Expr Left, Expr Right)? ops = e switch
         {
@@ -2677,70 +3126,82 @@ public sealed partial class Lowering
             return !MentionsVar(e, g); // unmodeled node: fail-closed
         }
 
-        return AllUsesAreCompletingCalls(b.Left, g, neededMore, completing)
-            && AllUsesAreCompletingCalls(b.Right, g, neededMore, completing);
+        return AllUsesAreCompletingCalls(b.Left, g, neededMore, completing, scope)
+            && AllUsesAreCompletingCalls(b.Right, g, neededMore, completing, scope);
     }
 
-    private void CollectCallsAndEscapesMatch(Expr.Match m, FuncKey? enclosing)
+    private void CollectCallsAndEscapesMatch(
+        Expr.Match m,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        CollectCallsAndEscapes(m.Value, enclosing);
+        CollectCallsAndEscapes(m.Value, enclosing, scope);
         foreach (var c in m.Cases)
         {
-            CollectCallsAndEscapes(c.Body, enclosing);
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(c.Pattern, binders);
+            IReadOnlyDictionary<string, FuncKey> armScope = RemoveFuncNames(scope, binders);
+            CollectCallsAndEscapes(c.Body, enclosing, armScope);
             if (c.Guard is not null)
             {
-                CollectCallsAndEscapes(c.Guard, enclosing);
+                CollectCallsAndEscapes(c.Guard, enclosing, armScope);
             }
         }
     }
 
-    private void CollectCallsAndEscapesOperators(Expr e, FuncKey? enclosing)
+    private void CollectCallsAndEscapesOperators(
+        Expr e,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         switch (e)
         {
-            case Expr.Add x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.Subtract x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.Multiply x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.Divide x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.Modulo x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.BitwiseAnd x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.BitwiseOr x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.BitwiseXor x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.ShiftLeft x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.ShiftRight x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.BitwiseNot x: CollectCallsAndEscapes(x.Operand, enclosing); return;
-            case Expr.GreaterThan x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.LessThan x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.GreaterOrEqual x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.LessOrEqual x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.Equal x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.NotEqual x: CollectBinary(x.Left, x.Right, enclosing); return;
+            case Expr.Add x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.Subtract x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.Multiply x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.Divide x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.Modulo x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.BitwiseAnd x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.BitwiseOr x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.BitwiseXor x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.ShiftLeft x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.ShiftRight x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.BitwiseNot x: CollectCallsAndEscapes(x.Operand, enclosing, scope); return;
+            case Expr.GreaterThan x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.LessThan x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.GreaterOrEqual x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.LessOrEqual x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.Equal x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.NotEqual x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
 
             default:
-                CollectCallsAndEscapesAggregates(e, enclosing);
+                CollectCallsAndEscapesAggregates(e, enclosing, scope);
                 return;
         }
     }
 
-    private void CollectCallsAndEscapesAggregates(Expr e, FuncKey? enclosing)
+    private void CollectCallsAndEscapesAggregates(
+        Expr e,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
         switch (e)
         {
-            case Expr.ResultPipe x: CollectBinary(x.Left, x.Right, enclosing); return;
-            case Expr.ResultMapErrorPipe x: CollectBinary(x.Left, x.Right, enclosing); return;
+            case Expr.ResultPipe x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.ResultMapErrorPipe x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
 
             case Expr.Cons cons:
-                CollectBinary(cons.Head, cons.Tail, enclosing);
+                CollectBinary(cons.Head, cons.Tail, enclosing, scope);
                 return;
 
             case Expr.Await aw:
-                CollectCallsAndEscapes(aw.Task, enclosing);
+                CollectCallsAndEscapes(aw.Task, enclosing, scope);
                 return;
 
             case Expr.TupleLit t:
                 foreach (var el in t.Elements)
                 {
-                    CollectCallsAndEscapes(el, enclosing);
+                    CollectCallsAndEscapes(el, enclosing, scope);
                 }
 
                 return;
@@ -2748,7 +3209,7 @@ public sealed partial class Lowering
             case Expr.ListLit lst:
                 foreach (var el in lst.Elements)
                 {
-                    CollectCallsAndEscapes(el, enclosing);
+                    CollectCallsAndEscapes(el, enclosing, scope);
                 }
 
                 return;
@@ -2756,16 +3217,16 @@ public sealed partial class Lowering
             case Expr.RecordLit rec:
                 foreach (var (_, fv) in rec.Fields)
                 {
-                    CollectCallsAndEscapes(fv, enclosing);
+                    CollectCallsAndEscapes(fv, enclosing, scope);
                 }
 
                 return;
 
             case Expr.RecordUpdate ru:
-                CollectCallsAndEscapes(ru.Target, enclosing);
+                CollectCallsAndEscapes(ru.Target, enclosing, scope);
                 foreach (var (_, uv) in ru.Updates)
                 {
-                    CollectCallsAndEscapes(uv, enclosing);
+                    CollectCallsAndEscapes(uv, enclosing, scope);
                 }
 
                 return;
@@ -2775,27 +3236,157 @@ public sealed partial class Lowering
         }
     }
 
-    private void CollectBinary(Expr left, Expr right, FuncKey? enclosing)
+    private void CollectBinary(
+        Expr left,
+        Expr right,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        CollectCallsAndEscapes(left, enclosing);
-        CollectCallsAndEscapes(right, enclosing);
+        CollectCallsAndEscapes(left, enclosing, scope);
+        CollectCallsAndEscapes(right, enclosing, scope);
     }
 
     /// <summary>
-    /// Walks a binding's value. When the value is a registered lambda function <paramref name="name"/>,
-    /// its innermost body is walked with the enclosing function switched to <paramref name="name"/>
-    /// (so calls inside it resolve their <c>Var</c> arguments against that function's parameters);
-    /// otherwise the value is walked under the current enclosing function.
+    /// Walks a binding's normalized value while attributing its calls to the registered function
+    /// identity. This keeps module-alias substitutions visible to the census without losing the
+    /// original <see cref="FuncKey"/> when normalization copied nested binder nodes.
     /// </summary>
-    private void WalkBindingValue(string name, Expr value, FuncKey? enclosing)
+    private void WalkBindingValue(
+        Expr binder,
+        string name,
+        Expr value,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
     {
-        if (!_maAmbiguous.Contains(name) && _maNameIndex.TryGetValue(name, out var key) && _maFuncs.TryGetValue(key, out var info))
+        WalkBindingValueCore(TryResolveBindingFunction(binder, value), value, enclosing, scope);
+    }
+
+    private void WalkBindingValue(
+        FuncKey functionKey,
+        string name,
+        Expr value,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        WalkBindingValueCore(
+            TryResolveBindingFunction(functionKey, value),
+            value,
+            functionKey,
+            scope);
+    }
+
+    private void WalkBindingValueCore(
+        (
+            FuncKey Key,
+            IReadOnlyList<string> Params,
+            Expr Body,
+            (string RecursiveName, IReadOnlyList<string> Outer, string Acc)? Nested)? function,
+        Expr value,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        if (function is { } resolved)
         {
-            CollectCallsAndEscapes(info.Body, key);
+            IReadOnlyDictionary<string, FuncKey> bodyScope;
+            if (resolved.Nested is { } nested)
+            {
+                bodyScope = RemoveFuncNames(scope, nested.Outer);
+                FuncKey recursiveKey = _maNestedRecursive[resolved.Key].Recursive;
+                bodyScope = SetFuncName(bodyScope, nested.RecursiveName, recursiveKey);
+                bodyScope = RemoveFuncNames(bodyScope, [nested.Acc]);
+                _maFunctionScopes[recursiveKey] = bodyScope;
+                _maProvenanceBodies[recursiveKey] = resolved.Body;
+            }
+            else
+            {
+                bodyScope = RemoveFuncNames(scope, resolved.Params);
+            }
+
+            _maFunctionScopes[resolved.Key] = bodyScope;
+            _maProvenanceBodies[resolved.Key] = resolved.Body;
+            CollectCallsAndEscapes(resolved.Body, resolved.Key, bodyScope);
         }
         else
         {
-            CollectCallsAndEscapes(StripOrSelf(value), enclosing);
+            CollectCallsAndEscapes(StripOrSelf(value), enclosing, scope);
         }
+    }
+
+    private (
+        FuncKey Key,
+        IReadOnlyList<string> Params,
+        Expr Body,
+        (string RecursiveName, IReadOnlyList<string> Outer, string Acc)? Nested)?
+        TryResolveBindingFunction(Expr binder, Expr value)
+    {
+        if (!TryResolveBindingFunctionKey(binder, out FuncKey key))
+        {
+            return null;
+        }
+
+        return TryResolveBindingFunction(key, value);
+    }
+
+    private (
+        FuncKey Key,
+        IReadOnlyList<string> Params,
+        Expr Body,
+        (string RecursiveName, IReadOnlyList<string> Outer, string Acc)? Nested)?
+        TryResolveBindingFunction(FuncKey key, Expr value)
+    {
+        if (!_maFuncs.ContainsKey(key) || StripOrSelf(value) is not Expr.Lambda lambda)
+        {
+            return null;
+        }
+
+        if (TryGetNestedRecursiveReturnShape(
+            lambda,
+            out var outer,
+            out string acc,
+            out _,
+            out string recursiveName,
+            out Expr innerBody))
+        {
+            return (key, new List<string>(outer) { acc }, innerBody, (recursiveName, outer, acc));
+        }
+
+        return (key, CollectLambdaParams(lambda), GetInnermostBody(lambda), null);
+    }
+
+    private bool TryResolveBindingFunctionKey(Expr binder, out FuncKey key)
+    {
+        key = GetCanonicalFuncKey(binder);
+        return _maFuncs.ContainsKey(key);
+    }
+
+    private void MarkFunctionEscaped(FuncKey key)
+    {
+        if (_maKeyName.TryGetValue(key, out string? name))
+        {
+            _maEscaped.Add(name);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, FuncKey> RemoveFuncNames(
+        IReadOnlyDictionary<string, FuncKey> scope,
+        IEnumerable<string> names)
+    {
+        var next = new Dictionary<string, FuncKey>(scope, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
+    }
+
+    private static IReadOnlyDictionary<string, FuncKey> SetFuncName(
+        IReadOnlyDictionary<string, FuncKey> scope,
+        string name,
+        FuncKey key)
+    {
+        return new Dictionary<string, FuncKey>(scope, StringComparer.Ordinal)
+        {
+            [name] = key,
+        };
     }
 }

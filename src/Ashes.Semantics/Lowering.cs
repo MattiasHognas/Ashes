@@ -470,13 +470,14 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
-    // Reverse lookup from a top-level function's own declaration-site label back to its registered
-    // source name (the same name FunctionOwnershipSummary/GetOwnershipSummary is keyed by). Populated
-    // wherever _topLevelFunctionRefs (or an empty-env-only equivalent, for a capturing top-level let) is
-    // written, so a label resolved via TryResolveKnownFunctionLabel's existing slot/env alias chase can
-    // be mapped back to the function identity FunctionOwnershipSummary/GetOwnershipSummary reasons
-    // about, without re-deriving that identity a second way.
+    // Compatibility reverse lookup from a declaration-site label to its source name. Exact ownership
+    // consumers use _functionKeyByLabel; this remains for older lowering paths whose labels do not yet
+    // retain a binder identity.
     private readonly Dictionary<string, string> _functionNameByLabel = new(StringComparer.Ordinal);
+    // Exact ownership-analysis identity for every declaration-site label where lowering still has the
+    // original binder node. This is the primary summary bridge; the name map above remains a
+    // compatibility fallback for labels produced by paths that do not yet retain a binder identity.
+    private readonly Dictionary<string, FuncKey> _functionKeyByLabel = new(StringComparer.Ordinal);
     // Whether a lambda's OWN compiled body (keyed by its own label) was proven, by inspecting the actual
     // emitted instructions (IsRuntimeManagedResultTemp), to produce a RuntimeManaged result — populated
     // once per LowerLambdaCore invocation, for EVERY lambda (named or anonymous), not just registered
@@ -2911,6 +2912,7 @@ public sealed partial class Lowering
             _topLevelFunctionRefs[let.Name] = (_lastLoweredLambdaLabel, scheme);
             _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
             _functionNameByLabel[_lastLoweredLambdaLabel] = let.Name;
+            RegisterOwnershipFunctionLabel(_lastLoweredLambdaLabel, let);
         }
         else if (_lambdaDepth == 0 && _depth0LambdaCount == depth0Before + 1)
         {
@@ -2919,6 +2921,7 @@ public sealed partial class Lowering
             // Preserve that provenance so a later closure capture can retain its result-ownership fact.
             _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
             _functionNameByLabel[_lastLoweredLambdaLabel] = let.Name;
+            RegisterOwnershipFunctionLabel(_lastLoweredLambdaLabel, let);
         }
         else if (TryResolveKnownFunctionLabel(let.Value, out string aliasedFunctionLabel))
         {
@@ -5028,9 +5031,11 @@ public sealed partial class Lowering
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
+                OwnershipFunction = GetRegisteredFunctionKey(letRecursive),
             };
 
             ShadowCompareTcoParamFacts(
+                _tcoCtx.OwnershipFunction,
                 letRecursive.Name,
                 tcoParamNames,
                 loopInvariantParams,
@@ -5132,7 +5137,9 @@ public sealed partial class Lowering
             var helperScheme = FreshenScheme(Generalize(Prune(recursiveType)));
             _scopes.Push(selfScope);
             _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
+            _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
             _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
+            RegisterOwnershipFunctionLabel(_lastLoweredLambdaLabel, letRecursive);
         }
         else if (_lambdaDepth == 0 && letRecursive.Value is Expr.Lambda)
         {
@@ -5147,6 +5154,7 @@ public sealed partial class Lowering
             // calling any sibling top-level function is the ordinary shape, not the exception.
             _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
             _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
+            RegisterOwnershipFunctionLabel(_lastLoweredLambdaLabel, letRecursive);
         }
     }
 
@@ -6395,7 +6403,7 @@ public sealed partial class Lowering
                 // against the already-unique accumulator with no copy — the actual win.
                 directReuseSlots.Add(accLocal.Slot);
                 bool elideDirect = tco.SelfName.Length > 0
-                    && ReuseAccumulatorIsUnique(tco.SelfName, accName);
+                    && ReuseAccumulatorIsUnique(tco.OwnershipFunction, tco.SelfName, accName);
                 if (!elideDirect)
                 {
                     reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
@@ -6443,7 +6451,7 @@ public sealed partial class Lowering
                 // re-entry (the nested-reuse leak). Skip it only when provably safe; the
                 // conservative default keeps the copy.
                 bool elide = tco.SelfName.Length > 0
-                    && ReuseAccumulatorIsUnique(tco.SelfName, accName);
+                    && ReuseAccumulatorIsUnique(tco.OwnershipFunction, tco.SelfName, accName);
                 if (!elide)
                 {
                     reuseDefensiveCopy.Add((accL.Slot, accL.T));
@@ -7394,8 +7402,8 @@ public sealed partial class Lowering
         if ((_reuseTokens.Count > 0
                 || _inSpecialization
                 || _loweringTcoBackEdgeArguments
-                    && ResolveSpecializableCalleeName(rootExpr) is { } freshInlineName
-                    && GetOwnershipSummary(freshInlineName) is { ResultFresh: true })
+                    && ResolveSpecializableCalleeName(rootExpr) is not null
+                    && GetOwnershipSummaryForCallRoot(rootExpr) is { ResultFresh: true })
             && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
             && !_inliningInProgress.Contains(inlineName)
@@ -8438,10 +8446,10 @@ public sealed partial class Lowering
     /// <paramref name="argumentCount"/> arguments, with concrete post-unification result type
     /// <paramref name="callResultType"/>) is statically KNOWN to produce an RC-eligible result, via the
     /// ownership analysis (<see cref="FunctionOwnershipSummary.ResultProvenance"/>).
-    /// <paramref name="rootExpr"/> resolves to a
-    /// label exactly as before (<see cref="TryResolveKnownFunctionLabel(Expr, out string)"/>'s existing
-    /// slot/env/top-level alias chase, unchanged) — the label is then mapped back to the registered
-    /// function name via <see cref="_functionNameByLabel"/>.
+    /// <paramref name="rootExpr"/> resolves to a label through
+    /// <see cref="TryResolveKnownFunctionLabel(Expr, out string)"/>'s lexical slot/env/top-level alias
+    /// chase. The label is mapped to its exact <see cref="FuncKey"/> where available, with the registered
+    /// source name retained only as a compatibility fallback.
     ///
     /// CRITICAL SOUNDNESS NOTE — this method only ever returns <c>true</c> (resolved), never
     /// <c>true</c> with <paramref name="runtimeManaged"/> <c>false</c>. This is deliberate and is NOT
@@ -8471,9 +8479,8 @@ public sealed partial class Lowering
     /// <see cref="IsConcretelyRuntimeManageableResultType"/> against the call's concrete type), is ever
     /// trusted through this static fast path.
     ///
-    /// A partial application (fewer arguments than the function declares), an unregistered function
-    /// (e.g. a mutual-recursion group member, or a name colliding with another top-level binding and
-    /// marked ambiguous), a call resolving to an intermediate curried label with no registered name, a
+    /// A partial application (fewer arguments than the function declares), an unregistered function,
+    /// a call resolving to an intermediate curried label with no registered ownership identity, a
     /// result type the drop machinery cannot walk, or (per the above) a negative RcEligible answer all
     /// conservatively return false (unresolved) — the same "fall back to the dynamic ownership check"
     /// behavior this predicate has always had on failure, so none of those shapes regress past what an
@@ -8504,8 +8511,7 @@ public sealed partial class Lowering
             || _programHasDynamicCapabilityDispatch
             || argumentCount == 0
             || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
-            || !_functionNameByLabel.TryGetValue(resultLabel, out string? function)
-            || GetOwnershipSummary(function) is not { } summary
+            || GetOwnershipSummaryForLabel(resultLabel) is not { } summary
             || argumentCount != summary.Parameters.Count
             || !summary.ResultProvenance.RcEligible
             || !IsConcretelyRuntimeManageableResultType(callResultType))
@@ -8532,13 +8538,13 @@ public sealed partial class Lowering
     {
         label = "";
 
-        if (_topLevelFunctionRefs.TryGetValue(variableName, out var topLevelFunction))
+        Binding? binding = Lookup(variableName);
+        if (binding is Binding.Self self)
         {
-            label = topLevelFunction.Label;
+            label = self.FuncLabel;
             return true;
         }
 
-        Binding? binding = Lookup(variableName);
         int? slot = binding switch
         {
             Binding.Local local => local.Slot,
@@ -8560,6 +8566,20 @@ public sealed partial class Lowering
         if (envIndex is not null && _knownFunctionLabelsByEnvIndex.TryGetValue(envIndex.Value, out string? envLabel))
         {
             label = envLabel;
+            return true;
+        }
+
+        // Any lexical binding shadows the global name, even when it does not itself carry a known
+        // function label. Falling through here would attach the outer function's ownership summary to
+        // a local value or closure with the same source name.
+        if (binding is not null)
+        {
+            return false;
+        }
+
+        if (_topLevelFunctionRefs.TryGetValue(variableName, out var topLevelFunction))
+        {
+            label = topLevelFunction.Label;
             return true;
         }
 
@@ -10002,14 +10022,17 @@ public sealed partial class Lowering
         }
     }
 
-    private static Expr SubstituteVars(Expr e, Dictionary<string, string> renames)
+    private static Expr SubstituteVars(
+        Expr e,
+        Dictionary<string, string> renames,
+        Action<Expr, Expr>? recordRebuiltBinder = null)
     {
         if (renames.Count == 0)
         {
             return e;
         }
 
-        Expr S(Expr x) => SubstituteVars(x, renames);
+        Expr S(Expr x) => SubstituteVars(x, renames, recordRebuiltBinder);
 
         switch (e)
         {
@@ -10044,15 +10067,18 @@ public sealed partial class Lowering
             case Expr.Await a: return new Expr.Await(S(a.Task));
             case Expr.Perform p: return new Expr.Perform(S(p.Operation));
             case Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Match:
-                return SubstituteVarsBinders(e, renames);
+                return SubstituteVarsBinders(e, renames, recordRebuiltBinder);
             default:
                 throw new NotSupportedException($"SubstituteVars: unhandled {e.GetType().Name}");
         }
     }
 
-    private static Expr SubstituteVarsBinders(Expr e, Dictionary<string, string> renames)
+    private static Expr SubstituteVarsBinders(
+        Expr e,
+        Dictionary<string, string> renames,
+        Action<Expr, Expr>? recordRebuiltBinder)
     {
-        Expr S(Expr x) => SubstituteVars(x, renames);
+        Expr S(Expr x) => SubstituteVars(x, renames, recordRebuiltBinder);
 
         // A binder shadows a renamed name within its scope: drop it from the rename set for the subtree.
         T WithShadowed<T>(IEnumerable<string> bound, Func<Dictionary<string, string>, T> build)
@@ -10061,26 +10087,78 @@ public sealed partial class Lowering
             return build(sub);
         }
 
+        Expr RecordBinder(Expr original, Expr rebuilt)
+        {
+            recordRebuiltBinder?.Invoke(original, rebuilt);
+            return rebuilt;
+        }
+
         switch (e)
         {
             case Expr.Lambda lam:
-                return WithShadowed([lam.ParamName], sub => new Expr.Lambda(lam.ParamName, SubstituteVars(lam.Body, sub)));
+                return WithShadowed(
+                    [lam.ParamName],
+                    sub => new Expr.Lambda(
+                        lam.ParamName,
+                        SubstituteVars(lam.Body, sub, recordRebuiltBinder)));
             case Expr.Let l:
-                return new Expr.Let(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
+                return RecordBinder(
+                    l,
+                    new Expr.Let(
+                        l.Name,
+                        S(l.Value),
+                        WithShadowed(
+                            [l.Name],
+                            sub => SubstituteVars(l.Body, sub, recordRebuiltBinder))));
             case Expr.LetResult l:
-                return new Expr.LetResult(l.Name, S(l.Value), WithShadowed([l.Name], sub => SubstituteVars(l.Body, sub)));
+                return RecordBinder(
+                    l,
+                    new Expr.LetResult(
+                        l.Name,
+                        S(l.Value),
+                        WithShadowed(
+                            [l.Name],
+                            sub => SubstituteVars(l.Body, sub, recordRebuiltBinder))));
             case Expr.LetRecursive l:
-                return WithShadowed([l.Name], sub => new Expr.LetRecursive(l.Name, SubstituteVars(l.Value, sub), SubstituteVars(l.Body, sub)));
+                return WithShadowed(
+                    [l.Name],
+                    sub => RecordBinder(
+                        l,
+                        new Expr.LetRecursive(
+                            l.Name,
+                            SubstituteVars(l.Value, sub, recordRebuiltBinder),
+                            SubstituteVars(l.Body, sub, recordRebuiltBinder))));
             case Expr.Match m:
-                return new Expr.Match(
-                    S(m.Value),
-                    m.Cases.Select(mc => WithShadowed(
-                        PatternBindings(mc.Pattern),
-                        sub => new MatchCase(mc.Pattern, SubstituteVars(mc.Body, sub), mc.Guard is null ? null : SubstituteVars(mc.Guard, sub)))).ToList(),
-                    m.Pos);
+                return SubstituteVarsMatch(m, renames, recordRebuiltBinder);
             default:
                 throw new NotSupportedException($"SubstituteVars: unhandled {e.GetType().Name}");
         }
+    }
+
+    private static Expr SubstituteVarsMatch(
+        Expr.Match match,
+        Dictionary<string, string> renames,
+        Action<Expr, Expr>? recordRebuiltBinder)
+    {
+        var cases = new List<MatchCase>(match.Cases.Count);
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            IEnumerable<string> bound = PatternBindings(matchCase.Pattern);
+            var armRenames = renames
+                .Where(kv => !bound.Contains(kv.Key, StringComparer.Ordinal))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            cases.Add(new MatchCase(
+                matchCase.Pattern,
+                SubstituteVars(matchCase.Body, armRenames, recordRebuiltBinder),
+                matchCase.Guard is null
+                    ? null
+                    : SubstituteVars(matchCase.Guard, armRenames, recordRebuiltBinder)));
+        }
+
+        return new Expr.Match(
+            SubstituteVars(match.Value, renames, recordRebuiltBinder),
+            cases,
+            match.Pos);
     }
 
     private bool TryLowerConstructorExpression(Expr expr, bool stackAllocate, out (int Temp, TypeRef Type) lowered)

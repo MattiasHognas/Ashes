@@ -50,6 +50,104 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
+    public void Function_parameter_shadow_does_not_inherit_global_fresh_result_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            let apply makeBodies = moveBodies(1.0)(makeBodies(3))
+
+            apply(given count -> [])
+            """);
+
+        program.Functions.ShouldNotContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Mutual_recursion_wrapper_keeps_source_ownership_for_fresh_result_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeA count =
+                if count == 0
+                then []
+                else makeB(count - 1)
+            and makeB count =
+                if count == 0
+                then []
+                else makeA(count - 1)
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            moveBodies(1.0)(makeA(3))
+            """);
+
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("__recgroup_dispatch", StringComparison.Ordinal));
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Recursive_group_member_label_keeps_source_ownership_for_fresh_result_reuse()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Float
+                | velocity: Float
+
+            let recursive makeBodies count =
+                if count == 0
+                then []
+                else Body(x = 0.0, velocity = 2.0) :: makeBodies(count - 1)
+            and identity value = value
+
+            let recursive moveBodies dt bodies =
+                match bodies with
+                    | [] -> []
+                    | body :: rest ->
+                        match body with
+                            | Body(x, velocity) ->
+                                Body(x = x + dt * velocity, velocity = velocity)
+                                    :: moveBodies(dt)(rest)
+
+            moveBodies(1.0)(makeBodies(3))
+            """);
+
+        program.Functions.ShouldNotContain(function =>
+            function.Label.StartsWith("__recgroup_dispatch", StringComparison.Ordinal));
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Fresh_helper_is_inlined_into_tco_back_edge_before_list_reuse()
     {
         IrProgram program = LowerProgram("""

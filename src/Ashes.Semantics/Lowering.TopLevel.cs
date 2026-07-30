@@ -562,8 +562,8 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only
-    /// ever appears at the top level (never inside a lambda/async body), so the free-variable and
-    /// other expression walkers never encounter it; only <see cref="LowerExpr"/> dispatches it.
+    /// ever appears at the top level (never inside a lambda/async body). Lowering and whole-program
+    /// ownership registration/call-census walkers handle it explicitly.
     /// </summary>
     private sealed record RecursiveGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body) : Expr;
 
@@ -601,6 +601,11 @@ public sealed partial class Lowering
             labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
             members[i] = (bindings[i].Name, labels[i], recordTypes[i], GetSpan(bindings[i].Value));
             slots[i] = NewLocal();
+            _knownFunctionLabelsBySlot[slots[i]] = labels[i];
+            _functionNameByLabel[labels[i]] = bindings[i].Name;
+            RegisterOwnershipFunctionLabel(
+                labels[i],
+                GetRecursiveGroupMemberKey(group, i));
         }
 
         var groupContext = new RecursiveGroupContext
@@ -616,7 +621,7 @@ public sealed partial class Lowering
         // dispatch function and rebind each member to a thin wrapper so the existing single-function
         // TCO collapses the whole group into one loop instead of growing the stack through closure
         // calls. Ineligible groups keep the closures lowered above.
-        var tcoSlots = TryLowerMutualRecursionTco(bindings, recordTypes, groupNames);
+        var tcoSlots = TryLowerMutualRecursionTco(group, bindings, recordTypes, groupNames);
 
         // The members stay in scope for the continuation, bound to the slots holding their closures
         // (or their TCO wrappers) — monomorphic, matching the single let rec form.
@@ -742,6 +747,7 @@ public sealed partial class Lowering
     /// </para>
     /// </summary>
     private int[]? TryLowerMutualRecursionTco(
+        RecursiveGroupExpr group,
         IReadOnlyList<(string Name, Expr Value)> bindings,
         TypeRef[] recordTypes,
         HashSet<string> groupNames)
@@ -781,7 +787,8 @@ public sealed partial class Lowering
             return null;
         }
 
-        return MutualRecursionTcoLowerDispatchAndWrappers(bindings, recordTypes, lambdas, groupNames, tagOf, arity);
+        return MutualRecursionTcoLowerDispatchAndWrappers(
+            group, bindings, recordTypes, lambdas, groupNames, tagOf, arity);
     }
 
     // All members must be lambdas of the same (at least unary) arity.
@@ -847,6 +854,7 @@ public sealed partial class Lowering
     }
 
     private int[] MutualRecursionTcoLowerDispatchAndWrappers(
+        RecursiveGroupExpr group,
         IReadOnlyList<(string Name, Expr Value)> bindings,
         TypeRef[] recordTypes,
         Expr.Lambda[] lambdas,
@@ -886,10 +894,16 @@ public sealed partial class Lowering
         {
             var wrapperLambda = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
             var (wrapperTemp, wrapperType) = LowerExpr(wrapperLambda);
+            string wrapperLabel = _lastLoweredLambdaLabel;
             Unify(recordTypes[i], wrapperType);
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, wrapperTemp));
             RecordLocalDebugInfo(slot, bindings[i].Name, recordTypes[i]);
+            _knownFunctionLabelsBySlot[slot] = wrapperLabel;
+            _functionNameByLabel[wrapperLabel] = bindings[i].Name;
+            RegisterOwnershipFunctionLabel(
+                wrapperLabel,
+                GetRecursiveGroupMemberKey(group, i));
             wrapperSlots[i] = slot;
         }
 

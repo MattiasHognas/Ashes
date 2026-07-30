@@ -212,6 +212,416 @@ public sealed class UniquenessSummaryTests
     }
 
     [Test]
+    public void Function_parameter_shadow_does_not_pollute_outer_call_site_census()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let target value = value
+            let invoke target value = target(value)
+            in target(Full(Empty))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldContain("value");
+    }
+
+    [Test]
+    public void Pattern_binding_shadow_does_not_escape_outer_function()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            type Carrier =
+                | Vacant
+                | Carry(Box)
+            let target value = value
+            let inspect wrapped =
+                match wrapped with
+                    | Vacant -> Empty
+                    | Carry(target) -> target
+            in target(Full(Empty))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldContain("value");
+    }
+
+    [Test]
+    public void Recursive_binding_is_visible_in_its_value_for_escape_tracking()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let apply f value = f(value)
+            let recursive target value = apply(target)(value)
+            in target(Full(Empty))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldNotContain("value");
+    }
+
+    [Test]
+    public void Partial_application_alias_preserves_visible_callee_census()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive fill n acc =
+                if n <= 0
+                then acc
+                else fill(n - 1)(Full(acc))
+            let finish = fill(2)
+            in finish(Empty)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("fill");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldContain("acc");
+    }
+
+    [Test]
+    public void Nested_recursive_return_parameters_shadow_outer_functions_in_census()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let outerFn value = value
+            let accFn value = value
+            let set outerFn =
+                (let recursive go accFn =
+                    match accFn with
+                        | Empty -> outerFn
+                        | Full(rest) -> go(rest)
+                in go)
+            let observed = set(Empty)(Full(Empty))
+            in (outerFn(Full(Empty)), accFn(Full(Empty)), observed)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? outer = lowering.GetOwnershipSummary("outerFn");
+        FunctionOwnershipSummary? accumulator = lowering.GetOwnershipSummary("accFn");
+
+        outer.ShouldNotBeNull();
+        accumulator.ShouldNotBeNull();
+        outer.UniqueParameters.ShouldContain("value");
+        accumulator.UniqueParameters.ShouldContain("value");
+    }
+
+    [Test]
+    public void Alias_stripped_function_body_preserves_nested_binder_identity()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let target value = value
+            let wrapper =
+                let targetAlias = target
+                in given seed ->
+                    let recursive loop current = targetAlias(current)
+                    in loop(seed)
+            in wrapper(Full(Empty))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? target = lowering.GetOwnershipSummary("target");
+        FunctionOwnershipSummary? loop = lowering.GetOwnershipSummary("loop");
+
+        target.ShouldNotBeNull();
+        loop.ShouldNotBeNull();
+        target.UniqueParameters.ShouldContain("value");
+        loop.UniqueParameters.ShouldContain("current");
+    }
+
+    [Test]
+    public void Function_parameter_shadow_keeps_result_reach_conservative()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let fresh value = Full(Empty)
+            let invoke fresh value = fresh(value)
+            in invoke(given item -> item)(Empty)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("invoke");
+
+        summary.ShouldNotBeNull();
+        summary.ResultPoisoned.ShouldBeTrue();
+        summary.ResultFresh.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Pattern_function_shadow_keeps_result_reach_conservative()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            type Holder(A) =
+                | Hold(A)
+            let fresh value = Full(Empty)
+            let invoke holder =
+                match holder with
+                    | Hold(fresh) -> fresh(Empty)
+            in invoke(Hold(given item -> item))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("invoke");
+
+        summary.ShouldNotBeNull();
+        summary.ResultPoisoned.ShouldBeTrue();
+        summary.ResultFresh.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Shadowed_result_builder_does_not_make_call_argument_a_move()
+    {
+        const string source =
+            """
+            let make ignored = 42
+            let target value = value
+            let invoke make seed = target(make(seed))
+            in invoke(make)(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldNotContain("value");
+    }
+
+    [Test]
+    public void Sequential_local_result_builder_can_prove_call_argument_move()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let target value = value
+            let invoke seed =
+                let make item = Full(item)
+                in target(make(seed))
+            in invoke(Empty)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldContain("value");
+    }
+
+    [Test]
+    public void Partial_application_uses_completion_site_scope_for_move_arguments()
+    {
+        const string source =
+            """
+            let target first second = second
+            let partial = target(0)
+            let make ignored = 42
+            in partial(make(0))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("target");
+
+        summary.ShouldNotBeNull();
+        summary.UniqueParameters.ShouldContain("second");
+    }
+
+    [Test]
+    public void Colliding_nested_recursive_names_keep_exact_outer_result_reach()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let first replacement =
+                (let recursive go current =
+                    match current with
+                        | Empty -> replacement
+                        | Full(rest) -> go(rest)
+                in go)
+            let second replacement =
+                (let recursive go current =
+                    match current with
+                        | Empty -> replacement
+                        | Full(rest) -> go(rest)
+                in go)
+            in (first(Empty)(Full(Empty)), second(Empty)(Full(Empty)))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        first.ShouldNotBeNull();
+        second.ShouldNotBeNull();
+        first.ResultPoisoned.ShouldBeFalse();
+        second.ResultPoisoned.ShouldBeFalse();
+        first.ResultReaches("replacement").ShouldBeTrue();
+        second.ResultReaches("replacement").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Same_named_local_helpers_do_not_make_their_callers_conservative()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let first seed =
+                let go value = value
+                in go(seed)
+            let second seed =
+                let go value = value
+                in go(seed)
+            in (first(Empty), second(Empty))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? first = lowering.GetOwnershipSummary("first");
+        FunctionOwnershipSummary? second = lowering.GetOwnershipSummary("second");
+
+        lowering.GetOwnershipSummaries("go").Count.ShouldBe(2);
+        first.ShouldNotBeNull();
+        first.ResultPoisoned.ShouldBeFalse();
+        first.ResultReaches("seed").ShouldBeTrue();
+        second.ShouldNotBeNull();
+        second.ResultPoisoned.ShouldBeFalse();
+        second.ResultReaches("seed").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_recursive_helper_gets_its_own_self_scope()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let maker ignored =
+                (let recursive uniqueGo current =
+                    if true
+                    then current
+                    else uniqueGo(current)
+                in uniqueGo)
+            in maker(0)(Full(Empty))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("uniqueGo");
+
+        summary.ShouldNotBeNull();
+        summary.ResultPoisoned.ShouldBeFalse();
+        summary.ResultReaches("current").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Pattern_shadowed_self_name_does_not_create_tco_parameter_facts()
+    {
+        const string source =
+            """
+            type Holder(A) =
+                | Hold(A)
+            let recursive loop state =
+                match state with
+                    | Hold(loop) -> loop(state)
+            in loop(Hold(given value -> value))
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Plain_local_function_calling_outer_same_named_function_is_not_self_recursive()
+    {
+        const string source =
+            """
+            let go outerValue = outerValue
+            let caller value =
+                let go innerValue = go(innerValue)
+                in go(value)
+            in caller(42)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary inner = lowering.GetOwnershipSummaries("go")
+            .Single(summary => summary.Parameters.Contains("innerValue", StringComparer.Ordinal));
+
+        inner.TcoParamFacts.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Let_shadowed_consumed_tail_is_not_classified_as_the_original_tail()
+    {
+        const string source =
+            """
+            let recursive loop values replacement =
+                match values with
+                    | [] -> replacement
+                    | _ :: rest ->
+                        let rest = replacement
+                        in loop(rest)(replacement)
+            in loop([1])([])
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts["values"].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+    }
+
+    [Test]
+    public void Recursive_group_sibling_call_is_included_in_uniqueness_census()
+    {
+        const string source =
+            """
+            type Box =
+                | Empty
+                | Full(Box)
+            let recursive caller ignored = target(Full(Empty))
+            and target value = value
+            caller(0)
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary? caller = lowering.GetOwnershipSummary("caller");
+        FunctionOwnershipSummary? target = lowering.GetOwnershipSummary("target");
+
+        caller.ShouldNotBeNull();
+        target.ShouldNotBeNull();
+        target.UniqueParameters.ShouldContain("value");
+    }
+
+    [Test]
     public void Nested_recursive_return_shape_carries_outer_and_accumulator_facts()
     {
         const string source =

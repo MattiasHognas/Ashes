@@ -46,7 +46,7 @@ public sealed partial class Lowering
     /// </summary>
     private bool CalleeParamBorrowsOnly(Expr rootExpr, int argIndex)
     {
-        if (rootExpr is not Expr.Var v || GetOwnershipSummary(v.Name) is not { } summary)
+        if (rootExpr is not Expr.Var || GetOwnershipSummaryForCallRoot(rootExpr) is not { } summary)
         {
             return false;
         }
