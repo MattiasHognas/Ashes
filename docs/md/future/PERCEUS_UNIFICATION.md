@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `abb613a` on 2026-07-30, together with the duplicate-parameter positional
-slot cutover in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `89959c1` on 2026-07-31, together with the canonical borrow-inspection
+use-mode cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -141,18 +141,20 @@ The following is already implemented and is not part of the backlog:
   superseded `CollectLoopInvariantParams`, `CollectFreshRebuiltListParams`,
   `CollectFreshClosureParams`, `CollectAffineConsListParams`, and `CollectConsumedListTailParams`
   walks have been deleted, together with the now-unused shared collector and TCO structural shadow
-  comparator. The narrower
-  `BorrowableConsumedList` refinement remains separate but now receives and returns parameter
-  ordinals instead of rejoining the canonical fact through source names. Its permitted tail
-  self-transfer requires both the recursive binding's source name and the same lexical `FuncKey` as
-  the canonical fact, including a same-named immutable rebinding of the exact recursive function
-  while excluding same-named aliases of other functions and differently named aliases; match guards
-  participate in the escape proof. TCO now records the curried parameter identity by ordinal and
-  assigns every ordinal a distinct back-edge slot. The last, lexically visible same-named binding
-  retains its real local slot; earlier shadowed occurrences retain non-participating positional slots,
-  so a positive fact neither fails closed merely because a name is duplicated nor attaches to the
-  wrong binding. Parameter labels and deferred runtime-argument decisions use ordinal/slot identity
-  instead of a first-name lookup;
+  comparator. The orthogonal `TcoParamUseMode.BorrowInspectOnly` fact now records whether a
+  consumed-tail parameter and every head/tail reference derived from it are used only for structural
+  inspection or transferred to the same parameter of an exact self-call. Its lexical taint
+  environment replaces bindings at let/pattern boundaries, so disjoint same-named binders cannot
+  inherit ownership. The self-transfer exception requires both the recursive binding's source name
+  and the same lexical `FuncKey`, including a same-named immutable rebinding of the exact recursive
+  function while excluding same-named aliases of other functions and differently named aliases;
+  match guards participate in the escape proof. Lowering consumes this use mode by parameter
+  ordinal, and the superseded `CollectBorrowableConsumedListParams` walk has been deleted. TCO now
+  records the curried parameter identity by ordinal and assigns every ordinal a distinct back-edge
+  slot. The last, lexically visible same-named binding retains its real local slot; earlier shadowed
+  occurrences retain non-participating positional slots, so a positive fact neither fails closed
+  merely because a name is duplicated nor attaches to the wrong binding. Parameter labels and
+  deferred runtime-argument decisions use ordinal/slot identity instead of a first-name lookup;
 - immutable `TcoParamStaticFacts` are separate from mutable placement orchestration.
   `TcoParamPlacementDecision` records the parameter ordinal/slot, resolution point, arena or
   runtime-RC representation, stable eligibility/restriction reason, ownership-shape and resolved
@@ -233,19 +235,16 @@ implementation tasks remain; Milestone 2.5 is next.
 
 #### 2.5 Consolidate the remaining reuse refinements
 
-The base structural cutovers are complete. Move the two retained refinements onto the canonical
-per-parameter facts without forcing either into `TcoSelfCallArgumentShape`:
+The base structural cutovers and the borrow-inspection use-mode cutover are complete. Move the
+remaining affine refinement onto the canonical per-parameter facts without forcing it into
+`TcoSelfCallArgumentShape`:
 
-- `CollectBorrowableConsumedListParams` answers an inspect-only/does-not-escape property orthogonal to
-  `ConsumedTail`. Its candidate/result boundary is now ordinal and its self-transfer exception uses
-  exact lexical function identity, but the internal source-name value-taint walk remains; replace
-  that derivation with a separate canonical use-mode fact.
 - `CollectAffineAccumulators` proves single-use string accumulation for reservation reuse; connect it
   to the same uniqueness/affinity result used by Perceus reuse legality.
 
-Shadow-compare and cut these over independently, then delete their `Lowering.Reuse.cs` walks if no
-other representation-specific reader remains. Their separation from the five completed base
-structural facts is not their permanent architecture.
+Shadow-compare and cut the affine fact over independently, then delete its `Lowering.Reuse.cs` walk
+if no other representation-specific reader remains. Its separation from the completed structural
+and use-mode facts is not its permanent architecture.
 
 When the reuse path generates or rejects a specialization, retains/elides a defensive entry copy,
 requires a runtime uniqueness check, accepts/rejects a layout, produces/consumes a token, or leaves a

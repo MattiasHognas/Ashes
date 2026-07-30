@@ -163,6 +163,27 @@ internal enum TcoSelfCallArgumentShape
 }
 
 /// <summary>
+/// How a TCO parameter and values structurally derived from it are used by the recursive body.
+/// This is intentionally separate from <see cref="TcoSelfCallArgumentShape"/>: the successor may
+/// consume a list tail while the current iteration either only inspects that graph or lets a
+/// derived reference escape.
+/// </summary>
+internal enum TcoParamUseMode
+{
+    /// <summary>
+    /// The body contains an owning/escaping use, or the analysis encountered a shape it cannot
+    /// classify. Consumers must retain the conservative ownership path.
+    /// </summary>
+    GeneralOrUnknown,
+
+    /// <summary>
+    /// The parameter is consumed through its tail and every derived head/tail reference is used
+    /// only for structural inspection or transferred to the same parameter of an exact self-call.
+    /// </summary>
+    BorrowInspectOnly,
+}
+
+/// <summary>
 /// One parameter position's self-call argument classification. Parameter ordinal is the stable
 /// binding identity within the function's curried parameter list; the source name is retained for
 /// diagnostics but is not used to join facts back to lowering slots. Facts are present only for a
@@ -184,12 +205,16 @@ internal enum TcoSelfCallArgumentShape
 /// selects between direct closure constructions. This is separate from <paramref name="Shape"/>
 /// because a new closure may legitimately capture and therefore reach an input reference.
 /// </param>
+/// <param name="UseMode">
+/// The canonical ownership use mode for this parameter and values structurally derived from it.
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
     TcoSelfCallArgumentShape Shape,
     bool ArenaSelfContainedListRebuild,
-    bool FreshClosureRebuild);
+    bool FreshClosureRebuild,
+    TcoParamUseMode UseMode);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge
