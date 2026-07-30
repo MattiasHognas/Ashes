@@ -702,14 +702,15 @@ inactive initialization into the one-time entry prologue. Exit and deferred back
 consult the placement decision and treat a missing active local as inactive instead of indexing it
 directly. Fresh-list reset legality reruns the
 arena-self-containment predicate for the concrete edge and combines it with the resolved
-representation. The narrower
-`BorrowableConsumedList` use-mode analysis is still structural, but its
-candidate and result boundary is ordinal rather than source-name keyed, and only a callee resolved
-through the same lexical `FuncKey` scope under the recursive binding's source name receives its
-non-escaping tail-transfer exception. Match guards are checked as executable uses. A tail call
-becomes a back edge only when its root resolves to the current curried function's generated label,
-or to the transported self slot of a synthesized coroutine loop; source spelling alone is
-insufficient.
+representation. The orthogonal `TcoParamUseMode.BorrowInspectOnly` fact classifies a consumed-tail
+parameter and every structurally derived head/tail reference as inspection-only or conservatively
+general. Its lexical taint environment replaces bindings at let and pattern boundaries instead of
+joining by source name. Only a callee resolved through the same lexical `FuncKey` scope under the
+recursive binding's source name receives the non-escaping tail-transfer exception, and match guards
+are checked as executable uses. Lowering consumes the fact by parameter ordinal before applying the
+resolved all-inline-copy record layout gate. A tail call becomes a back edge only when its root
+resolves to the current curried function's generated label, or to the transported self slot of a
+synthesized coroutine loop; source spelling alone is insufficient.
 
 This structural summary does not replace the TCO back-edge storage query.
 Immutable `TcoParamStaticFacts` stay separate from placement orchestration.

@@ -965,6 +965,127 @@ public sealed class UniquenessSummaryTests
     }
 
     [Test]
+    public void Consumed_tail_inspection_is_a_canonical_parameter_use_mode()
+    {
+        const string source =
+            """
+            type Body =
+                | value: Int
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) -> sum(tail)(total + value)
+            in sum([Body(value = 1), Body(value = 2)])(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("sum");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        values.UseMode.ShouldBe(TcoParamUseMode.BorrowInspectOnly);
+    }
+
+    [Test]
+    public void Consumed_tail_escape_uses_the_conservative_parameter_mode()
+    {
+        const string source =
+            """
+            type Body =
+                | value: Int
+
+            let hasAny values =
+                match values with
+                    | [] -> false
+                    | _ :: _ -> true
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) ->
+                                if hasAny(tail)
+                                then sum(tail)(total + value)
+                                else total
+            in sum([Body(value = 1), Body(value = 2)])(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("sum");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        values.UseMode.ShouldBe(TcoParamUseMode.GeneralOrUnknown);
+    }
+
+    [Test]
+    public void Same_named_disjoint_pattern_binding_does_not_inherit_consumed_tail_ownership()
+    {
+        const string source =
+            """
+            type Body =
+                | value: Int
+
+            let recursive sum values fallback total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) ->
+                                if value > 0
+                                then sum(tail)(fallback)(total + value)
+                                else
+                                    match fallback with
+                                        | [] -> total
+                                        | tail :: _ ->
+                                            match tail with
+                                                | Body(other) -> total + other
+            in sum([Body(value = 1)])([Body(value = 2)])(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("sum");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        values.UseMode.ShouldBe(TcoParamUseMode.BorrowInspectOnly);
+    }
+
+    [Test]
+    public void Same_named_let_binding_does_not_inherit_consumed_tail_ownership()
+    {
+        const string source =
+            """
+            type Body =
+                | value: Int
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) ->
+                                if value > 0
+                                then sum(tail)(total + value)
+                                else
+                                    let tail = total
+                                    in tail
+            in sum([Body(value = 1)])(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("sum");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        values.UseMode.ShouldBe(TcoParamUseMode.BorrowInspectOnly);
+    }
+
+    [Test]
     public void Recursive_group_sibling_call_is_included_in_uniqueness_census()
     {
         const string source =

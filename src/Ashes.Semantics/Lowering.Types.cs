@@ -149,7 +149,7 @@ public sealed partial class Lowering
         // normalization/dup/drop — because nothing derived from it escapes the traversal (the
         // pointer-bearing analogue of the inline-element borrowed cursor). Gated additionally on an
         // all-inline-copy-field record element type at the runtime-managed decision site.
-        public bool BorrowableConsumedList { get; init; }
+        public bool BorrowInspectOnly { get; init; }
         // Every exact self-call edge directly constructs a closure (or selects between direct
         // constructions). Resolved TFun layout and per-edge capture safety remain separate gates.
         public bool FreshClosureRebuild { get; init; }
@@ -306,7 +306,7 @@ public sealed partial class Lowering
         private readonly IReadOnlySet<int> _freshClosureRebuildParamOrdinals;
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
-        private readonly IReadOnlySet<int> _borrowableConsumedListParamOrdinals;
+        private readonly IReadOnlySet<int> _borrowInspectOnlyParamOrdinals;
         private readonly IReadOnlySet<string> _affineStrParams;
 
         // Every affine-string param's own name, in CollectAffineAccumulators's own AST-walk order —
@@ -386,7 +386,7 @@ public sealed partial class Lowering
             IReadOnlySet<int> freshClosureRebuildParamOrdinals,
             IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<int> consumedListTailParamOrdinals,
-            IReadOnlySet<int> borrowableConsumedListParamOrdinals,
+            IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
             IReadOnlySet<string> affineStrParams,
             IReadOnlySet<string> escapingDirectPatternBindings)
         {
@@ -398,7 +398,7 @@ public sealed partial class Lowering
             _freshClosureRebuildParamOrdinals = freshClosureRebuildParamOrdinals;
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
-            _borrowableConsumedListParamOrdinals = borrowableConsumedListParamOrdinals;
+            _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
             _affineStrParams = affineStrParams;
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
         }
@@ -426,7 +426,7 @@ public sealed partial class Lowering
                     FreshClosureRebuild = _freshClosureRebuildParamOrdinals.Contains(i),
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
-                    BorrowableConsumedList = _borrowableConsumedListParamOrdinals.Contains(i),
+                    BorrowInspectOnly = _borrowInspectOnlyParamOrdinals.Contains(i),
                     AffineStr = _affineStrParams.Contains(name),
                 };
                 ParamPlacements[slot] = new TcoParamPlacementState();

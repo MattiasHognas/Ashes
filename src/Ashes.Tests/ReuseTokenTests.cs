@@ -650,6 +650,44 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
+    public void Disjoint_same_named_pattern_binding_does_not_block_borrowed_traversal()
+    {
+        IrProgram program = LowerProgram("""
+            type Body =
+                | value: Int
+
+            let recursive sum values fallback total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) ->
+                                if value > 0
+                                then sum(tail)(fallback)(total + value)
+                                else
+                                    match fallback with
+                                        | [] -> total
+                                        | tail :: _ ->
+                                            match tail with
+                                                | Body(other) -> total + other
+
+            Ashes.IO.print(sum([Body(value = 1)])([Body(value = 2)])(0))
+            """);
+
+        foreach (IrFunction function in program.Functions.Prepend(program.EntryFunction))
+        {
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization })
+                .ShouldBeFalse(
+                    "an unrelated same-named pattern binder must not inherit the consumed tail's owner");
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.Alloc { RuntimeManaged: true })
+                .ShouldBeFalse(
+                    "the identity-correct inspect-only traversal should keep borrowing the caller graph");
+        }
+    }
+
+    [Test]
     public void Record_list_traversal_that_hands_tail_to_another_function_still_normalizes()
     {
         // The tail escapes into a second function (not the tail self-call), so nothing proves it is

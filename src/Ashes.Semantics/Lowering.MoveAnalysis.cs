@@ -798,13 +798,17 @@ public sealed partial class Lowering
         IReadOnlySet<int> ArenaSelfContainedListRebuild,
         IReadOnlySet<int> FreshClosureRebuild,
         IReadOnlySet<int> AffineConsList,
-        IReadOnlySet<int> ConsumedListTail) GetTcoParameterOrdinalFacts(FuncKey? function)
+        IReadOnlySet<int> ConsumedListTail,
+        IReadOnlySet<int> BorrowInspectOnly) GetTcoParameterOrdinalFacts(FuncKey? function)
         => (
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
             GetTcoParameterOrdinals(function, static facts => facts.ArenaSelfContainedListRebuild),
             GetTcoParameterOrdinals(function, static facts => facts.FreshClosureRebuild),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.GrownCons),
-            GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail));
+            GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail),
+            GetTcoParameterOrdinals(
+                function,
+                static facts => facts.UseMode == TcoParamUseMode.BorrowInspectOnly));
 
     private IReadOnlySet<int> GetTcoParameterOrdinals(
         FuncKey? function,
@@ -1073,11 +1077,376 @@ public sealed partial class Lowering
                     paramNames[i],
                     shape,
                     state.ArenaSelfContainedListRebuild[i] == true,
-                    state.FreshClosureRebuild[i] == true));
+                    state.FreshClosureRebuild[i] == true,
+                    shape == TcoSelfCallArgumentShape.ConsumedTail
+                        && BorrowInspectOnly(function, info, i)
+                            ? TcoParamUseMode.BorrowInspectOnly
+                            : TcoParamUseMode.GeneralOrUnknown));
             }
         }
 
         return result;
+    }
+
+    private enum BorrowInspectTaint
+    {
+        Tail,
+        Head,
+    }
+
+    private readonly record struct BorrowInspectContext(
+        FuncKey SelfFunction,
+        string SelfName,
+        int ParamCount,
+        int ParamIndex);
+
+    /// <summary>
+    /// Proves that one consumed-tail parameter and every head/tail reference structurally derived
+    /// from it are used only for inspection or transferred to the same parameter of an exact
+    /// lexical self-call. The live taint environment is lexical: crossing a let or pattern binder
+    /// replaces the source name's prior meaning, so same-named bindings cannot inherit ownership
+    /// from an unrelated parameter or extracted value.
+    /// </summary>
+    private bool BorrowInspectOnly(
+        FuncKey function,
+        (List<string> Params, Expr Body) info,
+        int paramIndex)
+    {
+        IReadOnlyDictionary<string, int> parameterScope = CreateTcoParameterScope(info.Params);
+        string paramName = info.Params[paramIndex];
+        if (!parameterScope.TryGetValue(paramName, out int visibleOrdinal)
+            || visibleOrdinal != paramIndex
+            || !_maFunctionScopes.TryGetValue(
+                function,
+                out IReadOnlyDictionary<string, FuncKey>? functionScope))
+        {
+            return false;
+        }
+
+        Dictionary<string, BorrowInspectTaint> taints = new(StringComparer.Ordinal)
+        {
+            [paramName] = BorrowInspectTaint.Tail,
+        };
+        BorrowInspectContext context = new(
+            function,
+            _maKeyName[function],
+            info.Params.Count,
+            paramIndex);
+        return BorrowInspectExpression(info.Body, taints, context, functionScope);
+    }
+
+    // Approved uses are a tainted head/tail as a match scrutinee and a tainted tail at the
+    // candidate's own position in an exact self-call. Every other bare reference escapes. Unknown
+    // expression shapes fail closed, retaining the existing normalization path.
+    private bool BorrowInspectExpression(
+        Expr expression,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return !taints.ContainsKey(variable.Name);
+            case Expr.QualifiedVar:
+            case Expr.IntLit:
+            case Expr.BigIntLit:
+            case Expr.UIntLit:
+            case Expr.FloatLit:
+            case Expr.StrLit:
+            case Expr.BoolLit:
+                return true;
+            case Expr.If conditional:
+                return BorrowInspectAll(
+                    [conditional.Cond, conditional.Then, conditional.Else],
+                    taints,
+                    context,
+                    functionScope);
+            case Expr.Let let:
+                return BorrowInspectLet(let, taints, context, functionScope);
+            case Expr.LetResult letResult:
+                return BorrowInspectExpression(letResult.Value, taints, context, functionScope)
+                    && BorrowInspectExpression(
+                        letResult.Body,
+                        RemoveBorrowInspectTaints(taints, [letResult.Name]),
+                        context,
+                        ExtendFuncScope(functionScope, letResult, letResult.Name));
+            case Expr.LetRecursive letRecursive:
+                IReadOnlyDictionary<string, FuncKey> recursiveScope =
+                    ExtendFuncScope(functionScope, letRecursive, letRecursive.Name);
+                IReadOnlyDictionary<string, BorrowInspectTaint> recursiveTaints =
+                    RemoveBorrowInspectTaints(taints, [letRecursive.Name]);
+                return BorrowInspectExpression(
+                        letRecursive.Value,
+                        recursiveTaints,
+                        context,
+                        recursiveScope)
+                    && BorrowInspectExpression(
+                        letRecursive.Body,
+                        recursiveTaints,
+                        context,
+                        recursiveScope);
+            case Expr.Match match:
+                return BorrowInspectMatch(match, taints, context, functionScope);
+            case Expr.Call:
+                return BorrowInspectCall(expression, taints, context, functionScope);
+            default:
+                return BorrowInspectCompositeExpression(
+                    expression,
+                    taints,
+                    context,
+                    functionScope);
+        }
+    }
+
+    private bool BorrowInspectCompositeExpression(
+        Expr expression,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        IReadOnlyList<Expr>? operands = expression switch
+        {
+            Expr.Add binary => [binary.Left, binary.Right],
+            Expr.Subtract binary => [binary.Left, binary.Right],
+            Expr.Multiply binary => [binary.Left, binary.Right],
+            Expr.Divide binary => [binary.Left, binary.Right],
+            Expr.Modulo binary => [binary.Left, binary.Right],
+            Expr.Equal binary => [binary.Left, binary.Right],
+            Expr.NotEqual binary => [binary.Left, binary.Right],
+            Expr.GreaterThan binary => [binary.Left, binary.Right],
+            Expr.LessThan binary => [binary.Left, binary.Right],
+            Expr.GreaterOrEqual binary => [binary.Left, binary.Right],
+            Expr.LessOrEqual binary => [binary.Left, binary.Right],
+            Expr.TupleLit tuple => tuple.Elements,
+            _ => null,
+        };
+        return operands is not null
+            && BorrowInspectAll(operands, taints, context, functionScope);
+    }
+
+    private bool BorrowInspectAll(
+        IReadOnlyList<Expr> expressions,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        foreach (Expr expression in expressions)
+        {
+            if (!BorrowInspectExpression(expression, taints, context, functionScope))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool BorrowInspectLet(
+        Expr.Let let,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        IReadOnlyDictionary<string, FuncKey> bodyFunctionScope =
+            ExtendTcoFuncScope(functionScope, let, let.Name, let.Value);
+
+        // A bare reference carries the same owner into the new lexical binding. Any other value
+        // must be independently clean, and the new binder shadows an older same-named taint.
+        if (let.Value is Expr.Var alias
+            && taints.TryGetValue(alias.Name, out BorrowInspectTaint aliasTaint))
+        {
+            return BorrowInspectExpression(
+                let.Body,
+                SetBorrowInspectTaint(taints, let.Name, aliasTaint),
+                context,
+                bodyFunctionScope);
+        }
+
+        return BorrowInspectExpression(let.Value, taints, context, functionScope)
+            && BorrowInspectExpression(
+                let.Body,
+                RemoveBorrowInspectTaints(taints, [let.Name]),
+                context,
+                bodyFunctionScope);
+    }
+
+    private bool BorrowInspectMatch(
+        Expr.Match match,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        BorrowInspectTaint? scrutineeTaint = match.Value is Expr.Var scrutinee
+            && taints.TryGetValue(scrutinee.Name, out BorrowInspectTaint found)
+                ? found
+                : null;
+        if (scrutineeTaint is null
+            && !BorrowInspectExpression(match.Value, taints, context, functionScope))
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            HashSet<string> binders = new(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            IReadOnlyDictionary<string, FuncKey> armFunctionScope =
+                RemoveFuncNames(functionScope, binders);
+            IReadOnlyDictionary<string, BorrowInspectTaint> armTaints =
+                RemoveBorrowInspectTaints(taints, binders);
+            if (scrutineeTaint is { } tracked
+                && !TryBindBorrowInspectPattern(
+                    matchCase.Pattern,
+                    tracked,
+                    armTaints,
+                    out armTaints))
+            {
+                return false;
+            }
+
+            if (matchCase.Guard is { } guard
+                && !BorrowInspectExpression(guard, armTaints, context, armFunctionScope))
+            {
+                return false;
+            }
+
+            if (!BorrowInspectExpression(
+                matchCase.Body,
+                armTaints,
+                context,
+                armFunctionScope))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryBindBorrowInspectPattern(
+        Pattern pattern,
+        BorrowInspectTaint scrutineeTaint,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        out IReadOnlyDictionary<string, BorrowInspectTaint> boundTaints)
+    {
+        boundTaints = taints;
+        if (scrutineeTaint == BorrowInspectTaint.Head)
+        {
+            switch (pattern)
+            {
+                case Pattern.Wildcard:
+                case Pattern.Constructor:
+                    return true;
+                case Pattern.Var alias:
+                    boundTaints = SetBorrowInspectTaint(
+                        taints,
+                        alias.Name,
+                        BorrowInspectTaint.Head);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        switch (pattern)
+        {
+            case Pattern.EmptyList:
+            case Pattern.Wildcard:
+                return true;
+            case Pattern.Var whole:
+                boundTaints = SetBorrowInspectTaint(
+                    taints,
+                    whole.Name,
+                    BorrowInspectTaint.Tail);
+                return true;
+            case Pattern.Cons cons:
+                if (cons.Head is Pattern.Var head)
+                {
+                    boundTaints = SetBorrowInspectTaint(
+                        boundTaints,
+                        head.Name,
+                        BorrowInspectTaint.Head);
+                }
+                else if (cons.Head is not Pattern.Wildcard)
+                {
+                    return false;
+                }
+
+                if (cons.Tail is Pattern.Var tail)
+                {
+                    boundTaints = SetBorrowInspectTaint(
+                        boundTaints,
+                        tail.Name,
+                        BorrowInspectTaint.Tail);
+                }
+                else if (cons.Tail is not Pattern.Wildcard)
+                {
+                    return false;
+                }
+
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool BorrowInspectCall(
+        Expr expression,
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        List<Expr> arguments = [];
+        Expr root = CollectCallArgs(expression, arguments);
+        bool isSelfCall = root is Expr.Var function
+            && string.Equals(function.Name, context.SelfName, StringComparison.Ordinal)
+            && functionScope.TryGetValue(function.Name, out FuncKey callee)
+            && callee.Equals(context.SelfFunction)
+            && arguments.Count == context.ParamCount;
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (isSelfCall
+                && i == context.ParamIndex
+                && arguments[i] is Expr.Var tailArgument
+                && taints.GetValueOrDefault(tailArgument.Name) == BorrowInspectTaint.Tail)
+            {
+                continue;
+            }
+
+            if (!BorrowInspectExpression(arguments[i], taints, context, functionScope))
+            {
+                return false;
+            }
+        }
+
+        return root is Expr.Var or Expr.QualifiedVar
+            || BorrowInspectExpression(root, taints, context, functionScope);
+    }
+
+    private static IReadOnlyDictionary<string, BorrowInspectTaint> SetBorrowInspectTaint(
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        string name,
+        BorrowInspectTaint taint)
+    {
+        Dictionary<string, BorrowInspectTaint> next = new(taints, StringComparer.Ordinal)
+        {
+            [name] = taint,
+        };
+        return next;
+    }
+
+    private static IReadOnlyDictionary<string, BorrowInspectTaint> RemoveBorrowInspectTaints(
+        IReadOnlyDictionary<string, BorrowInspectTaint> taints,
+        IEnumerable<string> names)
+    {
+        Dictionary<string, BorrowInspectTaint> next = new(taints, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
     }
 
     // Walks the tail spine (If arms, Match case bodies, Let bodies), threading a tail-owner map

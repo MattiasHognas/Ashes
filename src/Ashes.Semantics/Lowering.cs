@@ -1175,13 +1175,13 @@ public sealed partial class Lowering
     /// <summary>
     /// True when the tail-consumed list parameter at <paramref name="paramIndex"/> is only inspected
     /// by the recursive body (nothing derived from it escapes — see
-    /// <see cref="TcoParamStaticFacts.BorrowableConsumedList"/>) AND its element is an all-inline-copy
+    /// <see cref="TcoParamStaticFacts.BorrowInspectOnly"/>) AND its element is an all-inline-copy
     /// record. Under both conditions the traversal reads only scalar fields and never retains a cell
     /// or head, so the caller's graph can be borrowed instead of RC-normalized into a private copy.
     /// </summary>
     private bool IsBorrowableInspectOnlyList(TcoContext tco, int paramIndex, TypeRef.TList list)
         => paramIndex >= 0
-            && tco.ParamFacts[tco.ParamSlots[paramIndex]].BorrowableConsumedList
+            && tco.ParamFacts[tco.ParamSlots[paramIndex]].BorrowInspectOnly
             && Prune(list.Element) is TypeRef.TNamedType element
             && TryGetCopyOnlyRecordConstructor(element, out _);
 
@@ -5012,12 +5012,7 @@ public sealed partial class Lowering
                 freshClosureRebuildParamOrdinals: tcoParamOrdinalFacts.FreshClosureRebuild,
                 affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
-                borrowableConsumedListParamOrdinals: CollectBorrowableConsumedListParams(
-                    innermostBody,
-                    tcoParamNames,
-                    letRecursive.Name,
-                    tcoParamOrdinalFacts.ConsumedListTail,
-                    ownershipFunction),
+                borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
                 affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
