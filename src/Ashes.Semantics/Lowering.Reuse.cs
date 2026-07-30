@@ -251,7 +251,7 @@ public sealed partial class Lowering
     /// this table); or a bare argument, at any position, to a call whose callee is not a known
     /// constructor (an ordinary function call's own argument-passing convention already borrows or dups
     /// the value correctly at the call boundary — see the comment on <see
-    /// cref="IsSafeDirectPatternBindingUse"/> for why this makes the extra protective dup redundant, and
+    /// cref="CountSafeDirectPatternBindingUsesAtNode"/> for why this makes the extra protective dup redundant, and
     /// why it stays excluded when the callee IS a constructor). A name whose every appearance in its own
     /// arm falls into one of those three shapes is left out — it needs no help here. A name with any
     /// other appearance (embedded in a returned or constructed value, passed to a different parameter's
@@ -355,7 +355,12 @@ public sealed partial class Lowering
             return 0;
         }
 
-        int count = IsSafeDirectPatternBindingUse(node, bindingName, parentIndex, paramCount, selfName) ? 1 : 0;
+        int count = CountSafeDirectPatternBindingUsesAtNode(
+            node,
+            bindingName,
+            parentIndex,
+            paramCount,
+            selfName);
 
         if (node is System.Runtime.CompilerServices.ITuple tuple)
         {
@@ -421,7 +426,7 @@ public sealed partial class Lowering
     // self-call sibling above, which is equally purely syntactic against selfName): a constructor
     // referenced only indirectly through another binding is not recognized as a constructor here and
     // would be treated as an ordinary call.
-    private bool IsSafeDirectPatternBindingUse(
+    private int CountSafeDirectPatternBindingUsesAtNode(
         object node,
         string bindingName,
         int parentIndex,
@@ -432,12 +437,12 @@ public sealed partial class Lowering
             && match.Value is Expr.Var scrutinee
             && string.Equals(scrutinee.Name, bindingName, StringComparison.Ordinal))
         {
-            return true;
+            return 1;
         }
 
         if (node is not Expr.Call call)
         {
-            return false;
+            return 0;
         }
 
         var arguments = new List<Expr>();
@@ -448,13 +453,20 @@ public sealed partial class Lowering
             && arguments[parentIndex] is Expr.Var selfArgument
             && string.Equals(selfArgument.Name, bindingName, StringComparison.Ordinal))
         {
-            return true;
+            return 1;
         }
 
-        return root is Expr.Var callee
-            && !_constructorSymbols.ContainsKey(callee.Name)
-            && arguments.Any(argument => argument is Expr.Var argumentVar
-                && string.Equals(argumentVar.Name, bindingName, StringComparison.Ordinal));
+        string? calleeName = root switch
+        {
+            Expr.Var callee => callee.Name,
+            Expr.QualifiedVar qualified => qualified.Name,
+            _ => null,
+        };
+        return calleeName is not null
+            && !_constructorSymbols.ContainsKey(calleeName)
+            ? arguments.Count(argument => argument is Expr.Var argumentVar
+                && string.Equals(argumentVar.Name, bindingName, StringComparison.Ordinal))
+            : 0;
     }
 
     private readonly record struct BorrowInspectContext(
