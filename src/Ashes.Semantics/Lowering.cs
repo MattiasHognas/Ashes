@@ -8530,9 +8530,36 @@ public sealed partial class Lowering
             || argumentCount == 0
             || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
             || GetOwnershipSummaryForLabel(resultLabel) is not { } summary
-            || argumentCount != summary.Parameters.Count
-            || !summary.ResultProvenance.RcEligible
-            || !IsConcretelyRuntimeManageableResultType(callResultType))
+            || argumentCount != summary.Parameters.Count)
+        {
+            return false;
+        }
+
+        bool provenanceEligible = summary.ResultProvenance.RcEligible;
+        OwnershipDecisionFact evaluatedFacts = OwnershipDecisionFact.ResultProvenance;
+        OwnershipDecisionFact positiveFacts = provenanceEligible
+            ? OwnershipDecisionFact.ResultProvenance
+            : OwnershipDecisionFact.None;
+        bool runtimeManageableResultType = false;
+        if (provenanceEligible)
+        {
+            evaluatedFacts |= OwnershipDecisionFact.RuntimeManageableResultType;
+            runtimeManageableResultType = IsConcretelyRuntimeManageableResultType(callResultType);
+            if (runtimeManageableResultType)
+            {
+                positiveFacts |= OwnershipDecisionFact.RuntimeManageableResultType;
+            }
+        }
+
+        bool useRuntimeManagement = provenanceEligible && runtimeManageableResultType;
+        RecordOwnershipFactConsumption(
+            summary,
+            OwnershipDecisionKind.RuntimeManagedCallResult,
+            parameter: null,
+            evaluatedFacts,
+            positiveFacts,
+            useRuntimeManagement);
+        if (!useRuntimeManagement)
         {
             return false;
         }

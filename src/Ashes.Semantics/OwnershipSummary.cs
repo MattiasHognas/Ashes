@@ -13,6 +13,86 @@ internal enum ParameterOwnership
     Consumed,
 }
 
+[Flags]
+internal enum FunctionCallCensusCause
+{
+    None = 0,
+    EscapedAsValue = 1 << 0,
+    IncompleteApplication = 1 << 1,
+    AmbiguousResolution = 1 << 2,
+    UnknownResolution = 1 << 3,
+}
+
+internal sealed record FunctionCallCensus(
+    int DirectCallCount,
+    FunctionCallCensusCause Causes)
+{
+    public bool Complete => Causes == FunctionCallCensusCause.None;
+}
+
+[Flags]
+internal enum ParameterMoveSafetyCause
+{
+    None = 0,
+    FunctionEscaped = 1 << 0,
+    IncompleteCallCensus = 1 << 1,
+    NoDirectCallSites = 1 << 2,
+    NoExternalCallSites = 1 << 3,
+    CallArityMismatch = 1 << 4,
+    SeedNotSafe = 1 << 5,
+    MoveLinearity = 1 << 6,
+    CapturedByClosure = 1 << 7,
+    TransitiveParameterUnsafe = 1 << 8,
+    ResultAliasUnsafe = 1 << 9,
+    AmbiguousResolution = 1 << 10,
+    ProofCycle = 1 << 11,
+    ConservativeUnknown = 1 << 12,
+}
+
+internal sealed record ParameterMoveSafetyProof(
+    bool IsMoveSafe,
+    ParameterMoveSafetyCause Causes);
+
+[Flags]
+internal enum ResultReachCause
+{
+    None = 0,
+    GlobalOrTopLevelReach = 1 << 0,
+    UnmodelledReach = 1 << 1,
+    InternalSharing = 1 << 2,
+    ConservativeUnknown = 1 << 3,
+}
+
+internal sealed record FunctionResultReachFacts(
+    IReadOnlyDictionary<string, int> ParameterReach,
+    ResultReachCause Causes)
+{
+    public bool Poisoned => Causes != ResultReachCause.None;
+}
+
+[Flags]
+internal enum OwnershipDecisionFact
+{
+    None = 0,
+    ParameterMoveSafety = 1 << 0,
+    ResultProvenance = 1 << 1,
+    RuntimeManageableResultType = 1 << 2,
+}
+
+internal enum OwnershipDecisionKind
+{
+    ReuseEntryCopyElision,
+    RuntimeManagedCallResult,
+}
+
+internal sealed record OwnershipFactConsumption(
+    SourceFunctionOrigin Function,
+    OwnershipDecisionKind Decision,
+    string? Parameter,
+    OwnershipDecisionFact EvaluatedFacts,
+    OwnershipDecisionFact PositiveFacts,
+    bool Outcome);
+
 /// <summary>
 /// The provenance of a registered function's fully-saturated result, as classified from its innermost
 /// body shape (see <c>Lowering.OwnershipProvenance.cs</c>). This is the AST-level, interprocedural
@@ -99,13 +179,18 @@ internal sealed record FunctionOwnershipSummary(
     IReadOnlyList<string> Parameters,
     IReadOnlyDictionary<string, ParameterOwnership> ParameterOwnership,
     IReadOnlySet<string> UniqueParameters,
+    FunctionCallCensus CallCensus,
+    IReadOnlyDictionary<string, ParameterMoveSafetyProof> ParameterMoveSafety,
     IReadOnlyList<string> CapturedValues,
-    IReadOnlyDictionary<string, int> ResultReach,
-    bool ResultPoisoned,
+    FunctionResultReachFacts ResultReachFacts,
     IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
     FunctionResultProvenance ResultProvenance,
     IReadOnlyDictionary<string, TcoParamStructuralFacts> TcoParamFacts)
 {
+    public IReadOnlyDictionary<string, int> ResultReach => ResultReachFacts.ParameterReach;
+
+    public bool ResultPoisoned => ResultReachFacts.Poisoned;
+
     /// <summary>Parameters whose ownership remains with the caller.</summary>
     public IReadOnlyList<string> BorrowedParameters => Parameters
         .Where(parameter => ParameterOwnership[parameter] == Ashes.Semantics.ParameterOwnership.Borrowed)

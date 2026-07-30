@@ -2,8 +2,9 @@
 
 Status: in progress.
 
-Audited against `main` at `d34f6eb` on 2026-07-30. This document is intentionally a
-remaining-work backlog. Completed implementation history belongs in
+Audited against `main` at `fad5b95` on 2026-07-30, together with the Milestone 1.7
+implementation in this change. This document is intentionally a remaining-work backlog.
+Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
 
@@ -123,6 +124,18 @@ The following is already implemented and is not part of the backlog:
 - every lambda-valued binding remains registered even when source names collide. `_maNameIndex` is
   only a globally-unambiguous compatibility index; normalized copied binders map explicitly back to
   their original identity, and lowering uses exact label/TCO identities where they are available;
+- conservative escape state is keyed by exact `FuncKey`. Each summary exposes an immutable
+  `FunctionCallCensus`, per-parameter `ParameterMoveSafetyProof` values, and
+  `FunctionResultReachFacts` with stable flags for escape/incomplete or ambiguous census,
+  move-linearity, capture, transitive/seed failure, global or unmodelled reach, internal sharing, and
+  an explicit conservative-unknown fallback. The positive `UniqueParameters`, `ResultFresh`, and
+  `ResultPoisoned` projections remain available while consumers migrate. Poisoned call summaries
+  remain fail-closed while still substituting any known parameter reach into their callers;
+- lowering retains immutable `OwnershipFactConsumption` records at the existing reuse entry-copy and
+  runtime-managed call-result placement decisions. Each record identifies the reportable source
+  function, decision, relevant parameter, evaluated and positive facts (including the concrete
+  runtime-manageable result-type predicate where applicable), and outcome without exposing the
+  mutable analysis tables;
 - `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
@@ -156,37 +169,19 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
-| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`; production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins, ownership/placement debug output is environment-driven and emitted inside semantic passes, and reuse/representation reasons are mostly transient booleans or reconstructed instruction counts. There is no immutable compilation-decision handoff to pair with the final optimized IR. |
+| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering also retains structured fact-consumption records for reuse entry-copy elision and runtime-managed call-result placement. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, and most reuse/representation decisions are still transient booleans or reconstructed instruction counts. The structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place.
+teardown prerequisites are in place. Milestone 1.8 is the next implementation task.
 
 ### Milestone 1 — complete the reportable ownership boundary
 
 Per-binding registration, lexical resolution identity, and stable reportable source/IR origins are
-complete. Conservative escape state is still name-keyed until 1.7. The remaining work adds
-structured conservative causes and completes recursive provenance for later cutovers and the
-follow-on `--explain` facility.
-
-#### 1.7 Preserve conservative analysis causes
-
-Do not leave future consumers to infer “why not unique/fresh” from absence in a positive set:
-
-- re-key `_maEscaped` by `FuncKey` now that per-binding identity is available, and retain whether the
-  function escaped, had an incomplete direct-call census, or fell back because resolution was
-  ambiguous or unknown;
-- supplement `UniqueParameters` with an immutable per-parameter proof outcome that distinguishes the
-  actual failed preconditions already checked by `IsParamMoveSafe` (escape/census completeness,
-  move-linearity, capture, transitive parameter safety, and seed safety);
-- split or accompany `ResultPoisoned` with stable cause flags for the cases its reach analysis already
-  detects: global/top-level reach, unmodelled reach, and internal sharing at the multiplicity cap;
-- retain which summary facts a later copy-elision or placement decision consumed.
-
-The positive `UniqueParameters`, `ResultFresh`, and `ResultPoisoned` compatibility surface may remain
-while live callers migrate. This task does not weaken the fail-closed default or invent a reason when
-the current analysis cannot distinguish one; use an explicit conservative/unknown code.
+complete, and conservative outcomes now retain structured causes. The only remaining work in this
+milestone is exact mutual-recursion result provenance for later cutovers and the follow-on
+`--explain` facility.
 
 #### 1.8 Complete mutual-recursion result provenance
 
@@ -204,18 +199,13 @@ representation fallback.
 
 #### Milestone 1 acceptance
 
-- Per-function `ASHES_EXPLAIN_OWNERSHIP=all` output is identical for functions unaffected by lexical
-  shadowing/normalized-body visibility; every difference is tied to a focused regression and reviewed
-  for its downstream copy/placement effect.
-- No ownership fact changes for unrelated callers.
-- Escape/call-census, move-safety failure, result-poison, and internal-sharing outcomes are available
-  as structured causes; consumers do not have to parse `FormatOwnershipSummaries` or inspect private
-  analysis sets.
 - Exact mutual-recursion result provenance converges across SCCs while unresolved or
   parameter-returning cycles remain fail-closed.
+- No ownership or placement fact changes for callers outside the affected mutual-recursion
+  components.
 - Every challenge binary remains byte-identical at `-O0` and `-O2` unless an explicitly reviewed
-  collision fix is expected to change placement; in that case compare IR, output, RSS, and lifetime
-  operations instead of accepting a broad binary diff.
+  provenance-precision fix is expected to change placement; in that case compare IR, output, RSS, and
+  lifetime operations instead of accepting a broad binary diff.
 
 ### Milestone 2 — make `TcoParamFacts` complete, then cut classifier A over
 
