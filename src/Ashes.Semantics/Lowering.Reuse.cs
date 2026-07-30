@@ -251,7 +251,7 @@ public sealed partial class Lowering
             body,
             paramNames,
             selfName,
-            (_, argument) => IsFreshListRebuildExpr(argument));
+            (_, argument) => IsArenaSelfContainedListRebuildExpr(argument));
 
     private static HashSet<string> CollectAffineConsListParams(
         Expr body,

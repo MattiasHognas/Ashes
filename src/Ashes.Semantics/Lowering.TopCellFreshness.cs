@@ -90,7 +90,7 @@ public sealed partial class Lowering
     /// <c>Var</c> or <c>Call</c>). That narrower set is exactly what makes a threaded/shared-tail list
     /// (a bare accumulator var, a pattern-derived tail, a cons onto an existing list) NEVER classify as
     /// fresh here: widening it to accept a call result (the way the arena/TCO-side
-    /// <see cref="IsFreshListRebuildExpr"/> deliberately does, for a different risk profile — CO-32's
+    /// <see cref="IsArenaSelfContainedListRebuildExpr"/> deliberately does, for a different risk profile — CO-32's
     /// whole-list-clone-cost question, not this RC-promotion question) would let a shared-tail list get
     /// promoted to RC, silently aliasing the previous iteration's cells. Preserving the exact terminal
     /// set across both engines is the tail-sharing safeguard for this phase: a list that is not

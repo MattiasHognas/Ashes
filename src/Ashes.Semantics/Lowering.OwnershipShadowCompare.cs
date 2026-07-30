@@ -64,9 +64,12 @@ public sealed partial class Lowering
     /// <summary>
     /// Compares a TCO loop's own <c>Collect*</c>-derived per-parameter classification (still the real
     /// decision — nothing reads the new field yet) against <c>FunctionOwnershipSummary.TcoParamFacts</c>
-    /// for the same self-recursive function, logging every disagreement. <paramref name="affineConsListParams"/>
-    /// (the growing-cons-accumulator shape) compares against <see cref="TcoSelfCallArgumentShape.GrownCons"/>
-    /// like every other old name-set compares against its own positive shape.
+    /// for the same self-recursive function, logging every disagreement. The live fresh-list-rebuild
+    /// set compares against <see cref="TcoParamStructuralFacts.ArenaSelfContainedListRebuild"/> rather
+    /// than <see cref="TcoSelfCallArgumentShape.FreshRebuilt"/>: a helper result may be safe to copy
+    /// across its callee arena boundary while still retaining an input reference. <paramref
+    /// name="affineConsListParams"/> (the growing-cons-accumulator shape) compares against
+    /// <see cref="TcoSelfCallArgumentShape.GrownCons"/> like the other ownership-shape sets.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
         FuncKey? function,
@@ -90,41 +93,81 @@ public sealed partial class Lowering
         foreach (string name in paramNames)
         {
             bool isLoopInvariant = loopInvariantParams.Contains(name);
-            bool isFreshRebuilt = freshRebuiltListParams.Contains(name) || freshClosureParams.Contains(name);
+            bool isArenaSelfContainedListRebuild = freshRebuiltListParams.Contains(name);
+            bool isFreshClosure = freshClosureParams.Contains(name);
             bool isConsumedTail = consumedListTailParams.Contains(name);
             bool isGrownCons = affineConsListParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
                 isLoopInvariant ? TcoSelfCallArgumentShape.UnchangedPassthrough
-                : isFreshRebuilt ? TcoSelfCallArgumentShape.FreshRebuilt
+                : isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt
                 : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
                 : isGrownCons ? TcoSelfCallArgumentShape.GrownCons
                 : null;
 
-            bool haveNew = tcoParamFacts is not null && tcoParamFacts.TryGetValue(name, out var newFacts);
-            TcoSelfCallArgumentShape? newShape = haveNew ? tcoParamFacts![name].Shape : null;
+            TcoParamStructuralFacts? newFacts = null;
+            bool haveNew = tcoParamFacts is not null && tcoParamFacts.TryGetValue(name, out newFacts);
+            ShadowCompareTcoParamFactsForParameter(
+                selfName,
+                name,
+                oldShape,
+                isArenaSelfContainedListRebuild,
+                haveNew,
+                newFacts);
+        }
+    }
 
-            if (oldShape is null && !haveNew)
-            {
-                // Neither side classifies this parameter (an ordinary threaded accumulator with no
-                // uniform self-call shape) — expected agreement, nothing to log.
-                continue;
-            }
+    private static void ShadowCompareTcoParamFactsForParameter(
+        string selfName,
+        string name,
+        TcoSelfCallArgumentShape? oldShape,
+        bool oldArenaSelfContainedListRebuild,
+        bool haveNew,
+        TcoParamStructuralFacts? newFacts)
+    {
+        TcoSelfCallArgumentShape? newShape = haveNew ? newFacts!.Shape : null;
+        bool newArenaSelfContainedListRebuild =
+            newFacts?.ArenaSelfContainedListRebuild == true;
+        if (oldArenaSelfContainedListRebuild != newArenaSelfContainedListRebuild)
+        {
+            LogOwnershipShadowDisagreement(
+                "TcoParamArenaSelfContainedListRebuild",
+                $"function={selfName} param={name} old={oldArenaSelfContainedListRebuild} "
+                    + $"new={newArenaSelfContainedListRebuild}");
+        }
 
-            if (oldShape is null && haveNew && newShape == TcoSelfCallArgumentShape.Mixed)
-            {
-                // Old side never positively classified this parameter (its Collect* sets all missed
-                // it, the same "none of the above" verdict Mixed represents) — expected agreement.
-                continue;
-            }
+        if (oldShape is null && !haveNew)
+        {
+            // Neither side classifies this parameter (an ordinary threaded accumulator with no
+            // uniform self-call shape) — expected agreement, nothing to log.
+            return;
+        }
 
-            if (!haveNew || oldShape != newShape)
-            {
-                LogOwnershipShadowDisagreement(
-                    "TcoParamFacts",
-                    $"function={selfName} param={name} old={(oldShape?.ToString() ?? "none")} "
-                        + $"new={(haveNew ? newShape!.Value.ToString() : "absent")}");
-            }
+        if (oldShape is null && haveNew && newShape == TcoSelfCallArgumentShape.Mixed)
+        {
+            // Old side never positively classified this parameter (its Collect* sets all missed
+            // it, the same "none of the above" verdict Mixed represents) — expected agreement.
+            return;
+        }
+
+        if (oldShape is null
+            && oldArenaSelfContainedListRebuild
+            && newArenaSelfContainedListRebuild
+            && newShape == TcoSelfCallArgumentShape.FreshRebuilt)
+        {
+            // The live list classifier's positive result is represented by the separately
+            // compared arena-self-containment fact. A genuinely reference-fresh list literal
+            // also has FreshRebuilt shape, but there is no old list ownership-shape verdict to
+            // compare it against until the 2.2 cutover.
+            return;
+        }
+
+        if (!haveNew || oldShape != newShape)
+        {
+            LogOwnershipShadowDisagreement(
+                "TcoParamFacts",
+                $"function={selfName} param={name} old={(oldShape?.ToString() ?? "none")} "
+                    + $"new={(haveNew ? newShape!.Value.ToString() : "absent")}");
         }
     }
 

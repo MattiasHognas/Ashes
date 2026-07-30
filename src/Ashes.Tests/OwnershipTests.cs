@@ -1406,7 +1406,8 @@ public sealed class OwnershipTests
     [Test]
     public void List_rebuilt_by_consing_onto_a_recursive_call_result_stays_arena_managed()
     {
-        // `h :: rebuild(t)` has a Call as its tail -- fresh per the ARENA-side IsFreshListRebuildExpr
+        // `h :: rebuild(t)` has a Call as its tail -- self-contained per the arena-side
+        // IsArenaSelfContainedListRebuildExpr
         // (a callee's list result is copied out of its own arena scope, so it is self-contained and safe
         // to whole-clone at a TCO back-edge), but deliberately NOT fresh per this RC-promotion engine's
         // narrower IsFreshListConstructionExpression, which only ever accepts ListLit or a Cons chain
@@ -1428,7 +1429,7 @@ public sealed class OwnershipTests
         IrFunction rebuild = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.StoreMemOffset));
         rebuild.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
             "a cons cell whose tail is a recursive call result must stay arena-managed under this RC " +
-            "engine even though the arena/TCO side's own IsFreshListRebuildExpr treats a call result as " +
+            "engine even though the arena/TCO side's own IsArenaSelfContainedListRebuildExpr treats a call result as " +
             "safe to whole-clone -- the two questions (RC-promotion-safe vs. clone-cost-safe) are not " +
             "the same question and must not share a terminal set.");
     }

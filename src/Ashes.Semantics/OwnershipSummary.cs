@@ -168,7 +168,18 @@ internal enum TcoSelfCallArgumentShape
 /// own parameters at a position some self-call site actually supplies — an ordinary, non-recursive
 /// function's parameters never get an entry.
 /// </summary>
-internal sealed record TcoParamStructuralFacts(TcoSelfCallArgumentShape Shape);
+/// <param name="Shape">
+/// The reference-ownership shape shared by every exact self-call argument at this parameter position.
+/// </param>
+/// <param name="ArenaSelfContainedListRebuild">
+/// True when every exact self-call argument at this position rebuilds a list during the current
+/// iteration in a form that is independent of the called helper's arena extent. This licenses a
+/// bounded whole-list copy at the TCO reset boundary; it does not claim reference freshness. In
+/// particular, a helper call result may be arena-self-contained while still retaining an input tail.
+/// </param>
+internal sealed record TcoParamStructuralFacts(
+    TcoSelfCallArgumentShape Shape,
+    bool ArenaSelfContainedListRebuild);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

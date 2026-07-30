@@ -597,6 +597,131 @@ public sealed class UniquenessSummaryTests
 
         summary.ShouldNotBeNull();
         summary.TcoParamFacts["values"].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts["values"].ArenaSelfContainedListRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void HelperResultCanBeArenaSelfContainedWithoutBeingReferenceFresh()
+    {
+        const string source =
+            """
+            let rebuild head tail = head :: tail
+            let recursive loop values remaining =
+                if remaining <= 0
+                then values
+                else loop(rebuild(remaining)(values))(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        values.ArenaSelfContainedListRebuild.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ConsSpineEndingInAHelperResultIsArenaSelfContainedWithoutBeingReferenceFresh()
+    {
+        const string source =
+            """
+            let rebuild head tail = head :: tail
+            let recursive loop values remaining =
+                if remaining <= 0
+                then values
+                else loop(0 :: rebuild(remaining)(values))(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        values.ArenaSelfContainedListRebuild.ShouldBeTrue();
+    }
+
+    [Test]
+    public void HigherOrderCallResultRetainsTheLiveArenaSelfContainmentContract()
+    {
+        const string source =
+            """
+            let recursive loop transform values remaining =
+                if remaining <= 0
+                then values
+                else loop(transform)(transform(values))(remaining - 1)
+            in loop(given value -> value)([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        values.ArenaSelfContainedListRebuild.ShouldBeTrue();
+    }
+
+    [Test]
+    public void FreshListLiteralIsBothReferenceFreshAndArenaSelfContained()
+    {
+        const string source =
+            """
+            let recursive loop values remaining =
+                if remaining <= 0
+                then values
+                else loop([1])(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.FreshRebuilt);
+        values.ArenaSelfContainedListRebuild.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ConsOntoThePreviousAccumulatorIsNotArenaSelfContained()
+    {
+        const string source =
+            """
+            let recursive loop values remaining =
+                if remaining <= 0
+                then values
+                else loop(remaining :: values)(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
+        values.ArenaSelfContainedListRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ArenaSelfContainmentRequiresEveryExactSelfCallArgumentToRebuild()
+    {
+        const string source =
+            """
+            let recursive loop values remaining =
+                if remaining <= 0
+                then values
+                else if remaining == 1
+                then loop([1])(remaining - 1)
+                else loop(remaining :: values)(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        values.ArenaSelfContainedListRebuild.ShouldBeFalse();
     }
 
     [Test]
