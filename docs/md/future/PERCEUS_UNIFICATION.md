@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `0184019` on 2026-07-30, together with the Milestone 2.1
-implementation in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `17ff6fe` on 2026-07-30, together with the first Milestone 2.2
+cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -102,7 +102,8 @@ The following is already implemented and is not part of the backlog:
 - `PerceusLifetimePlacement`, which moves ordinary-value lifetime markers to CFG-aware last uses while
   leaving resource cleanup alone;
 - `FunctionOwnershipSummary` with parameter borrow/consume facts, uniqueness, result reach,
-  `ExpressionFreshness`, `FunctionResultProvenance`, and shadow-only `TcoParamFacts`;
+  `ExpressionFreshness`, `FunctionResultProvenance`, and positional `TcoParamFacts`; the
+  `UnchangedPassthrough` shape is the live source for TCO loop invariance;
 - builtin fresh-result metadata (`BuiltinRegistry.BuiltinModuleMember.ProducesFreshRcResult`) for
   owned `Str`, `Bytes`, and `BigInt` producers, including use by interprocedural result provenance;
 - shared top-cell freshness traversal for ADTs, tuples, and lists, including mixed-arm
@@ -121,6 +122,12 @@ The following is already implemented and is not part of the backlog:
   the callee arena even when it retains an input tail and is therefore not reference-fresh, while a
   direct `head :: oldAccumulator` remains rejected. Shadow comparison now treats this fact
   separately from the reference-fresh `FreshRebuilt` shape;
+- positional `TcoParamStructuralFacts` identity. Facts retain both the parameter ordinal used to
+  join them to lowering slots and the source name used for diagnostics, so duplicate curried
+  parameter names cannot collapse into one verdict. `TcoParamFactsWalk` resolves live value names to
+  those ordinals across let and pattern scopes. `TcoParamOwnership.LoopInvariant` now consumes
+  `UnchangedPassthrough` through that ordinal boundary, and the superseded
+  `CollectLoopInvariantParams` walk has been deleted;
 - `FuncKey` identity and re-keying of the seven main move-analysis tables, with genuine lexical scope
   resolution in `TcoParamFactsWalk`, `CollectCallsAndEscapes`, `ResultReach`, move analysis, and
   result provenance; function-body and per-call-argument scopes follow sequential let/letrec rules,
@@ -174,7 +181,7 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| TCO structural facts | `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. | It is read only by `ShadowCompareTcoParamFacts`; live TCO decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
+| TCO structural facts | Positional `FunctionOwnershipSummary.TcoParamFacts` records unchanged, reference-fresh, consumed-tail, grown-cons, and arena-self-contained-list-rebuild facts. `UnchangedPassthrough` now feeds live `LoopInvariant` decisions. | The fresh-list, fresh-closure, consumed-tail, and grown-cons decisions still come from `Lowering.Reuse.cs`’s `Collect*` walks. |
 | TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
 | Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
@@ -187,19 +194,19 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
 teardown prerequisites are in place. Milestone 1 and task 2.1 are complete. Sixteen implementation
-tasks remain; Milestone 2.2 is next.
+tasks remain; Milestone 2.2 is in progress.
 
 ### Milestone 2 — make `TcoParamFacts` complete, then cut classifier A over
 
 #### 2.2 Cut over one structural fact at a time
 
-With Milestone 2.1 complete:
+`LoopInvariant` now comes from positional, binding-identity-aware `UnchangedPassthrough` facts. The
+remaining category cutovers are:
 
-1. source `LoopInvariant` from `UnchangedPassthrough`;
-2. source `AffineConsList` from `GrownCons`;
-3. source `ConsumedListTail` from `ConsumedTail`;
-4. source `FreshRebuiltList` from the new arena-self-contained fact;
-5. source `FreshClosure` from the appropriate fresh shape plus the resolved `TFun` type.
+1. source `AffineConsList` from `GrownCons`;
+2. source `ConsumedListTail` from `ConsumedTail`;
+3. source `FreshRebuiltList` from the arena-self-contained fact;
+4. source `FreshClosure` from the appropriate fresh shape plus the resolved `TFun` type.
 
 For each category:
 

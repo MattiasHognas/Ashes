@@ -163,11 +163,13 @@ internal enum TcoSelfCallArgumentShape
 }
 
 /// <summary>
-/// One parameter's self-call argument classification, keyed by parameter name on
-/// <see cref="FunctionOwnershipSummary.TcoParamFacts"/>. Present only for a self-recursive function's
-/// own parameters at a position some self-call site actually supplies — an ordinary, non-recursive
-/// function's parameters never get an entry.
+/// One parameter position's self-call argument classification. Parameter ordinal is the stable
+/// binding identity within the function's curried parameter list; the source name is retained for
+/// diagnostics but is not used to join facts back to lowering slots. Facts are present only for a
+/// self-recursive function whose exact self-call sites supply every parameter position.
 /// </summary>
+/// <param name="ParameterOrdinal">Zero-based position in the curried parameter list.</param>
+/// <param name="ParameterName">Source name retained for diagnostics.</param>
 /// <param name="Shape">
 /// The reference-ownership shape shared by every exact self-call argument at this parameter position.
 /// </param>
@@ -178,6 +180,8 @@ internal enum TcoSelfCallArgumentShape
 /// particular, a helper call result may be arena-self-contained while still retaining an input tail.
 /// </param>
 internal sealed record TcoParamStructuralFacts(
+    int ParameterOrdinal,
+    string ParameterName,
     TcoSelfCallArgumentShape Shape,
     bool ArenaSelfContainedListRebuild);
 
@@ -197,7 +201,7 @@ internal sealed record FunctionOwnershipSummary(
     FunctionResultReachFacts ResultReachFacts,
     IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
     FunctionResultProvenance ResultProvenance,
-    IReadOnlyDictionary<string, TcoParamStructuralFacts> TcoParamFacts)
+    IReadOnlyList<TcoParamStructuralFacts> TcoParamFacts)
 {
     public IReadOnlyDictionary<string, int> ResultReach => ResultReachFacts.ParameterReach;
 

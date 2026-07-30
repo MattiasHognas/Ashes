@@ -793,6 +793,25 @@ public sealed partial class Lowering
         return _maFuncs.ContainsKey(key) ? key : null;
     }
 
+    private IReadOnlySet<int> GetLoopInvariantTcoParameterOrdinals(FuncKey? function)
+    {
+        HashSet<int> result = [];
+        if (function is not { } key || GetOwnershipSummary(key) is not { } summary)
+        {
+            return result;
+        }
+
+        foreach (TcoParamStructuralFacts facts in summary.TcoParamFacts)
+        {
+            if (facts.Shape == TcoSelfCallArgumentShape.UnchangedPassthrough)
+            {
+                result.Add(facts.ParameterOrdinal);
+            }
+        }
+
+        return result;
+    }
+
     private void RegisterOwnershipFunctionLabel(string label, Expr binder)
     {
         if (GetRegisteredFunctionKey(binder) is { } key)
@@ -965,8 +984,8 @@ public sealed partial class Lowering
 
     // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i] narrows
     // from "unclassified" to one shape, or locks into Mixed the first time two self-call sites at the
-    // same position disagree; SawSelfCall distinguishes "no self-call found at all" (no entries at all
-    // in the returned dictionary) from "self-calls found, every position landed on Mixed."
+    // same position disagree; SawSelfCall distinguishes "no self-call found at all" (an empty result)
+    // from "self-calls found, every position landed on Mixed."
     private sealed class TcoParamFactsState
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
@@ -981,15 +1000,15 @@ public sealed partial class Lowering
     /// rebuild fact across ALL such call sites. The shape is re-derived from this same fixpoint's own
     /// already-computed <paramref name="expressionFreshness"/> map, while arena self-containment uses
     /// the narrower reset-boundary predicate without redefining reference freshness. Together they
-    /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s
-    /// <c>CollectLoopInvariantParams</c>/<c>CollectFreshRebuiltListParams</c>/
-    /// <c>CollectFreshClosureParams</c>/<c>CollectConsumedListTailParams</c>/<c>CollectAffineConsListParams</c>
-    /// answer today by re-walking a TCO loop's body a second time with their own, separate logic. A
+    /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s remaining
+    /// <c>CollectFreshRebuiltListParams</c>/<c>CollectFreshClosureParams</c>/
+    /// <c>CollectConsumedListTailParams</c>/<c>CollectAffineConsListParams</c> answer today by
+    /// re-walking a TCO loop's body a second time with their own, separate logic. A
     /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
     /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
     /// </summary>
-    private Dictionary<string, TcoParamStructuralFacts> ComputeTcoParamFacts(
+    private IReadOnlyList<TcoParamStructuralFacts> ComputeTcoParamFacts(
         FuncKey function,
         (List<string> Params, Expr Body) info,
         IReadOnlyDictionary<Expr, bool> expressionFreshness)
@@ -1008,14 +1027,15 @@ public sealed partial class Lowering
             ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
         TcoParamFactsWalk(
             info.Body,
-            new Dictionary<string, string>(StringComparer.Ordinal),
+            new Dictionary<string, int>(StringComparer.Ordinal),
             function,
             scope,
+            CreateTcoParameterScope(paramNames),
             paramNames,
             expressionFreshness,
             state);
 
-        var result = new Dictionary<string, TcoParamStructuralFacts>(StringComparer.Ordinal);
+        var result = new List<TcoParamStructuralFacts>(paramNames.Count);
         if (!state.SawSelfCall)
         {
             return result;
@@ -1025,9 +1045,11 @@ public sealed partial class Lowering
         {
             if (state.Observed[i] is { } shape)
             {
-                result[paramNames[i]] = new TcoParamStructuralFacts(
+                result.Add(new TcoParamStructuralFacts(
+                    i,
+                    paramNames[i],
                     shape,
-                    state.ArenaSelfContainedListRebuild[i] == true);
+                    state.ArenaSelfContainedListRebuild[i] == true));
             }
         }
 
@@ -1044,12 +1066,15 @@ public sealed partial class Lowering
     // node's body, resolving to the newly-crossed binder's own FuncKey when that binder itself
     // registered as a function, or to no function at all (removed from scope) when it did not —
     // matching a bare _maFuncs.ContainsKey check's own verdict for that exact occurrence, not a
-    // whole-program name lookup.
+    // whole-program name lookup. parameterScope separately resolves live value names to their
+    // original parameter ordinal. Crossing a let or pattern binder removes a same-named parameter,
+    // so source spelling alone can never classify a rebound value as the original parameter.
     private void TcoParamFactsWalk(
         Expr expression,
-        IReadOnlyDictionary<string, string> tailOwners,
+        IReadOnlyDictionary<string, int> tailOwners,
         FuncKey function,
         IReadOnlyDictionary<string, FuncKey> scope,
+        IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
@@ -1057,12 +1082,14 @@ public sealed partial class Lowering
         switch (expression)
         {
             case Expr.If iff:
-                TcoParamFactsWalk(iff.Then, tailOwners, function, scope, paramNames, expressionFreshness, state);
-                TcoParamFactsWalk(iff.Else, tailOwners, function, scope, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(
+                    iff.Then, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
+                TcoParamFactsWalk(
+                    iff.Else, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Match match:
                 TcoParamFactsWalkMatch(
-                    match, tailOwners, function, scope, paramNames, expressionFreshness, state);
+                    match, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Let let:
                 TcoParamFactsWalk(
@@ -1070,6 +1097,7 @@ public sealed partial class Lowering
                     RemoveTailOwnerNames(tailOwners, [let.Name]),
                     function,
                     ExtendFuncScope(scope, let, let.Name),
+                    RemoveTcoParameterNames(parameterScope, [let.Name]),
                     paramNames,
                     expressionFreshness,
                     state);
@@ -1080,6 +1108,7 @@ public sealed partial class Lowering
                     RemoveTailOwnerNames(tailOwners, [letResult.Name]),
                     function,
                     ExtendFuncScope(scope, letResult, letResult.Name),
+                    RemoveTcoParameterNames(parameterScope, [letResult.Name]),
                     paramNames,
                     expressionFreshness, state);
                 return;
@@ -1089,20 +1118,30 @@ public sealed partial class Lowering
                     RemoveTailOwnerNames(tailOwners, [letRecursive.Name]),
                     function,
                     ExtendFuncScope(scope, letRecursive, letRecursive.Name),
+                    RemoveTcoParameterNames(parameterScope, [letRecursive.Name]),
                     paramNames,
                     expressionFreshness, state);
                 return;
             case Expr.Call:
-                TcoParamFactsWalkCall(expression, tailOwners, function, scope, paramNames, expressionFreshness, state);
+                TcoParamFactsWalkCall(
+                    expression,
+                    tailOwners,
+                    function,
+                    scope,
+                    parameterScope,
+                    paramNames,
+                    expressionFreshness,
+                    state);
                 return;
         }
     }
 
     private void TcoParamFactsWalkMatch(
         Expr.Match match,
-        IReadOnlyDictionary<string, string> tailOwners,
+        IReadOnlyDictionary<string, int> tailOwners,
         FuncKey function,
         IReadOnlyDictionary<string, FuncKey> scope,
+        IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
@@ -1111,17 +1150,17 @@ public sealed partial class Lowering
         {
             var binders = new HashSet<string>(StringComparer.Ordinal);
             CollectPatternBinders(matchCase.Pattern, binders);
-            var armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
+            var armTailOwners = new Dictionary<string, int>(tailOwners, StringComparer.Ordinal);
             foreach (string binder in binders)
             {
                 armTailOwners.Remove(binder);
             }
 
             if (match.Value is Expr.Var source
-                && IndexOfOrdinal(paramNames, source.Name) >= 0
+                && parameterScope.TryGetValue(source.Name, out int sourceParameterOrdinal)
                 && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
             {
-                armTailOwners[tail.Name] = source.Name;
+                armTailOwners[tail.Name] = sourceParameterOrdinal;
             }
 
             TcoParamFactsWalk(
@@ -1129,17 +1168,45 @@ public sealed partial class Lowering
                 armTailOwners,
                 function,
                 RemoveFuncNames(scope, binders),
+                RemoveTcoParameterNames(parameterScope, binders),
                 paramNames,
                 expressionFreshness,
                 state);
         }
     }
 
-    private static IReadOnlyDictionary<string, string> RemoveTailOwnerNames(
-        IReadOnlyDictionary<string, string> tailOwners,
+    private static IReadOnlyDictionary<string, int> CreateTcoParameterScope(
+        IReadOnlyList<string> paramNames)
+    {
+        var scope = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            // Curried lambdas are nested from left to right, so a later same-named parameter is the
+            // live binding in the innermost body.
+            scope[paramNames[i]] = i;
+        }
+
+        return scope;
+    }
+
+    private static IReadOnlyDictionary<string, int> RemoveTcoParameterNames(
+        IReadOnlyDictionary<string, int> parameterScope,
         IEnumerable<string> names)
     {
-        var next = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
+        var next = new Dictionary<string, int>(parameterScope, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
+    }
+
+    private static IReadOnlyDictionary<string, int> RemoveTailOwnerNames(
+        IReadOnlyDictionary<string, int> tailOwners,
+        IEnumerable<string> names)
+    {
+        var next = new Dictionary<string, int>(tailOwners, StringComparer.Ordinal);
         foreach (string name in names)
         {
             next.Remove(name);
@@ -1171,9 +1238,10 @@ public sealed partial class Lowering
     // locks to Mixed on disagreement) the running per-position verdict in state.Observed.
     private void TcoParamFactsWalkCall(
         Expr expression,
-        IReadOnlyDictionary<string, string> tailOwners,
+        IReadOnlyDictionary<string, int> tailOwners,
         FuncKey function,
         IReadOnlyDictionary<string, FuncKey> scope,
+        IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
@@ -1195,14 +1263,17 @@ public sealed partial class Lowering
             bool arenaSelfContainedListRebuild =
                 IsArenaSelfContainedListRebuildExpr(argument);
             TcoSelfCallArgumentShape local =
-                argument is Expr.Var argVar && string.Equals(argVar.Name, paramNames[i], StringComparison.Ordinal)
+                argument is Expr.Var argVar
+                    && parameterScope.TryGetValue(argVar.Name, out int parameterOrdinal)
+                    && parameterOrdinal == i
                     ? TcoSelfCallArgumentShape.UnchangedPassthrough
                 : argument is Expr.Var tailVar
-                    && tailOwners.TryGetValue(tailVar.Name, out string? owner)
-                    && string.Equals(owner, paramNames[i], StringComparison.Ordinal)
+                    && tailOwners.TryGetValue(tailVar.Name, out int ownerOrdinal)
+                    && ownerOrdinal == i
                     ? TcoSelfCallArgumentShape.ConsumedTail
                 : argument is Expr.Cons { Tail: Expr.Var consTail }
-                    && string.Equals(consTail.Name, paramNames[i], StringComparison.Ordinal)
+                    && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
+                    && tailParameterOrdinal == i
                     ? TcoSelfCallArgumentShape.GrownCons
                 : expressionFreshness.TryGetValue(argument, out bool fresh) && fresh
                     ? TcoSelfCallArgumentShape.FreshRebuilt

@@ -228,18 +228,6 @@ public sealed partial class Lowering
     // tracking binders that shadow the accumulator name; each leaf must satisfy IsStableAccumulatorExpr
     // under the shadow set (a rebound accumulator name is no longer the accumulator). Used only when
     // recording a fold's stability, keyed by name — the caller side uses live-scope slots instead.
-    // The params that are passed as their own unchanged Var at every tail self-call, so they are
-    // loop-invariant (they only ever hold the value passed into the loop, allocated below the arena
-    // watermark) and survive a plain per-iteration reset. Computed from the raw AST before lowering, so
-    // self-calls are matched by name with shadow tracking (a rebound param name is no longer the param).
-    private static HashSet<string> CollectLoopInvariantParams(Expr body, IReadOnlyList<string> paramNames, string selfName)
-    {
-        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
-        bool sawSelfCall = false;
-        CollectLoopInvariantParamsWalk(body, new HashSet<string>(StringComparer.Ordinal), paramNames, selfName, candidates, ref sawSelfCall);
-        return sawSelfCall ? candidates : new HashSet<string>(StringComparer.Ordinal);
-    }
-
     // Params rebuilt as a self-contained fresh list at every tail self-call. This is deliberately
     // stricter than the ordinary list reset analysis: a cons onto the previous accumulator shares
     // its tail and cannot be normalized and followed by a drop without explicit ownership transfer.
@@ -912,62 +900,6 @@ public sealed partial class Lowering
 
         Walk(body);
         return sawSelfCall ? candidates : [];
-    }
-
-    private static void CollectLoopInvariantParamsWalk(Expr e, HashSet<string> shadowed, IReadOnlyList<string> paramNames,
-        string selfName, HashSet<string> candidates, ref bool sawSelfCall)
-    {
-        switch (e)
-        {
-            case Expr.If iff:
-                CollectLoopInvariantParamsWalk(iff.Then, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
-                CollectLoopInvariantParamsWalk(iff.Else, shadowed, paramNames, selfName, candidates, ref sawSelfCall);
-                break;
-            case Expr.Match m:
-                foreach (var c in m.Cases)
-                {
-                    var caseShadow = shadowed;
-                    var binders = new HashSet<string>(StringComparer.Ordinal);
-                    CollectPatternBinders(c.Pattern, binders);
-                    if (binders.Count > 0)
-                    {
-                        caseShadow = new HashSet<string>(shadowed, StringComparer.Ordinal);
-                        caseShadow.UnionWith(binders);
-                    }
-
-                    CollectLoopInvariantParamsWalk(c.Body, caseShadow, paramNames, selfName, candidates, ref sawSelfCall);
-                }
-
-                break;
-            case Expr.Let let:
-                var bodyShadow = shadowed.Contains(let.Name)
-                    ? shadowed
-                    : new HashSet<string>(shadowed, StringComparer.Ordinal) { let.Name };
-                CollectLoopInvariantParamsWalk(let.Body, bodyShadow, paramNames, selfName, candidates, ref sawSelfCall);
-                break;
-            case Expr.Call:
-                var args = new List<Expr>();
-                var root = CollectCallArgs(e, args);
-                if (root is Expr.Var f
-                    && string.Equals(f.Name, selfName, StringComparison.Ordinal)
-                    && !shadowed.Contains(selfName)
-                    && args.Count == paramNames.Count)
-                {
-                    sawSelfCall = true;
-                    for (int i = 0; i < paramNames.Count; i++)
-                    {
-                        bool unchanged = args[i] is Expr.Var av
-                            && string.Equals(av.Name, paramNames[i], StringComparison.Ordinal)
-                            && !shadowed.Contains(paramNames[i]);
-                        if (!unchanged)
-                        {
-                            candidates.Remove(paramNames[i]);
-                        }
-                    }
-                }
-
-                break;
-        }
     }
 
     /// <summary>

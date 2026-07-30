@@ -659,6 +659,53 @@ public sealed class ArenaDeallocationTests
             "Single-param TCO loop with Int arg should emit RestoreArenaState + ReclaimArenaChunks + RestoreStackPointer before jump-back.");
     }
 
+    [Test]
+    public void TCO_loop_invariant_summary_fact_licenses_the_live_back_edge_reset()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build : List(Str) -> Int -> Str -> Str = given table -> given remaining -> given acc ->
+                if remaining <= 0
+                then acc
+                else
+                    match table with
+                        | [] -> acc
+                        | head :: _ -> build(table)(remaining - 1)(acc + head)
+            in build(["x"])(5)("")
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.UnchangedPassthrough);
+        HasTcoBackEdgeReclaim(instructions).ShouldBeTrue(
+            "The canonical unchanged-passthrough fact should keep the invariant list below the loop watermark.");
+    }
+
+    [Test]
+    public void TCO_shadowed_heap_parameter_does_not_license_a_back_edge_reset()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build : List(Str) -> Int -> Str -> Str = given table -> given remaining -> given acc ->
+                if remaining <= 0
+                then acc
+                else if remaining == 1
+                then build(table)(remaining - 1)(acc + "x")
+                else
+                    let table = ["next"]
+                    in build(table)(remaining - 1)(acc + "x")
+            in build(["seed"])(5)("")
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        HasTcoBackEdgeReclaim(instructions).ShouldBeFalse(
+            "A same-named rebound list is not the original parameter and must not survive a plain reset.");
+    }
+
     // --- Extended TCO copy-out ---
 
     [Test]
@@ -1943,6 +1990,17 @@ public sealed class ArenaDeallocationTests
         return ir;
     }
 
+    private static (Lowering Lowering, IrProgram Program) LowerProgramWithOwnership(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        var lowering = new Lowering(diagnostics);
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        return (lowering, ir);
+    }
+
     /// <summary>
     /// Finds the lifted function containing the TCO tail-call jump (the actual TCO loop function).
     /// Identifies by the presence of a Jump instruction targeting a <c>_body</c> label.
@@ -1976,6 +2034,33 @@ public sealed class ArenaDeallocationTests
     private static bool HasRestoreArenaState(List<IrInst> instructions)
     {
         return instructions.Any(i => i is IrInst.RestoreArenaState);
+    }
+
+    private static bool HasTcoBackEdgeReclaim(List<IrInst> instructions)
+    {
+        for (int jumpIndex = 1; jumpIndex < instructions.Count; jumpIndex++)
+        {
+            if (instructions[jumpIndex] is not IrInst.Jump jump
+                || !jump.Target.Contains("_body", StringComparison.Ordinal)
+                || instructions[jumpIndex - 1] is not IrInst.RestoreStackPointer)
+            {
+                continue;
+            }
+
+            int scanStart = Math.Max(0, jumpIndex - 32);
+            for (int i = jumpIndex - 2; i >= scanStart; i--)
+            {
+                if (instructions[i] is IrInst.ReclaimArenaChunks)
+                {
+                    return instructions
+                        .Skip(scanStart)
+                        .Take(i - scanStart)
+                        .Any(instruction => instruction is IrInst.RestoreArenaState);
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool HasCopyOutArena(List<IrInst> instructions)
