@@ -650,8 +650,21 @@ no tracing garbage collector and no ownership syntax in the source language.
 Lowering infers a `FunctionOwnershipSummary` for each visible function:
 parameters are borrowed or consumed, results record which parameters they may
 reach, captures record their ownership, and unique inputs/results are tracked
-where proven. `PerceusLifetimePlacement` then moves ordinary lifetime operations
-from lexical anchors to control-flow-precise positions:
+where proven. Conservative outcomes are explicit rather than inferred from a
+missing positive fact: each summary carries the function's direct-call census,
+per-parameter move-safety proofs with stable failure flags, and result-reach
+flags for global or unmodelled reach and internal sharing. The existing
+`UniqueParameters`, `ResultFresh`, and `ResultPoisoned` values are compatibility
+projections of those facts.
+
+Reuse entry-copy elision and runtime-managed call-result placement retain
+immutable records of the decision facts they consumed and their outcome,
+including the concrete runtime-manageable result-type predicate used by the
+latter. Evaluated and positive fact sets distinguish a provenance rejection
+from a concrete layout rejection without recomputing either decision. This is
+reporting metadata only: it neither changes the decision nor exposes lowering's
+mutable analysis dictionaries. `PerceusLifetimePlacement` then moves ordinary
+lifetime operations from lexical anchors to control-flow-precise positions:
 
 - an owner is moved when its sole reference transfers;
 - `RcDup` is emitted as late as possible when ownership splits;

@@ -113,14 +113,16 @@ public sealed partial class Lowering
     // at top level, flattened args).
     private readonly Dictionary<FuncKey, List<MoveCallSite>> _maCallSites = new();
 
-    // Function names that appear anywhere other than as the head of a saturated direct call. Their
+    // Functions that appear anywhere other than as the head of a saturated direct call. Their
     // call-site census is not provably complete, so they are never treated as move-safe.
-    private readonly HashSet<string> _maEscaped = new(StringComparer.Ordinal);
+    private readonly HashSet<FuncKey> _maEscaped = new();
+    private readonly Dictionary<FuncKey, FunctionCallCensusCause> _maCallCensusCauses = new();
 
     // Memoization for the on-demand greatest fixpoint. A (func,param) currently being resolved is in
     // _maInProgress; re-encountering it (a cycle) yields "not proven" — the sound under-approximation.
     private readonly Dictionary<(FuncKey, string), bool> _maMoveSafeMemo = new();
     private readonly HashSet<(FuncKey, string)> _maInProgress = new();
+    private readonly HashSet<(FuncKey, string)> _maMoveSafetyCycles = new();
 
     private bool _maAnalyzed;
 
@@ -150,13 +152,21 @@ public sealed partial class Lowering
     // to `x` is itself a move. A function whose result reaches {} and is not poisoned is result-fresh
     // (its result is a uniquely-owned freshly-allocated value for any arguments) — the higher-order-seed
     // case, subsumed here as the empty-reach special case.
-    private readonly Dictionary<FuncKey, (Dictionary<string, int> Counts, bool Poison)> _maResultReach = new();
+    private readonly record struct ResultReachState(
+        Dictionary<string, int> Counts,
+        ResultReachCause Causes)
+    {
+        public bool Poison => Causes != ResultReachCause.None;
+    }
+
+    private readonly Dictionary<FuncKey, ResultReachState> _maResultReach = new();
 
     // Stable per-function ownership contracts materialized after the move-safety and result-reach
     // fixpoints converge. Later lowering passes read this table instead of reaching into the analysis
     // dictionaries directly, through the name-based GetOwnershipSummary surface below (resolved via
     // _maNameIndex), not this dictionary directly.
     private readonly Dictionary<FuncKey, FunctionOwnershipSummary> _ownershipSummaries = new();
+    private readonly HashSet<OwnershipFactConsumption> _ownershipFactConsumptions = new();
 
     // Flat merge of every registered function's ExpressionFreshness map (see AnalyzeReuseCopyElision),
     // keyed by reference identity like the per-function maps it merges. Lets a shadow-compare hook
@@ -226,7 +236,7 @@ public sealed partial class Lowering
         _maOriginalBinderByCopy.Clear();
         _maFunctionScopes.Clear();
         _maCallSites.Clear();
-        _maEscaped.Clear();
+        ClearOwnershipDecisionState();
         _maAmbiguous.Clear();
         ClearOwnershipMemoization();
         _maResultReach.Clear();
@@ -282,7 +292,15 @@ public sealed partial class Lowering
     {
         _maMoveSafeMemo.Clear();
         _maInProgress.Clear();
+        _maMoveSafetyCycles.Clear();
         ClearResultProvenanceAnalysis();
+    }
+
+    private void ClearOwnershipDecisionState()
+    {
+        _maEscaped.Clear();
+        _maCallCensusCauses.Clear();
+        _ownershipFactConsumptions.Clear();
     }
 
     private Expr StripOrSelf(Expr value)
@@ -683,7 +701,20 @@ public sealed partial class Lowering
         FunctionOwnershipSummary? summary = function is { } key
             ? GetOwnershipSummary(key)
             : GetOwnershipSummary(funcName);
-        return summary is not null && summary.UniqueParameters.Contains(accParam);
+        if (summary is null)
+        {
+            return false;
+        }
+
+        bool unique = summary.ParameterMoveSafety.GetValueOrDefault(accParam)?.IsMoveSafe == true;
+        RecordOwnershipFactConsumption(
+            summary,
+            OwnershipDecisionKind.ReuseEntryCopyElision,
+            accParam,
+            OwnershipDecisionFact.ParameterMoveSafety,
+            unique ? OwnershipDecisionFact.ParameterMoveSafety : OwnershipDecisionFact.None,
+            unique);
+        return unique;
     }
 
     /// <summary>
@@ -701,6 +732,32 @@ public sealed partial class Lowering
     /// </summary>
     internal IReadOnlyList<FunctionOwnershipSummary> OwnershipSummaries =>
         _maAnalyzed ? OrderOwnershipSummaries(_ownershipSummaries.Values).ToList() : [];
+
+    internal IReadOnlyList<OwnershipFactConsumption> OwnershipFactConsumptions =>
+        _ownershipFactConsumptions
+            .OrderBy(consumption => consumption.Function.QualifiedName, StringComparer.Ordinal)
+            .ThenBy(consumption => consumption.Function.DeclarationOffset)
+            .ThenBy(consumption => consumption.Decision)
+            .ThenBy(consumption => consumption.Parameter, StringComparer.Ordinal)
+            .ToList();
+
+    private void RecordOwnershipFactConsumption(
+        FunctionOwnershipSummary summary,
+        OwnershipDecisionKind decision,
+        string? parameter,
+        OwnershipDecisionFact evaluatedFacts,
+        OwnershipDecisionFact positiveFacts,
+        bool outcome)
+    {
+        _ownershipFactConsumptions.Add(
+            new OwnershipFactConsumption(
+                summary.Origin,
+                decision,
+                parameter,
+                evaluatedFacts,
+                positiveFacts,
+                outcome));
+    }
 
     /// <summary>
     /// Returns the materialized <see cref="FunctionOwnershipSummary"/> for a top-level function, or null if
@@ -823,14 +880,8 @@ public sealed partial class Lowering
         string functionName,
         (List<string> Params, Expr Body) info)
     {
-        var unique = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var param in info.Params)
-        {
-            if (IsParamMoveSafe(function, param))
-            {
-                unique.Add(param);
-            }
-        }
+        (HashSet<string> unique, Dictionary<string, ParameterMoveSafetyProof> moveSafety) =
+            CreateParameterMoveSafety(function, info.Params);
 
         var parameterOwnership = new Dictionary<string, ParameterOwnership>(StringComparer.Ordinal);
         foreach (var param in info.Params)
@@ -846,9 +897,12 @@ public sealed partial class Lowering
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
-        var (counts, poison) = _maResultReach.TryGetValue(function, out var reach)
+        ResultReachState resultReach = _maResultReach.TryGetValue(function, out ResultReachState reach)
             ? reach
-            : (new Dictionary<string, int>(StringComparer.Ordinal), false);
+            : ReachPoisoned(ResultReachCause.ConservativeUnknown);
+        var callCensus = new FunctionCallCensus(
+            _maCallSites.GetValueOrDefault(function)?.Count ?? 0,
+            _maCallCensusCauses.GetValueOrDefault(function));
 
         var expressionFreshness = ComputeExpressionFreshness(function, info);
         ResolvedFunctionResultProvenance resolvedProvenance = ResolveFunctionResultProvenance(function);
@@ -865,12 +919,42 @@ public sealed partial class Lowering
             info.Params.ToList(),
             parameterOwnership,
             unique,
+            callCensus,
+            moveSafety,
             captures,
-            new Dictionary<string, int>(counts, StringComparer.Ordinal),
-            poison,
+            new FunctionResultReachFacts(
+                new SortedDictionary<string, int>(
+                    resultReach.Counts,
+                    StringComparer.Ordinal),
+                resultReach.Causes),
             expressionFreshness,
             provenance,
             tcoParamFacts);
+    }
+
+    private (
+        HashSet<string> Unique,
+        Dictionary<string, ParameterMoveSafetyProof> Proofs)
+        CreateParameterMoveSafety(FuncKey function, IReadOnlyList<string> parameters)
+    {
+        var unique = new HashSet<string>(StringComparer.Ordinal);
+        var proofs = new Dictionary<string, ParameterMoveSafetyProof>(StringComparer.Ordinal);
+        foreach (string parameter in parameters)
+        {
+            bool isMoveSafe = IsParamMoveSafe(function, parameter);
+            if (isMoveSafe)
+            {
+                unique.Add(parameter);
+            }
+
+            proofs[parameter] = new ParameterMoveSafetyProof(
+                isMoveSafe,
+                isMoveSafe
+                    ? ParameterMoveSafetyCause.None
+                    : ExplainParameterMoveSafetyFailure(function, parameter));
+        }
+
+        return (unique, proofs);
     }
 
     // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i] narrows
@@ -1183,6 +1267,7 @@ public sealed partial class Lowering
 
         if (!_maInProgress.Add(key))
         {
+            _maMoveSafetyCycles.Add(key);
             return false; // cycle — not proven this pass
         }
 
@@ -1196,7 +1281,10 @@ public sealed partial class Lowering
     {
         // The function must be fully visible (never escapes as a value) and have a known parameter
         // list, otherwise its call sites are not provably complete.
-        if (!_maFuncs.TryGetValue(func, out var info) || _maEscaped.Contains(_maKeyName[func]))
+        if (!_maFuncs.TryGetValue(func, out var info)
+            || _maEscaped.Contains(func)
+            || _maCallCensusCauses.GetValueOrDefault(func)
+                != FunctionCallCensusCause.None)
         {
             return false;
         }
@@ -1233,6 +1321,294 @@ public sealed partial class Lowering
         }
 
         return sawExternal;
+    }
+
+    private ParameterMoveSafetyCause ExplainParameterMoveSafetyFailure(
+        FuncKey func,
+        string param)
+    {
+        if (!_maFuncs.TryGetValue(func, out var info))
+        {
+            return ParameterMoveSafetyCause.ConservativeUnknown;
+        }
+
+        ParameterMoveSafetyCause causes = ParameterMoveSafetyCause.None;
+        FunctionCallCensusCause censusCauses = _maCallCensusCauses.GetValueOrDefault(func);
+        if (_maEscaped.Contains(func))
+        {
+            causes |= ParameterMoveSafetyCause.FunctionEscaped;
+        }
+
+        if (censusCauses != FunctionCallCensusCause.None)
+        {
+            causes |= ParameterMoveSafetyCause.IncompleteCallCensus;
+        }
+
+        if ((censusCauses & FunctionCallCensusCause.AmbiguousResolution)
+            != FunctionCallCensusCause.None)
+        {
+            causes |= ParameterMoveSafetyCause.AmbiguousResolution;
+        }
+
+        if (!info.Params.Contains(param))
+        {
+            return causes | ParameterMoveSafetyCause.ConservativeUnknown;
+        }
+
+        if (!_maCallSites.TryGetValue(func, out var sites))
+        {
+            return causes | ParameterMoveSafetyCause.NoDirectCallSites;
+        }
+
+        causes |= ExplainMoveCallSites(func, info.Params.IndexOf(param), sites);
+
+        if (_maMoveSafetyCycles.Contains((func, param)))
+        {
+            causes |= ParameterMoveSafetyCause.ProofCycle;
+        }
+
+        return causes == ParameterMoveSafetyCause.None
+            ? ParameterMoveSafetyCause.ConservativeUnknown
+            : causes;
+    }
+
+    private ParameterMoveSafetyCause ExplainMoveCallSites(
+        FuncKey function,
+        int parameterIndex,
+        IReadOnlyList<MoveCallSite> sites)
+    {
+        ParameterMoveSafetyCause causes = ParameterMoveSafetyCause.None;
+        bool sawExternal = false;
+        foreach (MoveCallSite site in sites)
+        {
+            if (site.Enclosing is { } enclosingKey && enclosingKey.Equals(function))
+            {
+                continue;
+            }
+
+            sawExternal = true;
+            if (parameterIndex >= site.Args.Count)
+            {
+                causes |= ParameterMoveSafetyCause.CallArityMismatch
+                    | ParameterMoveSafetyCause.IncompleteCallCensus;
+            }
+            else if (!ArgIsMove(
+                site.Args[parameterIndex],
+                site.Enclosing,
+                site.ArgumentScopes[parameterIndex]))
+            {
+                causes |= ExplainMoveArgumentFailure(
+                    site.Args[parameterIndex],
+                    site.Enclosing,
+                    site.ArgumentScopes[parameterIndex]);
+            }
+        }
+
+        return sawExternal
+            ? causes
+            : causes | ParameterMoveSafetyCause.NoExternalCallSites;
+    }
+
+    private ParameterMoveSafetyCause ExplainMoveArgumentFailure(
+        Expr argument,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        if (argument is Expr.Call)
+        {
+            return ParameterMoveSafetyCause.ResultAliasUnsafe;
+        }
+
+        if (argument is not Expr.Var variable)
+        {
+            return ParameterMoveSafetyCause.SeedNotSafe;
+        }
+
+        if (_constructorSymbols.ContainsKey(variable.Name))
+        {
+            return ParameterMoveSafetyCause.SeedNotSafe;
+        }
+
+        if (enclosing is { } enclosingKey
+            && _maFuncs.TryGetValue(enclosingKey, out var enclosingInfo)
+            && enclosingInfo.Params.Contains(variable.Name))
+        {
+            int occurrences = MaxPathOccurrences(variable.Name, enclosingInfo.Body);
+            if (occurrences > 1)
+            {
+                return IsCapturedByNestedLambda(variable.Name, enclosingInfo.Body)
+                    ? ParameterMoveSafetyCause.CapturedByClosure
+                    : ParameterMoveSafetyCause.MoveLinearity;
+            }
+
+            if (!IsParamMoveSafe(enclosingKey, variable.Name))
+            {
+                return ParameterMoveSafetyCause.TransitiveParameterUnsafe;
+            }
+
+            return ParameterMoveSafetyCause.ConservativeUnknown;
+        }
+
+        return ExplainLocalMoveArgumentFailure(variable, enclosing, scope);
+    }
+
+    private ParameterMoveSafetyCause ExplainLocalMoveArgumentFailure(
+        Expr.Var variable,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        ParameterMoveSafetyCause causes = ParameterMoveSafetyCause.None;
+        Expr? enclosingBody = enclosing is null
+            ? _maBody
+            : _maFuncs.GetValueOrDefault(enclosing.Value).Body;
+        if (_maAmbiguous.Contains(variable.Name))
+        {
+            causes |= ParameterMoveSafetyCause.AmbiguousResolution;
+        }
+
+        if (enclosingBody is not null
+            && TryFindLocalLet(variable.Name, enclosingBody) is var (boundRhs, boundScope)
+            && boundRhs is not null
+            && boundScope is not null)
+        {
+            int occurrences = MaxPathOccurrences(variable.Name, boundScope);
+            if (occurrences > 1)
+            {
+                causes |= IsCapturedByNestedLambda(variable.Name, boundScope)
+                    ? ParameterMoveSafetyCause.CapturedByClosure
+                    : ParameterMoveSafetyCause.MoveLinearity;
+            }
+
+            if (!IsFullyFreshConstruction(boundRhs)
+                && !IsResultAliasMove(boundRhs, enclosing, scope))
+            {
+                causes |= ParameterMoveSafetyCause.ResultAliasUnsafe;
+            }
+
+            return causes;
+        }
+
+        return causes | ParameterMoveSafetyCause.ConservativeUnknown;
+    }
+
+    private bool IsCapturedByNestedLambda(string name, Expr expression)
+    {
+        switch (expression)
+        {
+            case Expr.Lambda lambda:
+                if (string.Equals(lambda.ParamName, name, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                return FreeVars(
+                    lambda.Body,
+                    new HashSet<string>(StringComparer.Ordinal) { lambda.ParamName })
+                    .Contains(name);
+            case Expr.Let let:
+                return IsCapturedByNestedLambda(name, let.Value)
+                    || !string.Equals(let.Name, name, StringComparison.Ordinal)
+                    && IsCapturedByNestedLambda(name, let.Body);
+            case Expr.LetResult letResult:
+                return IsCapturedByNestedLambda(name, letResult.Value)
+                    || !string.Equals(letResult.Name, name, StringComparison.Ordinal)
+                    && IsCapturedByNestedLambda(name, letResult.Body);
+            case Expr.LetRecursive recursive:
+                return !string.Equals(recursive.Name, name, StringComparison.Ordinal)
+                    && (IsCapturedByNestedLambda(name, recursive.Value)
+                        || IsCapturedByNestedLambda(name, recursive.Body));
+            case Expr.If conditional:
+                return IsCapturedByNestedLambda(name, conditional.Cond)
+                    || IsCapturedByNestedLambda(name, conditional.Then)
+                    || IsCapturedByNestedLambda(name, conditional.Else);
+            case Expr.Call call:
+                return IsCapturedByNestedLambda(name, call.Func)
+                    || IsCapturedByNestedLambda(name, call.Arg);
+            case Expr.Match match:
+                return IsCapturedByNestedLambdaInMatch(name, match);
+            case Expr.Perform perform:
+                return IsCapturedByNestedLambda(name, perform.Operation);
+            case Expr.Handle handle:
+                return IsCapturedByNestedLambdaInHandle(name, handle);
+            case RecursiveGroupExpr group:
+                return IsCapturedByNestedLambdaInRecursiveGroup(name, group);
+            case CapabilityPostExpr post:
+                return IsCapturedByNestedLambda(name, post.Value)
+                    || IsCapturedByNestedLambda(name, post.PostLambda);
+        }
+
+        foreach (Expr child in EnumerateChildren(expression))
+        {
+            if (IsCapturedByNestedLambda(name, child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsCapturedByNestedLambdaInHandle(string name, Expr.Handle handle)
+    {
+        if (IsCapturedByNestedLambda(name, handle.Body))
+        {
+            return true;
+        }
+
+        foreach (HandlerArm arm in handle.Arms)
+        {
+            if (arm.Parameters.Any(pattern => PatternBinds(pattern, name)))
+            {
+                continue;
+            }
+
+            if (IsCapturedByNestedLambda(name, arm.Body))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsCapturedByNestedLambdaInRecursiveGroup(
+        string name,
+        RecursiveGroupExpr group)
+    {
+        if (group.Bindings.Any(binding =>
+            string.Equals(binding.Name, name, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        return group.Bindings.Any(binding =>
+                IsCapturedByNestedLambda(name, binding.Value))
+            || IsCapturedByNestedLambda(name, group.Body);
+    }
+
+    private bool IsCapturedByNestedLambdaInMatch(string name, Expr.Match match)
+    {
+        if (IsCapturedByNestedLambda(name, match.Value))
+        {
+            return true;
+        }
+
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            if (PatternBinds(matchCase.Pattern, name))
+            {
+                continue;
+            }
+
+            if (IsCapturedByNestedLambda(name, matchCase.Body)
+                || matchCase.Guard is not null
+                && IsCapturedByNestedLambda(name, matchCase.Guard))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1626,10 +2002,12 @@ public sealed partial class Lowering
             changed = false;
             foreach (var (name, info) in _maFuncs)
             {
-                var env = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+                var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
                 foreach (var p in info.Params)
                 {
-                    env[p] = (new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 }, false);
+                    env[p] = new ResultReachState(
+                        new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 },
+                        ResultReachCause.None);
                 }
 
                 _maReachToken = 0;
@@ -1660,10 +2038,12 @@ public sealed partial class Lowering
     /// </summary>
     private Dictionary<Expr, bool> ComputeExpressionFreshness(FuncKey function, (List<string> Params, Expr Body) info)
     {
-        var env = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+        var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
         foreach (var p in info.Params)
         {
-            env[p] = (new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 }, false);
+            env[p] = new ResultReachState(
+                new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 },
+                ResultReachCause.None);
         }
 
         var map = new Dictionary<Expr, bool>(ReferenceEqualityComparer.Instance);
@@ -1680,21 +2060,21 @@ public sealed partial class Lowering
         return map;
     }
 
-    private static (Dictionary<string, int> Counts, bool Poison) ReachBottom()
-        => (new Dictionary<string, int>(StringComparer.Ordinal), false);
+    private static ResultReachState ReachBottom()
+        => new(new Dictionary<string, int>(StringComparer.Ordinal), ResultReachCause.None);
 
-    private static (Dictionary<string, int> Counts, bool Poison) ReachPoisoned()
-        => (new Dictionary<string, int>(StringComparer.Ordinal), true);
+    private static ResultReachState ReachPoisoned(ResultReachCause cause = ResultReachCause.UnmodelledReach)
+        => new(new Dictionary<string, int>(StringComparer.Ordinal), cause);
 
     // Sequential composition (simultaneously-live heap positions — a constructor's heap fields, an
     // aggregate's elements): multiplicities add, so a parameter reachable through two positions reaches
     // the cap and poisons (internal sharing — a moved argument would be doubly aliased in the result).
-    private static (Dictionary<string, int> Counts, bool Poison) ReachSum(
-        (Dictionary<string, int> Counts, bool Poison) a,
-        (Dictionary<string, int> Counts, bool Poison) b)
+    private static ResultReachState ReachSum(
+        ResultReachState a,
+        ResultReachState b)
     {
         var counts = new Dictionary<string, int>(a.Counts, StringComparer.Ordinal);
-        bool poison = a.Poison || b.Poison;
+        ResultReachCause causes = a.Causes | b.Causes;
         foreach (var (k, v) in b.Counts)
         {
             int nv = (counts.TryGetValue(k, out var e) ? e : 0) + v;
@@ -1705,7 +2085,7 @@ public sealed partial class Lowering
         {
             if (v >= ReachCap)
             {
-                poison = true;
+                causes |= ResultReachCause.InternalSharing;
             }
         }
 
@@ -1716,12 +2096,13 @@ public sealed partial class Lowering
         // ("map/1" and "map/2") are NOT in an ancestor relation, so partitioning a value and re-embedding
         // its distinct parts (a rebalance/rebuild) never falsely poisons. Only summed (simultaneously-live)
         // positions are checked — branch joins (ReachMax) never manufacture this.
-        if (!poison)
+        if ((causes & ResultReachCause.InternalSharing) == ResultReachCause.None
+            && HasPathAncestorPair(counts))
         {
-            poison = HasPathAncestorPair(counts);
+            causes |= ResultReachCause.InternalSharing;
         }
 
-        return (counts, poison);
+        return new ResultReachState(counts, causes);
     }
 
     // True when the token set contains a proper path-ancestor/descendant pair: some key k and another key
@@ -1748,8 +2129,8 @@ public sealed partial class Lowering
     // yields a DISTINCT sub-cell of every cell the value may alias, so each token k becomes "k/field".
     // Distinct fields therefore stay disjoint (siblings), while a field of a field nests deeper — the path
     // records the containment used by <see cref="HasPathAncestorPair"/>.
-    private static (Dictionary<string, int> Counts, bool Poison) ExtendPaths(
-        (Dictionary<string, int> Counts, bool Poison) r,
+    private static ResultReachState ExtendPaths(
+        ResultReachState r,
         int field)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -1758,14 +2139,14 @@ public sealed partial class Lowering
             counts[k + "/" + field] = v;
         }
 
-        return (counts, r.Poison);
+        return new ResultReachState(counts, r.Causes);
     }
 
     // Branch join (if/match arms — at most one executes): multiplicities take the max, so distinct arms
     // never manufacture sharing.
-    private static (Dictionary<string, int> Counts, bool Poison) ReachMax(
-        (Dictionary<string, int> Counts, bool Poison) a,
-        (Dictionary<string, int> Counts, bool Poison) b)
+    private static ResultReachState ReachMax(
+        ResultReachState a,
+        ResultReachState b)
     {
         var counts = new Dictionary<string, int>(a.Counts, StringComparer.Ordinal);
         foreach (var (k, v) in b.Counts)
@@ -1773,19 +2154,19 @@ public sealed partial class Lowering
             counts[k] = counts.TryGetValue(k, out var e) && e > v ? e : v;
         }
 
-        return (counts, a.Poison || b.Poison);
+        return new ResultReachState(counts, a.Causes | b.Causes);
     }
 
     // Fixpoint join: identical to the branch max (grow reach sets / poison until stable).
-    private static (Dictionary<string, int> Counts, bool Poison) ReachJoin(
-        (Dictionary<string, int> Counts, bool Poison) a,
-        (Dictionary<string, int> Counts, bool Poison) b)
+    private static ResultReachState ReachJoin(
+        ResultReachState a,
+        ResultReachState b)
         => ReachMax(a, b);
 
     // Scale by a callee's per-parameter multiplicity: a callee embedding a parameter twice doubles the
     // reach of the argument bound to it (again capped into poison at the sharing boundary).
-    private static (Dictionary<string, int> Counts, bool Poison) ReachScale(
-        (Dictionary<string, int> Counts, bool Poison) a,
+    private static ResultReachState ReachScale(
+        ResultReachState a,
         int factor)
     {
         if (factor <= 0)
@@ -1794,27 +2175,27 @@ public sealed partial class Lowering
         }
 
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        bool poison = a.Poison;
+        ResultReachCause causes = a.Causes;
         foreach (var (k, v) in a.Counts)
         {
             int nv = v * factor;
             if (nv >= ReachCap)
             {
                 nv = ReachCap;
-                poison = true;
+                causes |= ResultReachCause.InternalSharing;
             }
 
             counts[k] = nv;
         }
 
-        return (counts, poison);
+        return new ResultReachState(counts, causes);
     }
 
     private static bool ReachEquals(
-        (Dictionary<string, int> Counts, bool Poison) a,
-        (Dictionary<string, int> Counts, bool Poison) b)
+        ResultReachState a,
+        ResultReachState b)
     {
-        if (a.Poison != b.Poison || a.Counts.Count != b.Counts.Count)
+        if (a.Causes != b.Causes || a.Counts.Count != b.Counts.Count)
         {
             return false;
         }
@@ -1832,11 +2213,11 @@ public sealed partial class Lowering
 
     // A fresh per-binding synthetic identity token, reach {token:1}. Summed into a binding's env reach so
     // multiplicity of a fresh (non-parameter) heap value is tracked exactly as for a parameter.
-    private (Dictionary<string, int> Counts, bool Poison) TokenReach()
+    private ResultReachState TokenReach()
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal) { ["#" + _maReachToken] = 1 };
         _maReachToken++;
-        return (counts, false);
+        return new ResultReachState(counts, ResultReachCause.None);
     }
 
     // Collapses a working reach to the stored per-function summary: each path token is reduced to its ROOT
@@ -1846,8 +2227,8 @@ public sealed partial class Lowering
     // DISJOINT sub-cells ("map/1" and "map/2") is reached once, not twice; a genuine same-cell double
     // (which would be internal sharing) already set poison during the sum before this collapse. Poison is
     // preserved. The result keys are exactly parameter names, so IsResultAliasMove/CallReach can map them.
-    private static (Dictionary<string, int> Counts, bool Poison) StripSyntheticTokens(
-        (Dictionary<string, int> Counts, bool Poison) r)
+    private static ResultReachState StripSyntheticTokens(
+        ResultReachState r)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var k in r.Counts.Keys)
@@ -1862,7 +2243,7 @@ public sealed partial class Lowering
             counts[root] = 1;
         }
 
-        return (counts, r.Poison);
+        return new ResultReachState(counts, r.Causes);
     }
 
     /// <summary>
@@ -1874,9 +2255,9 @@ public sealed partial class Lowering
     /// partially-applied constructor, an unresolved/under-or-over-applied call, or any unmodeled node
     /// poisons; the conservative default is poison, so an unproven shape never over-claims confinement.
     /// </summary>
-    private (Dictionary<string, int> Counts, bool Poison) ResultReach(
+    private ResultReachState ResultReach(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var result = ResultReachCore(e, env, scope);
@@ -1892,7 +2273,7 @@ public sealed partial class Lowering
     // already-audited whole-function fixpoint it generalizes. Only active during the dedicated
     // post-fixpoint recording pass (see ComputeExpressionFreshness); a null map during the hot
     // while-changed fixpoint loop makes this a no-op there, so recording cannot affect convergence.
-    private void RecordExpressionFreshness(Expr e, (Dictionary<string, int> Counts, bool Poison) result)
+    private void RecordExpressionFreshness(Expr e, ResultReachState result)
     {
         if (_maExpressionFreshness is { } map)
         {
@@ -1900,9 +2281,9 @@ public sealed partial class Lowering
         }
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) ResultReachCore(
+    private ResultReachState ResultReachCore(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (ResultReachIsCopyScalar(e))
@@ -1916,7 +2297,7 @@ public sealed partial class Lowering
                 return ResultReachVar(v, env);
 
             case Expr.QualifiedVar:
-                return ReachPoisoned();
+                return ReachPoisoned(ResultReachCause.GlobalOrTopLevelReach);
 
             // Control flow: the returned value is one of the arms; the scrutinee/condition is not part
             // of the returned value (but a match's scrutinee reach flows into its pattern bindings).
@@ -1974,9 +2355,9 @@ public sealed partial class Lowering
             or Expr.Equal or Expr.NotEqual;
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) ResultReachVar(
+    private ResultReachState ResultReachVar(
         Expr.Var v,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        Dictionary<string, ResultReachState> env)
     {
         if (env.TryGetValue(v.Name, out var bound))
         {
@@ -1991,13 +2372,17 @@ public sealed partial class Lowering
             return ctor.Arity == 0 && IsSoleNullaryConstructor(ctor) ? ReachBottom() : ReachPoisoned();
         }
 
-        // A free reference: a top-level/global binding or an unmodeled name — not confined.
-        return ReachPoisoned();
+        // A registered nonlocal value is a top-level/global reach. A name absent from the binding
+        // census is conservatively unknown rather than guessed to be global.
+        return ReachPoisoned(
+            _maValueRhs.ContainsKey(v.Name)
+                ? ResultReachCause.GlobalOrTopLevelReach
+                : ResultReachCause.ConservativeUnknown);
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) ResultReachRecordLit(
+    private ResultReachState ResultReachRecordLit(
         Expr.RecordLit rec,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         ConstructorSymbol? constructor = _constructorSymbols.GetValueOrDefault(rec.TypeName);
@@ -2027,9 +2412,9 @@ public sealed partial class Lowering
         return acc;
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) SumReach(
+    private ResultReachState SumReach(
         IReadOnlyList<Expr> exprs,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var acc = ReachBottom();
@@ -2041,12 +2426,12 @@ public sealed partial class Lowering
         return acc;
     }
 
-    private static Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> ExtendEnv(
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+    private static Dictionary<string, ResultReachState> ExtendEnv(
+        Dictionary<string, ResultReachState> env,
         string name,
-        (Dictionary<string, int> Counts, bool Poison) value)
+        ResultReachState value)
     {
-        var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal)
+        var env2 = new Dictionary<string, ResultReachState>(env, StringComparer.Ordinal)
         {
             [name] = value,
         };
@@ -2060,13 +2445,13 @@ public sealed partial class Lowering
     /// ever used in a copy position (ignored by the constructor case), so over-approximating it here is
     /// harmless.
     /// </summary>
-    private (Dictionary<string, int> Counts, bool Poison) MatchReach(
+    private ResultReachState MatchReach(
         Expr.Match m,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var scrut = ResultReach(m.Value, env, scope);
-        (Dictionary<string, int> Counts, bool Poison)? acc = null;
+        ResultReachState? acc = null;
         foreach (var c in m.Cases)
         {
             var env2 = BindPatternReach(c.Pattern, scrut, env);
@@ -2076,15 +2461,15 @@ public sealed partial class Lowering
             acc = acc is null ? arm : ReachMax(acc.Value, arm);
         }
 
-        return acc ?? ReachPoisoned();
+        return acc ?? ReachPoisoned(ResultReachCause.ConservativeUnknown);
     }
 
-    private Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> BindPatternReach(
+    private Dictionary<string, ResultReachState> BindPatternReach(
         Pattern p,
-        (Dictionary<string, int> Counts, bool Poison) scrut,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env)
+        ResultReachState scrut,
+        Dictionary<string, ResultReachState> env)
     {
-        var env2 = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(env, StringComparer.Ordinal);
+        var env2 = new Dictionary<string, ResultReachState>(env, StringComparer.Ordinal);
         BindPatternPaths(p, scrut, env2);
         return env2;
     }
@@ -2100,8 +2485,8 @@ public sealed partial class Lowering
     /// </summary>
     private void BindPatternPaths(
         Pattern p,
-        (Dictionary<string, int> Counts, bool Poison) parentReach,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env2)
+        ResultReachState parentReach,
+        Dictionary<string, ResultReachState> env2)
     {
         switch (p)
         {
@@ -2149,9 +2534,9 @@ public sealed partial class Lowering
     /// its multiplicity, and sum). A partial/over-applied constructor, an unresolved/ambiguous/mis-arity
     /// call, or a poisoned callee poisons.
     /// </summary>
-    private (Dictionary<string, int> Counts, bool Poison) CallReach(
+    private ResultReachState CallReach(
         Expr e,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var args = new List<Expr>();
@@ -2187,7 +2572,7 @@ public sealed partial class Lowering
             || TryResolveFunctionKey(head, name, scope) is not { } key
             || !_maFuncs.TryGetValue(key, out var info))
         {
-            return ReachPoisoned();
+            return ReachPoisoned(ResultReachCause.UnmodelledReach);
         }
 
         // (CO-2d) Over-application: the callee returns a closure that is applied to the surplus
@@ -2205,21 +2590,23 @@ public sealed partial class Lowering
         return CallReachRegistered(key, info, args, env, scope);
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) CallReachSelfRecursive(
+    private ResultReachState CallReachSelfRecursive(
         (FuncKey Func, FuncKey Recursive, string RecursiveName, List<string> Outer, string Acc) sr,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
-        if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary) || selfSummary.Poison)
+        if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary))
         {
-            return selfSummary.Poison ? ReachPoisoned() : ReachBottom();
+            return ReachBottom();
         }
 
-        var selfResult = ReachBottom();
+        var selfResult = new ResultReachState(
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            selfSummary.Causes);
         foreach (var (paramName, mult) in selfSummary.Counts)
         {
-            (Dictionary<string, int> Counts, bool Poison) paramReach;
+            ResultReachState paramReach;
             if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
             {
                 paramReach = ResultReach(args[0], env, scope);
@@ -2230,7 +2617,7 @@ public sealed partial class Lowering
             }
             else
             {
-                return ReachPoisoned();
+                return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
             selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
@@ -2239,10 +2626,10 @@ public sealed partial class Lowering
         return selfResult;
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) CallReachConstructor(
+    private ResultReachState CallReachConstructor(
         ConstructorSymbol ctor,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (args.Count != ctor.Arity)
@@ -2266,26 +2653,28 @@ public sealed partial class Lowering
         return acc;
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) CallReachOverApplied(
+    private ResultReachState CallReachOverApplied(
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var over = OverApplicationReach(key, info, args);
-        if (over is not { } ov || ov.Poison)
+        if (over is not { } ov)
         {
-            return ReachPoisoned();
+            return ReachPoisoned(ResultReachCause.ConservativeUnknown);
         }
 
-        var acc = ReachBottom();
+        var acc = new ResultReachState(
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            ov.Causes);
         foreach (var (marker, mult) in ov.Counts)
         {
             int ai = ArgMarkerIndex(marker);
             if (ai < 0 || ai >= args.Count)
             {
-                return ReachPoisoned();
+                return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
             acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env, scope), mult));
@@ -2294,29 +2683,30 @@ public sealed partial class Lowering
         return acc;
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) CallReachRegistered(
+    private ResultReachState CallReachRegistered(
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (args.Count != info.Params.Count
-            || !_maResultReach.TryGetValue(key, out var summary)
-            || summary.Poison)
+            || !_maResultReach.TryGetValue(key, out var summary))
         {
             RecordUncoveredCallArgumentsFreshness(args, env, scope, covered: null);
-            return ReachPoisoned();
+            return ReachPoisoned(ResultReachCause.UnmodelledReach);
         }
 
-        var result = ReachBottom();
+        var result = new ResultReachState(
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            summary.Causes);
         HashSet<int>? covered = _maExpressionFreshness is not null ? new HashSet<int>() : null;
         foreach (var (paramName, mult) in summary.Counts)
         {
             int idx = info.Params.IndexOf(paramName);
             if (idx < 0 || idx >= args.Count)
             {
-                return ReachPoisoned();
+                return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
             result = ReachSum(result, ReachScale(ResultReach(args[idx], env, scope), mult));
@@ -2344,7 +2734,7 @@ public sealed partial class Lowering
     // be harmless too, even though covered lets us skip it.
     private void RecordUncoveredCallArgumentsFreshness(
         List<Expr> args,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope,
         HashSet<int>? covered)
     {
@@ -2470,7 +2860,7 @@ public sealed partial class Lowering
     /// nested call result, an unmodeled node) poisons — the conservative default. Synthetic identity
     /// tokens are stripped; the depth guard poisons a chain of nested over-applications.
     /// </summary>
-    private (Dictionary<string, int> Counts, bool Poison)? OverApplicationReach(
+    private ResultReachState? OverApplicationReach(
         FuncKey key,
         (List<string> Params, Expr Body) info,
         List<Expr> args)
@@ -2482,13 +2872,15 @@ public sealed partial class Lowering
 
         if (_maOverAppDepth >= MaxOverAppDepth)
         {
-            return ReachPoisoned();
+            return ReachPoisoned(ResultReachCause.ConservativeUnknown);
         }
 
-        var symEnv = new Dictionary<string, (Dictionary<string, int> Counts, bool Poison)>(StringComparer.Ordinal);
+        var symEnv = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
         for (int i = 0; i < info.Params.Count; i++)
         {
-            symEnv[info.Params[i]] = (new Dictionary<string, int>(StringComparer.Ordinal) { ["@" + i] = 1 }, false);
+            symEnv[info.Params[i]] = new ResultReachState(
+                new Dictionary<string, int>(StringComparer.Ordinal) { ["@" + i] = 1 },
+                ResultReachCause.None);
         }
 
         var extra = new List<string>();
@@ -2513,11 +2905,11 @@ public sealed partial class Lowering
     /// max. Any node that is not a returned lambda / control-flow structure while an argument is still
     /// unconsumed (a nested call, an unmodeled node) poisons.
     /// </summary>
-    private (Dictionary<string, int> Counts, bool Poison) OverApplyReachSym(
+    private ResultReachState OverApplyReachSym(
         Expr body,
         List<string> extra,
         int idx,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (idx >= extra.Count)
@@ -2533,7 +2925,9 @@ public sealed partial class Lowering
                     var env2 = ExtendEnv(
                         env,
                         lam.ParamName,
-                        (new Dictionary<string, int>(StringComparer.Ordinal) { [extra[idx]] = 1 }, false));
+                        new ResultReachState(
+                            new Dictionary<string, int>(StringComparer.Ordinal) { [extra[idx]] = 1 },
+                            ResultReachCause.None));
                     return OverApplyReachSym(
                         lam.Body, extra, idx + 1, env2, RemoveFuncNames(scope, [lam.ParamName]));
                 }
@@ -2575,15 +2969,15 @@ public sealed partial class Lowering
         }
     }
 
-    private (Dictionary<string, int> Counts, bool Poison) OverApplyMatchReachSym(
+    private ResultReachState OverApplyMatchReachSym(
         Expr.Match match,
         List<string> extra,
         int idx,
-        Dictionary<string, (Dictionary<string, int> Counts, bool Poison)> env,
+        Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
         var scrut = ResultReach(match.Value, env, scope);
-        (Dictionary<string, int> Counts, bool Poison)? acc = null;
+        ResultReachState? acc = null;
         foreach (MatchCase matchCase in match.Cases)
         {
             var env2 = BindPatternReach(matchCase.Pattern, scrut, env);
@@ -2594,7 +2988,7 @@ public sealed partial class Lowering
             acc = acc is null ? arm : ReachMax(acc.Value, arm);
         }
 
-        return acc ?? ReachPoisoned();
+        return acc ?? ReachPoisoned(ResultReachCause.ConservativeUnknown);
     }
 
     // Parses an "@i" argument-position marker back to its index, or -1 when not a marker.
@@ -2994,11 +3388,46 @@ public sealed partial class Lowering
             return;
         }
 
+        RecordIncompleteCallCensus(root, calleeName, scope);
+
         // Not a complete saturated call to a known function: fall through to the generic
         // walk, which will surface any known-function name as an escape.
         var call = (Expr.Call)e;
         CollectCallsAndEscapes(call.Func, enclosing, scope);
         CollectCallsAndEscapes(call.Arg, enclosing, scope);
+    }
+
+    private void RecordIncompleteCallCensus(
+        Expr root,
+        string? calleeName,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        if (calleeName is null)
+        {
+            return;
+        }
+
+        if (TryResolveFunctionKey(root, calleeName, scope) is { } incompleteKey
+            && _maFuncs.ContainsKey(incompleteKey))
+        {
+            MarkFunctionEscaped(
+                incompleteKey,
+                FunctionCallCensusCause.IncompleteApplication);
+            return;
+        }
+
+        if (!_maAmbiguous.Contains(calleeName))
+        {
+            return;
+        }
+
+        foreach ((FuncKey key, string name) in _maKeyName)
+        {
+            if (string.Equals(name, calleeName, StringComparison.Ordinal))
+            {
+                AddCallCensusCause(key, FunctionCallCensusCause.AmbiguousResolution);
+            }
+        }
     }
 
     // `let g = f(partialArgs) in body` where f is a known function and g is used ONLY as saturated
@@ -3481,12 +3910,17 @@ public sealed partial class Lowering
         return _maFuncs.ContainsKey(key);
     }
 
-    private void MarkFunctionEscaped(FuncKey key)
+    private void MarkFunctionEscaped(
+        FuncKey key,
+        FunctionCallCensusCause cause = FunctionCallCensusCause.EscapedAsValue)
     {
-        if (_maKeyName.TryGetValue(key, out string? name))
-        {
-            _maEscaped.Add(name);
-        }
+        _maEscaped.Add(key);
+        AddCallCensusCause(key, cause);
+    }
+
+    private void AddCallCensusCause(FuncKey key, FunctionCallCensusCause cause)
+    {
+        _maCallCensusCauses[key] = _maCallCensusCauses.GetValueOrDefault(key) | cause;
     }
 
     private static IReadOnlyDictionary<string, FuncKey> RemoveFuncNames(
