@@ -878,7 +878,7 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void TCO_loop_with_consumed_list_tail_keeps_one_runtime_regime()
     {
-        IrProgram ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive reverse : List(Str) -> List(Str) -> List(Str) = given acc -> given rest ->
                 match rest with
@@ -886,8 +886,12 @@ public sealed class ArenaDeallocationTests
                     | head :: tail -> reverse (head :: acc) tail
             in reverse [] ["a", "b"]
             """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("reverse");
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
             RuntimeManaged: true,
@@ -907,6 +911,225 @@ public sealed class ArenaDeallocationTests
                 "Nil list aliases must bypass RC header access.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void TCO_let_shadowed_consumed_tail_does_not_enable_runtime_list_ownership()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive consume values replacement remaining =
+                if remaining <= 0
+                then replacement
+                else
+                    match values with
+                        | [] -> replacement
+                        | _ :: tail ->
+                            let tail = replacement
+                            in consume(tail)(replacement)(remaining - 1)
+            in consume(["a"])(["b"])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("consume");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        HasRuntimeManagedListOwnership(instructions).ShouldBeFalse(
+            "A same-named let binding is not the tail extracted from the original parameter.");
+    }
+
+    [Test]
+    public void TCO_pattern_shadowed_consumed_tail_does_not_enable_runtime_list_ownership()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            type Holder(A) =
+                | Hold(A)
+            let recursive consume values holder remaining =
+                if remaining <= 0
+                then values
+                else
+                    match values with
+                        | [] -> values
+                        | _ :: tail ->
+                            match holder with
+                                | Hold(tail) -> consume(tail)(holder)(remaining - 1)
+            in consume(["a"])(Hold(["b"]))(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("consume");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        HasRuntimeManagedListOwnership(instructions).ShouldBeFalse(
+            "A same-named nested pattern binding is not the tail extracted from the original parameter.");
+    }
+
+    [Test]
+    public void TCO_shadowed_self_name_does_not_disqualify_exact_consumed_tail()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive consume values fallback remaining =
+                if remaining <= 0
+                then values
+                else
+                    match values with
+                        | [] -> fallback
+                        | _ :: tail ->
+                            if remaining == 1
+                            then consume(tail)(fallback)(remaining - 1)
+                            else
+                                let consume a b c = a
+                                in consume(fallback)(fallback)(remaining - 1)
+            in consume(["a", "b"])(["fallback"])(2)
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("consume")
+            .Single(candidate => candidate.TcoParamFacts.Any(fact =>
+                fact.Shape == TcoSelfCallArgumentShape.ConsumedTail));
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Test]
+    public void TCO_exact_self_alias_call_participates_in_consumed_tail_join()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive consume values fallback remaining =
+                if remaining <= 0
+                then values
+                else
+                    match values with
+                        | [] -> fallback
+                        | _ :: tail ->
+                            if remaining == 1
+                            then consume(tail)(fallback)(remaining - 1)
+                            else
+                                let consume = consume
+                                in consume(fallback)(fallback)(remaining - 1)
+            in consume(["a", "b"])(["fallback"])(2)
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("consume")
+            .Single(candidate => candidate.TcoParamFacts.Count > 0);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed,
+            "Every live TCO back edge must participate in the canonical positional shape join.");
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(2,
+            "An immutable local alias of the exact recursive function remains a valid TCO back edge.");
+        HasRuntimeManagedListOwnership(instructions).ShouldBeFalse(
+            "A mixed parameter shape must not inherit consumed-tail runtime ownership.");
+    }
+
+    [Test]
+    public void TCO_same_named_non_self_alias_disqualifies_borrowable_consumed_tail()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let inspect values total ignored =
+                match values with
+                    | [] -> total
+                    | _ :: _ -> total + 1
+            in let recursive consume values total remaining =
+                match values with
+                    | [] -> total
+                    | Body(x, mass) :: tail ->
+                        if remaining > 0
+                        then consume(tail)(total + x * mass)(remaining - 1)
+                        else
+                            let consume = inspect
+                            in consume(tail)(total)(0)
+            in consume([Body(x = 1, mass = 2), Body(x = 3, mass = 4)])(0)(1)
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("consume")
+            .Single(candidate => candidate.TcoParamFacts.Any(fact =>
+                fact.Shape == TcoSelfCallArgumentShape.ConsumedTail));
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(1,
+            "The same-named alias of another function must remain an ordinary call.");
+        ir.Functions.Prepend(ir.EntryFunction)
+            .Any(function => function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena
+                {
+                    Purpose: IrInst.CopyOutPurpose.RcNormalization,
+                }))
+            .ShouldBeTrue(
+            "Passing the extracted tail to an ordinary function is an escape, so the traversal cannot borrow the caller's list graph.");
+    }
+
+    [Test]
+    public void TCO_differently_named_self_alias_disqualifies_borrowable_consumed_tail()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let recursive consume values total remaining =
+                match values with
+                    | [] -> total
+                    | Body(x, mass) :: tail ->
+                        if remaining > 0
+                        then consume(tail)(total + x * mass)(remaining - 1)
+                        else
+                            let again = consume
+                            in again(tail)(total)(0)
+            in consume([Body(x = 1, mass = 2), Body(x = 3, mass = 4)])(0)(1)
+            """);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("consume")
+            .Single(candidate => candidate.TcoParamFacts.Any(fact =>
+                fact.Shape == TcoSelfCallArgumentShape.ConsumedTail));
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        instructions.Count(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal)).ShouldBe(1,
+            "Live TCO requires both exact function identity and the recursive binding's source name.");
+        ir.Functions.Prepend(ir.EntryFunction)
+            .Any(function => function.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena
+                {
+                    Purpose: IrInst.CopyOutPurpose.RcNormalization,
+                }))
+            .ShouldBeTrue(
+                "A differently named alias is an ordinary call, so passing it the tail must disqualify borrowing.");
+    }
+
+    [Test]
+    public void TCO_duplicate_parameter_names_keep_consumed_tail_positional_but_fail_closed_in_lowering()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive consume value value remaining =
+                if remaining <= 0
+                then value
+                else
+                    match value with
+                        | [] -> value
+                        | _ :: tail -> consume(tail)(tail)(remaining - 1)
+            in consume([])(["a", "b"])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("consume");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        HasRuntimeManagedListOwnership(instructions).ShouldBeFalse(
+            "The lowering scope cannot distinguish duplicate-name parameter slots, so consumed-tail positives must fail closed.");
     }
 
     [Test]
@@ -2121,6 +2344,17 @@ public sealed class ArenaDeallocationTests
     {
         return instructions.Any(i => i is IrInst.RestoreArenaState);
     }
+
+    private static bool HasRuntimeManagedListOwnership(List<IrInst> instructions)
+        => instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+        }
+            or IrInst.RcDrop
+        {
+            TypeName: "List",
+            RuntimeManaged: true,
+        });
 
     private static bool HasTcoBackEdgeReclaim(List<IrInst> instructions)
     {

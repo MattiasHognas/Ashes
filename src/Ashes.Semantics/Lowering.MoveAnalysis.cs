@@ -793,6 +793,15 @@ public sealed partial class Lowering
         return _maFuncs.ContainsKey(key) ? key : null;
     }
 
+    private (
+        IReadOnlySet<int> LoopInvariant,
+        IReadOnlySet<int> AffineConsList,
+        IReadOnlySet<int> ConsumedListTail) GetTcoParameterOrdinalFacts(FuncKey? function)
+        => (
+            GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
+            GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.GrownCons),
+            GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail));
+
     private IReadOnlySet<int> GetTcoParameterOrdinals(
         FuncKey? function,
         TcoSelfCallArgumentShape shape)
@@ -1006,6 +1015,7 @@ public sealed partial class Lowering
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
+        public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
     }
 
@@ -1017,9 +1027,8 @@ public sealed partial class Lowering
     /// already-computed <paramref name="expressionFreshness"/> map, while arena self-containment uses
     /// the narrower reset-boundary predicate without redefining reference freshness. Together they
     /// retain the separately named facts that <c>Lowering.Reuse.cs</c>'s remaining
-    /// <c>CollectFreshRebuiltListParams</c>/<c>CollectFreshClosureParams</c>/
-    /// <c>CollectConsumedListTailParams</c> answer today by re-walking a TCO loop's body a second
-    /// time with their own, separate logic. A
+    /// <c>CollectFreshRebuiltListParams</c>/<c>CollectFreshClosureParams</c> answer today by
+    /// re-walking a TCO loop's body a second time with their own, separate logic. A
     /// parameter with no self-recursive call site to classify from (an ordinary non-recursive
     /// function, or a parameter never itself threaded through the self-call) gets no entry at all —
     /// absence, not <see cref="TcoSelfCallArgumentShape.Mixed"/>, is "never asked."
@@ -1034,6 +1043,7 @@ public sealed partial class Lowering
         {
             Observed = new TcoSelfCallArgumentShape?[paramNames.Count],
             ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
+            SelfName = _maKeyName[function],
         };
 
         // Use the same body-entry scope recorded by call census. It contains this binding's own name
@@ -1072,15 +1082,16 @@ public sealed partial class Lowering
         return result;
     }
 
-    // Walks the tail spine (If arms, Match case bodies, Let bodies) the same way
-    // CollectConsumedListTailParams does, threading a tail-owner map (extracted binding name -> the
-    // parameter it was pattern-matched out of, one Cons level deep) so a self-call argument that is
-    // just that extracted tail can be recognized as ConsumedTail. Also threads a live, lexically-
+    // Walks the tail spine (If arms, Match case bodies, Let bodies), threading a tail-owner map
+    // (extracted binding name -> the parameter it was pattern-matched out of, one Cons level deep)
+    // so a self-call argument that is just that extracted tail can be recognized as ConsumedTail.
+    // Also threads a live, lexically-
     // extended scope (name -> the FuncKey it currently denotes), copy-on-write extended at every
     // Let/LetRecursive/LetResult crossed exactly the way ExtendEnv extends ResultReach's own env: a
     // locally nested binding of the same name as one already in scope shadows it for the rest of this
     // node's body, resolving to the newly-crossed binder's own FuncKey when that binder itself
-    // registered as a function, or to no function at all (removed from scope) when it did not —
+    // registered as a function, to an existing FuncKey for an immutable plain-let function alias,
+    // or to no function at all (removed from scope) when it did not —
     // matching a bare _maFuncs.ContainsKey check's own verdict for that exact occurrence, not a
     // whole-program name lookup. parameterScope separately resolves live value names to their
     // original parameter ordinal. Crossing a let or pattern binder removes a same-named parameter,
@@ -1112,7 +1123,7 @@ public sealed partial class Lowering
                     let.Body,
                     RemoveTailOwnerNames(tailOwners, [let.Name]),
                     function,
-                    ExtendFuncScope(scope, let, let.Name),
+                    ExtendTcoFuncScope(scope, let, let.Name, let.Value),
                     RemoveTcoParameterNames(parameterScope, [let.Name]),
                     paramNames,
                     expressionFreshness,
@@ -1250,6 +1261,24 @@ public sealed partial class Lowering
         return next;
     }
 
+    // Plain lets may bind an immutable alias of an exact function already present in scope. Live
+    // TCO preserves that identity through the local slot's known function label, so structural TCO
+    // analyses must preserve the same FuncKey or they can omit a live back edge. Other let-like
+    // forms retain ExtendFuncScope's binder-identity semantics.
+    private IReadOnlyDictionary<string, FuncKey> ExtendTcoFuncScope(
+        IReadOnlyDictionary<string, FuncKey> scope,
+        Expr binder,
+        string name,
+        Expr value)
+    {
+        if (value is Expr.Var alias && scope.TryGetValue(alias.Name, out FuncKey aliasedFunction))
+        {
+            return SetFuncName(scope, name, aliasedFunction);
+        }
+
+        return ExtendFuncScope(scope, binder, name);
+    }
+
     // The self-call site itself: classifies every argument position's local shape and narrows (or
     // locks to Mixed on disagreement) the running per-position verdict in state.Observed.
     private void TcoParamFactsWalkCall(
@@ -1265,6 +1294,7 @@ public sealed partial class Lowering
         var arguments = new List<Expr>();
         Expr root = CollectCallArgs(expression, arguments);
         if (root is not Expr.Var callee
+            || !string.Equals(callee.Name, state.SelfName, StringComparison.Ordinal)
             || !scope.TryGetValue(callee.Name, out var calleeKey)
             || !calleeKey.Equals(function)
             || arguments.Count != paramNames.Count)

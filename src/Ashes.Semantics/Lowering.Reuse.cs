@@ -254,72 +254,6 @@ public sealed partial class Lowering
             selfName,
             (_, argument) => IsArenaSelfContainedListRebuildExpr(argument));
 
-    private static HashSet<string> CollectConsumedListTailParams(
-        Expr body,
-        IReadOnlyList<string> paramNames,
-        string selfName)
-    {
-        var candidates = new HashSet<string>(paramNames, StringComparer.Ordinal);
-        bool sawSelfCall = false;
-
-        void Walk(Expr expression, IReadOnlyDictionary<string, string> tailOwners)
-        {
-            switch (expression)
-            {
-                case Expr.If iff:
-                    Walk(iff.Then, tailOwners);
-                    Walk(iff.Else, tailOwners);
-                    return;
-                case Expr.Match match:
-                    foreach (MatchCase matchCase in match.Cases)
-                    {
-                        var armTailOwners = new Dictionary<string, string>(tailOwners, StringComparer.Ordinal);
-                        if (match.Value is Expr.Var source
-                            && paramNames.Contains(source.Name, StringComparer.Ordinal)
-                            && matchCase.Pattern is Pattern.Cons { Tail: Pattern.Var tail })
-                        {
-                            armTailOwners[tail.Name] = source.Name;
-                        }
-                        Walk(matchCase.Body, armTailOwners);
-                    }
-                    return;
-                case Expr.Let let:
-                    Walk(let.Body, tailOwners);
-                    return;
-                case Expr.LetResult letResult:
-                    Walk(letResult.Body, tailOwners);
-                    return;
-                case Expr.LetRecursive letRecursive:
-                    Walk(letRecursive.Body, tailOwners);
-                    return;
-                case Expr.Call:
-                    var arguments = new List<Expr>();
-                    Expr root = CollectCallArgs(expression, arguments);
-                    if (root is not Expr.Var function
-                        || !string.Equals(function.Name, selfName, StringComparison.Ordinal)
-                        || arguments.Count != paramNames.Count)
-                    {
-                        return;
-                    }
-
-                    sawSelfCall = true;
-                    for (int i = 0; i < paramNames.Count; i++)
-                    {
-                        if (arguments[i] is not Expr.Var argument
-                            || !tailOwners.TryGetValue(argument.Name, out string? owner)
-                            || !string.Equals(owner, paramNames[i], StringComparison.Ordinal))
-                        {
-                            candidates.Remove(paramNames[i]);
-                        }
-                    }
-                    return;
-            }
-        }
-
-        Walk(body, new Dictionary<string, string>(StringComparer.Ordinal));
-        return sawSelfCall ? candidates : [];
-    }
-
     /// <summary>
     /// Pattern-bound names extracted directly (one pattern level) off a bare reference to a declared TCO
     /// parameter — via any match on that parameter, not just a list cons — whose appearances in the arm
@@ -401,6 +335,19 @@ public sealed partial class Lowering
 
         Walk(body);
         return escaping;
+    }
+
+    private static int IndexOfOrdinal(IReadOnlyList<string> names, string name)
+    {
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (string.Equals(names[i], name, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     // Counts, within the same arm a direct pattern binding came from, the occurrences of bindingName
@@ -523,43 +470,53 @@ public sealed partial class Lowering
                 && string.Equals(argumentVar.Name, bindingName, StringComparison.Ordinal));
     }
 
+    private readonly record struct BorrowInspectContext(
+        FuncKey SelfFunction,
+        string SelfName,
+        int ParamCount,
+        int ParamIndex);
+
     /// <summary>
-    /// Of the <paramref name="consumedTailParams"/>, returns those the recursive body only inspects:
+    /// Of the <paramref name="consumedTailParamOrdinals"/>, returns those the recursive body only inspects:
     /// nothing derived from the list (a bound head or tail) escapes the traversal. A head may only be
     /// a match scrutinee; a tail may only be a match scrutinee or the argument at the param's own
-    /// index in the tail self-call. Any other appearance of a head/tail variable (returned, consed,
+    /// index in an exact lexical self-call. Any other appearance of a head/tail variable (returned, consed,
     /// stored in a record/tuple, or passed to another function) disqualifies the param. Such a param
     /// can be borrowed from the caller instead of RC-normalized into a private copy. Purely
     /// structural; the element-type inline-copy check is applied separately at the decision site.
     /// </summary>
-    private static HashSet<string> CollectBorrowableConsumedListParams(
+    private HashSet<int> CollectBorrowableConsumedListParams(
         Expr body,
         IReadOnlyList<string> paramNames,
         string selfName,
-        HashSet<string> consumedTailParams)
+        IReadOnlySet<int> consumedTailParamOrdinals,
+        FuncKey? ownershipFunction)
     {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string param in consumedTailParams)
+        var result = new HashSet<int>();
+        if (ownershipFunction is not { } selfFunction
+            || !_maFunctionScopes.TryGetValue(selfFunction, out IReadOnlyDictionary<string, FuncKey>? functionScope))
         {
-            int paramIndex = -1;
-            for (int i = 0; i < paramNames.Count; i++)
-            {
-                if (string.Equals(paramNames[i], param, StringComparison.Ordinal))
-                {
-                    paramIndex = i;
-                    break;
-                }
-            }
+            return result;
+        }
 
-            if (paramIndex < 0)
+        for (int paramIndex = 0; paramIndex < paramNames.Count; paramIndex++)
+        {
+            if (!consumedTailParamOrdinals.Contains(paramIndex))
             {
                 continue;
             }
 
+            string param = paramNames[paramIndex];
             var tails = new HashSet<string>(StringComparer.Ordinal) { param };
-            if (BorrowInspectClean(body, tails, new HashSet<string>(StringComparer.Ordinal), paramNames, selfName, paramIndex))
+            var context = new BorrowInspectContext(selfFunction, selfName, paramNames.Count, paramIndex);
+            if (BorrowInspectClean(
+                body,
+                tails,
+                new HashSet<string>(StringComparer.Ordinal),
+                context,
+                functionScope))
             {
-                result.Add(param);
+                result.Add(paramIndex);
             }
         }
 
@@ -571,13 +528,12 @@ public sealed partial class Lowering
     // scrutinee, and a tail var at `paramIndex` of the tail self-call. Every other bare reference to
     // a tainted var is an escape. Unmodelled expression shapes fall back to `false` (conservative:
     // the param simply keeps its current RC-normalized behaviour).
-    private static bool BorrowInspectClean(
+    private bool BorrowInspectClean(
         Expr expression,
         HashSet<string> tails,
         HashSet<string> heads,
-        IReadOnlyList<string> paramNames,
-        string selfName,
-        int paramIndex)
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
     {
         switch (expression)
         {
@@ -592,45 +548,53 @@ public sealed partial class Lowering
             case Expr.BoolLit:
                 return true;
             case Expr.If iff:
-                return BorrowInspectCleanAll([iff.Cond, iff.Then, iff.Else], tails, heads, paramNames, selfName, paramIndex);
+                return BorrowInspectCleanAll([iff.Cond, iff.Then, iff.Else], tails, heads, context, functionScope);
             case Expr.Let let:
-                return BorrowInspectCleanLet(let.Value, let.Name, let.Body, tails, heads, paramNames, selfName, paramIndex);
+                return BorrowInspectCleanLet(let, tails, heads, context, functionScope);
             case Expr.LetResult letResult:
-                return BorrowInspectCleanAll([letResult.Value, letResult.Body], tails, heads, paramNames, selfName, paramIndex);
+                return BorrowInspectClean(letResult.Value, tails, heads, context, functionScope)
+                    && BorrowInspectClean(
+                        letResult.Body,
+                        tails,
+                        heads,
+                        context,
+                        ExtendFuncScope(functionScope, letResult, letResult.Name));
             case Expr.LetRecursive letRec:
-                return BorrowInspectCleanAll([letRec.Value, letRec.Body], tails, heads, paramNames, selfName, paramIndex);
+                IReadOnlyDictionary<string, FuncKey> recursiveScope =
+                    ExtendFuncScope(functionScope, letRec, letRec.Name);
+                return BorrowInspectClean(letRec.Value, tails, heads, context, recursiveScope)
+                    && BorrowInspectClean(letRec.Body, tails, heads, context, recursiveScope);
             case Expr.Match match:
-                return BorrowInspectCleanMatch(match, tails, heads, paramNames, selfName, paramIndex);
+                return BorrowInspectCleanMatch(match, tails, heads, context, functionScope);
             case Expr.Call:
-                return BorrowInspectCleanCall(expression, tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Add a: return BorrowInspectCleanAll([a.Left, a.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Subtract s: return BorrowInspectCleanAll([s.Left, s.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Multiply m: return BorrowInspectCleanAll([m.Left, m.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Divide d: return BorrowInspectCleanAll([d.Left, d.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Modulo mo: return BorrowInspectCleanAll([mo.Left, mo.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.Equal eq: return BorrowInspectCleanAll([eq.Left, eq.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.NotEqual ne: return BorrowInspectCleanAll([ne.Left, ne.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.GreaterThan gt: return BorrowInspectCleanAll([gt.Left, gt.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.LessThan lt: return BorrowInspectCleanAll([lt.Left, lt.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.GreaterOrEqual ge: return BorrowInspectCleanAll([ge.Left, ge.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.LessOrEqual le: return BorrowInspectCleanAll([le.Left, le.Right], tails, heads, paramNames, selfName, paramIndex);
-            case Expr.TupleLit tuple: return BorrowInspectCleanAll(tuple.Elements, tails, heads, paramNames, selfName, paramIndex);
+                return BorrowInspectCleanCall(expression, tails, heads, context, functionScope);
+            case Expr.Add a: return BorrowInspectCleanAll([a.Left, a.Right], tails, heads, context, functionScope);
+            case Expr.Subtract s: return BorrowInspectCleanAll([s.Left, s.Right], tails, heads, context, functionScope);
+            case Expr.Multiply m: return BorrowInspectCleanAll([m.Left, m.Right], tails, heads, context, functionScope);
+            case Expr.Divide d: return BorrowInspectCleanAll([d.Left, d.Right], tails, heads, context, functionScope);
+            case Expr.Modulo mo: return BorrowInspectCleanAll([mo.Left, mo.Right], tails, heads, context, functionScope);
+            case Expr.Equal eq: return BorrowInspectCleanAll([eq.Left, eq.Right], tails, heads, context, functionScope);
+            case Expr.NotEqual ne: return BorrowInspectCleanAll([ne.Left, ne.Right], tails, heads, context, functionScope);
+            case Expr.GreaterThan gt: return BorrowInspectCleanAll([gt.Left, gt.Right], tails, heads, context, functionScope);
+            case Expr.LessThan lt: return BorrowInspectCleanAll([lt.Left, lt.Right], tails, heads, context, functionScope);
+            case Expr.GreaterOrEqual ge: return BorrowInspectCleanAll([ge.Left, ge.Right], tails, heads, context, functionScope);
+            case Expr.LessOrEqual le: return BorrowInspectCleanAll([le.Left, le.Right], tails, heads, context, functionScope);
+            case Expr.TupleLit tuple: return BorrowInspectCleanAll(tuple.Elements, tails, heads, context, functionScope);
             default:
                 return false;
         }
     }
 
-    private static bool BorrowInspectCleanAll(
+    private bool BorrowInspectCleanAll(
         IReadOnlyList<Expr> expressions,
         HashSet<string> tails,
         HashSet<string> heads,
-        IReadOnlyList<string> paramNames,
-        string selfName,
-        int paramIndex)
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
     {
         foreach (Expr expression in expressions)
         {
-            if (!BorrowInspectClean(expression, tails, heads, paramNames, selfName, paramIndex))
+            if (!BorrowInspectClean(expression, tails, heads, context, functionScope))
             {
                 return false;
             }
@@ -639,64 +603,64 @@ public sealed partial class Lowering
         return true;
     }
 
-    private static bool BorrowInspectCleanLet(
-        Expr value,
-        string name,
-        Expr letBody,
+    private bool BorrowInspectCleanLet(
+        Expr.Let let,
         HashSet<string> tails,
         HashSet<string> heads,
-        IReadOnlyList<string> paramNames,
-        string selfName,
-        int paramIndex)
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
     {
+        IReadOnlyDictionary<string, FuncKey> bodyFunctionScope =
+            ExtendTcoFuncScope(functionScope, let, let.Name, let.Value);
+
         // A bare-var alias of a tainted tail/head propagates the taint to the bound name; any other
         // value that touches a tainted var is caught as an escape by checking the value directly.
-        if (value is Expr.Var alias && tails.Contains(alias.Name))
+        if (let.Value is Expr.Var alias && tails.Contains(alias.Name))
         {
-            return BorrowInspectClean(letBody, Extend(tails, name), heads, paramNames, selfName, paramIndex);
+            return BorrowInspectClean(
+                let.Body,
+                Extend(tails, let.Name),
+                heads,
+                context,
+                bodyFunctionScope);
         }
 
-        if (value is Expr.Var headAlias && heads.Contains(headAlias.Name))
+        if (let.Value is Expr.Var headAlias && heads.Contains(headAlias.Name))
         {
-            return BorrowInspectClean(letBody, tails, Extend(heads, name), paramNames, selfName, paramIndex);
+            return BorrowInspectClean(
+                let.Body,
+                tails,
+                Extend(heads, let.Name),
+                context,
+                bodyFunctionScope);
         }
 
-        return BorrowInspectClean(value, tails, heads, paramNames, selfName, paramIndex)
-            && BorrowInspectClean(letBody, tails, heads, paramNames, selfName, paramIndex);
+        return BorrowInspectClean(let.Value, tails, heads, context, functionScope)
+            && BorrowInspectClean(let.Body, tails, heads, context, bodyFunctionScope);
     }
 
-    private static bool BorrowInspectCleanMatch(
+    private bool BorrowInspectCleanMatch(
         Expr.Match match,
         HashSet<string> tails,
         HashSet<string> heads,
-        IReadOnlyList<string> paramNames,
-        string selfName,
-        int paramIndex)
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
     {
         bool tailScrutinee = match.Value is Expr.Var sv1 && tails.Contains(sv1.Name);
         bool headScrutinee = match.Value is Expr.Var sv2 && heads.Contains(sv2.Name);
         if (!tailScrutinee && !headScrutinee)
         {
-            if (!BorrowInspectClean(match.Value, tails, heads, paramNames, selfName, paramIndex))
-            {
-                return false;
-            }
-
-            foreach (MatchCase matchCase in match.Cases)
-            {
-                if (!BorrowInspectClean(matchCase.Body, tails, heads, paramNames, selfName, paramIndex))
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return BorrowInspectCleanUntrackedMatch(match, tails, heads, context, functionScope);
         }
 
         foreach (MatchCase matchCase in match.Cases)
         {
             HashSet<string> caseTails = tails;
             HashSet<string> caseHeads = heads;
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            IReadOnlyDictionary<string, FuncKey> armFunctionScope =
+                RemoveFuncNames(functionScope, binders);
             if (tailScrutinee)
             {
                 if (!BorrowInspectBindTailPattern(matchCase.Pattern, tails, heads, out caseTails, out caseHeads))
@@ -709,7 +673,46 @@ public sealed partial class Lowering
                 return false;
             }
 
-            if (!BorrowInspectClean(matchCase.Body, caseTails, caseHeads, paramNames, selfName, paramIndex))
+            if (matchCase.Guard is { } guard
+                && !BorrowInspectClean(guard, caseTails, caseHeads, context, armFunctionScope))
+            {
+                return false;
+            }
+
+            if (!BorrowInspectClean(matchCase.Body, caseTails, caseHeads, context, armFunctionScope))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool BorrowInspectCleanUntrackedMatch(
+        Expr.Match match,
+        HashSet<string> tails,
+        HashSet<string> heads,
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
+    {
+        if (!BorrowInspectClean(match.Value, tails, heads, context, functionScope))
+        {
+            return false;
+        }
+
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            IReadOnlyDictionary<string, FuncKey> armFunctionScope =
+                RemoveFuncNames(functionScope, binders);
+            if (matchCase.Guard is { } guard
+                && !BorrowInspectClean(guard, tails, heads, context, armFunctionScope))
+            {
+                return false;
+            }
+
+            if (!BorrowInspectClean(matchCase.Body, tails, heads, context, armFunctionScope))
             {
                 return false;
             }
@@ -790,37 +793,38 @@ public sealed partial class Lowering
         }
     }
 
-    private static bool BorrowInspectCleanCall(
+    private bool BorrowInspectCleanCall(
         Expr expression,
         HashSet<string> tails,
         HashSet<string> heads,
-        IReadOnlyList<string> paramNames,
-        string selfName,
-        int paramIndex)
+        BorrowInspectContext context,
+        IReadOnlyDictionary<string, FuncKey> functionScope)
     {
         var arguments = new List<Expr>();
         Expr root = CollectCallArgs(expression, arguments);
         bool isSelfCall = root is Expr.Var function
-            && string.Equals(function.Name, selfName, StringComparison.Ordinal)
-            && arguments.Count == paramNames.Count;
+            && string.Equals(function.Name, context.SelfName, StringComparison.Ordinal)
+            && functionScope.TryGetValue(function.Name, out FuncKey callee)
+            && callee.Equals(context.SelfFunction)
+            && arguments.Count == context.ParamCount;
         for (int i = 0; i < arguments.Count; i++)
         {
             if (isSelfCall
-                && i == paramIndex
+                && i == context.ParamIndex
                 && arguments[i] is Expr.Var tailArg
                 && tails.Contains(tailArg.Name))
             {
                 continue;
             }
 
-            if (!BorrowInspectClean(arguments[i], tails, heads, paramNames, selfName, paramIndex))
+            if (!BorrowInspectClean(arguments[i], tails, heads, context, functionScope))
             {
                 return false;
             }
         }
 
         return root is Expr.Var or Expr.QualifiedVar
-            || BorrowInspectClean(root, tails, heads, paramNames, selfName, paramIndex);
+            || BorrowInspectClean(root, tails, heads, context, functionScope);
     }
 
     private static HashSet<string> Extend(HashSet<string> set, string name)

@@ -76,7 +76,6 @@ public sealed partial class Lowering
         string selfName,
         IReadOnlyList<string> paramNames,
         IReadOnlySet<string> freshRebuiltListParams,
-        IReadOnlySet<string> consumedListTailParams,
         IReadOnlySet<string> freshClosureParams)
     {
         if (!ShouldExplainOwnership())
@@ -92,12 +91,9 @@ public sealed partial class Lowering
             string name = paramNames[parameterOrdinal];
             bool isArenaSelfContainedListRebuild = freshRebuiltListParams.Contains(name);
             bool isFreshClosure = freshClosureParams.Contains(name);
-            bool isConsumedTail = consumedListTailParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
-                isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt
-                : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
-                : null;
+                isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt : null;
 
             TcoParamStructuralFacts? newFacts = tcoParamFacts?.FirstOrDefault(
                 facts => facts.ParameterOrdinal == parameterOrdinal);
@@ -151,10 +147,11 @@ public sealed partial class Lowering
         if (oldShape is null
             && haveNew
             && newShape is TcoSelfCallArgumentShape.UnchangedPassthrough
-                or TcoSelfCallArgumentShape.GrownCons)
+                or TcoSelfCallArgumentShape.GrownCons
+                or TcoSelfCallArgumentShape.ConsumedTail)
         {
-            // LoopInvariant and AffineConsList already consume these canonical facts, so there is no
-            // remaining old classifier answer to compare them against.
+            // LoopInvariant, AffineConsList, and ConsumedListTail already consume these canonical
+            // facts, so there is no remaining old classifier answer to compare them against.
             return;
         }
 

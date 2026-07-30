@@ -685,13 +685,17 @@ has the bounded whole-list rebuild shape recognized by
 when its result retains an input tail, because the returned list is made
 independent of the callee arena; directly consing onto the old accumulator does
 not. These facts are computed across exact `FuncKey` self-call identities.
-`TcoSelfCallArgumentShape.UnchangedPassthrough` and `GrownCons` are the live sources for
-`TcoParamOwnership.LoopInvariant` and `AffineConsList`; lowering transports unambiguous ordinals to
-parameter slots and rechecks individual back-edge values against resolved local slots. A tail call
+`TcoSelfCallArgumentShape.UnchangedPassthrough`, `GrownCons`, and `ConsumedTail` are the live sources
+for `TcoParamOwnership.LoopInvariant`, `AffineConsList`, and `ConsumedListTail`; lowering transports
+unambiguous ordinals to parameter slots and rechecks individual back-edge values against resolved
+local slots. The narrower `BorrowableConsumedList` use-mode analysis is still structural, but its
+candidate and result boundary is ordinal rather than source-name keyed, and only a callee resolved
+through the same lexical `FuncKey` scope under the recursive binding's source name receives its
+non-escaping tail-transfer exception. Match guards are checked as executable uses. A tail call
 becomes a back edge only when its root resolves to the current curried function's generated label,
 or to the transported self slot of a synthesized coroutine loop; source spelling alone is
 insufficient. The
-fresh-list, consumed-tail, and fresh-closure categories remain shadow-compared with their lowering
+fresh-list and fresh-closure categories remain shadow-compared with their lowering
 classifiers until their individual cutovers.
 
 This structural summary does not replace the TCO back-edge storage query.

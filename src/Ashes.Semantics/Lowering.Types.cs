@@ -178,15 +178,15 @@ public sealed partial class Lowering
         public bool InTailPosition { get; set; }
 
         // Raw AST-derived facts stashed at construction time (before ParamSlots is known) and consumed
-        // once by BuildParamOwnership below. Loop invariance and growing-cons shape are ordinal-keyed
-        // because they now come from the binding-identity-aware ownership summary; the categories
-        // awaiting their own 2.2 cutovers remain name-keyed until then. No other consumer reads these
-        // transport fields.
+        // once by BuildParamOwnership below. Loop invariance, growing-cons shape, and consumed-tail
+        // shape are ordinal-keyed because they now come from the binding-identity-aware ownership
+        // summary; the categories awaiting their own 2.2 cutovers remain name-keyed until then. No
+        // other consumer reads these transport fields.
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
         private readonly IReadOnlySet<string> _freshRebuiltListParams;
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
-        private readonly IReadOnlySet<string> _consumedListTailParams;
-        private readonly IReadOnlySet<string> _borrowableConsumedListParams;
+        private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
+        private readonly IReadOnlySet<int> _borrowableConsumedListParamOrdinals;
         private readonly IReadOnlySet<string> _freshClosureParams;
         private readonly IReadOnlySet<string> _affineStrParams;
 
@@ -231,8 +231,8 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyStaticFacts,
                 EmptyParameterOrdinals,
-                EmptyStaticFacts,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
+                EmptyParameterOrdinals,
                 EmptyStaticFacts,
                 EmptyStaticFacts,
                 EmptyStaticFacts)
@@ -246,8 +246,8 @@ public sealed partial class Lowering
             IReadOnlySet<int> loopInvariantParamOrdinals,
             IReadOnlySet<string> freshRebuiltListParams,
             IReadOnlySet<int> affineConsListParamOrdinals,
-            IReadOnlySet<string> consumedListTailParams,
-            IReadOnlySet<string> borrowableConsumedListParams,
+            IReadOnlySet<int> consumedListTailParamOrdinals,
+            IReadOnlySet<int> borrowableConsumedListParamOrdinals,
             IReadOnlySet<string> freshClosureParams,
             IReadOnlySet<string> affineStrParams,
             IReadOnlySet<string> escapingDirectPatternBindings)
@@ -258,8 +258,8 @@ public sealed partial class Lowering
             _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
             _freshRebuiltListParams = freshRebuiltListParams;
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
-            _consumedListTailParams = consumedListTailParams;
-            _borrowableConsumedListParams = borrowableConsumedListParams;
+            _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
+            _borrowableConsumedListParamOrdinals = borrowableConsumedListParamOrdinals;
             _freshClosureParams = freshClosureParams;
             _affineStrParams = affineStrParams;
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
@@ -283,8 +283,8 @@ public sealed partial class Lowering
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParams.Contains(name),
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
-                    ConsumedListTail = _consumedListTailParams.Contains(name),
-                    BorrowableConsumedList = _borrowableConsumedListParams.Contains(name),
+                    ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
+                    BorrowableConsumedList = _borrowableConsumedListParamOrdinals.Contains(i),
                     FreshClosure = _freshClosureParams.Contains(name),
                     AffineStr = _affineStrParams.Contains(name),
                 };
