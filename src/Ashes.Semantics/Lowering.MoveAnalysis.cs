@@ -821,23 +821,9 @@ public sealed partial class Lowering
             return result;
         }
 
-        HashSet<string> seenParameterNames = new(StringComparer.Ordinal);
-        HashSet<string> duplicateParameterNames = new(StringComparer.Ordinal);
-        foreach (string parameterName in summary.Parameters)
-        {
-            if (!seenParameterNames.Add(parameterName))
-            {
-                duplicateParameterNames.Add(parameterName);
-            }
-        }
-
-        // The summary preserves distinct ordinals, but the innermost lowering scope contains only
-        // the last same-named curried binding. Until TcoContext transports the hidden outer slots
-        // independently of source lookup, no migrated positive fact may be joined to an ambiguous
-        // duplicate-name slot.
         foreach (TcoParamStructuralFacts facts in summary.TcoParamFacts)
         {
-            if (matches(facts) && !duplicateParameterNames.Contains(facts.ParameterName))
+            if (matches(facts))
             {
                 result.Add(facts.ParameterOrdinal);
             }

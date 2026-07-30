@@ -36,8 +36,13 @@ public sealed partial class Lowering
     // maps on TcoContext (see that class's own remarks) with one entry per parameter, keyed by slot.
     private sealed class TcoParamOwnership
     {
+        public required int ParameterOrdinal { get; init; }
         public required string ParamName { get; init; }
         public required int Slot { get; init; }
+        // A later same-named parameter in the curried chain shadows this binding completely. Its
+        // positional facts remain available for diagnostics, but runtime placement must not touch
+        // the synthetic slot retained for back-edge arity.
+        public required bool HasVisibleBinding { get; init; }
 
         // Param passed as its own unchanged Var at EVERY tail self-call — loop-invariant, so it
         // never holds a value allocated inside the loop and always points below the arena watermark.
@@ -94,15 +99,15 @@ public sealed partial class Lowering
         public string BodyLabel { get; set; } = "";
         public int ParamCount { get; init; }
         public List<string> ParamNames { get; init; }
-        public Dictionary<string, string> ParamLabels { get; } = new(System.StringComparer.Ordinal);
+        public Dictionary<int, string> ParamLabels { get; } = [];
+        public Dictionary<int, TypeRef> ParamTypes { get; } = [];
         public List<int> ParamSlots { get; init; } = [];
 
-        // One ownership record per parameter, keyed by slot — the single source of truth every
-        // consumer should read instead of testing membership in a scattered set. Populated once
-        // ParamSlots is known (see BuildParamOwnership) by joining ParamNames against the raw
-        // Collect*-derived facts below; the RuntimeManaged* fields on each entry are then written and
-        // revised in place by MarkRuntimeManaged/ClearRuntimeManaged as the lowering pipeline resolves
-        // types and evaluates profitability.
+        // One ownership record per parameter, keyed by its distinct positional slot — the single
+        // source of truth every consumer should read instead of testing membership in a scattered
+        // set. Populated once ParamSlots is known (see BuildParamOwnership) by joining ordinal facts
+        // directly; the RuntimeManaged* fields on each entry are then written and revised in place by
+        // MarkRuntimeManaged/ClearRuntimeManaged as lowering resolves types and profitability.
         public Dictionary<int, TcoParamOwnership> ParamOwnership { get; } = [];
 
         // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership
@@ -199,6 +204,25 @@ public sealed partial class Lowering
         // locals per name visited, so it must keep visiting them in this collection's original order.
         public IEnumerable<string> AffineStrParamNames => _affineStrParams;
 
+        public bool IsVisibleParameterOrdinal(int ordinal)
+        {
+            if (ordinal < 0 || ordinal >= ParamNames.Count)
+            {
+                return false;
+            }
+
+            string name = ParamNames[ordinal];
+            for (int later = ordinal + 1; later < ParamNames.Count; later++)
+            {
+                if (string.Equals(ParamNames[later], name, System.StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter
         // whose only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a
         // further nested match on the same name, or (b) the bare, unchanged argument at that same
@@ -268,9 +292,9 @@ public sealed partial class Lowering
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
         }
 
-        // Joins ParamNames against ParamSlots (only available once LowerLambdaCoreBindTcoParamSlots
-        // has run) with the raw static facts stashed at construction, producing one entry per
-        // parameter, keyed by its local slot. Called exactly once, right after ParamSlots is built.
+        // Joins each parameter ordinal to the distinct slot established by
+        // LowerLambdaCoreBindTcoParamSlots and to the raw ordinal facts stashed at construction.
+        // Called exactly once, right after ParamSlots is built.
         public void BuildParamOwnership()
         {
             ParamOwnership.Clear();
@@ -281,8 +305,10 @@ public sealed partial class Lowering
                 int slot = ParamSlots[i];
                 ParamOwnership[slot] = new TcoParamOwnership
                 {
+                    ParameterOrdinal = i,
                     ParamName = name,
                     Slot = slot,
+                    HasVisibleBinding = IsVisibleParameterOrdinal(i),
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParamOrdinals.Contains(i),
                     FreshClosureRebuild = _freshClosureRebuildParamOrdinals.Contains(i),

@@ -638,7 +638,7 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_duplicate_parameter_names_keep_fresh_list_rebuild_positional_but_fail_closed_in_lowering()
+    public void TCO_duplicate_parameter_names_apply_fresh_list_rebuild_to_the_visible_binding_slot()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
@@ -657,8 +657,34 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
             RuntimeManaged: true,
+        }).ShouldBeTrue(
+            "The positional fresh-list fact must attach to the visible binding's distinct slot.");
+    }
+
+    [Test]
+    public void TCO_duplicate_parameter_fact_for_a_shadowed_binding_does_not_attach_to_the_visible_slot()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive build value value remaining =
+                if remaining <= 0
+                then value
+                else build(["x"])(value)(remaining - 1)
+            in build([])([])(2)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("build");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].ArenaSelfContainedListRebuild.ShouldBeTrue();
+        summary.TcoParamFacts[1].ArenaSelfContainedListRebuild.ShouldBeFalse();
+        instructions.Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
         }).ShouldBeFalse(
-            "The lowering scope cannot distinguish duplicate-name slots, so migrated positives must fail closed.");
+            "A shadowed binding's positional fact must not be rejoined to the visible same-named binding.");
+        HasTcoBackEdgeReclaim(instructions).ShouldBeTrue(
+            "The visible binding's unchanged-passthrough fact must still license the reset.");
     }
 
     [Test]
@@ -858,7 +884,7 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_duplicate_parameter_names_keep_positional_facts_but_fail_closed_in_lowering()
+    public void TCO_duplicate_parameter_names_apply_grown_cons_to_the_visible_binding_slot()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
@@ -877,8 +903,8 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.Alloc
         {
             RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "The innermost lowering scope cannot distinguish duplicate-name parameter slots, so migrated positive facts must fail closed.");
+        }).ShouldBeTrue(
+            "The positional grown-cons fact must attach to the visible binding's distinct slot.");
     }
 
     [Test]
@@ -1196,17 +1222,19 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_duplicate_parameter_names_keep_consumed_tail_positional_but_fail_closed_in_lowering()
+    public void TCO_duplicate_parameter_names_apply_consumed_tail_to_the_visible_binding_slot()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
-            let recursive consume value value remaining =
-                if remaining <= 0
-                then value
-                else
-                    match value with
-                        | [] -> value
-                        | _ :: tail -> consume(tail)(tail)(remaining - 1)
+            let recursive consume :
+                List(Str) -> List(Str) -> Int -> List(Str) =
+                given value -> given value -> given remaining ->
+                    if remaining <= 0
+                    then value
+                    else
+                        match value with
+                            | [] -> value
+                            | _ :: tail -> consume(tail)(tail)(remaining - 1)
             in consume([])(["a", "b"])(2)
             """);
         FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("consume");
@@ -1215,8 +1243,8 @@ public sealed class ArenaDeallocationTests
         summary.ShouldNotBeNull();
         summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
         summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
-        HasRuntimeManagedListOwnership(instructions).ShouldBeFalse(
-            "The lowering scope cannot distinguish duplicate-name parameter slots, so consumed-tail positives must fail closed.");
+        HasRuntimeManagedListOwnership(instructions).ShouldBeTrue(
+            "The positional consumed-tail fact must attach to the visible binding's distinct slot.");
     }
 
     [Test]
@@ -1535,7 +1563,7 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_duplicate_parameter_names_keep_fresh_closure_rebuild_positional_but_fail_closed_in_lowering()
+    public void TCO_duplicate_parameter_names_apply_fresh_closure_rebuild_to_the_visible_binding_slot()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
@@ -1556,8 +1584,8 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.MakeClosure
         {
             RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "The lowering scope cannot distinguish duplicate-name slots, so migrated positives must fail closed.");
+        }).ShouldBeTrue(
+            "The positional fresh-closure fact must attach to the visible binding's distinct slot.");
     }
 
     [Test]

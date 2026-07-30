@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `4e24fc1` on 2026-07-30, together with the fifth and final Milestone 2.2
-cutover in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `abb613a` on 2026-07-30, together with the duplicate-parameter positional
+slot cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -146,10 +146,12 @@ The following is already implemented and is not part of the backlog:
   self-transfer requires both the recursive binding's source name and the same lexical `FuncKey` as
   the canonical fact, including a same-named immutable rebinding of the exact recursive function
   while excluding same-named aliases of other functions and differently named aliases; match guards
-  participate in the escape proof. The
-  innermost lowering scope still exposes only the last slot for duplicate source names, so migrated
-  positive facts fail closed for every duplicated name until 2.3 transports parameter slots without
-  looking them up by source name;
+  participate in the escape proof. TCO now records the curried parameter identity by ordinal and
+  assigns every ordinal a distinct back-edge slot. The last, lexically visible same-named binding
+  retains its real local slot; earlier shadowed occurrences retain non-participating positional slots,
+  so a positive fact neither fails closed merely because a name is duplicated nor attaches to the
+  wrong binding. Parameter labels and deferred runtime-argument decisions use ordinal/slot identity
+  instead of a first-name lookup;
 - `FuncKey` identity and re-keying of the seven main move-analysis tables, with genuine lexical scope
   resolution in `TcoParamFactsWalk`, `CollectCallsAndEscapes`, `ResultReach`, move analysis, and
   result provenance; function-body and per-call-argument scopes follow sequential let/letrec rules,
@@ -220,6 +222,10 @@ implementation tasks remain; Milestone 2.3 is next.
 ### Milestone 2 — separate TCO ownership, placement, and reuse refinements
 
 #### 2.3 Separate TCO ownership facts from TCO placement state
+
+The prerequisite duplicate-parameter slot cutover is complete: immutable structural facts, lambda
+labels, and deferred runtime-argument decisions now meet lowering through ordinal or local-slot
+identity. The remaining work in this task is the representation-state split below.
 
 Refactor `TcoParamOwnership` after the static-fact cutover:
 

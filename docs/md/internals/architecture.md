@@ -674,8 +674,10 @@ parameter ordinal used as its binding identity plus its diagnostic source name; 
 parameter names therefore remain distinct in the immutable summary. The analysis threads a lexical
 value scope through let and pattern binders instead of treating equal source spellings as equal
 bindings. The innermost lowering scope currently exposes only the last slot for duplicate parameter
-names, so migrated live consumers fail closed for every duplicated name rather than joining a
-positive fact to an ambiguous slot.
+names. TCO therefore records parameter labels and types by ordinal, gives every ordinal a distinct
+back-edge slot, and joins the visible binding to only its own slot. Earlier shadowed occurrences keep
+non-participating slots for positional parallel assignment, so their facts cannot bleed into the
+visible same-named binding.
 Reference shape and arena reset legality are deliberately separate:
 `ExpressionFreshness` and `TcoSelfCallArgumentShape.FreshRebuilt` answer whether
 the successor value reaches an input reference, while

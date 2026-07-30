@@ -153,10 +153,12 @@ public sealed partial class Lowering
     // occasionally-non-fresh closure sibling did NOT regress its Str co-accumulator.
     private bool IsPermanentlyBlockingTcoSibling(TcoContext tco, TypeRef?[] paramTypes, int index)
         => paramTypes[index] is { } type
+            && index < tco.ParamSlots.Count
+            && tco.ParamOwnership[tco.ParamSlots[index]].HasVisibleBinding
             && type is not TypeRef.TFun
             && !CanArenaReset(type)
             && !IsResourceHandleType(type)
-            && !(index < tco.ParamSlots.Count && tco.ParamOwnership[tco.ParamSlots[index]].LoopInvariant)
+            && !tco.ParamOwnership[tco.ParamSlots[index]].LoopInvariant
             && !IsIndependentlyRcEligibleTcoParam(type, index, tco, includeFreshClosures: true);
 
     // paramTypes is threaded through only to satisfy IsPermanentlyBlockingTcoSibling's own signature
