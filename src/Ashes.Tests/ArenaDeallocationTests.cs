@@ -1480,6 +1480,78 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_late_resolved_closure_uses_one_runtime_producer_and_balanced_drops()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
+            """
+            let recursive loop n text transform =
+                if n <= 0
+                then transform(text)
+                else loop(n - 1)(text + "x")(given value -> value + Ashes.Text.fromInt(n))
+            in loop(4)("")(given value -> value)
+            """);
+        FunctionOwnershipSummary? summary = lowering.GetOwnershipSummary("loop");
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[2].FreshClosureRebuild.ShouldBeTrue();
+        instructions.Count(instruction => instruction is IrInst.MakeClosure
+        {
+            RuntimeManaged: true,
+        }).ShouldBe(1,
+            "The one closure producer on the back edge must allocate directly into runtime RC.");
+        instructions.Count(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBe(2,
+            "The back-edge predecessor and the active exit value each need one guarded drop site.");
+        instructions.Count(instruction => instruction is IrInst.CleanupResource
+        {
+            TypeName: "Function",
+        }).ShouldBe(2,
+            "Closure resource cleanup must remain paired with both guarded RC drop sites.");
+        AssertSingleClosureActiveInitializationBeforeLoop(instructions);
+        instructions.Any(instruction => instruction is IrInst.CopyOutClosure).ShouldBeFalse(
+            "Late closure placement must not introduce a second arena-to-RC normalization.");
+        instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
+    }
+
+    private static void AssertSingleClosureActiveInitializationBeforeLoop(List<IrInst> instructions)
+    {
+        HashSet<int> closureDropActiveTemps = instructions
+            .OfType<IrInst.JumpIfFalse>()
+            .Where(instruction =>
+                instruction.Target.Contains("rc_closure_drop_inactive", StringComparison.Ordinal))
+            .Select(instruction => instruction.CondTemp)
+            .ToHashSet();
+        int closureActiveSlot = instructions
+            .OfType<IrInst.LoadLocal>()
+            .Where(instruction => closureDropActiveTemps.Contains(instruction.Target))
+            .Select(instruction => instruction.Slot)
+            .Distinct()
+            .Single();
+        HashSet<int> zeroTemps = instructions
+            .OfType<IrInst.LoadConstInt>()
+            .Where(instruction => instruction.Value == 0)
+            .Select(instruction => instruction.Target)
+            .ToHashSet();
+        int activeInitializationIndex = instructions.FindIndex(instruction =>
+            instruction is IrInst.StoreLocal store
+            && store.Slot == closureActiveSlot
+            && zeroTemps.Contains(store.Source));
+        activeInitializationIndex.ShouldBeGreaterThanOrEqualTo(0);
+        instructions.Count(instruction => instruction is IrInst.StoreLocal store
+            && store.Slot == closureActiveSlot
+            && zeroTemps.Contains(store.Source)).ShouldBe(1,
+                "Late promotion must splice exactly one inactive initialization into the entry prologue.");
+        int loopBodyIndex = instructions.FindIndex(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("_body", StringComparison.Ordinal));
+        activeInitializationIndex.ShouldBeLessThan(loopBodyIndex,
+            "The late active local must be initialized on function entry, not on a loop exit path.");
+    }
+
+    [Test]
     public void TCO_loop_with_arena_capture_closure_declines_relocation()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(

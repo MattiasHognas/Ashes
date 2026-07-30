@@ -696,7 +696,11 @@ are computed across exact `FuncKey` self-call identities.
 `ConsumedListTail`; lowering transports ordinals to their distinct parameter slots. Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
-rechecked against resolved local slots, while fresh-list reset legality reruns the
+rechecked against resolved local slots. When body inference resolves an unannotated closure
+parameter only at post-body refresh, lowering allocates its active local then and splices the
+inactive initialization into the one-time entry prologue. Exit and deferred back-edge consumers
+consult the placement decision and treat a missing active local as inactive instead of indexing it
+directly. Fresh-list reset legality reruns the
 arena-self-containment predicate for the concrete edge and combines it with the resolved
 representation. The narrower
 `BorrowableConsumedList` use-mode analysis is still structural, but its

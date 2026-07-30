@@ -1518,6 +1518,10 @@ public sealed partial class Lowering
         int sourceTemp = info.OldRuntimeParamTemps[index];
         if (argType is TypeRef.TFun)
         {
+            if (info.RuntimeManagedClosureActiveSlots[index] < 0)
+            {
+                return;
+            }
             EmitRuntimeManagedClosureDropIfActive(
                 sourceTemp,
                 info.RuntimeManagedClosureActiveSlots[index]);
@@ -5496,11 +5500,18 @@ public sealed partial class Lowering
             _scopes.Peek(),
             tco,
             TcoPlacementResolutionPoint.PostBodyRefresh,
-            includeFreshClosures: false);
+            includeFreshClosures: true);
         foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
-            if (tco.GetRuntimeManagedType(slot) is not TypeRef.TFun
-                && !tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
+            if (tco.GetRuntimeManagedType(slot) is TypeRef.TFun)
+            {
+                if (!tco.RuntimeManagedClosureActiveSlots.ContainsKey(slot))
+                {
+                    tco.RuntimeManagedClosureActiveSlots[slot] = NewLocal();
+                    tco.RuntimeManagedClosureSlotsNeedingEntryInitialization.Add(slot);
+                }
+            }
+            else if (!tco.RuntimeManagedParamActiveSlots.ContainsKey(slot))
             {
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
@@ -6545,6 +6556,13 @@ public sealed partial class Lowering
             RecordRuntimeNormalizedTcoParamLabel(tco, slot);
             if (tco.IsRuntimeManagedClosureSlot(slot))
             {
+                if (tco.RuntimeManagedClosureSlotsNeedingEntryInitialization.Remove(slot)
+                    && tco.RuntimeManagedClosureActiveSlots.TryGetValue(slot, out int activeSlot))
+                {
+                    int inactiveTemp = NewTemp();
+                    Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+                    Emit(new IrInst.StoreLocal(activeSlot, inactiveTemp));
+                }
                 continue;
             }
             int sourceTemp = NewTemp();
@@ -6657,17 +6675,18 @@ public sealed partial class Lowering
 
         foreach (int slot in tco.RuntimeManagedSlotsInOrder)
         {
+            if (!tco.TryGetRuntimeManagedActiveSlot(slot, out int activeSlot))
+            {
+                continue;
+            }
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             if (transferSelectedSlot < 0)
             {
-                EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+                EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp, activeSlot);
                 continue;
             }
 
-            int activeSlot = tco.IsRuntimeManagedClosureSlot(slot)
-                ? tco.RuntimeManagedClosureActiveSlots[slot]
-                : tco.RuntimeManagedParamActiveSlots[slot];
             int activeTemp = NewTemp();
             Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
             int matchesResultTemp = NewTemp();
@@ -6688,30 +6707,36 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(transferSelectedSlot, oneTemp));
             Emit(new IrInst.Jump(doneLabel));
             Emit(new IrInst.Label(dropLabel));
-            EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp);
+            EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp, activeSlot);
             Emit(new IrInst.Label(doneLabel));
         }
     }
 
-    private void EmitRuntimeManagedTcoExitParamDrop(TcoContext tco, int slot, int sourceTemp)
+    private void EmitRuntimeManagedTcoExitParamDrop(
+        TcoContext tco,
+        int slot,
+        int sourceTemp,
+        int activeSlot)
     {
         if (tco.IsRuntimeManagedClosureSlot(slot))
         {
-            EmitRuntimeManagedClosureDropIfActive(
-                sourceTemp,
-                tco.RuntimeManagedClosureActiveSlots[slot]);
+            EmitRuntimeManagedClosureDropIfActive(sourceTemp, activeSlot);
         }
         else
         {
-            EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp);
+            EmitRuntimeManagedTcoParamDropIfActive(tco, slot, sourceTemp, activeSlot);
         }
     }
 
-    private void EmitRuntimeManagedTcoParamDropIfActive(TcoContext tco, int slot, int sourceTemp)
+    private void EmitRuntimeManagedTcoParamDropIfActive(
+        TcoContext tco,
+        int slot,
+        int sourceTemp,
+        int activeSlot)
     {
         int activeTemp = NewTemp();
         string skipLabel = NewLabel("rc_tco_exit_drop_inactive");
-        Emit(new IrInst.LoadLocal(activeTemp, tco.RuntimeManagedParamActiveSlots[slot]));
+        Emit(new IrInst.LoadLocal(activeTemp, activeSlot));
         Emit(new IrInst.JumpIfFalse(activeTemp, skipLabel));
         TypeRef type = tco.GetRuntimeManagedType(slot);
         if (tco.IsRuntimeManagedListSlot(slot) && type is TypeRef.TList list)
