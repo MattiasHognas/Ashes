@@ -110,9 +110,8 @@ The following is already implemented and is not part of the backlog:
 - closure/function-result provenance, call-result freshness, and match-scrutinee ownership fixes;
 - capability gating narrowed from “any capability declaration” to
   `_programHasDynamicCapabilityDispatch`;
-- TCO type-shape predicate deduplication, the shared A/C query at the proven joint sites,
-  the promotion-cost signal, profitability-gated frame demotion, and the `TcoParamOwnership`
-  repackaging;
+- TCO type-shape predicate deduplication, the shared A/C query at the proven joint sites, and
+  profitability-gated frame demotion;
 - `TcoSelfCallArgumentShape.GrownCons` and complete expression-freshness recording for self-call
   arguments;
 - `TcoParamStructuralFacts.ArenaSelfContainedListRebuild`, computed across every exact self-call
@@ -121,19 +120,19 @@ The following is already implemented and is not part of the backlog:
   the callee arena even when it retains an input tail and is therefore not reference-fresh, while a
   direct `head :: oldAccumulator` remains rejected. The fact stays separate from the
   reference-fresh `FreshRebuilt` shape and is the live source for
-  `TcoParamOwnership.FreshRebuiltList`; the concrete per-edge reset classifier still rechecks the
+  `TcoParamStaticFacts.FreshRebuiltList`; the concrete per-edge reset classifier still rechecks the
   actual lowered argument;
 - `TcoParamStructuralFacts.FreshClosureRebuild`, computed across every exact self-call independently
   of `ExpressionFreshness`. A new closure can capture an input reference and therefore retain
   `Shape = Mixed`; the separate boolean records only that every relevant edge directly constructs a
   closure or selects between direct constructions. It is the live source for
-  `TcoParamOwnership.FreshClosureRebuild`, combined with the resolved `TFun` gate and the existing
+  `TcoParamStaticFacts.FreshClosureRebuild`, combined with the resolved `TFun` gate and the existing
   per-edge producer/capture-safety checks. Late-resolved closure promotion remains disabled pending
   task 2.4;
 - positional `TcoParamStructuralFacts` identity. Facts retain both the parameter ordinal used by
   consumers and the source name used for diagnostics, so duplicate curried parameter names remain
   distinct in the immutable summary. `TcoParamFactsWalk` resolves live value names to those ordinals
-  across let and pattern scopes. `TcoParamOwnership.LoopInvariant`, `FreshRebuiltList`,
+  across let and pattern scopes. `TcoParamStaticFacts.LoopInvariant`, `FreshRebuiltList`,
   `FreshClosureRebuild`, `AffineConsList`, and `ConsumedListTail` now consume
   `UnchangedPassthrough`, `ArenaSelfContainedListRebuild`, `FreshClosureRebuild`, `GrownCons`, and
   `ConsumedTail` through that boundary; the
@@ -152,6 +151,16 @@ The following is already implemented and is not part of the backlog:
   so a positive fact neither fails closed merely because a name is duplicated nor attaches to the
   wrong binding. Parameter labels and deferred runtime-argument decisions use ordinal/slot identity
   instead of a first-name lookup;
+- immutable `TcoParamStaticFacts` are separate from mutable placement orchestration.
+  `TcoParamPlacementDecision` records the parameter ordinal/slot, resolution point, arena or
+  runtime-RC representation, stable eligibility/restriction reason, ownership-shape and resolved
+  layout inputs, dynamic-boundary restriction, frame-profitability verdict and blocker, transition,
+  and first promotion stage. One evaluator runs at provisional loop entry, each resolved back edge,
+  and post-body refresh. Its normalized frame-blocking query replaces the former scope/back-edge
+  copies, and classifier B consumes the resulting placement decision while retaining its concrete
+  per-edge reset checks. Final immutable per-function traces retain both current and superseded
+  decisions in parameter order for the later compiler-report snapshot. A later unresolved view
+  retains the last accepted concrete runtime type rather than corrupting codegen with weaker evidence;
 - `FuncKey` identity and re-keying of the seven main move-analysis tables, with genuine lexical scope
   resolution in `TcoParamFactsWalk`, `CollectCallsAndEscapes`, `ResultReach`, move analysis, and
   result provenance; function-body and per-call-argument scopes follow sequential let/letrec rules,
@@ -205,55 +214,20 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| TCO representation | `TcoParamOwnership` centralizes the old sets and the profitability signal can demote individual parameters. | The record mixes immutable flow facts with mutable representation state, and the same verdict is revised at loop entry, after body type resolution, and at resolved back edges. |
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
 | Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
-| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering also retains structured fact-consumption records for reuse entry-copy elision and runtime-managed call-result placement. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, and most reuse/representation decisions are still transient booleans or reconstructed instruction counts. The structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
+| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse entry-copy elision and runtime-managed call-result placement, plus immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, and most non-TCO reuse/representation decisions are still transient booleans or reconstructed instruction counts. The structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.2 are complete. Fifteen
-implementation tasks remain; Milestone 2.3 is next.
+teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.3 are complete. Fourteen
+implementation tasks remain; Milestone 2.4 is next.
 
 ### Milestone 2 — separate TCO ownership, placement, and reuse refinements
-
-#### 2.3 Separate TCO ownership facts from TCO placement state
-
-The prerequisite duplicate-parameter slot cutover is complete: immutable structural facts, lambda
-labels, and deferred runtime-argument decisions now meet lowering through ordinal or local-slot
-identity. The remaining work in this task is the representation-state split below.
-
-Refactor `TcoParamOwnership` after the static-fact cutover:
-
-- immutable fields: binding identity and semantic/structural facts from
-  `FunctionOwnershipSummary`;
-- resolved layout eligibility: derived from the canonical type/layout query;
-- placement/profitability: a separately named verdict consumed by loop-entry, exit-drop, and back-edge
-  codegen.
-
-Preserve the three real resolution times found in current code:
-
-1. provisional loop entry, where types may still be variables;
-2. post-body refresh, where body inference has resolved them;
-3. a concrete back edge, where argument types may provide the first usable evidence.
-
-The goal is not to pretend these are one pass. The goal is to recompute/update one explicit placement
-verdict at those times instead of mutating several booleans through `MarkRuntimeManaged`,
-`ClearRuntimeManaged`, two frame-blocking checks, and later cleanup.
-
-Share the frame-blocking/profitability implementation between the scope-typed and resolved-argument
-paths by normalizing their inputs. Keep classifier B as a pure downstream reset/copy-out query, but
-make it consume the placement verdict rather than re-deriving ownership.
-
-The placement verdict must retain a stable reason code and its decisive inputs: ownership/shape
-eligibility, resolved layout eligibility, dynamic-boundary restriction, profitability result, and
-whether a later resolution promoted or demoted the value. Do not make the follow-on report infer these
-reasons from the final boolean. The code remains free to discard superseded provisional verdicts as
-long as the final decision records why it changed.
 
 #### 2.4 Retrofit late-resolved closure parameters
 
@@ -304,7 +278,9 @@ parameter/value, location, and positive or conservative reason.
 
 #### Milestone 2 acceptance
 
-- `fannkuch-redux` N=8–11 remains constant-memory with unchanged checksum/result.
+- `fannkuch-redux` N=8 retains its checksum/result and baseline footprint. N=9–11 are not a gate
+  while the separately documented pre-existing size-32 RC free-list regression remains open; restore
+  them to this gate when that allocator bug is fixed.
 - `1brc` (10M and 100M rows), `reverse-complement`, and `binary-trees` retain their baseline peak RSS
   and output. These are mandatory because earlier “safe” TCO cleanups regressed them despite passing
   ordinary tests.
@@ -684,8 +660,9 @@ For any change that can affect placement, reuse, TCO, or task lifetime:
 2. compare `ASHES_EXPLAIN_OWNERSHIP=all` per function;
 3. compare emitted IR and whole binaries (`cmp -s`) at `-O0` and `-O2`;
 4. run the full `challenges/` set;
-5. measure at least `fannkuch-redux` N=8–11, `binary-trees` N=21, `1brc` at 10M/100M rows, and
-   `reverse-complement` on the established input;
+5. measure at least `fannkuch-redux` N=8, `binary-trees` N=21, `1brc` at 10M/100M rows, and
+   `reverse-complement` on the established input; keep the documented fannkuch N=9–11 allocator-bug
+   exception until that separate regression is fixed;
 6. verify checksums/stdout as well as peak RSS;
 7. run growing-key/growing-workload memory checks and a native invalid-access/leak checker.
 

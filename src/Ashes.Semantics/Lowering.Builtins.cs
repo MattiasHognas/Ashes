@@ -2114,7 +2114,7 @@ public sealed partial class Lowering
             DescendingChain = false,
             SelfSlot = selfSlot,
         };
-        loopTco.BuildParamOwnership();
+        loopTco.BuildParamStaticFacts();
         if (loopResetEligible)
         {
             // Per-iteration watermark, re-saved on every pass over the restart label. The slots

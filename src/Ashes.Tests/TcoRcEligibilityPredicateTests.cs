@@ -5,13 +5,9 @@ using Shouldly;
 
 namespace Ashes.Tests;
 
-// Pins the truth table of IsRcEligibleScalarTupleOrAdtType, the scalar/tuple/ADT type-shape test
-// shared by IsIndependentlyRcEligibleTcoParam, LowerCallTcoPromoteResolvedRuntimeParam's resolved-
-// argument-type check, and TcoBackEdgeRuntimeManagedArgCanReset. Before this predicate was extracted,
-// each of those three sites carried its own copy of the same OR chain (one copy with an extra,
-// entirely redundant disjunct); this suite exercises every TypeRef shape category the shared
-// predicate itself decides on, independent of any single call site's own list/closure handling
-// (which stays separate at each site and is not covered here).
+// Pins the truth table of IsRcEligibleScalarTupleOrAdtType, the scalar/tuple/ADT layout predicate
+// shared by the placement evaluator and back-edge reset classifier. This suite exercises every
+// TypeRef shape category the predicate decides on, independent of list/closure ownership shapes.
 public sealed class TcoRcEligibilityPredicateTests
 {
     private static bool InvokeIsRcEligible(Lowering lowering, TypeRef type)
