@@ -257,9 +257,7 @@ parameter/value, location, and positive or conservative reason.
 
 #### Milestone 2 acceptance
 
-- `fannkuch-redux` N=8 retains its checksum/result and baseline footprint. N=9–11 are not a gate
-  while the separately documented pre-existing size-32 RC free-list regression remains open; restore
-  them to this gate when that allocator bug is fixed.
+- `fannkuch-redux` N=8–11 retain their checksums/results and bounded baseline footprint.
 - `1brc` (10M and 100M rows), `reverse-complement`, and `binary-trees` retain their baseline peak RSS
   and output. These are mandatory because earlier “safe” TCO cleanups regressed them despite passing
   ordinary tests.
@@ -639,9 +637,8 @@ For any change that can affect placement, reuse, TCO, or task lifetime:
 2. compare `ASHES_EXPLAIN_OWNERSHIP=all` per function;
 3. compare emitted IR and whole binaries (`cmp -s`) at `-O0` and `-O2`;
 4. run the full `challenges/` set;
-5. measure at least `fannkuch-redux` N=8, `binary-trees` N=21, `1brc` at 10M/100M rows, and
-   `reverse-complement` on the established input; keep the documented fannkuch N=9–11 allocator-bug
-   exception until that separate regression is fixed;
+5. measure at least `fannkuch-redux` N=8–11, `binary-trees` N=21, `1brc` at 10M/100M rows, and
+   `reverse-complement` on the established input;
 6. verify checksums/stdout as well as peak RSS;
 7. run growing-key/growing-workload memory checks and a native invalid-access/leak checker.
 

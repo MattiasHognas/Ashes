@@ -206,6 +206,59 @@ public sealed class NestedTcoPatternAliasTests
             .ShouldNotContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Early_resolved_direct_alias_is_not_also_protected_by_the_late_fixup()
+    {
+        IrProgram program = LowerProgram("""
+            let recursive reverse : List((Str, Int)) -> List((Str, Int)) -> List((Str, Int)) =
+                given values -> given reversed ->
+                    match values with
+                        | [] -> reversed
+                        | head :: tail -> reverse(tail)(head :: reversed)
+
+            match reverse([("x", 1)])([]) with
+                | [] -> Ashes.IO.print(0)
+                | (_, value) :: _ -> Ashes.IO.print(value)
+            """);
+
+        List<IrInst.Label> labels = program.Functions
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.Label>()
+            .ToList();
+
+        labels.Count(label =>
+            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBe(2,
+                "The head and tail transfers each need the ordinary alias guard.");
+        labels.ShouldNotContain(label =>
+            label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal),
+                "An alias already handled by the ordinary path must not receive a second late-fixup dup.");
+    }
+
+    [Test]
+    public void Qualified_inspection_of_a_direct_alias_does_not_transfer_ownership()
+    {
+        IrProgram program = LowerProgram("""
+            let recursive consume : List(Str) -> Int -> Int = given values -> given total ->
+                match values with
+                    | [] -> total
+                    | value :: tail ->
+                        consume(tail)(total + Ashes.Text.byteLength(value))
+
+            Ashes.IO.print(consume(["x", "y"])(0))
+            """);
+
+        List<IrInst.Label> labels = program.Functions
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.Label>()
+            .ToList();
+
+        labels.Count(label =>
+            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBe(1,
+                "Only the tail transfer needs a dup; byteLength merely borrows the head.");
+        labels.ShouldNotContain(label =>
+            label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();

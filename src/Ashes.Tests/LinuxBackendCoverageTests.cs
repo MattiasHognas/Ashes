@@ -2877,7 +2877,7 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 4).ConfigureAwait(false);
         List<MemoryExecutionResult> consumedTupleHeadSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcConsumedTupleHeadListTcoMemoryProgram,
-            outputPerIteration: 10).ConfigureAwait(false);
+            outputPerIteration: 14).ConfigureAwait(false);
         List<MemoryExecutionResult> tupleHeadSamples = await MeasureMemoryGrowthAsync(
             BuildRuntimeRcTupleHeadListTcoMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
@@ -2893,15 +2893,7 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC String-head list TCO accumulator", stringSamples);
         AssertMemoryPlateaus("runtime-RC nested-list TCO accumulator", nestedSamples);
         AssertMemoryPlateaus("runtime-RC list-pattern payload transfer", transferSamples);
-        // This shape reaches the documented size-32 RC free-list defect: its freed cons cells are
-        // pushed but not reused, just like the excluded fannkuch N=9-11 gate. At 50k iterations the
-        // resulting bounded sample sometimes straddles the generic 8 MiB delta threshold depending
-        // on page residency, while a 1M probe deterministically demonstrates the underlying leak.
-        // Keep correctness and the 64 MiB smoke ceiling here; restore the plateau assertion with the
-        // allocator fix instead of weakening the shared growth budget.
-        AssertMemorySamplesBelowCeiling(
-            "runtime-RC consumed tuple-head list",
-            consumedTupleHeadSamples);
+        AssertMemoryPlateaus("runtime-RC consumed tuple-head list", consumedTupleHeadSamples);
         AssertMemoryPlateaus("runtime-RC tuple-head list TCO accumulator", tupleHeadSamples);
         AssertMemoryPlateaus("runtime-RC record-head list TCO accumulator", recordHeadSamples);
     }
@@ -7307,7 +7299,8 @@ public sealed class LinuxBackendCoverageTests
             let recursive consume : List((Str, Int)) -> Int -> Int = given values -> given total ->
                 match values with
                     | [] -> total
-                    | (_, value) :: tail -> consume(tail)(total + value)
+                    | (text, value) :: tail ->
+                        consume(tail)(total + Ashes.Text.byteLength(text) + value)
 
             let recursive reverse : List((Str, Int)) -> List((Str, Int)) -> List((Str, Int)) = given values -> given reversed ->
                 match values with

@@ -5414,6 +5414,8 @@ public sealed partial class Lowering
         // merely over-protecting.
         var accepted = _pendingNestedTcoPatternAliasSites
             .Where(site => !CanArenaReset(Prune(site.Value.PayloadType))
+                && !_runtimeManagedTcoPatternAliases.Values.Any(alias =>
+                    alias.AliasSlot == site.Key)
                 && (!tco.ParamSlots.Contains(site.Value.ParentSlot)
                     || tco.EscapingDirectPatternBindings.Contains(site.Value.BindingName))
                 && IsChainRootRuntimeManaged(site.Value.ParentSlot, tco))
@@ -7358,7 +7360,7 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
-        List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(collectedArgs);
+        List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(tco, collectedArgs);
         (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
         foreach (string alias in transferredPatternAliases)
         {
@@ -7438,12 +7440,27 @@ public sealed partial class Lowering
         return (dummy, NewTypeVar());
     }
 
-    private List<string> LowerCallTcoTransferPatternAliases(IReadOnlyList<Expr> collectedArgs)
+    private List<string> LowerCallTcoTransferPatternAliases(
+        TcoContext tco,
+        IReadOnlyList<Expr> collectedArgs)
     {
         List<(string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> transfers = [];
         foreach ((string name, RuntimeManagedTcoPatternAlias alias) in _runtimeManagedTcoPatternAliases)
         {
-            int uses = collectedArgs.Sum(argument => CountNameOccurrences(argument, name));
+            int parentIndex = tco.ParamSlots.IndexOf(alias.ParentSlot);
+            if (parentIndex < 0)
+            {
+                throw new InvalidOperationException("A TCO pattern alias must originate from a loop parameter.");
+            }
+
+            int uses = collectedArgs.Sum(argument =>
+                CountNameOccurrences(argument, name)
+                - CountSafeDirectPatternBindingUses(
+                    argument,
+                    name,
+                    parentIndex,
+                    tco.ParamSlots.Count,
+                    tco.SelfName));
             if (uses > 0)
             {
                 transfers.Add((name, alias, uses));

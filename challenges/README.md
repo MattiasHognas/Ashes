@@ -38,7 +38,7 @@ that revision. See the linked RC Perceus sweep for the current regression status
 | [pidigits](pidigits/README.md) | N=10,000 | 3.50 s | 1.2 MB | Algorithm D bignum division (was O(N^3) bit-division; N=1000 went 3.46 s -> 0.029 s) |
 | [binary-trees](binary-trees/README.md) | N=21 | 1.41 s | 192 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree. **Re-verified post-CO-38 fix: 1.51 s / 196 MB** — matches this baseline (was regressed to 2.34 s / 7.3 GB). |
 | [mandelbrot](mandelbrot/README.md) | N=16,000 | 13.5 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
-| [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 27.5 s | 0.2 MB | constant memory at every N; time-bound only (N! enumeration). **Currently regressed and NOT fixed: 44.3 s / 47 GB** — a separate, unrelated RC free-list bug (see CO-38 note above); output is still correct, only memory/time are affected. |
+| [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 27.5 s | 0.2 MB | constant memory at every N; time-bound only (N! enumeration). Re-verified after the TCO pattern-alias over-retention fix: correct `556355 / 51` output and flat 8.2 MB RSS on the current validation host. |
 | [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
 | [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
 | [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
@@ -59,21 +59,16 @@ Two compiler bugs were found and fixed during this very benchmark rerun — the 
 A third bug (CO-38, below) was found in a **later** regression sweep, after these two had already
 shipped: **binary-trees** and **fannkuch-redux** — both untouched by CO-37/CO-32 above — had each
 independently regressed to gigabytes of peak RSS on a build that otherwise passed every gate.
-binary-trees is fixed (see CO-38); fannkuch-redux's regression is a **separate, still-open** bug —
-see the note under its own table row.
+Both regressions are fixed; their roots were separate.
 
 - **Self-recursive ADT mixed arena/RC representation (CO-38):** `binary-trees`' `make`/`check`
   regressed from 192 MB to 7.3 GB peak RSS at N=21 (fixed; see the changelog for the full
   root-cause). `fannkuch-redux`'s `loop`/`nextPerm` independently regressed from 0.2 MB to 47 GB at
-  N=11 in the same sweep — confirmed by direct investigation to be an **unrelated** bug (the CO-38
-  fix does not change fannkuch-redux's numbers at all): RC-managed `List` cons cells built by the
-  TCO-loop escaping-result normalization (`CopyOutList`/`RcNormalization`) are provably dropped at
-  refcount 1 and pushed onto the runtime free-list's size-32 bin (verified live via a hardware
-  watchpoint), yet the next same-size allocation never pops them back out — an ADT shell of a
-  different size (40 bytes) demonstrably DOES recycle through the same free-list mechanism in the
-  same program, so the defect is narrower than "RC never reuses," but the exact defective line
-  was not pinned down within a responsible investigation budget in this exact reuse/lifetime hot
-  zone. Left **unresolved** and reported rather than guessed at; see the table note below.
+  N=11 in the same sweep. A complete heap census later corrected the initial free-list diagnosis:
+  released size-32 cells were reused, while still-live pattern-bound head values were retained by
+  overlapping ordinary/late TCO alias dups and by borrow-only qualified calls counted as transfers.
+  The alias paths are now disjoint and borrow-only uses no longer emit transfer dups; N=9–11 are
+  again correct and constant-memory.
 
 ## Math-lib coverage
 
