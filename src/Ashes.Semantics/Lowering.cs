@@ -5014,7 +5014,9 @@ public sealed partial class Lowering
         if (hasTailSelfCalls)
         {
             var tcoParamNames = CollectLambdaParams(lam2);
-            var loopInvariantParams = CollectLoopInvariantParams(innermostBody, tcoParamNames, letRecursive.Name);
+            FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
+            IReadOnlySet<int> loopInvariantParamOrdinals =
+                GetLoopInvariantTcoParameterOrdinals(ownershipFunction);
             var freshRebuiltListParams = CollectFreshRebuiltListParams(innermostBody, tcoParamNames, letRecursive.Name);
             var affineConsListParams = CollectAffineConsListParams(innermostBody, tcoParamNames, letRecursive.Name);
             var consumedListTailParams = CollectConsumedListTailParams(innermostBody, tcoParamNames, letRecursive.Name);
@@ -5023,7 +5025,7 @@ public sealed partial class Lowering
                 selfName: letRecursive.Name,
                 paramCount: paramCount,
                 paramNames: tcoParamNames,
-                loopInvariantParams: loopInvariantParams,
+                loopInvariantParamOrdinals: loopInvariantParamOrdinals,
                 freshRebuiltListParams: freshRebuiltListParams,
                 affineConsListParams: affineConsListParams,
                 consumedListTailParams: consumedListTailParams,
@@ -5037,14 +5039,13 @@ public sealed partial class Lowering
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
-                OwnershipFunction = GetRegisteredFunctionKey(letRecursive),
+                OwnershipFunction = ownershipFunction,
             };
 
             ShadowCompareTcoParamFacts(
                 _tcoCtx.OwnershipFunction,
                 letRecursive.Name,
                 tcoParamNames,
-                loopInvariantParams,
                 freshRebuiltListParams,
                 affineConsListParams,
                 consumedListTailParams,
@@ -7887,7 +7888,8 @@ public sealed partial class Lowering
                 && i < tco.ParamSlots.Count
                 && tco.ParamOwnership[tco.ParamSlots[i]].LoopInvariant
                 && collectedArgs[i] is Expr.Var passVar
-                && string.Equals(passVar.Name, tco.ParamNames[i], StringComparison.Ordinal);
+                && Lookup(passVar.Name) is Binding.Local passLocal
+                && passLocal.Slot == tco.ParamSlots[i];
 
             // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
             // tail already lives below the watermark — which holds only for literally

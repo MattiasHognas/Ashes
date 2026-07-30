@@ -596,8 +596,115 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        summary.TcoParamFacts["values"].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
-        summary.TcoParamFacts["values"].ArenaSelfContainedListRebuild.ShouldBeFalse();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        summary.TcoParamFacts[0].ArenaSelfContainedListRebuild.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Exact_parameter_passthrough_is_classified_by_parameter_ordinal()
+    {
+        const string source =
+            """
+            let recursive loop stable remaining =
+                if remaining <= 0
+                then stable
+                else loop(stable)(remaining - 1)
+            in loop([1])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts stable = summary.TcoParamFacts[0];
+        stable.ParameterOrdinal.ShouldBe(0);
+        stable.ParameterName.ShouldBe("stable");
+        stable.Shape.ShouldBe(TcoSelfCallArgumentShape.UnchangedPassthrough);
+    }
+
+    [Test]
+    public void Let_shadowed_parameter_is_not_classified_as_unchanged_passthrough()
+    {
+        const string source =
+            """
+            let recursive loop stable remaining =
+                if remaining <= 0
+                then stable
+                else
+                    let stable = [remaining]
+                    in loop(stable)(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+    }
+
+    [Test]
+    public void Pattern_shadowed_parameter_is_not_classified_as_unchanged_passthrough()
+    {
+        const string source =
+            """
+            type Holder(A) =
+                | Hold(A)
+            let recursive loop stable holder remaining =
+                if remaining <= 0
+                then stable
+                else
+                    match holder with
+                        | Hold(stable) -> loop(stable)(holder)(remaining - 1)
+            in loop([])(Hold([1]))(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+    }
+
+    [Test]
+    public void Duplicate_parameter_names_retain_distinct_positional_facts()
+    {
+        const string source =
+            """
+            let recursive loop value value remaining =
+                if remaining <= 0
+                then value
+                else loop([remaining])(value)(remaining - 1)
+            in loop([])([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts.Count.ShouldBe(3);
+        summary.TcoParamFacts[0].ParameterOrdinal.ShouldBe(0);
+        summary.TcoParamFacts[0].Shape.ShouldNotBe(TcoSelfCallArgumentShape.UnchangedPassthrough);
+        summary.TcoParamFacts[1].ParameterOrdinal.ShouldBe(1);
+        summary.TcoParamFacts[1].Shape.ShouldBe(TcoSelfCallArgumentShape.UnchangedPassthrough);
+    }
+
+    [Test]
+    public void Unchanged_passthrough_requires_every_exact_self_call_site()
+    {
+        const string source =
+            """
+            let recursive loop stable remaining =
+                if remaining <= 0
+                then stable
+                else if remaining == 1
+                then loop(stable)(remaining - 1)
+                else
+                    let stable = [remaining]
+                    in loop(stable)(remaining - 1)
+            in loop([])(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
     }
 
     [Test]
@@ -616,7 +723,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
         values.ArenaSelfContainedListRebuild.ShouldBeTrue();
     }
@@ -637,7 +744,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
         values.ArenaSelfContainedListRebuild.ShouldBeTrue();
     }
@@ -657,7 +764,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[1];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
         values.ArenaSelfContainedListRebuild.ShouldBeTrue();
     }
@@ -677,7 +784,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.FreshRebuilt);
         values.ArenaSelfContainedListRebuild.ShouldBeTrue();
     }
@@ -697,7 +804,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
         values.ArenaSelfContainedListRebuild.ShouldBeFalse();
     }
@@ -719,7 +826,7 @@ public sealed class UniquenessSummaryTests
         FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("loop");
 
         summary.ShouldNotBeNull();
-        TcoParamStructuralFacts values = summary.TcoParamFacts["values"];
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
         values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
         values.ArenaSelfContainedListRebuild.ShouldBeFalse();
     }

@@ -175,10 +175,11 @@ public sealed partial class Lowering
         public Dictionary<int, int> RuntimeManagedClosureActiveSlots { get; } = [];
         public bool InTailPosition { get; set; }
 
-        // Raw, name-keyed AST-derived facts stashed at construction time (before ParamSlots is known)
-        // and consumed once by BuildParamOwnership below. Not read anywhere else — every other
-        // consumer reads the corresponding field on ParamOwnership[slot] instead.
-        private readonly IReadOnlySet<string> _loopInvariantParams;
+        // Raw AST-derived facts stashed at construction time (before ParamSlots is known) and consumed
+        // once by BuildParamOwnership below. Loop invariance is ordinal-keyed because it now comes
+        // from the binding-identity-aware ownership summary; the categories awaiting their own 2.2
+        // cutovers remain name-keyed until then. No other consumer reads these transport fields.
+        private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
         private readonly IReadOnlySet<string> _freshRebuiltListParams;
         private readonly IReadOnlySet<string> _affineConsListParams;
         private readonly IReadOnlySet<string> _consumedListTailParams;
@@ -210,6 +211,7 @@ public sealed partial class Lowering
         public IReadOnlySet<string> EscapingDirectPatternBindings { get; }
 
         private static readonly IReadOnlySet<string> EmptyStaticFacts = new HashSet<string>(System.StringComparer.Ordinal);
+        private static readonly IReadOnlySet<int> EmptyParameterOrdinals = new HashSet<int>();
 
         // Used by the two call sites that build a TcoContext without first running the Collect*
         // family over a real recursive body — a synthesized mutual-recursion dispatch lambda (whose
@@ -223,7 +225,7 @@ public sealed partial class Lowering
                 selfName,
                 paramCount,
                 paramNames,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
                 EmptyStaticFacts,
                 EmptyStaticFacts,
                 EmptyStaticFacts,
@@ -238,7 +240,7 @@ public sealed partial class Lowering
             string selfName,
             int paramCount,
             List<string> paramNames,
-            IReadOnlySet<string> loopInvariantParams,
+            IReadOnlySet<int> loopInvariantParamOrdinals,
             IReadOnlySet<string> freshRebuiltListParams,
             IReadOnlySet<string> affineConsListParams,
             IReadOnlySet<string> consumedListTailParams,
@@ -250,7 +252,7 @@ public sealed partial class Lowering
             SelfName = selfName;
             ParamCount = paramCount;
             ParamNames = paramNames;
-            _loopInvariantParams = loopInvariantParams;
+            _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
             _freshRebuiltListParams = freshRebuiltListParams;
             _affineConsListParams = affineConsListParams;
             _consumedListTailParams = consumedListTailParams;
@@ -275,7 +277,7 @@ public sealed partial class Lowering
                 {
                     ParamName = name,
                     Slot = slot,
-                    LoopInvariant = _loopInvariantParams.Contains(name),
+                    LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParams.Contains(name),
                     AffineConsList = _affineConsListParams.Contains(name),
                     ConsumedListTail = _consumedListTailParams.Contains(name),

@@ -62,20 +62,20 @@ public sealed partial class Lowering
     // decision now, not a comparison candidate.
 
     /// <summary>
-    /// Compares a TCO loop's own <c>Collect*</c>-derived per-parameter classification (still the real
-    /// decision — nothing reads the new field yet) against <c>FunctionOwnershipSummary.TcoParamFacts</c>
-    /// for the same self-recursive function, logging every disagreement. The live fresh-list-rebuild
-    /// set compares against <see cref="TcoParamStructuralFacts.ArenaSelfContainedListRebuild"/> rather
-    /// than <see cref="TcoSelfCallArgumentShape.FreshRebuilt"/>: a helper result may be safe to copy
-    /// across its callee arena boundary while still retaining an input reference. <paramref
-    /// name="affineConsListParams"/> (the growing-cons-accumulator shape) compares against
-    /// <see cref="TcoSelfCallArgumentShape.GrownCons"/> like the other ownership-shape sets.
+    /// Compares the TCO categories that still come from <c>Collect*</c> against
+    /// <c>FunctionOwnershipSummary.TcoParamFacts</c> for the same exact self-recursive function,
+    /// logging every disagreement. UnchangedPassthrough is no longer compared here because it is the
+    /// live LoopInvariant source. The live fresh-list-rebuild set compares against <see
+    /// cref="TcoParamStructuralFacts.ArenaSelfContainedListRebuild"/> rather than <see
+    /// cref="TcoSelfCallArgumentShape.FreshRebuilt"/>: a helper result may be safe to copy across its
+    /// callee arena boundary while still retaining an input reference. <paramref
+    /// name="affineConsListParams"/> (the growing-cons-accumulator shape) compares against <see
+    /// cref="TcoSelfCallArgumentShape.GrownCons"/> like the other ownership-shape sets.
     /// </summary>
     private void ShadowCompareTcoParamFacts(
         FuncKey? function,
         string selfName,
         IReadOnlyList<string> paramNames,
-        IReadOnlySet<string> loopInvariantParams,
         IReadOnlySet<string> freshRebuiltListParams,
         IReadOnlySet<string> affineConsListParams,
         IReadOnlySet<string> consumedListTailParams,
@@ -86,30 +86,30 @@ public sealed partial class Lowering
             return;
         }
 
-        var tcoParamFacts = (function is { } key
-            ? GetOwnershipSummary(key)
-            : GetOwnershipSummary(selfName))?.TcoParamFacts;
+        IReadOnlyList<TcoParamStructuralFacts>? tcoParamFacts =
+            function is { } key ? GetOwnershipSummary(key)?.TcoParamFacts : null;
 
-        foreach (string name in paramNames)
+        for (int parameterOrdinal = 0; parameterOrdinal < paramNames.Count; parameterOrdinal++)
         {
-            bool isLoopInvariant = loopInvariantParams.Contains(name);
+            string name = paramNames[parameterOrdinal];
             bool isArenaSelfContainedListRebuild = freshRebuiltListParams.Contains(name);
             bool isFreshClosure = freshClosureParams.Contains(name);
             bool isConsumedTail = consumedListTailParams.Contains(name);
             bool isGrownCons = affineConsListParams.Contains(name);
 
             TcoSelfCallArgumentShape? oldShape =
-                isLoopInvariant ? TcoSelfCallArgumentShape.UnchangedPassthrough
-                : isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt
+                isFreshClosure ? TcoSelfCallArgumentShape.FreshRebuilt
                 : isConsumedTail ? TcoSelfCallArgumentShape.ConsumedTail
                 : isGrownCons ? TcoSelfCallArgumentShape.GrownCons
                 : null;
 
-            TcoParamStructuralFacts? newFacts = null;
-            bool haveNew = tcoParamFacts is not null && tcoParamFacts.TryGetValue(name, out newFacts);
+            TcoParamStructuralFacts? newFacts = tcoParamFacts?.FirstOrDefault(
+                facts => facts.ParameterOrdinal == parameterOrdinal);
+            bool haveNew = newFacts is not null;
             ShadowCompareTcoParamFactsForParameter(
                 selfName,
                 name,
+                parameterOrdinal,
                 oldShape,
                 isArenaSelfContainedListRebuild,
                 haveNew,
@@ -120,6 +120,7 @@ public sealed partial class Lowering
     private static void ShadowCompareTcoParamFactsForParameter(
         string selfName,
         string name,
+        int parameterOrdinal,
         TcoSelfCallArgumentShape? oldShape,
         bool oldArenaSelfContainedListRebuild,
         bool haveNew,
@@ -132,7 +133,8 @@ public sealed partial class Lowering
         {
             LogOwnershipShadowDisagreement(
                 "TcoParamArenaSelfContainedListRebuild",
-                $"function={selfName} param={name} old={oldArenaSelfContainedListRebuild} "
+                $"function={selfName} param={name} ordinal={parameterOrdinal} "
+                    + $"old={oldArenaSelfContainedListRebuild} "
                     + $"new={newArenaSelfContainedListRebuild}");
         }
 
@@ -147,6 +149,13 @@ public sealed partial class Lowering
         {
             // Old side never positively classified this parameter (its Collect* sets all missed
             // it, the same "none of the above" verdict Mixed represents) — expected agreement.
+            return;
+        }
+
+        if (oldShape is null && haveNew && newShape == TcoSelfCallArgumentShape.UnchangedPassthrough)
+        {
+            // LoopInvariant already consumes this canonical fact, so there is no remaining old
+            // classifier answer to compare it against.
             return;
         }
 
@@ -166,7 +175,8 @@ public sealed partial class Lowering
         {
             LogOwnershipShadowDisagreement(
                 "TcoParamFacts",
-                $"function={selfName} param={name} old={(oldShape?.ToString() ?? "none")} "
+                $"function={selfName} param={name} ordinal={parameterOrdinal} "
+                    + $"old={(oldShape?.ToString() ?? "none")} "
                     + $"new={(haveNew ? newShape!.Value.ToString() : "absent")}");
         }
     }

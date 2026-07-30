@@ -669,7 +669,10 @@ conservative. The reportable `ForwardsTo` field names one immediate target only
 when the source function has exactly one exact forwarding target; it never
 substitutes an arbitrary component representative.
 
-Self-recursive functions also retain per-parameter `TcoParamStructuralFacts`.
+Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
+parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried
+parameter names therefore remain distinct. The analysis threads a lexical value scope through let
+and pattern binders instead of treating equal source spellings as equal bindings.
 Reference shape and arena reset legality are deliberately separate:
 `ExpressionFreshness` and `TcoSelfCallArgumentShape.FreshRebuilt` answer whether
 the successor value reaches an input reference, while
@@ -678,8 +681,11 @@ has the bounded whole-list rebuild shape recognized by
 `IsArenaSelfContainedListRebuildExpr`. A helper call can satisfy the latter even
 when its result retains an input tail, because the returned list is made
 independent of the callee arena; directly consing onto the old accumulator does
-not. These facts are computed across exact `FuncKey` self-call identities and
-are currently shadow-compared with the lowering classifiers.
+not. These facts are computed across exact `FuncKey` self-call identities.
+`TcoSelfCallArgumentShape.UnchangedPassthrough` is the live source for
+`TcoParamOwnership.LoopInvariant`; lowering joins the fact to the parameter slot by ordinal and
+rechecks an individual back-edge pass-through against the resolved local slot. The other structural
+categories remain shadow-compared with their lowering classifiers until their individual cutovers.
 
 This structural summary does not replace the TCO back-edge storage query.
 Resolved argument layout, the concrete placement verdict, and per-edge facts
