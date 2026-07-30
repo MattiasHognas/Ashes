@@ -1077,6 +1077,14 @@ public sealed class OwnershipTests
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
             && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
         IrFunction dropper = ir.Functions.Single(function => function.Label.StartsWith("__rcdrop_", StringComparison.Ordinal));
+        IrFunctionOrigin dropperOrigin = dropper.Origin
+            ?? throw new InvalidOperationException("Missing structural dropper origin.");
+        dropperOrigin.Kind.ShouldBe(IrFunctionOriginKind.RuntimeManagedAdtDropper);
+        dropperOrigin.Source.ShouldBeNull();
+        CompilerFunctionOwner compilerOwner = dropperOrigin.CompilerOwner
+            ?? throw new InvalidOperationException("Missing structural dropper owner.");
+        compilerOwner.Kind.ShouldBe(CompilerFunctionOwnerKind.Type);
+        compilerOwner.Name.ShouldContain("Tree");
         dropper.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
         dropper.Instructions.Any(inst => inst is IrInst.SwitchTag).ShouldBeTrue();
         dropper.Instructions.Count(inst => inst is IrInst.CallKnown { FuncLabel: var label }

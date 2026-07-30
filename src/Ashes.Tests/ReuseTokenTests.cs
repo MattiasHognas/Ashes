@@ -33,6 +33,18 @@ public sealed class ReuseTokenTests
 
         program.Functions.ShouldContain(function =>
             function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
+        IrFunction reuseSpecialization = program.Functions.Single(function =>
+            function.Origin?.Kind == IrFunctionOriginKind.ReuseSpecialization);
+        IrFunctionOrigin reuseOrigin = reuseSpecialization.Origin
+            ?? throw new InvalidOperationException("Missing reuse origin.");
+        SourceFunctionOrigin sourceOrigin = reuseOrigin.Source
+            ?? throw new InvalidOperationException("Missing reuse source origin.");
+        sourceOrigin.SourceName.ShouldBe("moveBodies");
+        reuseOrigin.ParentGeneratedLabel.ShouldNotBeNull();
+        string discriminator = reuseOrigin.StableDiscriminator
+            ?? throw new InvalidOperationException("Missing reuse discriminator.");
+        discriminator.ShouldContain("moveBodies|");
+
         IrFunction specialization = program.Functions.Single(function =>
             function.Instructions.Count(instruction => instruction is IrInst.AllocReusing) == 2
                 && function.Instructions.Any(instruction =>

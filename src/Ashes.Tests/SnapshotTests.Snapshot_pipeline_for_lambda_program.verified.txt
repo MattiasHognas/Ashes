@@ -321,6 +321,14 @@
             Id: 3
           }
         }
+      },
+      Origin: {
+        GeneratedLabel: _start_main,
+        Kind: ProgramEntry,
+        CompilerOwner: {
+          Kind: Program,
+          Name: program entry
+        }
       }
     },
     Functions: [
@@ -352,6 +360,16 @@
           1: {
             Id: 5
           }
+        },
+        Origin: {
+          GeneratedLabel: lambda_1,
+          Kind: ClosureHelper,
+          Source: {
+            SourceName: add,
+            DeclarationOffset: 4
+          },
+          ParentGeneratedLabel: lambda_0,
+          StableDiscriminator: lambda:23:18:y
         }
       },
       {
@@ -389,6 +407,14 @@
         LocalTypes: {
           1: {
             Id: 5
+          }
+        },
+        Origin: {
+          GeneratedLabel: lambda_0,
+          Kind: SourceFunction,
+          Source: {
+            SourceName: add,
+            DeclarationOffset: 4
           }
         }
       }

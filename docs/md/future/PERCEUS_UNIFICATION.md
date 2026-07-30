@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `ae46a2d` on 2026-07-30. This document is intentionally a
+Audited against `main` at `d34f6eb` on 2026-07-30. This document is intentionally a
 remaining-work backlog. Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -72,9 +72,10 @@ Every remaining milestone must therefore preserve the following handoff:
 
 - semantic passes expose immutable fact/decision records; they do not add new environment-variable
   reads or direct console output;
-- internal `FuncKey` reference identity is paired with a stable reportable function origin: source
-  name, qualified name where available, generated label, generated-function kind, source function,
-  and source location;
+- `FunctionOwnershipSummary` carries a stable `SourceFunctionOrigin`, and each production
+  `IrFunction` carries an `IrFunctionOrigin` with its generated label, generated kind, source lineage
+  or typed compiler owner, and available source location; later report filtering must use the source
+  identity rather than require generated labels;
 - decisions with several conservative outcomes carry a stable enum/code and the specific facts
   consumed by the decision, not only a final boolean or a human sentence;
 - `IrInst.Location` is preserved when instructions are copied or rewritten, and generated operations
@@ -125,7 +126,19 @@ The following is already implemented and is not part of the backlog:
 - `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
-  source ownership summary.
+  source ownership summary;
+- `SourceFunctionOrigin` is the stable ownership-report boundary: source and module-qualified names
+  where known, declaration location, and deterministic combined-source offset. Project stitching
+  retains original names while rewriting module bindings;
+- `IrFunctionOrigin` records every production function's unique generated label and typed generated
+  kind. Source-derived artifacts retain their source identity and immediate generated parent, while
+  shared synthesized functions use typed program, type, external, runtime-layout, or
+  mutual-recursion-group owners. Stable discriminators and generation locations distinguish
+  generated sites without exposing `FuncKey`, AST identity, object hashes, or traversal order;
+- lowering attaches origins at function creation for ordinary/closure functions, reuse and parallel
+  specializations, mutual-recursion dispatchers and wrappers, coroutines, external thunks,
+  closure-layout normalizers, structural droppers, and deep-copy helpers. Record-copy IR transforms
+  preserve this metadata, and the LLVM backend deliberately ignores it.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -143,7 +156,7 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
-| Observability | `FunctionOwnershipSummary` is structured and `IrInst` has `SourceLocation`. `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. Colliding summaries are retained internally. | `IrFunction` has only a generated label, the compatibility ownership formatter cannot identify colliding summaries, ownership/placement debug output is environment-driven and emitted inside semantic passes, and reuse/representation reasons are mostly transient booleans or reconstructed instruction counts. There is no immutable compilation-decision handoff to pair with the final optimized IR. |
+| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`; production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins, ownership/placement debug output is environment-driven and emitted inside semantic passes, and reuse/representation reasons are mostly transient booleans or reconstructed instruction counts. There is no immutable compilation-decision handoff to pair with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
@@ -152,32 +165,10 @@ teardown prerequisites are in place.
 
 ### Milestone 1 — complete the reportable ownership boundary
 
-Per-binding registration and lexical resolution identity are complete. Conservative escape state is
-still name-keyed until 1.7. The remaining work makes ownership facts deterministic and
-self-describing for later cutovers and the follow-on `--explain` facility.
-
-#### 1.6 Add stable reportable function origins
-
-`FuncKey` is the correct internal lookup identity, but its reference identity cannot be sorted,
-filtered, serialized, or shown to users. With registration complete, materialize a separate stable
-origin for every analyzed/lowered function:
-
-- source and qualified source name where known;
-- source declaration location;
-- unique generated label;
-- generated kind (ordinary function, reuse specialization, recursive helper, closure helper,
-  coroutine/state-machine function, structural dropper, or the equivalent actual categories);
-- parent/source function for generated artifacts, or an explicit type/program-level origin when a
-  shared synthesized helper has no single source function.
-
-Attach or index that origin for `FunctionOwnershipSummary` and `IrFunction`. The current `IrFunction`
-record exposes `Label` and debug local maps but no source-function lineage, while reuse specialization
-generation in `GetOrCreateReuseSpecialization` knows both `name` and `label` and then discards that
-relationship. Capture it at generation time rather than reverse-engineering label suffixes later.
-
-Keep `FuncKey` out of the stable origin and do not use object hash codes, AST addresses, or traversal
-order as public identity. Generated labels may disambiguate internal records, but source filtering
-must not require users to know them.
+Per-binding registration, lexical resolution identity, and stable reportable source/IR origins are
+complete. Conservative escape state is still name-keyed until 1.7. The remaining work adds
+structured conservative causes and completes recursive provenance for later cutovers and the
+follow-on `--explain` facility.
 
 #### 1.7 Preserve conservative analysis causes
 
@@ -217,9 +208,6 @@ representation fallback.
   shadowing/normalized-body visibility; every difference is tied to a focused regression and reviewed
   for its downstream copy/placement effect.
 - No ownership fact changes for unrelated callers.
-- Every `FunctionOwnershipSummary` and every generated `IrFunction` can be mapped to one deterministic
-  report origin, including reuse specializations, recursive helpers, synthesized type droppers, and
-  coroutine functions.
 - Escape/call-census, move-safety failure, result-poison, and internal-sharing outcomes are available
   as structured causes; consumers do not have to parse `FormatOwnershipSummaries` or inspect private
   analysis sets.

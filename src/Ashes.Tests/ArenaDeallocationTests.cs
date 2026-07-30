@@ -1404,8 +1404,15 @@ public sealed class ArenaDeallocationTests
     {
         IrProgram ir = LowerProgram(
             "let make source = given x -> Ashes.Text.byteLength(source) + x in make(\"value\")");
-        ir.Functions.Any(function =>
-            function.Label.EndsWith("$env_normalize", StringComparison.Ordinal)).ShouldBeTrue();
+        IrFunction normalizer = ir.Functions.Single(function =>
+            function.Label.EndsWith("$env_normalize", StringComparison.Ordinal));
+        IrFunctionOrigin origin = normalizer.Origin
+            ?? throw new InvalidOperationException("Missing closure normalizer origin.");
+        origin.Kind.ShouldBe(IrFunctionOriginKind.ClosureEnvironmentNormalizer);
+        origin.ParentGeneratedLabel.ShouldNotBeNull();
+        SourceFunctionOrigin sourceOrigin = origin.Source
+            ?? throw new InvalidOperationException("Missing closure normalizer source origin.");
+        sourceOrigin.SourceName.ShouldBe("make");
     }
 
     [Test]

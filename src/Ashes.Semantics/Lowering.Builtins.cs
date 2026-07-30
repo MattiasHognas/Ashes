@@ -909,7 +909,11 @@ public sealed partial class Lowering
         _arenaWatermarks.Clear();
         _arenaWatermarks.Push((-1, -1));
 
-        int stateStructSize = LowerCapturedStringTaskBuildCoroutine(captureTemps, emitBody, coroutineLabel);
+        int stateStructSize = LowerCapturedStringTaskBuildCoroutine(
+            captureTemps,
+            emitBody,
+            coroutineLabel,
+            origin);
 
         LowerCapturedStringTaskRestoreState(saved);
 
@@ -1000,7 +1004,8 @@ public sealed partial class Lowering
     private int LowerCapturedStringTaskBuildCoroutine(
         IReadOnlyList<int> captureTemps,
         Func<IReadOnlyList<int>, int> emitBody,
-        string coroutineLabel)
+        string coroutineLabel,
+        Expr generationExpression)
     {
         var coroutineCaptureTemps = new int[captureTemps.Count];
         for (int i = 0; i < captureTemps.Count; i++)
@@ -1027,7 +1032,19 @@ public sealed partial class Lowering
             LocalNames: new Dictionary<int, string>(_localNames),
             LocalTypes: SnapshotLocalTypes()
         );
-        _funcs.Add(coroutineFunc);
+        TextSpan generationSpan = AstSpans.GetOrDefault(generationExpression);
+        IrFunctionOrigin? parent = _activeFunctionOrigin;
+        var coroutineOrigin = new IrFunctionOrigin(
+            coroutineLabel,
+            IrFunctionOriginKind.Coroutine,
+            parent?.Source,
+            parent?.GeneratedLabel,
+            parent is null
+                ? new CompilerFunctionOwner(CompilerFunctionOwnerKind.Program, "coroutine")
+                : null,
+            $"coroutine:{generationSpan.Start}:{generationSpan.Length}",
+            ResolveSourceLocation(generationSpan));
+        AddFunction(coroutineFunc, coroutineOrigin);
         return transformResult.StateStructSize;
     }
 

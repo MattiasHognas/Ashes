@@ -95,6 +95,7 @@ internal sealed record TcoParamStructuralFacts(TcoSelfCallArgumentShape Shape);
 /// </summary>
 internal sealed record FunctionOwnershipSummary(
     string Function,
+    SourceFunctionOrigin Origin,
     IReadOnlyList<string> Parameters,
     IReadOnlyDictionary<string, ParameterOwnership> ParameterOwnership,
     IReadOnlySet<string> UniqueParameters,

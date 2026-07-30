@@ -40,6 +40,39 @@ A single function with a flat instruction list:
 | `TempCount` | `int` | Number of temporary registers |
 | `HasEnvAndArgParams` | `bool` | `true` for lambdas (implicit env+arg at slots 0, 1) |
 | `Coroutine` | `CoroutineInfo?` | Non-null for async coroutine functions |
+| `LocalNames` | `IReadOnlyDictionary<int, string>?` | Optional source names for local slots |
+| `LocalTypes` | `IReadOnlyDictionary<int, TypeRef>?` | Optional inferred types for local slots |
+| `Origin` | `IrFunctionOrigin?` | Stable source/generated lineage for compiler reporting |
+
+### Function origin metadata
+
+Production lowering assigns an `IrFunctionOrigin` to the entry function and
+every lowered or synthesized `IrFunction`. This is immutable reporting metadata,
+not part of execution semantics:
+
+- `GeneratedLabel` is the unique emitted IR label.
+- `Kind` is a typed `IrFunctionOriginKind`, distinguishing source functions,
+  closure helpers, reuse and parallel specializations, mutual-recursion
+  dispatchers/wrappers, coroutines, external thunks, closure-environment
+  normalizers, structural droppers, and deep-copy helpers.
+- `Source`, when present, is a `SourceFunctionOrigin` containing the declaration's
+  source name, module-qualified name where known, declaration location, and
+  deterministic combined-source offset.
+- `ParentGeneratedLabel` links a generated artifact to its immediate generated
+  parent. Source-derived artifacts retain the same `Source` identity.
+- `CompilerOwner` gives shared artifacts without one source-function parent a
+  typed program, type, external, runtime-layout, or mutual-recursion-group owner.
+- `StableDiscriminator` and `GenerationLocation` distinguish multiple generated
+  artifacts of the same kind without making callers parse label suffixes.
+
+`FunctionOwnershipSummary` uses the same `SourceFunctionOrigin` boundary, while
+its internal analysis lookup remains keyed by binder identity. This keeps source
+and qualified-name filtering independent of compiler-generated labels.
+
+IR rewrites preserve `Origin` through record copies, including the optimizer and
+Perceus lifetime placement. The LLVM backend deliberately ignores the metadata,
+so adding or retaining origins does not alter generated code. Manually
+constructed IR used by tests or embedding callers may leave `Origin` unset.
 
 ### CoroutineInfo
 

@@ -192,7 +192,13 @@ public sealed partial class Lowering
 
         // Drop the `needs` annotation: the requirement is now compiled into parameters, so the
         // annotation no longer matches the transformed value's shape.
-        return let with { Value = TransformDictFnValue(let.Value, info, let.Name, let.IsRecursive), TypeAnnotation = null };
+        TopLevelItem.LetDecl transformed = let with
+        {
+            Value = TransformDictFnValue(let.Value, info, let.Name, let.IsRecursive),
+            TypeAnnotation = null
+        };
+        AstSpans.Set(transformed, AstSpans.GetOrDefault(let));
+        return transformed;
     }
 
     private Expr TransformBody(Expr body)
@@ -200,13 +206,41 @@ public sealed partial class Lowering
         switch (body)
         {
             case Expr.Let l when _dictFunctions.TryGetValue(l.Name, out var info):
-                return new Expr.Let(l.Name, TransformDictFnValue(l.Value, info, l.Name, isRecursive: false), TransformBody(l.Body));
+                {
+                    var transformed = new Expr.Let(
+                        l.Name,
+                        TransformDictFnValue(l.Value, info, l.Name, isRecursive: false),
+                        TransformBody(l.Body));
+                    AstSpans.SetLetName(transformed, AstSpans.GetLetNameOrDefault(l));
+                    return transformed;
+                }
             case Expr.Let l:
-                return new Expr.Let(l.Name, l.Value, TransformBody(l.Body)) { TypeAnnotation = l.TypeAnnotation };
+                {
+                    var transformed = new Expr.Let(l.Name, l.Value, TransformBody(l.Body))
+                    {
+                        TypeAnnotation = l.TypeAnnotation
+                    };
+                    AstSpans.SetLetName(transformed, AstSpans.GetLetNameOrDefault(l));
+                    return transformed;
+                }
             case Expr.LetRecursive lr when _dictFunctions.TryGetValue(lr.Name, out var info):
-                return new Expr.LetRecursive(lr.Name, TransformDictFnValue(lr.Value, info, lr.Name, isRecursive: true), TransformBody(lr.Body));
+                {
+                    var transformed = new Expr.LetRecursive(
+                        lr.Name,
+                        TransformDictFnValue(lr.Value, info, lr.Name, isRecursive: true),
+                        TransformBody(lr.Body));
+                    AstSpans.SetLetRecursiveName(transformed, AstSpans.GetLetRecursiveNameOrDefault(lr));
+                    return transformed;
+                }
             case Expr.LetRecursive lr:
-                return new Expr.LetRecursive(lr.Name, lr.Value, TransformBody(lr.Body)) { TypeAnnotation = lr.TypeAnnotation };
+                {
+                    var transformed = new Expr.LetRecursive(lr.Name, lr.Value, TransformBody(lr.Body))
+                    {
+                        TypeAnnotation = lr.TypeAnnotation
+                    };
+                    AstSpans.SetLetRecursiveName(transformed, AstSpans.GetLetRecursiveNameOrDefault(lr));
+                    return transformed;
+                }
             default:
                 return body;
         }
@@ -458,7 +492,9 @@ public sealed partial class Lowering
         // safe (no scope tracking needed).
         if (expr is Expr.QualifiedVar qv && needed.Contains((qv.Module, qv.Name)))
         {
-            return new Expr.Var(OpParamName(qv.Module, qv.Name));
+            Expr replacement = new Expr.Var(OpParamName(qv.Module, qv.Name));
+            AstSpans.Set(replacement, AstSpans.GetOrDefault(expr));
+            return replacement;
         }
 
         return MapChildExpressions(expr, e => RewriteCapabilityOps(e, needed));
@@ -466,6 +502,17 @@ public sealed partial class Lowering
 
     /// <summary>Rebuilds an expression with each immediate child expression replaced by <paramref name="f"/> applied to it. Leaves (literals, variables) are returned unchanged.</summary>
     private static Expr MapChildExpressions(Expr e, Func<Expr, Expr> f)
+    {
+        Expr mapped = MapChildExpressionsCore(e, f);
+        if (!ReferenceEquals(mapped, e))
+        {
+            AstSpans.Set(mapped, AstSpans.GetOrDefault(e));
+        }
+
+        return mapped;
+    }
+
+    private static Expr MapChildExpressionsCore(Expr e, Func<Expr, Expr> f)
     {
         switch (e)
         {
@@ -496,10 +543,8 @@ public sealed partial class Lowering
             case Expr.Await x: return new Expr.Await(f(x.Task));
             case Expr.Perform x: return new Expr.Perform(f(x.Operation));
             case Expr.Call x: return new Expr.Call(f(x.Func), f(x.Arg)) { IsWhitespaceApplication = x.IsWhitespaceApplication };
-            case Expr.Lambda x: return new Expr.Lambda(x.ParamName, f(x.Body));
-            case Expr.Let x: return new Expr.Let(x.Name, f(x.Value), f(x.Body)) { TypeAnnotation = x.TypeAnnotation };
-            case Expr.LetResult x: return new Expr.LetResult(x.Name, f(x.Value), f(x.Body));
-            case Expr.LetRecursive x: return new Expr.LetRecursive(x.Name, f(x.Value), f(x.Body)) { TypeAnnotation = x.TypeAnnotation };
+            case Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive:
+                return MapBindingExpression(e, f);
             case Expr.TupleLit x: return new Expr.TupleLit(x.Elements.Select(f).ToList());
             case Expr.ListLit x: return new Expr.ListLit(x.Elements.Select(f).ToList());
             case Expr.RecordLit x: return new Expr.RecordLit(x.TypeName, x.Fields.Select(fld => (fld.Name, f(fld.Value))).ToList());
@@ -516,5 +561,59 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException($"MapChildExpressions: unhandled {e.GetType().Name}");
         }
+    }
+
+    private static Expr MapBindingExpression(Expr expression, Func<Expr, Expr> map)
+        => expression switch
+        {
+            Expr.Lambda x => CopyLambdaSpans(
+                x,
+                new Expr.Lambda(x.ParamName, map(x.Body))),
+            Expr.Let x => CopyLetSpans(
+                x,
+                new Expr.Let(x.Name, map(x.Value), map(x.Body))
+                {
+                    TypeAnnotation = x.TypeAnnotation
+                }),
+            Expr.LetResult x => CopyLetResultSpans(
+                x,
+                new Expr.LetResult(x.Name, map(x.Value), map(x.Body))),
+            Expr.LetRecursive x => CopyLetRecursiveSpans(
+                x,
+                new Expr.LetRecursive(x.Name, map(x.Value), map(x.Body))
+                {
+                    TypeAnnotation = x.TypeAnnotation
+                }),
+            _ => throw new InvalidOperationException("Expected a binding expression."),
+        };
+
+    private static Expr.Lambda CopyLambdaSpans(Expr.Lambda source, Expr.Lambda target)
+    {
+        AstSpans.Set(target, AstSpans.GetOrDefault(source));
+        AstSpans.SetLambdaParameter(target, AstSpans.GetLambdaParameterOrDefault(source));
+        return target;
+    }
+
+    private static Expr.Let CopyLetSpans(Expr.Let source, Expr.Let target)
+    {
+        AstSpans.Set(target, AstSpans.GetOrDefault(source));
+        AstSpans.SetLetName(target, AstSpans.GetLetNameOrDefault(source));
+        return target;
+    }
+
+    private static Expr.LetResult CopyLetResultSpans(Expr.LetResult source, Expr.LetResult target)
+    {
+        AstSpans.Set(target, AstSpans.GetOrDefault(source));
+        AstSpans.SetLetResultName(target, AstSpans.GetLetResultNameOrDefault(source));
+        return target;
+    }
+
+    private static Expr.LetRecursive CopyLetRecursiveSpans(
+        Expr.LetRecursive source,
+        Expr.LetRecursive target)
+    {
+        AstSpans.Set(target, AstSpans.GetOrDefault(source));
+        AstSpans.SetLetRecursiveName(target, AstSpans.GetLetRecursiveNameOrDefault(source));
+        return target;
     }
 }

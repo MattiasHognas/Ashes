@@ -27,6 +27,13 @@ public sealed class AsyncCoroutinePathTests
         var coroutine = ir.Functions.SingleOrDefault(f => f.Coroutine is not null);
         coroutine.ShouldNotBeNull();
         coroutine.Coroutine!.StateCount.ShouldBeGreaterThan(1);
+        IrFunctionOrigin origin = coroutine.Origin
+            ?? throw new InvalidOperationException("Missing coroutine origin.");
+        origin.Kind.ShouldBe(IrFunctionOriginKind.Coroutine);
+        origin.ParentGeneratedLabel.ShouldBe("_start_main");
+        SourceLocation generationLocation = origin.GenerationLocation
+            ?? throw new InvalidOperationException("Missing coroutine generation location.");
+        generationLocation.FilePath.ShouldBe("async-origin.ash");
         AllInstructions(ir).Any(i => i is IrInst.CreateTask).ShouldBeTrue();
     }
 
@@ -41,6 +48,36 @@ public sealed class AsyncCoroutinePathTests
         AllInstructions(ir).Any(i => i is IrInst.CreateCompletedTask).ShouldBeTrue();
     }
 
+    [Test]
+    public void CapabilityDictionaryRewrite_PreservesCoroutineGenerationLocation()
+    {
+        const string source = """
+            capability Clock =
+                | now : Unit -> Int
+
+            let readLater : Unit -> Task(Str, Int) needs {Clock} =
+                given (unit) ->
+                    async(match await async (perform Clock.now(unit)) with
+                        | Ok(value) -> value
+                        | Error(error) -> 0)
+
+            0
+            """;
+
+        var ir = LowerProgram(source);
+
+        var coroutine = ir.Functions.Single(f => f.Coroutine is not null);
+        IrFunctionOrigin origin = coroutine.Origin
+            ?? throw new InvalidOperationException("Missing coroutine origin.");
+        origin.Kind.ShouldBe(IrFunctionOriginKind.Coroutine);
+        origin.StableDiscriminator.ShouldNotBe("coroutine:0:0");
+        SourceLocation generationLocation = origin.GenerationLocation
+            ?? throw new InvalidOperationException("Missing coroutine generation location.");
+        generationLocation.FilePath.ShouldBe("async-origin.ash");
+        generationLocation.Line.ShouldBeGreaterThan(0);
+        generationLocation.Column.ShouldBeGreaterThan(0);
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
@@ -48,7 +85,9 @@ public sealed class AsyncCoroutinePathTests
         var diagnostics = new Diagnostics();
         var program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
-        var ir = new Lowering(diagnostics).Lower(program);
+        var lowering = new Lowering(diagnostics);
+        lowering.SetSourceContext("async-origin.ash", source);
+        var ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }

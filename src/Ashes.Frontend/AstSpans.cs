@@ -16,6 +16,11 @@ public static class AstSpans
         public TextSpan Span { get; } = span;
     }
 
+    private sealed class SpanListBox(IReadOnlyList<TextSpan> spans)
+    {
+        public IReadOnlyList<TextSpan> Spans { get; } = spans;
+    }
+
     private static readonly ConditionalWeakTable<Expr, SpanBox> ExprSpans = new();
     private static readonly ConditionalWeakTable<Expr.Let, SpanBox> LetNameSpans = new();
     private static readonly ConditionalWeakTable<Expr.LetResult, SpanBox> LetResultNameSpans = new();
@@ -29,6 +34,8 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<ProvideDecl, SpanBox> ProvideDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupSpans = new();
+    private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanListBox>
+        RecursiveGroupBindingNameSpans = new();
 
     /// <summary>Records the source span of an expression node.</summary>
     public static void Set(Expr expr, TextSpan span)
@@ -94,18 +101,27 @@ public static class AstSpans
         ExternalDeclSpans.Add(externalDecl, new SpanBox(span));
     }
 
-    /// <summary>Records the source span of a top-level <c>let</c> declaration.</summary>
+    /// <summary>Records the source span of a top-level <c>let</c> declaration's identifier.</summary>
     public static void Set(TopLevelItem.LetDecl letDecl, TextSpan span)
     {
         LetDeclSpans.Remove(letDecl);
         LetDeclSpans.Add(letDecl, new SpanBox(span));
     }
 
-    /// <summary>Records the source span of a top-level mutual-recursion group.</summary>
+    /// <summary>Records the source span of a top-level mutual-recursion group's first identifier.</summary>
     public static void Set(TopLevelItem.RecursiveGroup recursiveGroup, TextSpan span)
     {
         RecursiveGroupSpans.Remove(recursiveGroup);
         RecursiveGroupSpans.Add(recursiveGroup, new SpanBox(span));
+    }
+
+    /// <summary>Records each binding identifier span in a top-level mutual-recursion group.</summary>
+    public static void SetRecursiveGroupBindingNames(
+        TopLevelItem.RecursiveGroup recursiveGroup,
+        IReadOnlyList<TextSpan> spans)
+    {
+        RecursiveGroupBindingNameSpans.Remove(recursiveGroup);
+        RecursiveGroupBindingNameSpans.Add(recursiveGroup, new SpanListBox(spans));
     }
 
     /// <summary>Returns the recorded span of an expression node, or the default span if none was set.</summary>
@@ -142,6 +158,27 @@ public static class AstSpans
     public static TextSpan GetLambdaParameterOrDefault(Expr.Lambda lambdaExpr)
     {
         return LambdaParameterSpans.TryGetValue(lambdaExpr, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the recorded identifier span of a top-level <c>let</c> declaration.</summary>
+    public static TextSpan GetOrDefault(TopLevelItem.LetDecl letDecl)
+    {
+        return LetDeclSpans.TryGetValue(letDecl, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the recorded first-identifier span of a top-level recursive group.</summary>
+    public static TextSpan GetOrDefault(TopLevelItem.RecursiveGroup recursiveGroup)
+    {
+        return RecursiveGroupSpans.TryGetValue(recursiveGroup, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the binding identifier spans of a top-level recursive group.</summary>
+    public static IReadOnlyList<TextSpan> GetRecursiveGroupBindingNamesOrDefault(
+        TopLevelItem.RecursiveGroup recursiveGroup)
+    {
+        return RecursiveGroupBindingNameSpans.TryGetValue(recursiveGroup, out var spanBox)
+            ? spanBox.Spans
+            : [];
     }
 
     /// <summary>Returns the recorded span of a <c>type</c> declaration, or the default if unset.</summary>

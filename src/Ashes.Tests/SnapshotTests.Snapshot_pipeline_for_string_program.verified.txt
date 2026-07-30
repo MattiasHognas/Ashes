@@ -98,7 +98,15 @@
         }
       ],
       TempCount: 4,
-      HasEnvAndArgParams: false
+      HasEnvAndArgParams: false,
+      Origin: {
+        GeneratedLabel: _start_main,
+        Kind: ProgramEntry,
+        CompilerOwner: {
+          Kind: Program,
+          Name: program entry
+        }
+      }
     },
     StringLiterals: [
       {

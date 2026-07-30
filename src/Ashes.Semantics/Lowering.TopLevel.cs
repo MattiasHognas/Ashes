@@ -539,14 +539,36 @@ public sealed partial class Lowering
         {
             body = valueItems[i] switch
             {
-                TopLevelItem.LetDecl { IsRecursive: true } let => new Expr.LetRecursive(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
-                TopLevelItem.LetDecl let => new Expr.Let(let.Name, let.Value, body) { TypeAnnotation = let.TypeAnnotation },
+                TopLevelItem.LetDecl { IsRecursive: true } let => DesugarTopLevelLetRecursive(let, body),
+                TopLevelItem.LetDecl let => DesugarTopLevelLet(let, body),
                 TopLevelItem.RecursiveGroup group => DesugarRecursiveGroup(group, body),
                 _ => body
             };
         }
 
         return body;
+    }
+
+    private static Expr.Let DesugarTopLevelLet(TopLevelItem.LetDecl declaration, Expr body)
+    {
+        var result = new Expr.Let(declaration.Name, declaration.Value, body)
+        {
+            TypeAnnotation = declaration.TypeAnnotation
+        };
+        AstSpans.SetLetName(result, AstSpans.GetOrDefault(declaration));
+        return result;
+    }
+
+    private static Expr.LetRecursive DesugarTopLevelLetRecursive(
+        TopLevelItem.LetDecl declaration,
+        Expr body)
+    {
+        var result = new Expr.LetRecursive(declaration.Name, declaration.Value, body)
+        {
+            TypeAnnotation = declaration.TypeAnnotation
+        };
+        AstSpans.SetLetRecursiveName(result, AstSpans.GetOrDefault(declaration));
+        return result;
     }
 
     /// <summary>
@@ -558,14 +580,20 @@ public sealed partial class Lowering
     /// trailing expression) under Model-A scoping; <paramref name="body"/> carries that continuation.
     /// </summary>
     private Expr DesugarRecursiveGroup(TopLevelItem.RecursiveGroup group, Expr body)
-        => new RecursiveGroupExpr(group.Bindings, body);
+        => new RecursiveGroupExpr(
+            group.Bindings,
+            AstSpans.GetRecursiveGroupBindingNamesOrDefault(group),
+            body);
 
     /// <summary>
     /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only
     /// ever appears at the top level (never inside a lambda/async body). Lowering and whole-program
     /// ownership registration/call-census walkers handle it explicitly.
     /// </summary>
-    private sealed record RecursiveGroupExpr(IReadOnlyList<(string Name, Expr Value)> Bindings, Expr Body) : Expr;
+    private sealed record RecursiveGroupExpr(
+        IReadOnlyList<(string Name, Expr Value)> Bindings,
+        IReadOnlyList<TextSpan> BindingNameSpans,
+        Expr Body) : Expr;
 
     /// <summary>
     /// Shared lowering state for the members of a mutual-recursion group. Every member is compiled to
@@ -883,17 +911,54 @@ public sealed partial class Lowering
             }
             : null;
         var (dispatchTemp, dispatchType) = LowerLambdaCore(
-            dispatchLambda, dispatchName, dispatchRecursiveType, stackAllocateClosure: false, forcedLabel: dispatchName);
+            dispatchLambda,
+            dispatchName,
+            dispatchRecursiveType,
+            stackAllocateClosure: false,
+            forcedLabel: dispatchName,
+            originSeed: CreateMutualRecursionDispatchOriginSeed(group, bindings, arity));
         _tcoCtx = savedTcoCtx;
         Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
 
         // Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…).
+        int[] wrapperSlots = LowerMutualRecursionWrappers(
+            group,
+            bindings,
+            recordTypes,
+            tagOf,
+            arity,
+            dispatchName);
+
+        _scopes.Pop(); // dispatchScope — dispatchName must not leak into the continuation.
+        return wrapperSlots;
+    }
+
+    private int[] LowerMutualRecursionWrappers(
+        RecursiveGroupExpr group,
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recordTypes,
+        IReadOnlyDictionary<string, int> tagOf,
+        int arity,
+        string dispatchName)
+    {
         var wrapperSlots = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
-            var wrapperLambda = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
-            var (wrapperTemp, wrapperType) = LowerExpr(wrapperLambda);
+            Expr.Lambda wrapper = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
+            FuncKey function = GetRecursiveGroupMemberKey(group, i);
+            SourceFunctionOrigin source = _maFunctionOrigins[function];
+            var (wrapperTemp, wrapperType) = LowerLambdaCore(
+                wrapper,
+                selfName: null,
+                selfType: null,
+                stackAllocateClosure: false,
+                originSeed: CreateGeneratedSourceSeed(
+                    IrFunctionOriginKind.MutualRecursionWrapper,
+                    source,
+                    ResolvePrimaryFunctionLabel(source),
+                    $"wrapper:{source.DeclarationOffset}",
+                    wrapper));
             string wrapperLabel = _lastLoweredLambdaLabel;
             Unify(recordTypes[i], wrapperType);
             int slot = NewLocal();
@@ -901,13 +966,10 @@ public sealed partial class Lowering
             RecordLocalDebugInfo(slot, bindings[i].Name, recordTypes[i]);
             _knownFunctionLabelsBySlot[slot] = wrapperLabel;
             _functionNameByLabel[wrapperLabel] = bindings[i].Name;
-            RegisterOwnershipFunctionLabel(
-                wrapperLabel,
-                GetRecursiveGroupMemberKey(group, i));
+            RegisterOwnershipFunctionLabel(wrapperLabel, function);
             wrapperSlots[i] = slot;
         }
 
-        _scopes.Pop(); // dispatchScope — dispatchName must not leak into the continuation.
         return wrapperSlots;
     }
 

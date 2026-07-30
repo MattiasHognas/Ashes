@@ -13,6 +13,9 @@ public sealed partial class Lowering
         _currentFilePath = filePath;
         _lineStarts = SourceTextUtils.GetLineStarts(sourceText);
         _sourceLength = sourceText.Length;
+        _moduleOffsets = null;
+        _moduleLineStarts = null;
+        _functionSourceNames = null;
     }
 
     /// <summary>
@@ -24,6 +27,7 @@ public sealed partial class Lowering
         _lineStarts = SourceTextUtils.GetLineStarts(layout.Source);
         _sourceLength = layout.Source.Length;
         _moduleOffsets = layout.ModuleOffsets;
+        _functionSourceNames = layout.FunctionSourceNames;
 
         // Pre-compute line starts per region (not per file) so disjoint regions
         // for the same file each get correct line/column mappings.
@@ -50,10 +54,10 @@ public sealed partial class Lowering
     {
         if (_lineStarts is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
         {
-            var span = AstSpans.GetOrDefault(_currentSourceExpr);
-            if ((span.Length > 0 || span.Start > 0) && ResolveSourceLocation(span.Start) is { } resolved)
+            TextSpan span = AstSpans.GetOrDefault(_currentSourceExpr);
+            if (ResolveSourceLocation(span) is { } resolved)
             {
-                inst = inst with { Location = new SourceLocation(resolved.FilePath, resolved.Line, resolved.Column) };
+                inst = inst with { Location = resolved };
             }
         }
 
@@ -114,5 +118,17 @@ public sealed partial class Lowering
         // Single-file fallback
         var (l, c) = SourceTextUtils.ToLineColumn(_lineStarts!, _sourceLength, absolutePosition);
         return (_currentFilePath ?? "<unknown>", l, c);
+    }
+
+    private SourceLocation? ResolveSourceLocation(TextSpan span)
+    {
+        if (_lineStarts is null || (span.Length == 0 && span.Start == 0))
+        {
+            return null;
+        }
+
+        return ResolveSourceLocation(span.Start) is { } resolved
+            ? new SourceLocation(resolved.FilePath, resolved.Line, resolved.Column)
+            : null;
     }
 }

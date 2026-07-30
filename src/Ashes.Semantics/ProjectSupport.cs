@@ -129,14 +129,24 @@ public readonly record struct ParsedImportHeader(
 /// <param name="ModuleOffsets">Per-file spans within the combined source, for mapping offsets back to files.</param>
 /// <param name="EntryTypeDeclFragments">Spans of entry-module type declarations hoisted into the combined preamble, mapping combined offset to original offset and length; null when none were hoisted.</param>
 /// <param name="ConstructorModules">Maps each module name to the ADT constructor names its own <c>type</c> declarations introduce, so a qualified reference (<c>alias.Ctor</c>) can be scoped to the module the alias actually names.</param>
+/// <param name="FunctionSourceNames">Maps compiler binding names in the stitched source back to the
+/// original source and module-qualified declaration names.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
     int BodyStart,
     IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets,
     IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null,
-    IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null,
+    IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null
 );
+
+/// <summary>
+/// Original declaration names retained while project modules are stitched into compiler bindings.
+/// </summary>
+/// <param name="SourceName">The declaration name in its source module.</param>
+/// <param name="QualifiedName">The canonical module-qualified declaration name.</param>
+public sealed record SourceFunctionName(string SourceName, string QualifiedName);
 
 /// <summary>
 /// Multi-file project support: discovers and loads <c>ashes.json</c> projects, parses import
@@ -1614,6 +1624,7 @@ public static class ProjectSupport
         AppendHoistedTypeDeclarations(prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
 
         var constructorModules = BuildConstructorModuleNames(orderedModules, entryModule, entrySourceOverride);
+        var functionSourceNames = BuildFunctionSourceNames(orderedModules, entryModule, shapes);
 
         var legacyBindingEmitted = AppendModuleBindingPrefixes(prefix, moduleOffsets, nonEntryModules, shapes, exportedNames);
 
@@ -1631,7 +1642,44 @@ public static class ProjectSupport
         }
 
         var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
-        return ComposeEntryLayout(entryModule, entryShape, entryExpression, prefix, moduleOffsets, constructorModules);
+        return ComposeEntryLayout(
+            entryModule,
+            entryShape,
+            entryExpression,
+            prefix,
+            moduleOffsets,
+            constructorModules,
+            functionSourceNames);
+    }
+
+    private static IReadOnlyDictionary<string, SourceFunctionName> BuildFunctionSourceNames(
+        IReadOnlyList<ProjectModule> orderedModules,
+        ProjectModule entryModule,
+        IReadOnlyDictionary<string, ModuleSourceShape> shapes)
+    {
+        var result = new Dictionary<string, SourceFunctionName>(StringComparer.Ordinal);
+        foreach (ProjectModule module in orderedModules)
+        {
+            bool isEntry = string.Equals(
+                module.FilePath,
+                entryModule.FilePath,
+                StringComparison.OrdinalIgnoreCase);
+            string moduleBindingName = SanitizeModuleBindingName(module.ModuleName);
+            foreach (ModuleBindingGroup group in shapes[module.ModuleName].TopLevelBindings)
+            {
+                foreach (ModuleBindingFragment binding in group.Bindings)
+                {
+                    string compilerName = isEntry
+                        ? binding.Name
+                        : $"{moduleBindingName}_{binding.Name}";
+                    result[compilerName] = new SourceFunctionName(
+                        binding.Name,
+                        $"{module.ModuleName}.{binding.Name}");
+                }
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -1734,21 +1782,16 @@ public static class ProjectSupport
         string entryExpression,
         StringBuilder prefix,
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
-        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules)
+        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames)
     {
-        var hasPrefixBeforeBody = prefix.Length > entryShape.TypeDeclarationsSource.Length;
-        if (hasPrefixBeforeBody)
+        if (prefix.Length > entryShape.TypeDeclarationsSource.Length)
         {
             // A declarations-only entry (e.g. a module file compiled directly) has no trailing
             // expression, but the parenthesized flat entry block below must end in one — otherwise
             // the parser reports ASH003 at the closing paren. Synthesize an inert trailing value;
             // a program's trailing value is discarded, so this is unobservable.
-            if (!entryShape.HasTrailingExpression || string.IsNullOrWhiteSpace(entryExpression))
-            {
-                entryExpression = string.IsNullOrWhiteSpace(entryExpression)
-                    ? "0"
-                    : entryExpression + "\n0";
-            }
+            entryExpression = EnsureTrailingEntryExpression(entryShape, entryExpression);
 
             // Module bindings precede the entry body, so the body must be parenthesized: a flat
             // entry block (declarations + trailing expression) is only recognized inside parens
@@ -1760,13 +1803,27 @@ public static class ProjectSupport
             prefix.Append(entryExpression);
             prefix.Append(')');
             moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
-            return new CombinedCompilationLayout(prefix.ToString(), entryOffset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments, constructorModules);
+            return CreateCombinedCompilationLayout(
+                prefix.ToString(),
+                entryOffset,
+                entryShape.TypeDeclarationsSource.Length,
+                moduleOffsets,
+                entryShape.TypeDeclFragments,
+                constructorModules,
+                functionSourceNames);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
         {
             moduleOffsets.Add((entryModule.FilePath, 0, entryExpression.Length));
-            return new CombinedCompilationLayout(entryExpression, 0, 0, moduleOffsets, ConstructorModules: constructorModules);
+            return CreateCombinedCompilationLayout(
+                entryExpression,
+                0,
+                0,
+                moduleOffsets,
+                entryTypeDeclFragments: null,
+                constructorModules,
+                functionSourceNames);
         }
 
         // Only the entry's own (hoisted) type declarations precede the body: append it bare — the
@@ -1775,8 +1832,44 @@ public static class ProjectSupport
         var offset = prefix.Length;
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
-        return new CombinedCompilationLayout(prefix.ToString(), offset, entryShape.TypeDeclarationsSource.Length, moduleOffsets, entryShape.TypeDeclFragments, constructorModules);
+        return CreateCombinedCompilationLayout(
+            prefix.ToString(),
+            offset,
+            entryShape.TypeDeclarationsSource.Length,
+            moduleOffsets,
+            entryShape.TypeDeclFragments,
+            constructorModules,
+            functionSourceNames);
     }
+
+    private static string EnsureTrailingEntryExpression(
+        ModuleSourceShape entryShape,
+        string entryExpression)
+    {
+        if (entryShape.HasTrailingExpression && !string.IsNullOrWhiteSpace(entryExpression))
+        {
+            return entryExpression;
+        }
+
+        return string.IsNullOrWhiteSpace(entryExpression) ? "0" : entryExpression + "\n0";
+    }
+
+    private static CombinedCompilationLayout CreateCombinedCompilationLayout(
+        string source,
+        int entryOffset,
+        int bodyStart,
+        IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames)
+        => new(
+            source,
+            entryOffset,
+            bodyStart,
+            moduleOffsets,
+            entryTypeDeclFragments,
+            constructorModules,
+            functionSourceNames);
 
     /// <summary>
     /// Verifies every selector import names an export the target module actually provides, resolving

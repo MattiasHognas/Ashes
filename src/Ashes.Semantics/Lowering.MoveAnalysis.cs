@@ -97,6 +97,12 @@ public sealed partial class Lowering
     // never lose the binding identity.
     private readonly Dictionary<FuncKey, string> _maKeyName = new();
 
+    // Stable source/report identities are kept separately from FuncKey so later reporting can sort
+    // and filter functions without leaking AST reference identity.
+    private readonly Dictionary<FuncKey, SourceFunctionOrigin> _maFunctionOrigins = new();
+    private readonly Dictionary<Expr.Lambda, SourceFunctionOrigin> _sourceFunctionOriginsByLambda =
+        new(ReferenceEqualityComparer.Instance);
+
     // StripModuleAliasPrefix substitutes stitched aliases by rebuilding the remaining AST. Preserve an
     // explicit link from every rebuilt binding node to its original binding occurrence; name lookup
     // cannot recover this identity once two local functions legitimately share a source name.
@@ -215,6 +221,8 @@ public sealed partial class Lowering
         _maValueRhs.Clear();
         _maNameIndex.Clear();
         _maKeyName.Clear();
+        _maFunctionOrigins.Clear();
+        _sourceFunctionOriginsByLambda.Clear();
         _maOriginalBinderByCopy.Clear();
         _maFunctionScopes.Clear();
         _maCallSites.Clear();
@@ -227,7 +235,7 @@ public sealed partial class Lowering
         _maExpressionFreshnessAll.Clear();
         _maBody = desugaredBody;
 
-        RegisterBindings(desugaredBody);
+        RegisterBindings(desugaredBody, enclosingSource: null);
 
         // Duplicated names remain unavailable through the global compatibility/value indexes. Every
         // lambda-valued binding itself stays registered and is resolved internally through lexical
@@ -241,7 +249,10 @@ public sealed partial class Lowering
         CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
         ComputeResultReach();
         _maAnalyzed = true;
-        foreach (var key in _maFuncs.Keys.OrderBy(k => _maKeyName[k], StringComparer.Ordinal))
+        foreach (FuncKey key in _maFuncs.Keys
+            .OrderBy(key => _maFunctionOrigins[key].QualifiedName, StringComparer.Ordinal)
+            .ThenBy(key => _maFunctionOrigins[key].SourceName, StringComparer.Ordinal)
+            .ThenBy(key => _maFunctionOrigins[key].DeclarationOffset))
         {
             var functionName = _maKeyName[key];
             var summary = CreateOwnershipSummary(key, functionName, _maFuncs[key]);
@@ -292,86 +303,142 @@ public sealed partial class Lowering
     /// Records every let/letrec binding in the desugared tree: lambda-valued ones as functions
     /// (params + innermost body), all as value RHS (for seed resolution). Flags duplicate names.
     /// </summary>
-    private void RegisterBindings(Expr e)
+    private void RegisterBindings(Expr e, SourceFunctionOrigin? enclosingSource)
     {
         switch (e)
         {
             case Expr.Let l:
-                RegisterOneBinding(l, l.Name, l.Value);
-                RegisterBindings(l.Value);
-                RegisterBindings(l.Body);
+                RegisterBindings(l, enclosingSource);
                 return;
             case Expr.LetRecursive lr:
-                RegisterOneBinding(lr, lr.Name, lr.Value);
-                RegisterBindings(lr.Value);
-                RegisterBindings(lr.Body);
+                RegisterBindings(lr, enclosingSource);
                 return;
             case Expr.LetResult lres:
-                RegisterOneBinding(lres, lres.Name, lres.Value);
-                RegisterBindings(lres.Value);
-                RegisterBindings(lres.Body);
+                RegisterBindings(lres, enclosingSource);
                 return;
             case RecursiveGroupExpr group:
-                RegisterRecursiveGroupBindings(group);
+                RegisterRecursiveGroupBindings(group, enclosingSource);
                 return;
             case Expr.Lambda lam:
-                RegisterBindings(lam.Body);
+                RegisterBindings(lam.Body, enclosingSource);
                 return;
             case Expr.If i:
-                RegisterBindings(i.Cond);
-                RegisterBindings(i.Then);
-                RegisterBindings(i.Else);
+                RegisterBindings(i.Cond, enclosingSource);
+                RegisterBindings(i.Then, enclosingSource);
+                RegisterBindings(i.Else, enclosingSource);
                 return;
             case Expr.Match m:
-                RegisterBindings(m.Value);
+                RegisterBindings(m.Value, enclosingSource);
                 foreach (var c in m.Cases)
                 {
-                    RegisterBindings(c.Body);
+                    RegisterBindings(c.Body, enclosingSource);
                     if (c.Guard is not null)
                     {
-                        RegisterBindings(c.Guard);
+                        RegisterBindings(c.Guard, enclosingSource);
                     }
                 }
 
                 return;
             case Expr.Call c:
-                RegisterBindings(c.Func);
-                RegisterBindings(c.Arg);
+                RegisterBindings(c.Func, enclosingSource);
+                RegisterBindings(c.Arg, enclosingSource);
                 return;
             default:
                 foreach (var child in EnumerateChildren(e))
                 {
-                    RegisterBindings(child);
+                    RegisterBindings(child, enclosingSource);
                 }
 
                 return;
         }
     }
 
-    private void RegisterRecursiveGroupBindings(RecursiveGroupExpr group)
+    private void RegisterBindings(Expr.Let let, SourceFunctionOrigin? enclosingSource)
+    {
+        SourceFunctionOrigin? declared = RegisterOneBinding(
+            let,
+            let.Name,
+            let.Value,
+            AstSpans.GetLetNameOrDefault(let),
+            enclosingSource);
+        RegisterBindings(let.Value, declared ?? enclosingSource);
+        RegisterBindings(let.Body, enclosingSource);
+    }
+
+    private void RegisterBindings(Expr.LetRecursive let, SourceFunctionOrigin? enclosingSource)
+    {
+        SourceFunctionOrigin? declared = RegisterOneBinding(
+            let,
+            let.Name,
+            let.Value,
+            AstSpans.GetLetRecursiveNameOrDefault(let),
+            enclosingSource);
+        RegisterBindings(let.Value, declared ?? enclosingSource);
+        RegisterBindings(let.Body, enclosingSource);
+    }
+
+    private void RegisterBindings(Expr.LetResult let, SourceFunctionOrigin? enclosingSource)
+    {
+        SourceFunctionOrigin? declared = RegisterOneBinding(
+            let,
+            let.Name,
+            let.Value,
+            AstSpans.GetLetResultNameOrDefault(let),
+            enclosingSource);
+        RegisterBindings(let.Value, declared ?? enclosingSource);
+        RegisterBindings(let.Body, enclosingSource);
+    }
+
+    private void RegisterRecursiveGroupBindings(
+        RecursiveGroupExpr group,
+        SourceFunctionOrigin? enclosingSource)
     {
         // A group is one AST node containing several simultaneous bindings. Register every member
         // first so subsequent traversal can seed the complete sibling scope.
+        var origins = new SourceFunctionOrigin?[group.Bindings.Count];
         for (int i = 0; i < group.Bindings.Count; i++)
         {
             (string name, Expr value) = group.Bindings[i];
-            RegisterOneBinding(GetRecursiveGroupMemberKey(group, i), name, value);
+            TextSpan nameSpan = i < group.BindingNameSpans.Count
+                ? group.BindingNameSpans[i]
+                : AstSpans.GetOrDefault(value);
+            origins[i] = RegisterOneBinding(
+                GetRecursiveGroupMemberKey(group, i),
+                name,
+                value,
+                nameSpan,
+                enclosingSource);
         }
 
-        foreach ((_, Expr value) in group.Bindings)
+        for (int i = 0; i < group.Bindings.Count; i++)
         {
-            RegisterBindings(value);
+            RegisterBindings(group.Bindings[i].Value, origins[i] ?? enclosingSource);
         }
 
-        RegisterBindings(group.Body);
+        RegisterBindings(group.Body, enclosingSource);
     }
 
-    private void RegisterOneBinding(Expr binder, string name, Expr value)
+    private SourceFunctionOrigin? RegisterOneBinding(
+        Expr binder,
+        string name,
+        Expr value,
+        TextSpan nameSpan,
+        SourceFunctionOrigin? enclosingSource)
     {
-        RegisterOneBinding(GetCanonicalFuncKey(binder), name, value);
+        return RegisterOneBinding(
+            GetCanonicalFuncKey(binder),
+            name,
+            value,
+            nameSpan,
+            enclosingSource);
     }
 
-    private void RegisterOneBinding(FuncKey key, string name, Expr value)
+    private SourceFunctionOrigin? RegisterOneBinding(
+        FuncKey key,
+        string name,
+        Expr value,
+        TextSpan nameSpan,
+        SourceFunctionOrigin? enclosingSource)
     {
         bool duplicate = _maAmbiguous.Contains(name)
             || _maValueRhs.ContainsKey(name)
@@ -391,6 +458,13 @@ public sealed partial class Lowering
 
         if (stripped is Expr.Lambda lam)
         {
+            SourceFunctionOrigin origin = CreateSourceFunctionOrigin(name, nameSpan, enclosingSource);
+            _maFunctionOrigins[key] = origin;
+            if (FindInnermostLambdaUnderLets(value) is { } sourceLambda)
+            {
+                _sourceFunctionOriginsByLambda[sourceLambda] = origin;
+            }
+
             if (TryGetNestedRecursiveReturnShape(
                 lam, out var outer, out var accParam, out var recursiveBinder, out var recursiveName, out var innerBody))
             {
@@ -416,7 +490,36 @@ public sealed partial class Lowering
             }
 
             _maKeyName[key] = name;
+            return origin;
         }
+
+        return null;
+    }
+
+    private SourceFunctionOrigin CreateSourceFunctionOrigin(
+        string compilerName,
+        TextSpan nameSpan,
+        SourceFunctionOrigin? enclosingSource)
+    {
+        string sourceName = compilerName;
+        string? qualifiedName = null;
+        if (enclosingSource is null
+            && _functionSourceNames is not null
+            && _functionSourceNames.TryGetValue(compilerName, out SourceFunctionName? mapped))
+        {
+            sourceName = mapped.SourceName;
+            qualifiedName = mapped.QualifiedName;
+        }
+        else if (enclosingSource?.QualifiedName is { } parentQualified)
+        {
+            qualifiedName = $"{parentQualified}.{compilerName}";
+        }
+
+        return new SourceFunctionOrigin(
+            sourceName,
+            qualifiedName,
+            ResolveSourceLocation(nameSpan),
+            nameSpan.Start);
     }
 
     private FuncKey GetCanonicalFuncKey(Expr binder)
@@ -593,6 +696,13 @@ public sealed partial class Lowering
             : [];
 
     /// <summary>
+    /// Every retained ownership summary in stable source order. Returns an immutable projection
+    /// rather than exposing the mutable analysis dictionary or its internal <see cref="FuncKey"/>.
+    /// </summary>
+    internal IReadOnlyList<FunctionOwnershipSummary> OwnershipSummaries =>
+        _maAnalyzed ? OrderOwnershipSummaries(_ownershipSummaries.Values).ToList() : [];
+
+    /// <summary>
     /// Returns the materialized <see cref="FunctionOwnershipSummary"/> for a top-level function, or null if
     /// the program has not been analysed or <paramref name="function"/> is not a registered,
     /// fully-visible top-level function. The summary combines the same move-safety and result-reach
@@ -676,12 +786,24 @@ public sealed partial class Lowering
     internal IReadOnlyList<FunctionOwnershipSummary> GetOwnershipSummaries(string function)
     {
         return _maAnalyzed
-            ? _ownershipSummaries
+            ? OrderOwnershipSummaries(_ownershipSummaries
                 .Where(entry => string.Equals(_maKeyName[entry.Key], function, StringComparison.Ordinal))
-                .Select(entry => entry.Value)
+                .Select(entry => entry.Value))
                 .ToList()
             : [];
     }
+
+    private static IOrderedEnumerable<FunctionOwnershipSummary> OrderOwnershipSummaries(
+        IEnumerable<FunctionOwnershipSummary> summaries)
+        => summaries
+            .OrderBy(summary => summary.Origin.QualifiedName, StringComparer.Ordinal)
+            .ThenBy(summary => summary.Origin.SourceName, StringComparer.Ordinal)
+            .ThenBy(summary => summary.Origin.DeclarationOffset)
+            .ThenBy(
+                summary => summary.Origin.DeclarationLocation?.FilePath,
+                StringComparer.Ordinal)
+            .ThenBy(summary => summary.Origin.DeclarationLocation?.Line)
+            .ThenBy(summary => summary.Origin.DeclarationLocation?.Column);
 
     private bool IsFreshOwnershipResultCall(Expr expression)
     {
@@ -739,6 +861,7 @@ public sealed partial class Lowering
 
         return new FunctionOwnershipSummary(
             functionName,
+            _maFunctionOrigins[function],
             info.Params.ToList(),
             parameterOwnership,
             unique,
