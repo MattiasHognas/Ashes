@@ -259,7 +259,8 @@ internal sealed record FunctionOwnershipSummary(
     FunctionResultReachFacts ResultReachFacts,
     IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
     FunctionResultProvenance ResultProvenance,
-    IReadOnlyList<TcoParamStructuralFacts> TcoParamFacts)
+    IReadOnlyList<TcoParamStructuralFacts> TcoParamFacts,
+    IReadOnlyList<PatternBindingOwnershipFact> PatternBindingOwnership)
 {
     public IReadOnlyDictionary<string, int> ResultReach => ResultReachFacts.ParameterReach;
 

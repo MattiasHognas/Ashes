@@ -348,9 +348,13 @@ public sealed partial class Lowering
         // all post-lowering consumers use only that slot identity.
         private readonly IReadOnlySet<Pattern.Var> _escapingDirectPatternBinders;
         private readonly HashSet<int> _escapingDirectPatternBindingSlots = [];
+        private readonly IReadOnlyDictionary<Pattern.Var, PatternBindingOwnershipFact>
+            _patternBindingOwnershipByBinder;
+        private readonly Dictionary<int, PatternBindingOwnershipFact> _patternBindingOwnershipBySlot = [];
 
         private static readonly IReadOnlySet<Pattern.Var> EmptyPatternBinders =
             new HashSet<Pattern.Var>(ReferenceEqualityComparer.Instance);
+        private static readonly IReadOnlyList<PatternBindingOwnershipFact> EmptyPatternBindingOwnership = [];
         private static readonly IReadOnlySet<int> EmptyParameterOrdinals = new HashSet<int>();
 
         public void RegisterPatternBindingSlot(Pattern.Var binder, int slot)
@@ -359,11 +363,25 @@ public sealed partial class Lowering
             {
                 _escapingDirectPatternBindingSlots.Add(slot);
             }
+
+            if (_patternBindingOwnershipByBinder.TryGetValue(
+                binder,
+                out PatternBindingOwnershipFact? ownership))
+            {
+                _patternBindingOwnershipBySlot[slot] = ownership;
+            }
         }
 
         public bool IsEscapingDirectPatternBindingSlot(int slot)
         {
             return _escapingDirectPatternBindingSlots.Contains(slot);
+        }
+
+        public bool TryGetPatternBindingOwnership(
+            int slot,
+            out PatternBindingOwnershipFact? ownership)
+        {
+            return _patternBindingOwnershipBySlot.TryGetValue(slot, out ownership);
         }
 
         // Used by the two call sites that build a TcoContext without first running the Collect*
@@ -385,7 +403,8 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
-                EmptyPatternBinders)
+                EmptyPatternBinders,
+                EmptyPatternBindingOwnership)
         {
         }
 
@@ -400,7 +419,8 @@ public sealed partial class Lowering
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
             IReadOnlySet<int> affineSelfAppendOnlyParamOrdinals,
-            IReadOnlySet<Pattern.Var> escapingDirectPatternBinders)
+            IReadOnlySet<Pattern.Var> escapingDirectPatternBinders,
+            IReadOnlyList<PatternBindingOwnershipFact> patternBindingOwnership)
         {
             SelfName = selfName;
             ParamCount = paramCount;
@@ -413,6 +433,14 @@ public sealed partial class Lowering
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
             _affineSelfAppendOnlyParamOrdinals = affineSelfAppendOnlyParamOrdinals;
             _escapingDirectPatternBinders = escapingDirectPatternBinders;
+            var ownershipByBinder = new Dictionary<Pattern.Var, PatternBindingOwnershipFact>(
+                ReferenceEqualityComparer.Instance);
+            foreach (PatternBindingOwnershipFact fact in patternBindingOwnership)
+            {
+                ownershipByBinder[fact.Binder] = fact;
+            }
+
+            _patternBindingOwnershipByBinder = ownershipByBinder;
         }
 
         // Joins each parameter ordinal to the distinct slot established by

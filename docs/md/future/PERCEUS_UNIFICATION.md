@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `e34d93e` on 2026-07-31, together with the stable pattern-binding identity
-handoff in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `ded5881` on 2026-07-31, together with the pattern-binding ownership shadow
+analysis in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -272,6 +272,16 @@ The following is already implemented and is not part of the backlog:
   unresolved-type, and unsupported-reuse rejection categories. The capability is snapshotted onto
   lowered-temp ownership facts; tuple/ADT drops, TCO child copies, and reuse cleanup consume the same
   descriptor while expression freshness and TCO profitability remain separate policies.
+- pattern-extracted references now receive an immutable `PatternBindingOwnershipFact` in the canonical
+  function ownership summary. Exact binder identity is transported to the emitted local slot, while
+  the retained reportable fact uses a stable per-function binding ordinal, root-parameter ordinal,
+  parent-binding lineage, extraction depth, source location, and typed use/classification enums. The
+  analysis distinguishes structural or ordinary-call borrows, unchanged transfer to the same exact
+  TCO parameter, embedding in a new owner, independent escape and closure capture, and a conservative
+  unknown fallback. `ResolvePendingNestedTcoPatternAliasSites` still preserves the legacy placement
+  outcome during shadow mode, but now retains an immutable decision correlating that outcome with the
+  new ownership fact and a typed agreement/disagreement result. Same-named binders in disjoint arms
+  remain distinct by binder, ordinal, and local slot.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -280,7 +290,7 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
+| Pattern-derived aliases | Canonical ownership summaries retain stable pattern-binding ownership and lineage facts, and the late slot-keyed fix-up retains their shadow comparison with the legacy result. | Actual protective-dup placement still follows `CollectEscapingDirectPatternBindings` and `_pendingNestedTcoPatternAliasSites`; the shadow facts must replace those classifier-D paths. |
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
@@ -289,39 +299,12 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–3 and 4.1 are complete. Eight implementation tasks
-remain; Milestone 4.2 is next.
+teardown prerequisites are in place. Milestones 1–3 and 4.1–4.2 are complete. Seven implementation
+tasks remain; Milestone 4.3 is next.
 
 ### Milestone 4 — fold pattern-derived aliases into ordinary Perceus placement
 
 Classifier D is the most historically dangerous TCO subsystem and must move in shadow/cutover stages.
-
-#### 4.2 Compute pattern-binding ownership in shadow mode
-
-Generalize the ownership/reach analysis to answer whether a pattern-extracted reference:
-
-- is borrowed only for inspection or an ordinary call;
-- is transferred unchanged to the same TCO parameter;
-- is embedded in a new owner and therefore needs a dup;
-- escapes independently beyond the parent’s final use.
-
-Shadow-compare this against `CollectEscapingDirectPatternBindings` and the decisions made in
-`ResolvePendingNestedTcoPatternAliasSites`. Preserve the existing conservative behavior on any unknown
-case.
-
-Store the final alias/escape classification against the stable binder/slot identity and source
-location. Dup/drop placement should consume that record, and the same record should later explain
-whether the operation came from embedding, independent escape, transfer to the same TCO parameter, or
-an unknown conservative fallback.
-
-The required corpus includes all `NestedTcoPatternAliasTests` plus explicit cases for:
-
-- a direct binding passed only to a plain helper call;
-- a direct binding embedded in a constructor;
-- a direct binding forwarded to the same parameter;
-- nested list/tuple/ADT extraction chains;
-- copy-typed extracted fields;
-- same-named bindings in disjoint arms.
 
 #### 4.3 Cut over dup/drop placement
 

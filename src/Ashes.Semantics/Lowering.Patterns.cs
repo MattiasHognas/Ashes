@@ -1279,7 +1279,12 @@ public sealed partial class Lowering
             }
 
             _tcoCtx.RegisterPatternBindingSlot(binder, payload.Slot);
-            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType);
+            _pendingNestedTcoPatternAliasSites[payload.Slot] = new PendingNestedTcoPatternAliasSite(
+                parent.Slot,
+                _inst.Count,
+                bindingType,
+                binder,
+                ResolveSourceLocation(AstSpans.GetOrDefault(binder)));
         }
     }
 

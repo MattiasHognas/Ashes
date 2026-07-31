@@ -190,6 +190,12 @@ public sealed partial class Lowering
     private readonly Dictionary<string, RuntimeManagedTcoPatternAlias> _runtimeManagedTcoPatternAliases =
         new(StringComparer.Ordinal);
     private readonly HashSet<string> _activeRuntimeManagedTcoPatternAliases = new(StringComparer.Ordinal);
+    private sealed record PendingNestedTcoPatternAliasSite(
+        int ParentSlot,
+        int InsertIndex,
+        TypeRef PayloadType,
+        Pattern.Var Binder,
+        SourceLocation? Location);
 
     // A value extracted (via any pattern, not just a list cons) from a TCO loop parameter, or
     // transitively from another such extraction (a tuple field of a list element, a record field of
@@ -218,7 +224,18 @@ public sealed partial class Lowering
     // post-lowering resolution step, allowing it to consult the parent parameter's static escape fact for a
     // binding whose immediate parent is itself a declared TCO parameter slot (see the comment there
     // for why that case needs its own check).
-    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType)> _pendingNestedTcoPatternAliasSites = new();
+    private readonly Dictionary<int, PendingNestedTcoPatternAliasSite>
+        _pendingNestedTcoPatternAliasSites = new();
+    private readonly List<PatternBindingOwnershipDecision> _patternBindingOwnershipDecisions = [];
+
+    internal IReadOnlyList<PatternBindingOwnershipDecision> PatternBindingOwnershipDecisions =>
+        _patternBindingOwnershipDecisions
+            .OrderBy(decision => decision.Function?.QualifiedName, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Function?.SourceName, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Function?.DeclarationOffset)
+            .ThenBy(decision => decision.BindingOrdinal)
+            .ThenBy(decision => decision.LocalSlot)
+            .ToList();
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
@@ -5043,7 +5060,8 @@ public sealed partial class Lowering
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
                 affineSelfAppendOnlyParamOrdinals: tcoParamOrdinalFacts.AffineSelfAppendOnly,
-                escapingDirectPatternBinders: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
+                escapingDirectPatternBinders: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name),
+                patternBindingOwnership: GetPatternBindingOwnershipFacts(ownershipFunction))
             {
                 InTailPosition = false,
                 OwnershipFunction = ownershipFunction,
@@ -5499,21 +5517,150 @@ public sealed partial class Lowering
         // pass, so checking early can wrongly treat an about-to-be-Int (or -Float, -Bool, -UInt) binding
         // as heap-managed — and dup'ing a scalar as if it were a refcounted pointer segfaults rather than
         // merely over-protecting.
-        var accepted = _pendingNestedTcoPatternAliasSites
-            .Where(site => !CanArenaReset(Prune(site.Value.PayloadType))
-                && !_runtimeManagedTcoPatternAliases.Values.Any(alias =>
-                    alias.AliasSlot == site.Key)
-                && (!tco.ParamSlots.Contains(site.Value.ParentSlot)
-                    || tco.IsEscapingDirectPatternBindingSlot(site.Key))
-                && IsChainRootRuntimeManaged(site.Value.ParentSlot, tco))
-            .OrderByDescending(site => site.Value.InsertIndex)
-            .ToList();
-        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _)) in accepted)
+        List<(int PayloadSlot, PendingNestedTcoPatternAliasSite Site)> accepted = [];
+        foreach ((int payloadSlot, PendingNestedTcoPatternAliasSite site) in
+            _pendingNestedTcoPatternAliasSites)
         {
-            SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, insertIndex);
+            bool legacyRequiresProtectiveDup = !tco.ParamSlots.Contains(site.ParentSlot)
+                || tco.IsEscapingDirectPatternBindingSlot(payloadSlot);
+            PatternBindingPlacementOutcome outcome = ResolvePatternBindingPlacementOutcome(
+                payloadSlot,
+                site,
+                legacyRequiresProtectiveDup,
+                tco);
+            RecordPatternBindingOwnershipDecision(
+                payloadSlot,
+                site,
+                legacyRequiresProtectiveDup,
+                outcome,
+                tco);
+            if (outcome == PatternBindingPlacementOutcome.ProtectiveDupInserted)
+            {
+                accepted.Add((payloadSlot, site));
+            }
+        }
+
+        foreach ((int payloadSlot, PendingNestedTcoPatternAliasSite site) in accepted
+            .OrderByDescending(candidate => candidate.Site.InsertIndex))
+        {
+            SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, site.InsertIndex);
         }
 
         _pendingNestedTcoPatternAliasSites.Clear();
+    }
+
+    private PatternBindingPlacementOutcome ResolvePatternBindingPlacementOutcome(
+        int payloadSlot,
+        PendingNestedTcoPatternAliasSite site,
+        bool legacyRequiresProtectiveDup,
+        TcoContext tco)
+    {
+        if (CanArenaReset(Prune(site.PayloadType)))
+        {
+            return PatternBindingPlacementOutcome.CopyType;
+        }
+
+        if (_runtimeManagedTcoPatternAliases.Values.Any(alias => alias.AliasSlot == payloadSlot))
+        {
+            return PatternBindingPlacementOutcome.AlreadyProtectedByRuntimeAlias;
+        }
+
+        if (!legacyRequiresProtectiveDup)
+        {
+            return PatternBindingPlacementOutcome.LegacyEscapeRejected;
+        }
+
+        return IsChainRootRuntimeManaged(site.ParentSlot, tco)
+            ? PatternBindingPlacementOutcome.ProtectiveDupInserted
+            : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
+    }
+
+    private void RecordPatternBindingOwnershipDecision(
+        int payloadSlot,
+        PendingNestedTcoPatternAliasSite site,
+        bool legacyRequiresProtectiveDup,
+        PatternBindingPlacementOutcome outcome,
+        TcoContext tco)
+    {
+        if (tco.TryGetPatternBindingOwnership(payloadSlot, out PatternBindingOwnershipFact? fact)
+            && fact is not null)
+        {
+            _patternBindingOwnershipDecisions.Add(new PatternBindingOwnershipDecision(
+                fact.Function,
+                fact.BindingOrdinal,
+                fact.BindingName,
+                payloadSlot,
+                fact.RootParameterOrdinal,
+                fact.RootParameterName,
+                fact.ParentBindingOrdinal,
+                fact.ExtractionDepth,
+                fact.Uses,
+                fact.Ownership,
+                fact.Location,
+                legacyRequiresProtectiveDup,
+                ComparePatternBindingOwnership(fact.RequiresProtectiveDup, legacyRequiresProtectiveDup),
+                outcome));
+            return;
+        }
+
+        int rootParameterOrdinal = FindPatternBindingRootParameterOrdinal(site.ParentSlot, tco);
+        string rootParameterName = rootParameterOrdinal >= 0
+            ? tco.ParamNames[rootParameterOrdinal]
+            : "<unknown>";
+        _patternBindingOwnershipDecisions.Add(new PatternBindingOwnershipDecision(
+            _activeFunctionOrigin?.Source,
+            -1,
+            site.Binder.Name,
+            payloadSlot,
+            rootParameterOrdinal,
+            rootParameterName,
+            null,
+            -1,
+            PatternBindingOwnershipUse.ConservativeUnknown,
+            PatternBindingOwnershipKind.ConservativeUnknown,
+            site.Location,
+            legacyRequiresProtectiveDup,
+            PatternBindingShadowComparison.MissingOwnershipFact,
+            outcome));
+    }
+
+    private static PatternBindingShadowComparison ComparePatternBindingOwnership(
+        bool ownershipRequiresProtectiveDup,
+        bool legacyRequiresProtectiveDup)
+    {
+        if (ownershipRequiresProtectiveDup == legacyRequiresProtectiveDup)
+        {
+            return PatternBindingShadowComparison.Agrees;
+        }
+
+        return ownershipRequiresProtectiveDup
+            ? PatternBindingShadowComparison.OwnershipMoreConservative
+            : PatternBindingShadowComparison.LegacyMoreConservative;
+    }
+
+    private int FindPatternBindingRootParameterOrdinal(int slot, TcoContext tco)
+    {
+        HashSet<int> visited = [];
+        int current = slot;
+        while (visited.Add(current))
+        {
+            int parameterOrdinal = tco.ParamSlots.IndexOf(current);
+            if (parameterOrdinal >= 0)
+            {
+                return parameterOrdinal;
+            }
+
+            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(
+                current,
+                out PendingNestedTcoPatternAliasSite? site))
+            {
+                break;
+            }
+
+            current = site.ParentSlot;
+        }
+
+        return -1;
     }
 
     // Cycle-guarded: a slot chain can only grow shorter (each hop moves to a strictly earlier
@@ -5529,7 +5676,9 @@ public sealed partial class Lowering
                 return tco.IsRuntimeManagedSlot(current);
             }
 
-            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(current, out var entry))
+            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(
+                current,
+                out PendingNestedTcoPatternAliasSite? entry))
             {
                 return false;
             }

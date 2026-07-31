@@ -307,6 +307,7 @@ public sealed partial class Lowering
         _maEscaped.Clear();
         _maCallCensusCauses.Clear();
         _ownershipFactConsumptions.Clear();
+        _patternBindingOwnershipDecisions.Clear();
     }
 
     private Expr StripOrSelf(Expr value)
@@ -820,6 +821,14 @@ public sealed partial class Lowering
                 function,
                 static facts => facts.ReuseAffinity == TcoParamReuseAffinity.SelfAppendOnly));
 
+    private IReadOnlyList<PatternBindingOwnershipFact> GetPatternBindingOwnershipFacts(
+        FuncKey? function)
+    {
+        return function is { } key && GetOwnershipSummary(key) is { } summary
+            ? summary.PatternBindingOwnership
+            : [];
+    }
+
     private IReadOnlySet<int> GetTcoParameterOrdinals(
         FuncKey? function,
         TcoSelfCallArgumentShape shape)
@@ -971,6 +980,8 @@ public sealed partial class Lowering
                 : null;
         var provenance = new FunctionResultProvenance(resolvedProvenance.RcEligible, forwardName);
         var tcoParamFacts = ComputeTcoParamFacts(function, info, expressionFreshness);
+        IReadOnlyList<PatternBindingOwnershipFact> patternBindingOwnership =
+            ComputePatternBindingOwnership(function, info);
 
         return new FunctionOwnershipSummary(
             functionName,
@@ -988,7 +999,8 @@ public sealed partial class Lowering
                 resultReach.Causes),
             expressionFreshness,
             provenance,
-            tcoParamFacts);
+            tcoParamFacts,
+            patternBindingOwnership);
     }
 
     private (
