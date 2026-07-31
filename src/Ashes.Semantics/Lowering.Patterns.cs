@@ -1350,18 +1350,16 @@ public sealed partial class Lowering
         var transferableFields = new Dictionary<string, int>(StringComparer.Ordinal);
         if (pattern is Pattern.Constructor constructorPattern)
         {
-            for (int i = 0; i < Math.Min(constructorPattern.Patterns.Count, constructor.Arity); i++)
+            List<OrdinaryHeapLayoutChild> children =
+                GetOwnedOrdinaryHeapChildren(runtimeType, constructor);
+            foreach (OrdinaryHeapLayoutChild child in children)
             {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(
-                    constructor,
-                    i,
-                    runtimeType));
-                if (!CanArenaReset(fieldType)
-                    && fieldType is TypeRef.TNamedType
-                    && constructorPattern.Patterns[i] is Pattern.Var binding
+                if (child.Index < constructorPattern.Patterns.Count
+                    && child.Type is TypeRef.TNamedType
+                    && constructorPattern.Patterns[child.Index] is Pattern.Var binding
                     && !_constructorSymbols.ContainsKey(binding.Name))
                 {
-                    transferableFields[binding.Name] = i;
+                    transferableFields[binding.Name] = child.Index;
                 }
             }
         }

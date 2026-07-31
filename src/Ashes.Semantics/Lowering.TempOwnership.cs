@@ -31,7 +31,8 @@ internal enum LoweredTempDropKind
 
 /// <summary>
 /// Stable outer layout category known without rerunning type inference or inspecting emitted IR.
-/// Detailed recursive copy/drop capability remains the responsibility of the layout work in 3.3.
+/// Recursive copy/drop/reuse details are retained separately by
+/// <see cref="OrdinaryHeapLayoutCapability"/>.
 /// </summary>
 internal enum LoweredTempLayoutKind
 {
@@ -191,6 +192,7 @@ internal sealed record LoweredTempOwnershipFact(
     int? SourceTemp,
     TypeRef? Type,
     LoweredTempLayoutKind Layout,
+    OrdinaryHeapLayoutCapability? LayoutCapability,
     LoweredTempDropKind DropKind,
     LoweredTempOwnershipKind Ownership,
     LoweredTempProducerKind Producer,
@@ -314,7 +316,7 @@ public sealed partial class Lowering
             LoweredTempRepresentation.BorrowedView,
             sourceFact?.OwnerTemp ?? source,
             source,
-            sourceFact?.Type,
+            new TypeRef.TBytes(),
             LoweredTempLayoutKind.Bytes,
             LoweredTempDropKind.BorrowedViewNoDrop,
             LoweredTempOwnershipKind.Borrowed,
@@ -366,7 +368,8 @@ public sealed partial class Lowering
             ownership,
             producer,
             location,
-            reason);
+            reason,
+            sourceFact.LayoutCapability);
     }
 
     private static LoweredTempOwnershipReason CopyOutReason(IrInst instruction)
@@ -405,7 +408,8 @@ public sealed partial class Lowering
                 LoweredTempOwnershipKind.Transferred,
                 LoweredTempProducerKind.RcDup,
                 location,
-                LoweredTempOwnershipReason.RcDupForward);
+                LoweredTempOwnershipReason.RcDupForward,
+                sourceFact?.LayoutCapability);
             return;
         }
 
@@ -476,7 +480,8 @@ public sealed partial class Lowering
             existing?.Ownership ?? LoweredTempOwnershipKind.NewlyProduced,
             existing?.Producer ?? ProducerForReason(effectiveReason),
             location ?? existing?.Location,
-            effectiveReason);
+            effectiveReason,
+            type is null ? existing?.LayoutCapability : null);
     }
 
     private void RecordCallResultTempOwnership(
@@ -502,6 +507,9 @@ public sealed partial class Lowering
             {
                 Type = resultType,
                 Layout = LayoutForType(resultType),
+                LayoutCapability = GetOrdinaryHeapLayoutCapability(
+                    resultType,
+                    existing.Representation),
                 Reason = LoweredTempOwnershipReason.UnknownCallResult,
             };
             return;
@@ -545,6 +553,9 @@ public sealed partial class Lowering
             {
                 Type = type,
                 Layout = LayoutForType(type),
+                LayoutCapability = GetOrdinaryHeapLayoutCapability(
+                    type,
+                    existing.Representation),
             };
         }
     }
@@ -612,7 +623,8 @@ public sealed partial class Lowering
         LoweredTempOwnershipKind ownership,
         LoweredTempProducerKind producer,
         SourceLocation? location,
-        LoweredTempOwnershipReason reason)
+        LoweredTempOwnershipReason reason,
+        OrdinaryHeapLayoutCapability? layoutCapability = null)
     {
         _tempOwnershipFacts[temp] = new LoweredTempOwnershipFact(
             temp,
@@ -621,6 +633,8 @@ public sealed partial class Lowering
             sourceTemp,
             type,
             layout,
+            layoutCapability
+                ?? GetOrdinaryHeapLayoutCapability(type, representation),
             dropKind,
             ownership,
             producer,
