@@ -43,12 +43,14 @@ public sealed class NestedTcoPatternAliasTests
             .Any(instruction => instruction is IrInst.CmpStrEq));
 
         // The guarded protective dup this fix-up inserts: a null check followed by an RcDup into the
-        // same slot, landing on a "rc_tco_nested_alias_duplicated" label. Structurally distinct from
-        // the pre-existing pair/rest (list-cons-level) protection, which never emits this label.
+        // same stable owner slot, landing on the ordinary pattern-owner duplication label.
         lookup.Instructions
             .OfType<IrInst.Label>()
-            .ShouldContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+            .ShouldContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
         lookup.Instructions.OfType<IrInst.RcDup>().ShouldContain(dup => dup.RuntimeManaged);
+        lookup.Instructions.OfType<IrInst.RcDrop>().ShouldContain(drop =>
+            drop.RuntimeManaged && drop.OwnerSlot >= 0,
+            "The binding owner must retain an ordinary Perceus final-drop anchor.");
     }
 
     [Test]
@@ -90,11 +92,11 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction lookup = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpStrEq));
 
-        // Exactly one protected alias in this function shape (the string "lit"); a second one would
-        // mean "n" was wrongly swept in too.
+        // Exactly one lexical owner in this shape (the escaping string "lit"). The tail transfer is
+        // duplicated at the back edge, while the copy-typed "n" must never enter RC.
         lookup.Instructions
             .OfType<IrInst.Label>()
-            .Count(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal))
+            .Count(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal))
             .ShouldBe(1);
     }
 
@@ -140,7 +142,7 @@ public sealed class NestedTcoPatternAliasTests
 
         findFirst.Instructions
             .OfType<IrInst.Label>()
-            .ShouldContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+            .ShouldContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
         findFirst.Instructions.OfType<IrInst.RcDup>().ShouldContain(dup => dup.RuntimeManaged);
     }
 
@@ -151,7 +153,7 @@ public sealed class NestedTcoPatternAliasTests
     // "rest" are exactly those two safe cases, and it is required to keep passing unmodified. A prior,
     // broader attempt at this same fix (replacing the exclusion instead of narrowing it with a positive
     // escape check) regressed exactly this test by also protecting "pair" and "rest"; this fix's own
-    // narrower EscapingDirectPatternBindings set is what keeps it passing.
+    // stable PatternBindingOwnership facts keep it passing.
 
     [Test]
     public void Direct_binding_passed_only_to_a_plain_helper_call_is_not_protected_as_escaping()
@@ -203,7 +205,7 @@ public sealed class NestedTcoPatternAliasTests
 
         walk.Instructions
             .OfType<IrInst.Label>()
-            .ShouldNotContain(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+            .ShouldNotContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
     }
 
     [Test]
@@ -226,12 +228,12 @@ public sealed class NestedTcoPatternAliasTests
             .OfType<IrInst.Label>()
             .ToList();
 
-        labels.Count(label =>
-            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBe(2,
-                "The head and tail transfers each need the ordinary alias guard.");
         labels.ShouldNotContain(label =>
-            label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal),
-                "An alias already handled by the ordinary path must not receive a second late-fixup dup.");
+            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal),
+                "The source-name TCO alias path has been removed.");
+        labels.Count(label =>
+            label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal)).ShouldBe(1,
+                "Only the head embedded in the rebuilt list needs a lexical Perceus owner.");
     }
 
     [Test]
@@ -252,11 +254,11 @@ public sealed class NestedTcoPatternAliasTests
             .OfType<IrInst.Label>()
             .ToList();
 
-        labels.Count(label =>
-            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBe(1,
-                "Only the tail transfer needs a dup; byteLength merely borrows the head.");
         labels.ShouldNotContain(label =>
-            label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
+            label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal),
+                "Same-parameter transfer is handled at the exact back edge, without a binding alias table.");
+        labels.ShouldNotContain(label =>
+            label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
     }
 
     [Test]
@@ -285,9 +287,9 @@ public sealed class NestedTcoPatternAliasTests
 
         find.Instructions
             .OfType<IrInst.Label>()
-            .Count(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal))
+            .Count(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal))
             .ShouldBe(1,
-                "Only the guarded arm's escaping value should be protected; the recursive arm's same-named binder is distinct.");
+                "Only the guarded arm's escaping value receives a lexical owner; the tail transfers at its back edge.");
     }
 
     [Test]
@@ -324,7 +326,7 @@ public sealed class NestedTcoPatternAliasTests
         find.Instructions
             .OfType<IrInst.Label>()
             .ShouldNotContain(
-                label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal),
+                label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal),
                 "The escaping inner value must not transfer its verdict to the unused outer value with the same source name.");
     }
 

@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `ded5881` on 2026-07-31, together with the pattern-binding ownership shadow
-analysis in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `3337460` on 2026-07-31, together with the pattern-binding Perceus cutover
+in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -95,10 +95,14 @@ The following is already implemented and is not part of the backlog:
 
 - the runtime RC header/free-list allocation path, `RcDup`, `RcDrop`, `DropReuse`, structural droppers,
   arena allocation, copy-out, and static/in-place reuse;
-- pattern-derived TCO escape facts keyed by the exact `Pattern.Var` syntax node before lowering and
+- pattern-derived ownership facts keyed by the exact `Pattern.Var` syntax node before lowering and
   transported to the binder's distinct local slot during emission. Lexical reference resolution
   prevents same-named binders in sibling arms, nested matches, lets, lambdas, and handler arms from
-  sharing an escape verdict; the late protective-dup fix-up consumes only slot identity;
+  sharing an ownership verdict. Embedded and independently escaping bindings enter ordinary Perceus
+  ownership immediately; finalization selects runtime-RC or erased markers from the root parameter's
+  resolved placement. The ordinary lifetime pass places their final drop, while unchanged transfer
+  to the same TCO parameter remains covered by that parameter's owner. The former direct-pattern
+  escape re-walk, pending alias chain, and TCO-specific alias activation path have been deleted;
 - `PerceusLifetimePlacement`, which moves ordinary-value lifetime markers to CFG-aware last uses while
   leaving resource cleanup alone;
 - `FunctionOwnershipSummary` with parameter borrow/consume facts, uniqueness, result reach,
@@ -278,19 +282,17 @@ The following is already implemented and is not part of the backlog:
   parent-binding lineage, extraction depth, source location, and typed use/classification enums. The
   analysis distinguishes structural or ordinary-call borrows, unchanged transfer to the same exact
   TCO parameter, embedding in a new owner, independent escape and closure capture, and a conservative
-  unknown fallback. `ResolvePendingNestedTcoPatternAliasSites` still preserves the legacy placement
-  outcome during shadow mode, but now retains an immutable decision correlating that outcome with the
-  new ownership fact and a typed agreement/disagreement result. Same-named binders in disjoint arms
-  remain distinct by binder, ordinal, and local slot.
+  unknown fallback. Lowering consumes that fact directly to create stable binding owners and retains
+  the final borrowed, same-parameter transfer, copy-type, arena-erased, or runtime-RC placement
+  outcome. Same-named binders in disjoint arms remain distinct by binder, ordinal, and local slot.
 
-These pieces are useful foundations, but several remain shadow-only or are still fed by the old
-classifiers. Their existence must not be mistaken for a completed cutover.
+These pieces are useful foundations, but the gaps below still retain separate ownership or
+representation paths. Their existence must not be mistaken for a completed migration.
 
 ## 3. Verified current gaps
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Pattern-derived aliases | Canonical ownership summaries retain stable pattern-binding ownership and lineage facts, and the late slot-keyed fix-up retains their shadow comparison with the legacy result. | Actual protective-dup placement still follows `CollectEscapingDirectPatternBindings` and `_pendingNestedTcoPatternAliasSites`; the shadow facts must replace those classifier-D paths. |
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
@@ -299,25 +301,8 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–3 and 4.1–4.2 are complete. Seven implementation
-tasks remain; Milestone 4.3 is next.
-
-### Milestone 4 — fold pattern-derived aliases into ordinary Perceus placement
-
-Classifier D is the most historically dangerous TCO subsystem and must move in shadow/cutover stages.
-
-#### 4.3 Cut over dup/drop placement
-
-Make the ordinary ownership/Perceus path place the protective dup and final drop from stable
-binding/owner identities. Only then remove:
-
-- `EscapingDirectPatternBindings`;
-- `CollectEscapingDirectPatternBindings` and its occurrence-counting helpers;
-- `_pendingNestedTcoPatternAliasSites`;
-- the corresponding TCO-specific alias activation bookkeeping that has no remaining consumer.
-
-The cutover gate is runtime memory behavior, not disassembly. Ashes binaries have no useful section
-headers for `objdump -d`; an empty disassembly diff is not validation.
+teardown prerequisites are in place. Milestones 1–4 are complete. Six implementation tasks remain;
+Milestone 5 is next.
 
 ### Milestone 5 — represent owned buffers and borrowed `Bytes` views explicitly
 

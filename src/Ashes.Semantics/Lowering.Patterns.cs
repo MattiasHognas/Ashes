@@ -1051,8 +1051,7 @@ public sealed partial class Lowering
             return;
         }
 
-        TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
-        RecordPendingNestedTcoPatternAliasCandidates(matchValue, patternBindings, armPattern);
+        TrackPerceusPatternBindingOwners(patternBindings, armPattern);
 
         (string? ownerName, HashSet<string>? independentlyTrackedFieldNames) =
             TrackRuntimeManagedMatchScrutineeOwner(matchValue, valueTemp, valueType, patternBindings, armPattern);
@@ -1069,7 +1068,10 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (!CanArenaReset(Prune(bindingType)))
+            bool hasIndependentPatternOwner = _ownershipScopes.Count > 0
+                && _ownershipScopes.Peek().TryGetValue(bindingName, out OwnershipInfo? bindingOwner)
+                && bindingOwner.PerceusPatternOwner;
+            if (!CanArenaReset(Prune(bindingType)) && !hasIndependentPatternOwner)
             {
                 _ownershipAliases[bindingName] = ownerName;
             }
@@ -1208,83 +1210,56 @@ public sealed partial class Lowering
         return (fieldIndices, fieldNames, fieldIndices is not null ? matchedCtor : null);
     }
 
-    private void TrackRuntimeManagedTcoListPatternAliases(
-        Expr matchValue,
-        TypeRef valueType,
-        IReadOnlyDictionary<string, TypeRef> patternBindings)
-    {
-        if (matchValue is not Expr.Var variable
-            || Prune(valueType) is not TypeRef.TList
-            || Lookup(variable.Name) is not Binding.Local parent
-            || _tcoCtx?.IsRuntimeManagedSlot(parent.Slot) != true
-            || !_tcoCtx.RuntimeManagedParamActiveSlots.TryGetValue(parent.Slot, out int activeSlot))
-        {
-            return;
-        }
-
-        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
-        {
-            TypeRef payloadType = Prune(bindingType);
-            if (CanArenaReset(payloadType)
-                || Lookup(bindingName) is not Binding.Local payload)
-            {
-                continue;
-            }
-
-            _runtimeManagedTcoPatternAliases[bindingName] = new RuntimeManagedTcoPatternAlias(
-                variable.Name,
-                parent.Slot,
-                activeSlot,
-                Prune(valueType),
-                payload.Slot,
-                payloadType);
-        }
-    }
-
     /// <summary>
-    /// Records every pattern binding of this match as a candidate for the retroactive nested-TCO-
-    /// pattern-alias fix-up (see the field comment on <c>_pendingNestedTcoPatternAliasSites</c>), keyed
-    /// by the binding's own local slot with its immediate parent's slot, the instruction index right
-    /// after <c>EmitPattern</c> extracted it, and the binding's own (possibly still-unresolved) type.
-    /// Unconditional — both eligibility and the copy-type filter are resolved later, once the whole body
-    /// has been lowered and types are fully settled — except for the two structural preconditions that
-    /// never depend on either: the match must be on a plain bound local (a computed scrutinee has no
-    /// stable parent slot to chain through), and we must be inside some TCO loop (only a TCO loop
-    /// parameter's own later drop is what a chain needs protecting from).
+    /// Joins canonical pattern ownership to exact emitted slots. An escaping or embedded binding gets
+    /// an ordinary scope owner immediately, so moves and lexical cleanup use the same machinery as all
+    /// other owned values. Its physical RC representation is selected only after the root TCO
+    /// parameter's type and placement have settled.
     /// </summary>
-    private void RecordPendingNestedTcoPatternAliasCandidates(
-        Expr matchValue,
+    private void TrackPerceusPatternBindingOwners(
         IReadOnlyDictionary<string, TypeRef> patternBindings,
         Pattern armPattern)
     {
-        if (_tcoCtx is null
-            || matchValue is not Expr.Var variable
-            || Lookup(variable.Name) is not Binding.Local parent)
+        if (_tcoCtx is not { } tco)
         {
             return;
         }
 
         foreach (Pattern.Var binder in PatternVariableBinders(armPattern))
         {
-            if (_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
-                && constructor.Arity == 0)
-            {
-                continue;
-            }
-
             if (!patternBindings.TryGetValue(binder.Name, out TypeRef? bindingType)
-                || Lookup(binder.Name) is not Binding.Local payload)
+                || !tco.TryGetPatternBinding(
+                    binder,
+                    out int localSlot,
+                    out PatternBindingOwnershipFact? ownership)
+                || ownership is null
+                || ownership.RootParameterOrdinal < 0
+                || ownership.RootParameterOrdinal >= tco.ParamSlots.Count)
             {
                 continue;
             }
 
-            _tcoCtx.RegisterPatternBindingSlot(binder, payload.Slot);
-            _pendingNestedTcoPatternAliasSites[payload.Slot] = new PendingNestedTcoPatternAliasSite(
-                parent.Slot,
+            _patternBindingPlacementSites.Add(new PatternBindingPlacementSite(
+                localSlot,
+                tco.ParamSlots[ownership.RootParameterOrdinal],
                 _inst.Count,
                 bindingType,
-                binder,
-                ResolveSourceLocation(AstSpans.GetOrDefault(binder)));
+                ownership));
+
+            if (!ownership.RequiresProtectiveDup)
+            {
+                continue;
+            }
+
+            TypeRef prunedType = Prune(bindingType);
+            TrackOwnedValue(
+                binder.Name,
+                localSlot,
+                GetOwnedTypeName(prunedType) ?? "PatternBinding",
+                isResource: false,
+                GetSpan(binder),
+                bindingType,
+                perceusPatternOwner: true);
         }
     }
 
@@ -1297,8 +1272,20 @@ public sealed partial class Lowering
         }
 
         if (result is Expr.Var variable
-            && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false } owner)
+            && LookupOwnedValue(variable.Name) is { IsDropped: false } owner)
         {
+            if (owner.PerceusPatternOwner)
+            {
+                int duplicatedTemp = NewTemp();
+                Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp));
+                return duplicatedTemp;
+            }
+
+            if (!owner.RuntimeManaged)
+            {
+                return bodyTemp;
+            }
+
             return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
         }
 
@@ -1680,6 +1667,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(slot, valueTemp));
         RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
         _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
+        _tcoCtx?.RegisterPatternBindingSlot(v, slot);
     }
 
     private void EmitConstructorPattern(Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)

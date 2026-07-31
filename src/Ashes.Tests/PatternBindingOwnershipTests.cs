@@ -40,15 +40,14 @@ public sealed class PatternBindingOwnershipTests
         (tail.Uses & PatternBindingOwnershipUse.SameParameterTransfer)
             .ShouldBe(PatternBindingOwnershipUse.SameParameterTransfer);
 
-        PatternBindingOwnershipDecision valueDecision = Decision(lowering, "walk", "value");
-        valueDecision.ShadowComparison.ShouldBe(PatternBindingShadowComparison.Agrees);
-        valueDecision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.LegacyEscapeRejected);
-        Decision(lowering, "walk", "tail").ShadowComparison
-            .ShouldBe(PatternBindingShadowComparison.Agrees);
+        Decision(lowering, "walk", "value").PlacementOutcome
+            .ShouldBe(PatternBindingPlacementOutcome.Borrowed);
+        Decision(lowering, "walk", "tail").PlacementOutcome
+            .ShouldBe(PatternBindingPlacementOutcome.TransferredToSameParameter);
     }
 
     [Test]
-    public void Structural_inspection_exposes_legacy_overprotection_in_shadow_comparison()
+    public void Structural_inspection_remains_borrowed_after_cutover()
     {
         Lowering lowering = LowerProgram("""
             let recursive contains target values =
@@ -69,9 +68,7 @@ public sealed class PatternBindingOwnershipTests
             .ShouldBe(PatternBindingOwnershipUse.StructuralInspection);
 
         PatternBindingOwnershipDecision decision = Decision(lowering, "contains", "value");
-        decision.LegacyRequiresProtectiveDup.ShouldBeTrue();
-        decision.ShadowComparison.ShouldBe(PatternBindingShadowComparison.LegacyMoreConservative);
-        decision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.RootNotRuntimeManaged);
+        decision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.Borrowed);
     }
 
     [Test]
@@ -112,11 +109,9 @@ public sealed class PatternBindingOwnershipTests
         tail.ExtractionDepth.ShouldBe(1);
 
         PatternBindingOwnershipDecision textDecision = Decision(lowering, "find", "text");
-        textDecision.ShadowComparison.ShouldBe(PatternBindingShadowComparison.Agrees);
-        textDecision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.ProtectiveDupInserted);
+        textDecision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.ProtectiveOwnerPlaced);
 
         PatternBindingOwnershipDecision numberDecision = Decision(lowering, "find", "number");
-        numberDecision.ShadowComparison.ShouldBe(PatternBindingShadowComparison.Agrees);
         numberDecision.PlacementOutcome.ShouldBe(PatternBindingPlacementOutcome.CopyType);
     }
 
@@ -191,9 +186,9 @@ public sealed class PatternBindingOwnershipTests
         decisions.Count.ShouldBe(2);
         decisions.Select(decision => decision.LocalSlot).Distinct().Count().ShouldBe(2);
         decisions.ShouldContain(decision =>
-            decision.PlacementOutcome == PatternBindingPlacementOutcome.ProtectiveDupInserted);
+            decision.PlacementOutcome == PatternBindingPlacementOutcome.ProtectiveOwnerPlaced);
         decisions.ShouldContain(decision =>
-            decision.PlacementOutcome == PatternBindingPlacementOutcome.LegacyEscapeRejected);
+            decision.PlacementOutcome == PatternBindingPlacementOutcome.Borrowed);
     }
 
     [Test]

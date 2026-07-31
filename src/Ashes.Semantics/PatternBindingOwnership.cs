@@ -49,26 +49,18 @@ internal sealed record PatternBindingOwnershipFact(
         or PatternBindingOwnershipKind.ConservativeUnknown;
 }
 
-internal enum PatternBindingShadowComparison
-{
-    Agrees,
-    OwnershipMoreConservative,
-    LegacyMoreConservative,
-    MissingOwnershipFact,
-}
-
 internal enum PatternBindingPlacementOutcome
 {
-    ProtectiveDupInserted,
+    ProtectiveOwnerPlaced,
+    Borrowed,
+    TransferredToSameParameter,
     CopyType,
-    AlreadyProtectedByRuntimeAlias,
-    LegacyEscapeRejected,
     RootNotRuntimeManaged,
 }
 
 /// <summary>
 /// Final correlation between a pre-lowering pattern ownership fact, its emitted local slot, and the
-/// legacy nested-TCO alias decision that remains authoritative during the shadow stage.
+/// ordinary Perceus placement chosen after the root parameter's representation is resolved.
 /// </summary>
 internal sealed record PatternBindingOwnershipDecision(
     SourceFunctionOrigin? Function,
@@ -82,6 +74,4 @@ internal sealed record PatternBindingOwnershipDecision(
     PatternBindingOwnershipUse Uses,
     PatternBindingOwnershipKind Ownership,
     SourceLocation? Location,
-    bool LegacyRequiresProtectiveDup,
-    PatternBindingShadowComparison ShadowComparison,
     PatternBindingPlacementOutcome PlacementOutcome);
