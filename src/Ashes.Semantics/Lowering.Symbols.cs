@@ -94,7 +94,10 @@ public sealed partial class Lowering
 
         // Build positional args in declared field order
         var orderedArgs = fieldNames.Select(fn => providedByName[fn]).ToList();
-        return LowerConstructorApplication(ctor, orderedArgs);
+        return LowerConstructorApplication(
+            ctor,
+            orderedArgs,
+            location: ResolveSourceLocation(AstSpans.GetOrDefault(recordLit)));
     }
 
     /// <summary>
@@ -587,7 +590,10 @@ public sealed partial class Lowering
         return new TypeRef.TNamedType(sym, typeArgs);
     }
 
-    private (int, TypeRef) LowerNullaryConstructor(ConstructorSymbol ctor, bool stackAllocate = false)
+    private (int, TypeRef) LowerNullaryConstructor(
+        ConstructorSymbol ctor,
+        bool stackAllocate = false,
+        SourceLocation? location = null)
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
@@ -604,7 +610,10 @@ public sealed partial class Lowering
                 0,
                 runtimeManagedCandidate,
                 out int reuseTokenTemp,
-                out RuntimeReuseCleanup? runtimeCleanup))
+                out RuntimeReuseCleanup? runtimeCleanup,
+                listCell: false,
+                targetConstructor: ctor.Name,
+                location))
         {
             // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
             // below the watermark so the enclosing loop can reset the arena.
@@ -660,7 +669,11 @@ public sealed partial class Lowering
         return body;
     }
 
-    private (int, TypeRef) LowerConstructorApplication(ConstructorSymbol ctor, List<Expr> args, bool stackAllocate = false)
+    private (int, TypeRef) LowerConstructorApplication(
+        ConstructorSymbol ctor,
+        List<Expr> args,
+        bool stackAllocate = false,
+        SourceLocation? location = null)
     {
         if (args.Count != ctor.Arity)
         {
@@ -697,6 +710,7 @@ public sealed partial class Lowering
             runtimeManagedCandidate,
             args,
             argTemps,
+            location,
             out bool reuseNode,
             out int consumedTokenTemp);
         for (int i = 0; i < argTemps.Count; i++)
@@ -918,6 +932,7 @@ public sealed partial class Lowering
         bool runtimeManagedCandidate,
         IReadOnlyList<Expr> arguments,
         List<int> argumentTemps,
+        SourceLocation? location,
         out bool reuseNode,
         out int consumedTokenTemp)
     {
@@ -928,7 +943,10 @@ public sealed partial class Lowering
                 ctor.Arity,
                 runtimeManagedCandidate,
                 out int reuseTokenTemp,
-                out RuntimeReuseCleanup? runtimeCleanup))
+                out RuntimeReuseCleanup? runtimeCleanup,
+                listCell: false,
+                targetConstructor: ctor.Name,
+                location))
         {
             consumedTokenTemp = reuseTokenTemp;
             // In-place reuse: overwrite a same-size dead cell (the node a linear value was just

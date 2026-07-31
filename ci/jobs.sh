@@ -22,7 +22,14 @@ build() {
 }
 
 fmt_check() {
-  run_in base "dotnet format Ashes.slnx --verify-no-changes"
+  # Host-side builds and containerized CI share the mounted obj/ trees, but their NuGet package
+  # roots differ. Always refresh assets inside the runner before format so a recent host restore
+  # cannot leave dotnet-format resolving source-generator packages from an inaccessible host path.
+  run_in base "
+    set -e
+    dotnet restore Ashes.slnx
+    dotnet format Ashes.slnx --verify-no-changes --no-restore
+  "
 }
 
 test() {
