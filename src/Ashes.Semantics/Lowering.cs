@@ -388,6 +388,28 @@ public sealed partial class Lowering
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
+    private readonly HashSet<ReuseDecision> _reuseDecisions = new();
+
+    /// <summary>
+    /// Reuse decisions retained in deterministic source/function order. This projection prevents
+    /// reporting consumers from observing or mutating lowering's working set.
+    /// </summary>
+    internal IReadOnlyList<ReuseDecision> ReuseDecisions =>
+        _reuseDecisions
+            .OrderBy(
+                decision => decision.Function.Source?.QualifiedName
+                    ?? decision.Function.Source?.SourceName
+                    ?? decision.Function.CompilerOwner?.Name,
+                StringComparer.Ordinal)
+            .ThenBy(decision => decision.Function.Source?.DeclarationOffset ?? int.MaxValue)
+            .ThenBy(decision => decision.Function.GeneratedLabel, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Decision)
+            .ThenBy(decision => decision.CandidateParameter, StringComparer.Ordinal)
+            .ThenBy(decision => decision.RelatedGeneratedLabel, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Location?.FilePath, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Location?.Line ?? int.MaxValue)
+            .ThenBy(decision => decision.Location?.Column ?? int.MaxValue)
+            .ToList();
 
     // Stitched names of the data-parallel combinators. The grain-parameterized `mapGrained`/`reduceGrained`
     // are the recursive divide-and-conquer functions whose above-grain split routes through the
