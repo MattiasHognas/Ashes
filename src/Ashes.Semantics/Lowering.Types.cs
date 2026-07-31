@@ -154,11 +154,9 @@ public sealed partial class Lowering
         // constructions). Resolved TFun layout and per-edge capture safety remain separate gates.
         public bool FreshClosureRebuild { get; init; }
 
-        // Param proven AFFINE across the loop (consumed at most once along every loop-continuing
-        // path, and only as the leftmost leaf of the `+` chain producing its own tail-call argument).
-        // The affine property guarantees the loop holds no other reference, licensing in-place
-        // reservation growth (ConcatStrTip). False when not computed (conservative).
-        public bool AffineStr { get; init; }
+        // Canonical ownership summary proves the param affine across the loop. Resolved string
+        // lowering combines this with the loop watermark to license ConcatStrTip reservation growth.
+        public bool AffineSelfAppendOnly { get; init; }
 
     }
 
@@ -307,13 +305,12 @@ public sealed partial class Lowering
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
         private readonly IReadOnlySet<int> _borrowInspectOnlyParamOrdinals;
-        private readonly IReadOnlySet<string> _affineStrParams;
+        private readonly IReadOnlySet<int> _affineSelfAppendOnlyParamOrdinals;
 
-        // Every affine-string param's own name, in CollectAffineAccumulators's own AST-walk order —
-        // exposed directly (not re-derived from ParamFacts' fixed ParamSlots-order iteration)
-        // because the one consumer (reservation-slot setup at loop entry) allocates a fresh pair of
-        // locals per name visited, so it must keep visiting them in this collection's original order.
-        public IEnumerable<string> AffineStrParamNames => _affineStrParams;
+        // Reservation locals are allocated deterministically in parameter order after static facts
+        // have been joined to their distinct slots.
+        public IEnumerable<int> AffineSelfAppendParamSlots => ParamSlots.Where(
+            slot => ParamFacts.GetValueOrDefault(slot)?.AffineSelfAppendOnly == true);
 
         public bool IsVisibleParameterOrdinal(int ordinal)
         {
@@ -372,7 +369,7 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
-                EmptyStaticFacts,
+                EmptyParameterOrdinals,
                 EmptyStaticFacts)
         {
         }
@@ -387,7 +384,7 @@ public sealed partial class Lowering
             IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
-            IReadOnlySet<string> affineStrParams,
+            IReadOnlySet<int> affineSelfAppendOnlyParamOrdinals,
             IReadOnlySet<string> escapingDirectPatternBindings)
         {
             SelfName = selfName;
@@ -399,7 +396,7 @@ public sealed partial class Lowering
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
-            _affineStrParams = affineStrParams;
+            _affineSelfAppendOnlyParamOrdinals = affineSelfAppendOnlyParamOrdinals;
             EscapingDirectPatternBindings = escapingDirectPatternBindings;
         }
 
@@ -427,7 +424,7 @@ public sealed partial class Lowering
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
                     BorrowInspectOnly = _borrowInspectOnlyParamOrdinals.Contains(i),
-                    AffineStr = _affineStrParams.Contains(name),
+                    AffineSelfAppendOnly = _affineSelfAppendOnlyParamOrdinals.Contains(i),
                 };
                 ParamPlacements[slot] = new TcoParamPlacementState();
             }
@@ -457,7 +454,7 @@ public sealed partial class Lowering
 
         // Per affine param: the reservation start/end local slots (zeroed at loop entry, written by
         // ConcatStrTip's fallback, zeroed again by the compaction that reclaims the reservation).
-        public Dictionary<string, (int Start, int End)> AffineResvSlots { get; } = new(System.StringComparer.Ordinal);
+        public Dictionary<int, (int Start, int End)> AffineResvSlots { get; } = [];
 
         // Live accumulator size (cursor - W) recorded after the last fixed-watermark compaction,
         // zero-initialized at loop entry. The back-edge skips the whole copy-out + reset while the

@@ -799,7 +799,8 @@ public sealed partial class Lowering
         IReadOnlySet<int> FreshClosureRebuild,
         IReadOnlySet<int> AffineConsList,
         IReadOnlySet<int> ConsumedListTail,
-        IReadOnlySet<int> BorrowInspectOnly) GetTcoParameterOrdinalFacts(FuncKey? function)
+        IReadOnlySet<int> BorrowInspectOnly,
+        IReadOnlySet<int> AffineSelfAppendOnly) GetTcoParameterOrdinalFacts(FuncKey? function)
         => (
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
             GetTcoParameterOrdinals(function, static facts => facts.ArenaSelfContainedListRebuild),
@@ -808,7 +809,10 @@ public sealed partial class Lowering
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail),
             GetTcoParameterOrdinals(
                 function,
-                static facts => facts.UseMode == TcoParamUseMode.BorrowInspectOnly));
+                static facts => facts.UseMode == TcoParamUseMode.BorrowInspectOnly),
+            GetTcoParameterOrdinals(
+                function,
+                static facts => facts.ReuseAffinity == TcoParamReuseAffinity.SelfAppendOnly));
 
     private IReadOnlySet<int> GetTcoParameterOrdinals(
         FuncKey? function,
@@ -1068,6 +1072,8 @@ public sealed partial class Lowering
             return result;
         }
 
+        IReadOnlySet<int> affineSelfAppendOnly =
+            ComputeAffineSelfAppendOrdinals(function, info);
         for (int i = 0; i < paramNames.Count; i++)
         {
             if (state.Observed[i] is { } shape)
@@ -1081,12 +1087,317 @@ public sealed partial class Lowering
                     shape == TcoSelfCallArgumentShape.ConsumedTail
                         && BorrowInspectOnly(function, info, i)
                             ? TcoParamUseMode.BorrowInspectOnly
-                            : TcoParamUseMode.GeneralOrUnknown));
+                            : TcoParamUseMode.GeneralOrUnknown,
+                    affineSelfAppendOnly.Contains(i)
+                        ? TcoParamReuseAffinity.SelfAppendOnly
+                        : TcoParamReuseAffinity.GeneralOrUnknown));
             }
         }
 
         return result;
     }
+
+    private sealed class AffineSelfAppendState
+    {
+        public required FuncKey Function { get; init; }
+        public required string SelfName { get; init; }
+        public required int ParamCount { get; init; }
+        public required HashSet<int> Candidates { get; init; }
+        public bool SawSelfCall { get; set; }
+    }
+
+    /// <summary>
+    /// Proves which parameters are affine across every loop-continuing path: each is consumed at
+    /// most once, only as the leftmost leaf of the addition chain producing its own argument to an
+    /// exact lexical self-call, or passed through unchanged. Exit-path uses are unrestricted because
+    /// no later loop iteration can observe a mutated reservation.
+    /// </summary>
+    private IReadOnlySet<int> ComputeAffineSelfAppendOrdinals(
+        FuncKey function,
+        (List<string> Params, Expr Body) info)
+    {
+        IReadOnlyDictionary<string, int> parameterScope = CreateTcoParameterScope(info.Params);
+        if (!_maFunctionScopes.TryGetValue(
+            function,
+            out IReadOnlyDictionary<string, FuncKey>? functionScope))
+        {
+            return new HashSet<int>();
+        }
+
+        var state = new AffineSelfAppendState
+        {
+            Function = function,
+            SelfName = _maKeyName[function],
+            ParamCount = info.Params.Count,
+            Candidates = new HashSet<int>(parameterScope.Values),
+        };
+        AffineSelfAppendWalk(
+            info.Body,
+            new HashSet<string>(StringComparer.Ordinal),
+            functionScope,
+            parameterScope,
+            state);
+        return state.SawSelfCall ? state.Candidates : new HashSet<int>();
+    }
+
+    // Returns whether the subtree contains an exact tail self-call. Uses on an exit-only path are
+    // unrestricted; conditions, scrutinees, guards, and bindings are checked only when a descendant
+    // continues the loop.
+    private bool AffineSelfAppendWalk(
+        Expr expression,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        switch (expression)
+        {
+            case Expr.If conditional:
+                bool thenContinues = AffineSelfAppendWalk(
+                    conditional.Then, shadowed, functionScope, parameterScope, state);
+                bool elseContinues = AffineSelfAppendWalk(
+                    conditional.Else, shadowed, functionScope, parameterScope, state);
+                if (thenContinues || elseContinues)
+                {
+                    DisqualifyAffineSelfAppendMentions(
+                        conditional.Cond, shadowed, parameterScope, state.Candidates);
+                }
+
+                return thenContinues || elseContinues;
+            case Expr.Match match:
+                return AffineSelfAppendWalkMatch(
+                    match, shadowed, functionScope, parameterScope, state);
+            case Expr.Let let:
+                return AffineSelfAppendWalkLet(
+                    let, shadowed, functionScope, parameterScope, state);
+            case Expr.LetResult letResult:
+                return AffineSelfAppendWalkLetResult(
+                    letResult, shadowed, functionScope, parameterScope, state);
+            case Expr.LetRecursive letRecursive:
+                return AffineSelfAppendWalkLetRecursive(
+                    letRecursive, shadowed, functionScope, parameterScope, state);
+            case Expr.Call:
+                return AffineSelfAppendWalkCall(
+                    expression, shadowed, functionScope, parameterScope, state);
+            default:
+                return false;
+        }
+    }
+
+    private bool AffineSelfAppendWalkMatch(
+        Expr.Match match,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        bool anyContinues = false;
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            var armShadowed = new HashSet<string>(shadowed, StringComparer.Ordinal);
+            armShadowed.UnionWith(binders);
+            bool caseContinues = AffineSelfAppendWalk(
+                matchCase.Body,
+                armShadowed,
+                RemoveFuncNames(functionScope, binders),
+                RemoveTcoParameterNames(parameterScope, binders),
+                state);
+            if (caseContinues && matchCase.Guard is not null)
+            {
+                DisqualifyAffineSelfAppendMentions(
+                    matchCase.Guard, armShadowed, parameterScope, state.Candidates);
+            }
+
+            anyContinues |= caseContinues;
+        }
+
+        if (anyContinues)
+        {
+            DisqualifyAffineSelfAppendMentions(
+                match.Value, shadowed, parameterScope, state.Candidates);
+        }
+
+        return anyContinues;
+    }
+
+    private bool AffineSelfAppendWalkLet(
+        Expr.Let let,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        HashSet<string> bodyShadowed = SetAffineSelfAppendShadow(shadowed, let.Name);
+        bool bodyContinues = AffineSelfAppendWalk(
+            let.Body,
+            bodyShadowed,
+            ExtendTcoFuncScope(functionScope, let, let.Name, let.Value),
+            RemoveTcoParameterNames(parameterScope, [let.Name]),
+            state);
+        if (bodyContinues)
+        {
+            DisqualifyAffineSelfAppendMentions(
+                let.Value, shadowed, parameterScope, state.Candidates);
+        }
+
+        return bodyContinues;
+    }
+
+    private bool AffineSelfAppendWalkLetResult(
+        Expr.LetResult letResult,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        bool bodyContinues = AffineSelfAppendWalk(
+            letResult.Body,
+            SetAffineSelfAppendShadow(shadowed, letResult.Name),
+            ExtendFuncScope(functionScope, letResult, letResult.Name),
+            RemoveTcoParameterNames(parameterScope, [letResult.Name]),
+            state);
+        if (bodyContinues)
+        {
+            DisqualifyAffineSelfAppendMentions(
+                letResult.Value, shadowed, parameterScope, state.Candidates);
+        }
+
+        return bodyContinues;
+    }
+
+    private bool AffineSelfAppendWalkLetRecursive(
+        Expr.LetRecursive letRecursive,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        HashSet<string> bodyShadowed = SetAffineSelfAppendShadow(shadowed, letRecursive.Name);
+        IReadOnlyDictionary<string, FuncKey> bodyFunctionScope =
+            ExtendFuncScope(functionScope, letRecursive, letRecursive.Name);
+        IReadOnlyDictionary<string, int> bodyParameterScope =
+            RemoveTcoParameterNames(parameterScope, [letRecursive.Name]);
+        bool bodyContinues = AffineSelfAppendWalk(
+            letRecursive.Body,
+            bodyShadowed,
+            bodyFunctionScope,
+            bodyParameterScope,
+            state);
+        if (bodyContinues)
+        {
+            DisqualifyAffineSelfAppendMentions(
+                letRecursive.Value, bodyShadowed, bodyParameterScope, state.Candidates);
+        }
+
+        return bodyContinues;
+    }
+
+    private bool AffineSelfAppendWalkCall(
+        Expr expression,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is not Expr.Var callee
+            || !string.Equals(callee.Name, state.SelfName, StringComparison.Ordinal)
+            || !functionScope.TryGetValue(callee.Name, out FuncKey calleeKey)
+            || !calleeKey.Equals(state.Function)
+            || arguments.Count != state.ParamCount)
+        {
+            return false;
+        }
+
+        state.SawSelfCall = true;
+        for (int argumentIndex = 0; argumentIndex < arguments.Count; argumentIndex++)
+        {
+            foreach (int candidate in state.Candidates.ToArray())
+            {
+                if (argumentIndex == candidate
+                    && IsAffineSelfAppendOwnArgument(
+                        arguments[argumentIndex], shadowed, parameterScope, candidate))
+                {
+                    continue;
+                }
+
+                DisqualifyAffineSelfAppendMentions(
+                    arguments[argumentIndex],
+                    shadowed,
+                    parameterScope,
+                    state.Candidates,
+                    candidate);
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsAffineSelfAppendOwnArgument(
+        Expr argument,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, int> parameterScope,
+        int candidate)
+    {
+        Expr chain = argument;
+        while (chain is Expr.Add addition)
+        {
+            if (ReferencesAffineSelfAppendCandidate(
+                addition.Right, shadowed, parameterScope, candidate))
+            {
+                return false;
+            }
+
+            chain = addition.Left;
+        }
+
+        return chain is Expr.Var variable
+            && !shadowed.Contains(variable.Name)
+            && parameterScope.TryGetValue(variable.Name, out int ordinal)
+            && ordinal == candidate;
+    }
+
+    private void DisqualifyAffineSelfAppendMentions(
+        Expr expression,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, int> parameterScope,
+        HashSet<int> candidates,
+        int? onlyCandidate = null)
+    {
+        foreach (string name in FreeVars(expression, shadowed))
+        {
+            if (parameterScope.TryGetValue(name, out int ordinal)
+                && (onlyCandidate is null || onlyCandidate == ordinal))
+            {
+                candidates.Remove(ordinal);
+            }
+        }
+    }
+
+    private bool ReferencesAffineSelfAppendCandidate(
+        Expr expression,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, int> parameterScope,
+        int candidate)
+    {
+        foreach (string name in FreeVars(expression, shadowed))
+        {
+            if (parameterScope.TryGetValue(name, out int ordinal) && ordinal == candidate)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static HashSet<string> SetAffineSelfAppendShadow(
+        HashSet<string> shadowed,
+        string name)
+        => new(shadowed, StringComparer.Ordinal) { name };
 
     private enum BorrowInspectTaint
     {

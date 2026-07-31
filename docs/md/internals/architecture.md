@@ -712,6 +712,14 @@ resolved all-inline-copy record layout gate. A tail call becomes a back edge onl
 resolves to the current curried function's generated label, or to the transported self slot of a
 synthesized coroutine loop; source spelling alone is insufficient.
 
+`TcoParamReuseAffinity.SelfAppendOnly` independently records the affine ownership discipline used
+by string reservation reuse. Along every loop-continuing path, the parameter may occur only as the
+leftmost leaf of the addition chain producing its own exact self-call argument, or pass through
+unchanged; exit-path uses are unrestricted. This fact is positional and binding-identity-aware.
+Lowering transports it by ordinal, combines it with the loop-entry watermark, and allocates
+`ConcatStrTip` reservation locals in parameter order keyed by the distinct parameter slot. It is not
+a successor-shape category and does not imply a physical string representation until types resolve.
+
 This structural summary does not replace the TCO back-edge storage query.
 Immutable `TcoParamStaticFacts` stay separate from placement orchestration.
 One evaluator produces an immutable `TcoParamPlacementDecision` at provisional

@@ -1816,6 +1816,30 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Continuing_path_string_read_keeps_the_non_affine_concat_path()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build remaining output =
+                if remaining <= 0
+                then output
+                else
+                    if Ashes.Text.byteLength(output) > 0
+                    then build(remaining - 1)(output + "x")
+                    else build(remaining - 1)(output + "y")
+
+            Ashes.Text.byteLength(build(3)(""))
+            """);
+        IrFunction tcoFunction = FindTcoFunction(ir);
+
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStrTip).ShouldBeFalse(
+            "A continuing-path aliasing read must keep string appends off the in-place reservation path.");
+        tcoFunction.Instructions.Any(instruction =>
+            instruction is IrInst.ConcatStr).ShouldBeTrue();
+    }
+
+    [Test]
     public void String_body_let_without_owned_binding_does_not_emit_CopyOutArena()
     {
         // let x = 42 in "hello" — x is Int (not owned), no heap to reclaim.
