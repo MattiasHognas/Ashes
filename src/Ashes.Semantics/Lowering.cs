@@ -5013,7 +5013,7 @@ public sealed partial class Lowering
                 affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
-                affineStrParams: CollectAffineAccumulators(innermostBody, tcoParamNames, letRecursive.Name),
+                affineSelfAppendOnlyParamOrdinals: tcoParamOrdinalFacts.AffineSelfAppendOnly,
                 escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
@@ -6394,13 +6394,13 @@ public sealed partial class Lowering
 
         // Reservation slots for the affine string accumulators (see ConcatStrTip): start/end,
         // zeroed here so no string matches until the loop's first fallback reserves.
-        foreach (var affineParam in tco.AffineStrParamNames)
+        foreach (int affineParamSlot in tco.AffineSelfAppendParamSlots)
         {
             int resvStart = NewLocal();
             int resvEnd = NewLocal();
             Emit(new IrInst.StoreLocal(resvStart, compactionZero));
             Emit(new IrInst.StoreLocal(resvEnd, compactionZero));
-            tco.AffineResvSlots[affineParam] = (resvStart, resvEnd);
+            tco.AffineResvSlots[affineParamSlot] = (resvStart, resvEnd);
         }
 
         foreach (int closureSlot in tco.RuntimeManagedClosureSlotsInOrder)
@@ -7717,7 +7717,7 @@ public sealed partial class Lowering
         if (index >= tco.ParamNames.Count
             || tco.FixedCursorSlot < 0
             || index >= tco.ParamSlots.Count
-            || !tco.ParamFacts[tco.ParamSlots[index]].AffineStr
+            || !tco.ParamFacts[tco.ParamSlots[index]].AffineSelfAppendOnly
             || argument is not Expr.Add)
         {
             return;
@@ -7731,7 +7731,7 @@ public sealed partial class Lowering
 
         if (chainLeaf is Expr.Var affineVar
             && string.Equals(affineVar.Name, tco.ParamNames[index], StringComparison.Ordinal)
-            && tco.AffineResvSlots.TryGetValue(tco.ParamNames[index], out var resvSlots))
+            && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[index], out var resvSlots))
         {
             _affineAppendCtx = (tco.ParamNames[index], tco.ParamSlots[index], resvSlots.Start, resvSlots.End);
         }
@@ -7827,9 +7827,9 @@ public sealed partial class Lowering
             tco.CoroutineLoopReset,
             tco.CompactionSizeSlot,
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
-                k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rp) ? rp.Start : -1).ToArray(),
+                k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rp) ? rp.Start : -1).ToArray(),
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
-                k < tco.ParamNames.Count && tco.AffineResvSlots.TryGetValue(tco.ParamNames[k], out var rq) ? rq.End : -1).ToArray());
+                k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray());
 
         // Every reset is resolved after the complete lambda body has been lowered. A later sibling
         // branch can promote additional parameters to runtime RC; emitting an earlier branch here

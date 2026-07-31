@@ -184,6 +184,29 @@ internal enum TcoParamUseMode
 }
 
 /// <summary>
+/// The affine ownership discipline proven for a TCO parameter across loop-continuing paths. This is
+/// independent of the successor value's structural shape and of the parameter's borrow-inspection
+/// mode: it records whether a consuming reuse operation may treat the current value as the sole live
+/// loop reference.
+/// </summary>
+internal enum TcoParamReuseAffinity
+{
+    /// <summary>
+    /// The body contains another continuing-path use, or the analysis encountered a shape it cannot
+    /// classify. Reuse consumers must retain their non-affine path.
+    /// </summary>
+    GeneralOrUnknown,
+
+    /// <summary>
+    /// Along every loop-continuing path, the parameter is used at most once and only as the
+    /// leftmost leaf of the addition chain producing its own exact self-call argument, or is passed
+    /// through unchanged. Combined with the loop-entry watermark, this licenses string reservation
+    /// reuse.
+    /// </summary>
+    SelfAppendOnly,
+}
+
+/// <summary>
 /// One parameter position's self-call argument classification. Parameter ordinal is the stable
 /// binding identity within the function's curried parameter list; the source name is retained for
 /// diagnostics but is not used to join facts back to lowering slots. Facts are present only for a
@@ -208,13 +231,17 @@ internal enum TcoParamUseMode
 /// <param name="UseMode">
 /// The canonical ownership use mode for this parameter and values structurally derived from it.
 /// </param>
+/// <param name="ReuseAffinity">
+/// The canonical affine-use proof consumed by representation-specific reuse lowering.
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
     TcoSelfCallArgumentShape Shape,
     bool ArenaSelfContainedListRebuild,
     bool FreshClosureRebuild,
-    TcoParamUseMode UseMode);
+    TcoParamUseMode UseMode,
+    TcoParamReuseAffinity ReuseAffinity);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `89959c1` on 2026-07-31, together with the canonical borrow-inspection
-use-mode cutover in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `f2a0c4b` on 2026-07-31, together with the canonical affine-reuse
+cutover in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -155,6 +155,12 @@ The following is already implemented and is not part of the backlog:
   occurrences retain non-participating positional slots, so a positive fact neither fails closed
   merely because a name is duplicated nor attaches to the wrong binding. Parameter labels and
   deferred runtime-argument decisions use ordinal/slot identity instead of a first-name lookup;
+- `TcoParamReuseAffinity.SelfAppendOnly`, which records by parameter ordinal that every
+  loop-continuing path consumes the parameter only as the leftmost leaf of its own exact self-call
+  addition chain, or passes it through unchanged. Exit-path uses remain unrestricted. Lowering
+  combines this canonical affinity with the loop-entry watermark to arm `ConcatStrTip`, allocates
+  reservation locals in parameter order, and keys them by the distinct parameter slot. The
+  source-name-keyed `CollectAffineAccumulators` walk has been deleted;
 - immutable `TcoParamStaticFacts` are separate from mutable placement orchestration.
   `TcoParamPlacementDecision` records the parameter ordinal/slot, resolution point, arena or
   runtime-RC representation, stable eligibility/restriction reason, ownership-shape and resolved
@@ -235,16 +241,8 @@ implementation tasks remain; Milestone 2.5 is next.
 
 #### 2.5 Consolidate the remaining reuse refinements
 
-The base structural cutovers and the borrow-inspection use-mode cutover are complete. Move the
-remaining affine refinement onto the canonical per-parameter facts without forcing it into
-`TcoSelfCallArgumentShape`:
-
-- `CollectAffineAccumulators` proves single-use string accumulation for reservation reuse; connect it
-  to the same uniqueness/affinity result used by Perceus reuse legality.
-
-Shadow-compare and cut the affine fact over independently, then delete its `Lowering.Reuse.cs` walk
-if no other representation-specific reader remains. Its separation from the completed structural
-and use-mode facts is not its permanent architecture.
+The structural, borrow-inspection, and affine-reuse cutovers are complete. The remaining work in
+this milestone is to retain structured facts for the reuse decisions that are still transient.
 
 When the reuse path generates or rejects a specialization, retains/elides a defensive entry copy,
 requires a runtime uniqueness check, accepts/rejects a layout, produces/consumes a token, or leaves a

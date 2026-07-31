@@ -686,6 +686,109 @@ public sealed class UniquenessSummaryTests
     }
 
     [Test]
+    public void Affine_string_append_is_a_canonical_parameter_reuse_affinity()
+    {
+        const string source =
+            """
+            let recursive build remaining output =
+                if remaining <= 0
+                then output
+                else build(remaining - 1)(output + "x")
+            in build(2)("")
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("build");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.GeneralOrUnknown);
+        summary.TcoParamFacts[1].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.SelfAppendOnly);
+    }
+
+    [Test]
+    public void Continuing_path_read_disqualifies_affine_string_append()
+    {
+        const string source =
+            """
+            let recursive build remaining output =
+                if remaining <= 0
+                then output
+                else
+                    if Ashes.Text.byteLength(output) > 0
+                    then build(remaining - 1)(output + "x")
+                    else build(remaining - 1)(output + "y")
+            in build(2)("")
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("build");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[1].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.GeneralOrUnknown);
+    }
+
+    [Test]
+    public void Exit_path_read_does_not_disqualify_affine_string_append()
+    {
+        const string source =
+            """
+            let recursive build remaining output =
+                if remaining <= 0
+                then Ashes.Text.byteLength(output)
+                else build(remaining - 1)(output + "x")
+            in build(2)("")
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("build")
+            .Single(candidate => candidate.Parameters.SequenceEqual(
+                ["remaining", "output"],
+                StringComparer.Ordinal));
+
+        summary.TcoParamFacts[1].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.SelfAppendOnly);
+    }
+
+    [Test]
+    public void Same_named_self_rebinding_retains_affine_string_append_identity()
+    {
+        const string source =
+            """
+            let recursive build remaining output =
+                if remaining <= 0
+                then output
+                else
+                    let build = build
+                    in build(remaining - 1)(output + "x")
+            in build(2)("")
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        FunctionOwnershipSummary summary = lowering.GetOwnershipSummaries("build")
+            .Single(candidate => candidate.Parameters.SequenceEqual(
+                ["remaining", "output"],
+                StringComparer.Ordinal));
+
+        summary.TcoParamFacts[1].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.SelfAppendOnly);
+    }
+
+    [Test]
+    public void Duplicate_parameter_names_apply_affinity_only_to_the_visible_binding()
+    {
+        const string source =
+            """
+            let recursive build output output remaining =
+                if remaining <= 0
+                then output
+                else build("")(output + "x")(remaining - 1)
+            in build("")("")(2)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("build");
+
+        summary.ShouldNotBeNull();
+        summary.TcoParamFacts[0].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.GeneralOrUnknown);
+        summary.TcoParamFacts[1].ReuseAffinity.ShouldBe(TcoParamReuseAffinity.SelfAppendOnly);
+    }
+
+    [Test]
     public void Unchanged_passthrough_requires_every_exact_self_call_site()
     {
         const string source =
