@@ -11,7 +11,9 @@ public sealed partial class Lowering
         return _moduleAliases.TryGetValue(moduleName, out var resolved) ? resolved : moduleName;
     }
 
-    private (int, TypeRef) LowerQualifiedVar(Expr.QualifiedVar qv)
+    private (int, TypeRef) LowerQualifiedVar(
+        Expr.QualifiedVar qv,
+        LoweredValueRequest request)
     {
         if (_capabilitySymbols.TryGetValue(qv.Module, out var bareCapabilitySym))
         {
@@ -39,7 +41,9 @@ public sealed partial class Lowering
         var exportedBindingName = $"{sanitizedModuleName}_{qv.Name}";
         if (Lookup(exportedBindingName) is not null)
         {
-            var resolvedQualifiedBinding = LowerVar(new Expr.Var(exportedBindingName));
+            var resolvedQualifiedBinding = LowerVar(
+                new Expr.Var(exportedBindingName),
+                request);
             RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedQualifiedBinding.Item2);
             return resolvedQualifiedBinding;
         }
@@ -54,7 +58,8 @@ public sealed partial class Lowering
         {
             var resolvedCtorReference = LowerConstructorReference(
                 qualifiedCtorSym,
-                ResolveSourceLocation(AstSpans.GetOrDefault(qv)));
+                ResolveSourceLocation(AstSpans.GetOrDefault(qv)),
+                request);
             RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedCtorReference.Item2);
             return resolvedCtorReference;
         }
@@ -112,7 +117,7 @@ public sealed partial class Lowering
             return ReturnNeverWithDummyTemp();
         }
 
-        return LowerExpr(BuildOperationEtaLambda(qv, CountArrows(bareOperation.DeclaredSignature)));
+        return LowerExpr(BuildOperationEtaLambda(qv, CountArrows(bareOperation.DeclaredSignature))).AsPair();
     }
 
     // Record field access fallback: `rec.fieldName` where `rec` is a bound record value.

@@ -63,6 +63,66 @@ public sealed class LoweredTempOwnershipTests
         facts[7].Reason.ShouldBe(LoweredTempOwnershipReason.UnknownCallResult);
     }
 
+    [Test]
+    public void Lowered_value_carries_the_canonical_fact_snapshot()
+    {
+        var lowering = new Lowering(new Diagnostics());
+        Emit(lowering, new IrInst.BytesEmpty(1, RuntimeManaged: true));
+
+        MethodInfo createValue = typeof(Lowering).GetMethod(
+            "CreateLoweredValue",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(
+                typeof(Lowering).FullName,
+                "CreateLoweredValue");
+        var value = (LoweredValue)createValue.Invoke(
+            lowering,
+            [1, new TypeRef.TBytes()])!;
+
+        value.Temp.ShouldBe(1);
+        value.Type.ShouldBeOfType<TypeRef.TBytes>();
+        value.Ownership.ShouldBeSameAs(Facts(lowering)[1]);
+        value.Ownership.Representation.ShouldBe(
+            LoweredTempRepresentation.RuntimeRc);
+        value.Ownership.Layout.ShouldBe(LoweredTempLayoutKind.Bytes);
+    }
+
+    [Test]
+    public void Runtime_representation_requires_a_consumer_ownership_proof()
+    {
+        LoweredValueRequest representationOnly =
+            LoweredValueRequest.None with
+            {
+                RuntimeRepresentation =
+                    LoweredValueRuntimeRepresentation.String,
+            };
+        LoweredValueRequest owned = LoweredValueRequest.OwnedRuntime(
+            LoweredValueRuntimeRepresentation.String);
+
+        representationOnly.EmitsRuntime(
+            LoweredValueRuntimeRepresentation.String).ShouldBeFalse();
+        owned.EmitsRuntime(
+            LoweredValueRuntimeRepresentation.String).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Lowering_has_no_ambient_runtime_allocation_request_fields()
+    {
+        string[] requestFields = typeof(Lowering)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Select(field => field.Name)
+            .Where(name => name.StartsWith(
+                    "_runtimeRc",
+                    StringComparison.Ordinal)
+                && name.EndsWith(
+                    "AllocationRequested",
+                    StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        requestFields.ShouldBeEmpty();
+    }
+
     private static void Emit(Lowering lowering, IrInst instruction)
     {
         MethodInfo method = typeof(Lowering).GetMethod(

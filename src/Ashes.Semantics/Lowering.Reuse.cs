@@ -800,7 +800,12 @@ public sealed partial class Lowering
     /// parameters to those values, and lowers the helper body in place. Lowering it here means any
     /// constructor in the body can consume a live reuse token from the enclosing arm.
     /// </summary>
-    private (int, TypeRef) InlineCall(string fnName, IReadOnlyList<string> paramNames, Expr body, List<Expr> args)
+    private (int, TypeRef) InlineCall(
+        string fnName,
+        IReadOnlyList<string> paramNames,
+        Expr body,
+        List<Expr> args,
+        LoweredValueRequest request = default)
     {
         var argSlots = new int[paramNames.Count];
         var argTypes = new TypeRef[paramNames.Count];
@@ -844,12 +849,12 @@ public sealed partial class Lowering
         _inliningInProgress.Add(fnName);
         foreach (var p in linearParams) _linearReuseNames.Add(p);
         if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Add(p);
-        var result = LowerExpr(body);
+        LoweredValue result = LowerExpr(body, request);
         if (_specFreshInputNames is not null) foreach (var p in freshParams) _specFreshInputNames.Remove(p);
         foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
-        return result;
+        return result.AsPair();
     }
 
     /// <summary>

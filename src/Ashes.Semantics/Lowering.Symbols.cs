@@ -37,7 +37,7 @@ public sealed partial class Lowering
     /// <c>TypeName { field1 = e1, field2 = e2 }</c>.
     /// Field values are reordered to match the declared field order.
     /// </summary>
-    private (int, TypeRef) LowerRecordLit(Expr.RecordLit recordLit)
+    private (int, TypeRef) LowerRecordLit(Expr.RecordLit recordLit, LoweredValueRequest request)
     {
         if (!_constructorSymbols.TryGetValue(recordLit.TypeName, out var ctor))
         {
@@ -92,20 +92,34 @@ public sealed partial class Lowering
             }
         }
 
-        // Build positional args in declared field order
-        var orderedArgs = fieldNames.Select(fn => providedByName[fn]).ToList();
-        return LowerConstructorApplication(
+        return LowerRecordConstructor(
+            recordLit,
             ctor,
-            orderedArgs,
-            location: ResolveSourceLocation(AstSpans.GetOrDefault(recordLit)));
+            fieldNames,
+            providedByName,
+            request);
     }
+
+    private (int Temp, TypeRef Type) LowerRecordConstructor(
+        Expr.RecordLit recordLit,
+        ConstructorSymbol constructor,
+        IReadOnlyList<string> fieldNames,
+        IReadOnlyDictionary<string, Expr> fields,
+        LoweredValueRequest request) =>
+        LowerConstructorApplication(
+            constructor,
+            fieldNames.Select(fieldName => fields[fieldName]).ToList(),
+            location: ResolveSourceLocation(AstSpans.GetOrDefault(recordLit)),
+            request: request);
 
     /// <summary>
     /// Lowers a record update expression:
     /// <c>{ target with field1 = e1, field2 = e2 }</c>.
     /// Produces a fresh ADT with unchanged fields copied and specified fields replaced.
     /// </summary>
-    private (int, TypeRef) LowerRecordUpdate(Expr.RecordUpdate recordUpdate)
+    private (int, TypeRef) LowerRecordUpdate(
+        Expr.RecordUpdate recordUpdate,
+        LoweredValueRequest request)
     {
         var (targetTemp, targetType) = LowerExpr(recordUpdate.Target);
         var prunedTarget = Prune(targetType);
@@ -593,12 +607,17 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerNullaryConstructor(
         ConstructorSymbol ctor,
         bool stackAllocate = false,
-        SourceLocation? location = null)
+        SourceLocation? location = null,
+        LoweredValueRequest request = default)
     {
         var resultType = InstantiateAdtType(ctor);
         int tag = GetConstructorTag(ctor);
-        bool runtimeManagedCandidate = (_runtimeRcCopyAdtAllocationRequested
-                || RuntimeReuseAllocationMatches(resultType))
+        bool runtimeReuseRequest = RuntimeReuseAllocationMatches(resultType, request);
+        bool runtimeManagedCandidate =
+            (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Adt)
+                || request.EmitsRuntime(LoweredValueRuntimeRepresentation.Record)
+                || request.EmitsRuntime(LoweredValueRuntimeRepresentation.TcoAdt)
+                || runtimeReuseRequest)
             && (CanRuntimeManageCopyAdt(resultType)
                 || CanRuntimeManageAdt(resultType)
                 || CanRuntimeManageOwnedChildAdt(resultType)
@@ -752,31 +771,37 @@ public sealed partial class Lowering
         ConstructorSymbol ctor,
         List<Expr> args,
         bool stackAllocate = false,
-        SourceLocation? location = null)
+        SourceLocation? location = null,
+        LoweredValueRequest request = default)
     {
         if (args.Count != ctor.Arity)
         {
-            var errorSpan = args.Count > 0 ? GetSpan(args[0]) : GetSpan(ctor.DeclaringSyntax);
-            ReportDiagnostic(errorSpan, $"Constructor '{ctor.Name}' expects {ctor.Arity} argument(s) but got {args.Count}. Expected shape: {FormatConstructorShape(ctor)}.");
-            foreach (var a in args)
-            {
-                LowerExpr(a);
-            }
-
-            return ReturnNeverWithDummyTemp();
+            return ReportConstructorArityMismatch(ctor, args);
         }
 
         var resultType = InstantiateAdtType(ctor);
         bool runtimeReuseRequest = resultType is TypeRef.TNamedType reuseNamed
-            && RuntimeReuseAllocationMatches(reuseNamed);
+            && RuntimeReuseAllocationMatches(reuseNamed, request);
         bool runtimeManagedCandidate = resultType is TypeRef.TNamedType named
-            && IsRuntimeManagedConstructorCandidate(ctor, args, named, runtimeReuseRequest);
+            && IsRuntimeManagedConstructorCandidate(
+                ctor,
+                args,
+                named,
+                runtimeReuseRequest,
+                request);
 
         (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
-            ctor, args, resultType, runtimeManagedCandidate);
+            ctor,
+            args,
+            resultType,
+            runtimeManagedCandidate,
+            request);
         if (runtimeManagedCandidate)
         {
-            PrepareRuntimeManagedAdtChildArguments(args, argTemps);
+            PrepareRuntimeManagedAdtChildArguments(
+                args,
+                argTemps,
+                request.RuntimeAdtChildBindings);
         }
 
         int tag = GetConstructorTag(ctor);
@@ -805,18 +830,44 @@ public sealed partial class Lowering
         return (ptrTemp, resultType);
     }
 
+    private (int Temp, TypeRef Type) ReportConstructorArityMismatch(
+        ConstructorSymbol constructor,
+        IReadOnlyList<Expr> arguments)
+    {
+        TextSpan errorSpan = arguments.Count > 0
+            ? GetSpan(arguments[0])
+            : GetSpan(constructor.DeclaringSyntax);
+        ReportDiagnostic(errorSpan, $"Constructor '{constructor.Name}' expects {constructor.Arity} argument(s) but got {arguments.Count}. Expected shape: {FormatConstructorShape(constructor)}.");
+        foreach (Expr argument in arguments)
+        {
+            LowerExpr(argument);
+        }
+
+        return ReturnNeverWithDummyTemp();
+    }
+
     private bool IsRuntimeManagedConstructorCandidate(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType,
-        bool runtimeReuseRequest)
-        => _runtimeRcRecordAllocationRequested
-                && CanRuntimeManageConstructorApplication(constructor, arguments, resultType)
-            || (_runtimeRcCopyAdtAllocationRequested || runtimeReuseRequest)
+        bool runtimeReuseRequest,
+        LoweredValueRequest request)
+        => request.EmitsRuntime(LoweredValueRuntimeRepresentation.Record)
+                && CanRuntimeManageConstructorApplication(
+                    constructor,
+                    arguments,
+                    resultType,
+                    request.RuntimeAdtChildBindings)
+            || (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Adt)
+                    || runtimeReuseRequest)
                 && (CanRuntimeManageCopyAdt(resultType)
                     || CanRuntimeManageGenericCopyAdtConstructorApplication(constructor, arguments, resultType)
                     || CanRuntimeManageFreshHeapChildAdtConstructorApplication(constructor, arguments, resultType)
-                    || CanRuntimeManageOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageOwnedChildAdtConstructorApplication(
+                        constructor,
+                        arguments,
+                        resultType,
+                        request.RuntimeAdtChildBindings)
                     // A positional, single-constructor accumulator shape (e.g. a TCO loop's own state
                     // record) nested as a field of an escaping ADT reaches this same ambient allocation
                     // request too — not only the TCO tail-call-argument path below, which is gated on a
@@ -824,17 +875,23 @@ public sealed partial class Lowering
                     // constructor that embeds one of these as a child field (rather than as its own
                     // loop-carried parameter) still qualify.
                     || CanRuntimeManageTcoOwnedChildAdtConstructorApplication(constructor, arguments, resultType)
-                    || CanRuntimeManageRecursiveAdtConstructorApplication(constructor, arguments, resultType)
+                    || CanRuntimeManageRecursiveAdtConstructorApplication(
+                        constructor,
+                        arguments,
+                        resultType,
+                        request.RuntimeAdtChildBindings)
                     || runtimeReuseRequest
                         && CanRuntimeReuseAdtConstructorApplication(constructor, arguments, resultType))
-            || _runtimeRcTcoAdtAllocationRequested
+            || request.EmitsRuntime(LoweredValueRuntimeRepresentation.TcoAdt)
                 && CanRuntimeManageTcoOwnedChildAdtConstructorApplication(
                     constructor,
                     arguments,
                     resultType);
 
-    private bool RuntimeReuseAllocationMatches(TypeRef.TNamedType resultType)
-        => _runtimeRcReuseAllocationTypeRequested is { } requested
+    private static bool RuntimeReuseAllocationMatches(
+        TypeRef.TNamedType resultType,
+        LoweredValueRequest request)
+        => request.RuntimeReuseAdtType is { } requested
             && ReferenceEquals(requested.Symbol, resultType.Symbol);
 
     private bool CanRuntimeReuseAdtConstructorApplication(
@@ -876,9 +933,12 @@ public sealed partial class Lowering
         return true;
     }
 
-    private void PrepareRuntimeManagedAdtChildArguments(IReadOnlyList<Expr> arguments, List<int> argumentTemps)
+    private void PrepareRuntimeManagedAdtChildArguments(
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
+        IReadOnlyDictionary<string, bool>? childBindings)
     {
-        if (_runtimeRcAdtChildBindings is null)
+        if (childBindings is null)
         {
             return;
         }
@@ -886,7 +946,7 @@ public sealed partial class Lowering
         for (int i = 0; i < arguments.Count; i++)
         {
             if (arguments[i] is not Expr.Var variable
-                || !_runtimeRcAdtChildBindings.TryGetValue(variable.Name, out bool shared)
+                || !childBindings.TryGetValue(variable.Name, out bool shared)
                 || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false } info)
             {
                 continue;
@@ -910,34 +970,45 @@ public sealed partial class Lowering
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
         TypeRef.TNamedType resultType,
-        bool runtimeManagedCandidate)
+        bool runtimeManagedCandidate,
+        LoweredValueRequest request)
     {
+        LoweredValueRuntimeRepresentation childRepresentations =
+            request.RuntimeRepresentation
+            & ~(LoweredValueRuntimeRepresentation.Adt
+                | LoweredValueRuntimeRepresentation.Record);
+        bool runtimeManagedAdt =
+            runtimeManagedCandidate
+            && request.EmitsRuntime(LoweredValueRuntimeRepresentation.Adt);
+        if (runtimeManagedAdt)
+        {
+            childRepresentations |= LoweredValueRuntimeRepresentation.Adt;
+        }
+        if (runtimeManagedCandidate)
+        {
+            childRepresentations |= LoweredValueRuntimeRepresentation.Record;
+        }
+        LoweredValueRequest childRequest = request with
+        {
+            ConsumerCanOwn = request.ConsumerCanOwn || runtimeManagedCandidate,
+            RuntimeRepresentation = childRepresentations,
+        };
+
         var argumentTemps = new List<int>(arguments.Count);
         var argumentTypes = new List<TypeRef>(arguments.Count);
-        bool savedRuntimeRequest = _runtimeRcRecordAllocationRequested;
-        bool savedCopyAdtRequest = _runtimeRcCopyAdtAllocationRequested;
-        _runtimeRcRecordAllocationRequested = runtimeManagedCandidate;
-        _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest && runtimeManagedCandidate;
-        try
+        for (int i = 0; i < arguments.Count; i++)
         {
-            for (int i = 0; i < arguments.Count; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
-                (int argumentTemp, TypeRef argumentType) = LowerRuntimeManagedConstructorArgument(
-                    arguments[i],
-                    fieldType,
-                    runtimeManagedCandidate);
-                argumentTemps.Add(argumentTemp);
-                TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
-                Unify(parameterType, argumentType);
-                argumentTypes.Add(Prune(argumentType));
-                MarkResourceArgMoved(arguments[i]);
-            }
-        }
-        finally
-        {
-            _runtimeRcRecordAllocationRequested = savedRuntimeRequest;
-            _runtimeRcCopyAdtAllocationRequested = savedCopyAdtRequest;
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            (int argumentTemp, TypeRef argumentType) = LowerRuntimeManagedConstructorArgument(
+                arguments[i],
+                fieldType,
+                runtimeManagedCandidate,
+                childRequest);
+            argumentTemps.Add(argumentTemp);
+            TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
+            Unify(parameterType, argumentType);
+            argumentTypes.Add(Prune(argumentType));
+            MarkResourceArgMoved(arguments[i]);
         }
 
         return (argumentTemps, argumentTypes);
@@ -946,35 +1017,45 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
         Expr argument,
         TypeRef fieldType,
-        bool runtimeManagedParent)
+        bool runtimeManagedParent,
+        LoweredValueRequest parentRequest)
     {
-        (bool String, bool Bytes, bool BigInt, bool List, bool Tuple) saved = (
-            _runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested,
-            _runtimeRcTupleAllocationRequested);
-        _runtimeRcStringAllocationRequested = saved.String
-            || runtimeManagedParent && (fieldType is TypeRef.TStr
-                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
-                && IsRuntimeRcStringProducer(argument) && IsRuntimeRcClosureCaptureSafeStringProducer(argument);
-        _runtimeRcBytesAllocationRequested = saved.Bytes
-            || runtimeManagedParent && (fieldType is TypeRef.TBytes
-                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
-                && IsRuntimeRcBytesProducer(argument) && IsRuntimeRcClosureCaptureSafeBytesProducer(argument);
-        _runtimeRcBigIntAllocationRequested = saved.BigInt
-            || runtimeManagedParent && (fieldType is TypeRef.TBigInt
-                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
-                && IsRuntimeRcBigIntProducer(argument) && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument);
-        _runtimeRcListAllocationRequested = saved.List
-            || runtimeManagedParent && (fieldType is TypeRef.TList
-                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
-                && IsFreshListConstructionExpression(argument);
-        _runtimeRcTupleAllocationRequested = saved.Tuple
-            || runtimeManagedParent && (fieldType is TypeRef.TTuple
-                    || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
-                && argument is Expr.TupleLit;
-        (int Temp, TypeRef Type) lowered = LowerExpr(argument);
+        LoweredValueRequest request = parentRequest
+            .AddRuntime(
+                runtimeManagedParent
+                    && (fieldType is TypeRef.TStr
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                    && IsRuntimeRcStringProducer(argument)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(argument),
+                LoweredValueRuntimeRepresentation.String)
+            .AddRuntime(
+                runtimeManagedParent
+                    && (fieldType is TypeRef.TBytes
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                    && IsRuntimeRcBytesProducer(argument)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(argument),
+                LoweredValueRuntimeRepresentation.Bytes)
+            .AddRuntime(
+                runtimeManagedParent
+                    && (fieldType is TypeRef.TBigInt
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                    && IsRuntimeRcBigIntProducer(argument)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(argument),
+                LoweredValueRuntimeRepresentation.BigInt)
+            .AddRuntime(
+                runtimeManagedParent
+                    && (fieldType is TypeRef.TList
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                    && IsFreshListConstructionExpression(argument),
+                LoweredValueRuntimeRepresentation.List)
+            .AddRuntime(
+                runtimeManagedParent
+                    && (fieldType is TypeRef.TTuple
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
+                    && argument is Expr.TupleLit,
+                LoweredValueRuntimeRepresentation.Tuple)
+            .WithRuntimeAdtContext(parentRequest.RuntimeAdtChildBindings);
+        (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
         if (runtimeManagedParent
             && fieldType is TypeRef.TList list
             && CanArenaReset(Prune(list.Element))
@@ -990,11 +1071,6 @@ public sealed partial class Lowering
             MarkRuntimeManagedTemp(normalizedTemp);
             lowered = (normalizedTemp, lowered.Type);
         }
-        (_runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested,
-            _runtimeRcTupleAllocationRequested) = saved;
         return lowered;
     }
 

@@ -535,7 +535,9 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
-    private (int, TypeRef) LowerTextUncons(Expr textArg)
+    private (int, TypeRef) LowerTextUncons(
+        Expr textArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -559,7 +561,11 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextUncons(target, textTemp, _runtimeRcTextUnconsResultAllocationRequested));
+        Emit(new IrInst.TextUncons(
+            target,
+            textTemp,
+            request.EmitsRuntime(
+                LoweredValueRuntimeRepresentation.TextUnconsResult)));
         return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
     }
 
@@ -645,7 +651,9 @@ public sealed partial class Lowering
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerTextParseInt(Expr textArg)
+    private (int, TypeRef) LowerTextParseInt(
+        Expr textArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -669,11 +677,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextParseInt(target, textTemp, _runtimeRcScalarResultAllocationRequested));
+        Emit(new IrInst.TextParseInt(
+            target,
+            textTemp,
+            request.EmitsRuntime(
+                LoweredValueRuntimeRepresentation.ScalarAdtResult)));
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
-    private (int, TypeRef) LowerTextParseFloat(Expr textArg)
+    private (int, TypeRef) LowerTextParseFloat(
+        Expr textArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -697,11 +711,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextParseFloat(target, textTemp, _runtimeRcScalarResultAllocationRequested));
+        Emit(new IrInst.TextParseFloat(
+            target,
+            textTemp,
+            request.EmitsRuntime(
+                LoweredValueRuntimeRepresentation.ScalarAdtResult)));
         return (target, CreateStringResultType(new TypeRef.TFloat()));
     }
 
-    private (int, TypeRef) LowerTextFromInt(Expr valueArg)
+    private (int, TypeRef) LowerTextFromInt(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -725,11 +745,16 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromInt(target, valueTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.TextFromInt(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerTextFromFloat(Expr valueArg)
+    private (int, TypeRef) LowerTextFromFloat(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -753,11 +778,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFromFloat(target, valueTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.TextFromFloat(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerTextFormatFloat(Expr valueArg, Expr decimalsArg)
+    private (int, TypeRef) LowerTextFormatFloat(
+        Expr valueArg,
+        Expr decimalsArg,
+        LoweredValueRequest request = default)
     {
         using var valueDiagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -802,11 +833,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextFormatFloat(target, valueTemp, decimalsTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.TextFormatFloat(
+            target,
+            valueTemp,
+            decimalsTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerTextToHex(Expr valueArg)
+    private (int, TypeRef) LowerTextToHex(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -830,11 +867,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextToHex(target, valueTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.TextToHex(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerTextAsciiCase(Expr textArg, bool upper)
+    private (int, TypeRef) LowerTextAsciiCase(
+        Expr textArg,
+        bool upper,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -859,7 +902,11 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextAsciiCase(target, textTemp, upper, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.TextAsciiCase(
+            target,
+            textTemp,
+            upper,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
@@ -2544,7 +2591,9 @@ public sealed partial class Lowering
     private Binding.Intrinsic CreateBigIntFromStringBinding() =>
         new(IntrinsicKind.BigIntFromString, new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBigInt()))));
 
-    private (int, TypeRef) LowerBigIntToInt(Expr arg)
+    private (int, TypeRef) LowerBigIntToInt(
+        Expr arg,
+        LoweredValueRequest request = default)
     {
         using var span = PushDiagnosticSpan(arg);
         var (valueTemp, valueType) = LowerExpr(arg);
@@ -2563,11 +2612,17 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntToInt(target, valueTemp, _runtimeRcScalarResultAllocationRequested));
+        Emit(new IrInst.BigIntToInt(
+            target,
+            valueTemp,
+            request.EmitsRuntime(
+                LoweredValueRuntimeRepresentation.ScalarAdtResult)));
         return (target, CreateStringResultType(new TypeRef.TInt()));
     }
 
-    private (int, TypeRef) LowerBigIntFromString(Expr arg)
+    private (int, TypeRef) LowerBigIntFromString(
+        Expr arg,
+        LoweredValueRequest request = default)
     {
         using var span = PushDiagnosticSpan(arg);
         var (valueTemp, valueType) = LowerExpr(arg);
@@ -2586,7 +2641,11 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntFromString(target, valueTemp, _runtimeRcBigIntParseResultAllocationRequested));
+        Emit(new IrInst.BigIntFromString(
+            target,
+            valueTemp,
+            request.EmitsRuntime(
+                LoweredValueRuntimeRepresentation.BigIntParseResult)));
         return (target, CreateStringResultType(new TypeRef.TBigInt()));
     }
 
@@ -2599,12 +2658,18 @@ public sealed partial class Lowering
     // A `<digits>N` BigInt literal. Fits-in-i64 values go straight through fromInt; larger ones are
     // built with chunked Horner in base 10^18 (each 18-digit chunk fits an i64), reusing the BigInt
     // mul/add ops. The literal digits are validated by the lexer, so no error path is needed here.
-    private (int, TypeRef) LowerBigIntLit(Expr.BigIntLit lit)
+    private (int, TypeRef) LowerBigIntLit(
+        Expr.BigIntLit lit,
+        LoweredValueRequest request)
     {
         string digits = lit.Digits;
         if (long.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long small))
         {
-            return (EmitBigIntFromLongConst(small), new TypeRef.TBigInt());
+            return (
+                EmitBigIntFromLongConst(
+                    small,
+                    request.EmitsRuntime(LoweredValueRuntimeRepresentation.BigInt)),
+                new TypeRef.TBigInt());
         }
 
         const int chunkDigits = 18;
@@ -2622,22 +2687,31 @@ public sealed partial class Lowering
             Emit(new IrInst.BigIntBinary(mulTemp, accTemp, baseTemp, "mul"));
             int chunkTemp = EmitBigIntFromLongConst(long.Parse(digits.Substring(pos, chunkDigits), System.Globalization.CultureInfo.InvariantCulture));
             int addTemp = NewTemp();
-            Emit(new IrInst.BigIntBinary(addTemp, mulTemp, chunkTemp, "add"));
+            bool finalChunk = pos + chunkDigits == digits.Length;
+            Emit(new IrInst.BigIntBinary(
+                addTemp,
+                mulTemp,
+                chunkTemp,
+                "add",
+                finalChunk
+                    && request.EmitsRuntime(LoweredValueRuntimeRepresentation.BigInt)));
             accTemp = addTemp;
         }
         return (accTemp, new TypeRef.TBigInt());
     }
 
-    private int EmitBigIntFromLongConst(long value)
+    private int EmitBigIntFromLongConst(long value, bool runtimeManaged = false)
     {
         int constTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(constTemp, value));
         int target = NewTemp();
-        Emit(new IrInst.BigIntFromInt(target, constTemp));
+        Emit(new IrInst.BigIntFromInt(target, constTemp, runtimeManaged));
         return target;
     }
 
-    private (int, TypeRef) LowerBigIntFromInt(Expr arg)
+    private (int, TypeRef) LowerBigIntFromInt(
+        Expr arg,
+        LoweredValueRequest request = default)
     {
         using var span = PushDiagnosticSpan(arg);
         var (valueTemp, valueType) = LowerExpr(arg);
@@ -2656,11 +2730,16 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntFromInt(target, valueTemp, _runtimeRcBigIntAllocationRequested));
+        Emit(new IrInst.BigIntFromInt(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.BigInt)));
         return (target, new TypeRef.TBigInt());
     }
 
-    private (int, TypeRef) LowerBigIntToString(Expr arg)
+    private (int, TypeRef) LowerBigIntToString(
+        Expr arg,
+        LoweredValueRequest request = default)
     {
         using var span = PushDiagnosticSpan(arg);
         var (valueTemp, valueType) = LowerExpr(arg);
@@ -2679,11 +2758,20 @@ public sealed partial class Lowering
             return (valueTemp, pruned);
         }
         var target = NewTemp();
-        Emit(new IrInst.BigIntToString(target, valueTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.BigIntToString(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerBigIntBinary(Expr leftArg, Expr rightArg, string op, string display, bool resultIsInt)
+    private (int, TypeRef) LowerBigIntBinary(
+        Expr leftArg,
+        Expr rightArg,
+        string op,
+        string display,
+        bool resultIsInt,
+        LoweredValueRequest request = default)
     {
         var (leftTemp, leftType, rightTemp, rightType) = LowerBigIntBinaryOperands(leftArg, rightArg, display);
         if (Prune(leftType) is TypeRef.TNever)
@@ -2700,24 +2788,20 @@ public sealed partial class Lowering
             Emit(new IrInst.BigIntCompare(target, leftTemp, rightTemp));
             return (target, new TypeRef.TInt());
         }
-        Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, op, _runtimeRcBigIntAllocationRequested));
+        Emit(new IrInst.BigIntBinary(
+            target,
+            leftTemp,
+            rightTemp,
+            op,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.BigInt)));
         return (target, new TypeRef.TBigInt());
     }
 
     private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerBigIntBinaryOperands(Expr leftArg, Expr rightArg, string display)
     {
-        bool savedRuntimeRequest = _runtimeRcBigIntAllocationRequested;
-        _runtimeRcBigIntAllocationRequested = false;
-        try
-        {
-            var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
-            var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
-            return (leftTemp, leftType, rightTemp, rightType);
-        }
-        finally
-        {
-            _runtimeRcBigIntAllocationRequested = savedRuntimeRequest;
-        }
+        var (leftTemp, leftType) = LowerBigIntOperand(leftArg, display);
+        var (rightTemp, rightType) = LowerBigIntOperand(rightArg, display);
+        return (leftTemp, leftType, rightTemp, rightType);
     }
 
     private (int, TypeRef) LowerBigIntOperand(Expr arg, string display)
@@ -3203,7 +3287,9 @@ public sealed partial class Lowering
 
     // --- Ashes.Byte lowering methods ---
 
-    private (int, TypeRef) LowerBytesEmpty(Expr arg)
+    private (int, TypeRef) LowerBytesEmpty(
+        Expr arg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(arg);
         var (argTemp, argType) = LowerExpr(arg);
@@ -3215,11 +3301,15 @@ public sealed partial class Lowering
 
         Unify(prunedArgType, _resolvedTypes["Unit"]);
         var target = NewTemp();
-        Emit(new IrInst.BytesEmpty(target, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesEmpty(
+            target,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesSingleton(Expr byteArg)
+    private (int, TypeRef) LowerBytesSingleton(
+        Expr byteArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(byteArg);
         var (byteTemp, byteType) = LowerExpr(byteArg);
@@ -3242,7 +3332,10 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesSingleton(target, byteTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesSingleton(
+            target,
+            byteTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
@@ -3417,7 +3510,11 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
-    private (int, TypeRef) LowerBytesSubText(Expr bytesArg, Expr startArg, Expr lenArg)
+    private (int, TypeRef) LowerBytesSubText(
+        Expr bytesArg,
+        Expr startArg,
+        Expr lenArg,
+        LoweredValueRequest request = default)
     {
         var (bytesTemp, bytesOk) = LowerBytesArgument(bytesArg, "Ashes.Byte.subText()");
         if (!bytesOk)
@@ -3438,7 +3535,12 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesSubText(target, bytesTemp, startTemp, lenTemp, _runtimeRcStringAllocationRequested));
+        Emit(new IrInst.BytesSubText(
+            target,
+            bytesTemp,
+            startTemp,
+            lenTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
@@ -3493,7 +3595,10 @@ public sealed partial class Lowering
         return (target, new TypeRef.TStr());
     }
 
-    private (int, TypeRef) LowerBytesAppend(Expr leftArg, Expr rightArg)
+    private (int, TypeRef) LowerBytesAppend(
+        Expr leftArg,
+        Expr rightArg,
+        LoweredValueRequest request = default)
     {
         using var leftDiagnosticSpan = PushDiagnosticSpan(leftArg);
         var (leftTemp, leftType) = LowerExpr(leftArg);
@@ -3536,11 +3641,18 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesAppend(target, leftTemp, rightTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesAppend(
+            target,
+            leftTemp,
+            rightTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesAppendByte(Expr bytesArg, Expr byteArg)
+    private (int, TypeRef) LowerBytesAppendByte(
+        Expr bytesArg,
+        Expr byteArg,
+        LoweredValueRequest request = default)
     {
         using var bytesDiagnosticSpan = PushDiagnosticSpan(bytesArg);
         var (bytesTemp, bytesType) = LowerExpr(bytesArg);
@@ -3583,11 +3695,17 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesAppendByte(target, bytesTemp, byteTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesAppendByte(
+            target,
+            bytesTemp,
+            byteTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesFromList(Expr listArg)
+    private (int, TypeRef) LowerBytesFromList(
+        Expr listArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(listArg);
         var (listTemp, listType) = LowerExpr(listArg);
@@ -3622,11 +3740,16 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesFromList(target, listTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesFromList(
+            target,
+            listTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesU16Le(Expr valueArg)
+    private (int, TypeRef) LowerBytesU16Le(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -3649,11 +3772,16 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU16Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesU16Le(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesU32Le(Expr valueArg)
+    private (int, TypeRef) LowerBytesU32Le(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -3676,11 +3804,16 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU32Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesU32Le(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
-    private (int, TypeRef) LowerBytesU64Le(Expr valueArg)
+    private (int, TypeRef) LowerBytesU64Le(
+        Expr valueArg,
+        LoweredValueRequest request = default)
     {
         using var diagnosticSpan = PushDiagnosticSpan(valueArg);
         var (valueTemp, valueType) = LowerExpr(valueArg);
@@ -3703,7 +3836,10 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.BytesU64Le(target, valueTemp, _runtimeRcBytesAllocationRequested));
+        Emit(new IrInst.BytesU64Le(
+            target,
+            valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
         return (target, new TypeRef.TBytes());
     }
 
