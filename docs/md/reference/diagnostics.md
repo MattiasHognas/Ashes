@@ -37,7 +37,7 @@ Current codes:
 | `ASH030` | A dependency's `path` was not found                           |
 | `ASH031` | A dependency's `path` is not an Ashes project (no `ashes.json`) |
 | `ASH032` | Version conflict: no version satisfies all constraints        |
-| `ASH033` | `ashes.lock` is stale (resolution would change) under `--frozen` |
+| `ASH033` | The selected project's lock file is stale (resolution would change) under `--frozen` |
 | `ASH034` | Content-hash mismatch against the lock file                    |
 | `ASH035` | Dependency graph contains a cycle                             |
 

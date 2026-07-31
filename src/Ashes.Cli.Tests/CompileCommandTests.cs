@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Ashes.Cli.Package;
 using Shouldly;
 
 namespace Ashes.Cli.Tests;
@@ -52,6 +54,71 @@ public sealed class CompileCommandTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Test]
+    public async Task Add_project_updates_only_the_selected_manifest()
+    {
+        string root = TempDir();
+        try
+        {
+            string mainProject = Path.Combine(root, "ashes.json");
+            string testProject = Path.Combine(root, "ashes-test.json");
+            File.WriteAllText(mainProject, """{"entry":"Main.ash"}""");
+            File.WriteAllText(testProject, """{"entry":"Test.ash"}""");
+
+            (int exitCode, string output) = await RunCliAsync(
+                root,
+                "add",
+                "json-parser",
+                "--project",
+                testProject).ConfigureAwait(false);
+
+            exitCode.ShouldBe(0, output);
+            using JsonDocument main = JsonDocument.Parse(
+                File.ReadAllText(mainProject));
+            using JsonDocument test = JsonDocument.Parse(
+                File.ReadAllText(testProject));
+            main.RootElement.TryGetProperty(
+                "dependencies",
+                out _).ShouldBeFalse();
+            test.RootElement
+                .GetProperty("dependencies")
+                .GetProperty("json-parser")
+                .GetString()
+                .ShouldBe("*");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunCliAsync(
+        string workingDirectory,
+        params string[] arguments)
+    {
+        ProcessStartInfo startInfo = new("dotnet")
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add(typeof(LockFile).Assembly.Location);
+        foreach (string argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using Process process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start dotnet.");
+        string stdout = await process.StandardOutput.ReadToEndAsync()
+            .ConfigureAwait(false);
+        string stderr = await process.StandardError.ReadToEndAsync()
+            .ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        return (process.ExitCode, stdout + stderr);
     }
 
     private static string FindRepoRoot()

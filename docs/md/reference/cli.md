@@ -99,7 +99,8 @@ The following option is accepted by **compile** and **run** only:
 | `-O2` | Standard optimizations (default) |
 | `-O3` | Aggressive optimizations |
 
-`--project` is accepted by **compile**, **run**, and **test** only (not by `ashes repl`):
+`--project` is accepted by project-scoped commands: **compile**, **run**, **test**, **add**,
+**remove**, **restore**, **tree**, **why**, and **publish**. It is not accepted by `ashes repl`.
 
 | Option | Value type | Default | Repeatable | Description |
 |--------|-----------|---------|------------|-------------|
@@ -537,12 +538,13 @@ ashes init
 
 ### `ashes add`
 
-Add a dependency to the nearest `ashes.json` project manifest.
+Add a dependency to the selected project manifest, or to the nearest `ashes.json` when `--project` is
+omitted.
 
 #### Synopsis
 
 ```sh
-ashes add <package> [--path <dir>] [--dev]
+ashes add <package> [--project <manifest>] [--path <dir>] [--dev]
 ```
 
 #### Arguments
@@ -555,12 +557,14 @@ ashes add <package> [--path <dir>] [--dev]
 
 | Name | Description |
 |------|-------------|
+| `--project <manifest>` | Update a specific project manifest instead of discovering the nearest `ashes.json`. |
 | `--path <dir>` | Record a path dependency `{ "path": "<dir>" }` instead of a registry version. |
 | `--dev` | Write to `devDependencies` instead of `dependencies`. |
 
 #### Behaviour
 
-1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
+1. Uses `--project` when supplied; otherwise discovers `ashes.json` by walking upward from the current
+   directory.
 2. If no `ashes.json` is found, the command fails with exit code **1**.
 3. Adds the dependency to `dependencies` (or `devDependencies` with `--dev`): `{ "path": "<dir>" }` when
    `--path` is given, otherwise the SemVer string `"*"`. Existing entries are overwritten; other
@@ -578,18 +582,22 @@ ashes add <package> [--path <dir>] [--dev]
 ```bash
 ashes add json-parser
 # Added json-parser to dependencies.
+
+ashes add test-helper --dev --project ashes-test.json
+# Added test-helper to devDependencies.
 ```
 
 ---
 
 ### `ashes remove`
 
-Remove a dependency from the nearest `ashes.json` project manifest.
+Remove a dependency from the selected project manifest, or from the nearest `ashes.json` when
+`--project` is omitted.
 
 #### Synopsis
 
 ```sh
-ashes remove <package>
+ashes remove <package> [--project <manifest>]
 ```
 
 #### Arguments
@@ -600,11 +608,14 @@ ashes remove <package>
 
 #### Options
 
-None.
+| Name | Description |
+|------|-------------|
+| `--project <manifest>` | Update a specific project manifest instead of discovering the nearest `ashes.json`. |
 
 #### Behaviour
 
-1. Discovers `ashes.json` by walking upward from the current directory (same discovery as other commands).
+1. Uses `--project` when supplied; otherwise discovers `ashes.json` by walking upward from the current
+   directory.
 2. If no `ashes.json` is found, the command fails with exit code **1**.
 3. If the package is not present in `dependencies`, the command fails with exit code **1**.
 4. Removes the package from the `dependencies` object and writes the file back.
@@ -628,28 +639,32 @@ ashes remove json-parser
 
 ### `ashes restore`
 
-Resolve and materialize a project's dependencies from the nearest `ashes.json`. (`ashes install` is retired.)
+Resolve and materialize dependencies for the selected project manifest, or for the nearest `ashes.json`
+when `--project` is omitted. (`ashes install` is retired.)
 
 #### Synopsis
 
 ```sh
-ashes restore [--registry <name-or-url>] [--frozen] [--offline]
+ashes restore [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]
 ```
 
 #### Options
 
 | Name | Description |
 |------|-------------|
+| `--project <manifest>` | Restore a specific project manifest instead of discovering the nearest `ashes.json`. |
 | `--registry <r>` | Registry to resolve registry dependencies against (name or URL; default from config). |
-| `--frozen` | Fail (`ASH032`/`ASH033`) if a fresh resolution would differ from the committed `ashes.lock`; never rewrite it. For CI. |
-| `--offline` | Never touch the network; trust `ashes.lock` and only verify its packages are in the cache. |
+| `--frozen` | Fail (`ASH032`/`ASH033`) if a fresh resolution would differ from the selected project's committed lock file; never rewrite it. For CI. |
+| `--offline` | Never touch the network; trust the selected project's lock file and only verify its packages are in the cache. |
 
 #### Behaviour
 
-1. Discovers `ashes.json` by walking upward from the current directory.
+1. Uses `--project` when supplied; otherwise discovers `ashes.json` by walking upward from the current
+   directory.
 2. Fetches and caches **registry dependencies** (resolving SemVer constraints across the transitive
-   graph) and writes `ashes.lock`; then validates **path dependencies** (a missing path or non-project
-   fails with `ASH030` / `ASH031`) and lists every resolved dependency with its namespace.
+   graph) and writes the selected manifest's lock file; then validates **path dependencies** (a missing
+   path or non-project fails with `ASH030` / `ASH031`) and lists every resolved dependency with its
+   namespace.
 3. Each cached package's content is verified against the lock's `ash1:` hash (`ASH034` on mismatch).
 4. `build` / `run` / `test` **auto-restore** when a project's lock is missing or a locked package is not
    cached (against the default registry). Use `ashes restore` explicitly to target a specific registry,
@@ -660,17 +675,20 @@ ashes restore [--registry <name-or-url>] [--frozen] [--offline]
 ```bash
 ashes restore --registry https://pkg.ashes-lang.org
 # Resolved 2 dependencies into ashes.lock.
+
+ashes restore --project ashes-test.json
+# Resolved 1 registry dependency into ashes-test.lock.
 ```
 
 ---
 
 ### `ashes tree`
 
-Render the resolved dependency tree (project root → direct dependencies → their transitive dependencies,
-from `ashes.lock`). Path dependencies are shown as leaves.
+Render the resolved dependency tree (project root → direct dependencies → their transitive dependencies)
+from the selected project's lock file. Path dependencies are shown as leaves.
 
 ```sh
-ashes tree
+ashes tree [--project <manifest>]
 # app
 # └── Json 1.2.0
 #     └── Utf8 0.4.3
@@ -683,7 +701,7 @@ ashes tree
 Show a path from a project root dependency to the named package, explaining why it is in the graph.
 
 ```sh
-ashes why Utf8
+ashes why Utf8 [--project <manifest>]
 # Json -> Utf8
 ```
 
@@ -692,6 +710,10 @@ ashes why Utf8
 ## Project File (`ashes.json`)
 
 The project file enables multi-module compilation and controls build settings.
+
+Named manifests may be colocated and selected with `--project`. Each manifest owns the lock file with
+the same base name: `ashes.json` maps to `ashes.lock`, while `ashes-test.json` maps to
+`ashes-test.lock`.
 
 ### Fields
 
@@ -703,7 +725,8 @@ The project file enables multi-module compilation and controls build settings.
 | `include` | string array | No | `[]` | Additional directories searched for imported modules. |
 | `outDir` | string | No | `"out"` | Directory where the compiled binary is written. |
 | `target` | string (enum) | No | OS default | Default back end target; overridden by `--target` on the command line. |
-| `dependencies` | object (string → string) | No | `{}` | Map of package names to version constraints. Recorded in v0.x but not yet resolved or fetched automatically. |
+| `dependencies` | object | No | `{}` | Runtime dependency map. Values are registry version constraints or path dependency objects. |
+| `devDependencies` | object | No | `{}` | Build/test dependency map with the same value forms as `dependencies`. |
 
 ### Example
 

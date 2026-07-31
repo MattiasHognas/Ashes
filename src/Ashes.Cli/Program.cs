@@ -13,17 +13,17 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <ashes.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--path <dir>]] [[--dev]]");
-    AnsiConsole.MarkupLine("  [bold]ashes remove[/]  <package>");
-    AnsiConsole.MarkupLine("  [bold]ashes restore[/] [[--frozen]] [[--offline]]");
-    AnsiConsole.MarkupLine("  [bold]ashes tree[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes why[/]    <namespace>");
+    AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--project <project.json>]] [[--path <dir>]] [[--dev]]");
+    AnsiConsole.MarkupLine("  [bold]ashes remove[/]  <package> [[--project <project.json>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes restore[/] [[--project <project.json>]] [[--frozen]] [[--offline]]");
+    AnsiConsole.MarkupLine("  [bold]ashes tree[/]    [[--project <project.json>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes why[/]     <namespace> [[--project <project.json>]]");
     AnsiConsole.MarkupLine("  [bold]ashes --version[/]");
     AnsiConsole.WriteLine();
 
@@ -31,7 +31,7 @@ static int Usage(int exitCode = 2)
     table.AddColumn("[grey]Option[/]");
     table.AddColumn("[grey]Description[/]");
     table.AddRow("[yellow]--target[/]", "Select output target. Defaults to current OS.");
-    table.AddRow("[yellow]--project[/]", "Use a specific ashes.json project file.");
+    table.AddRow("[yellow]--project[/]", "Use a specific project manifest.");
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
@@ -98,14 +98,13 @@ static async Task AutoRestoreProjectAsync(string? projectOption, string? inputFi
         return;
     }
 
-    var projectDirectory = Path.GetDirectoryName(Path.GetFullPath(projectFile))!;
     var roots = CollectRegistryRoots(projectFile);
     if (roots.Count == 0)
     {
         return;
     }
 
-    var lockFile = Ashes.Cli.Package.LockFile.Read(projectDirectory);
+    var lockFile = Ashes.Cli.Package.LockFile.Read(projectFile);
     var cache = new Ashes.Cli.Package.PackageCache();
     var needsRestore = lockFile is null || lockFile.Package.Any(p => !cache.Has(p.Namespace, p.Version, p.Hash));
     if (!needsRestore)
@@ -114,7 +113,7 @@ static async Task AutoRestoreProjectAsync(string? projectOption, string? inputFi
     }
 
     AnsiConsole.MarkupLine("[grey]Restoring dependencies...[/]");
-    await RestoreRegistryDependenciesAsync(projectFile, projectDirectory, null, frozen: false, offline: false, CancellationToken.None)
+    await RestoreRegistryDependenciesAsync(projectFile, null, frozen: false, offline: false, CancellationToken.None)
         .ConfigureAwait(false);
 }
 
@@ -1408,6 +1407,23 @@ static int RunInit(string[] a)
     return 0;
 }
 
+static string ResolveProjectFileForCommand(string? projectOption)
+{
+    if (!string.IsNullOrEmpty(projectOption))
+    {
+        string projectFilePath = Path.GetFullPath(projectOption);
+        if (!File.Exists(projectFilePath))
+        {
+            throw new CliUserException($"Project file not found: {projectOption}");
+        }
+
+        return projectFilePath;
+    }
+
+    return ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory())
+        ?? throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+}
+
 static int RunAdd(string[] a)
 {
     var opts = Ashes.Cli.Registry.ArgScanner.Parse(a);
@@ -1426,11 +1442,7 @@ static int RunAdd(string[] a)
     var isDev = opts.Flag("dev");
     var field = isDev ? "devDependencies" : "dependencies";
 
-    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
-    if (string.IsNullOrEmpty(projectFilePath))
-    {
-        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
-    }
+    string projectFilePath = ResolveProjectFileForCommand(opts.Value("project"));
 
     using var doc = ParseProjectJson(projectFilePath);
     var (obj, deps) = ReadProjectJson(doc.RootElement);
@@ -1478,11 +1490,7 @@ static int RunRemove(string[] a)
 
     var packageName = opts.Positionals[0];
 
-    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
-    if (string.IsNullOrEmpty(projectFilePath))
-    {
-        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
-    }
+    string projectFilePath = ResolveProjectFileForCommand(opts.Value("project"));
 
     using var doc = ParseProjectJson(projectFilePath);
     var (obj, deps) = ReadProjectJson(doc.RootElement);
@@ -1521,18 +1529,16 @@ static async Task<int> RunRestore(string[] a)
         return Usage(0);
     }
 
-    var projectFilePath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory());
-    if (string.IsNullOrEmpty(projectFilePath))
-    {
-        throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
-    }
+    string projectFilePath = ResolveProjectFileForCommand(opts.Value("project"));
 
-    var projectDirectory = Path.GetDirectoryName(projectFilePath)!;
-
-    // Registry dependencies resolve, download, and cache first (writing ashes.lock) so that the
-    // subsequent project load — which reads the lock — finds them materialized.
+    // Registry dependencies resolve, download, and cache first (writing the selected manifest's
+    // lock file) so that the subsequent project load finds them materialized.
     await RestoreRegistryDependenciesAsync(
-        projectFilePath, projectDirectory, opts.Value("registry"), opts.Flag("frozen"), opts.Flag("offline"), CancellationToken.None)
+        projectFilePath,
+        opts.Value("registry"),
+        opts.Flag("frozen"),
+        opts.Flag("offline"),
+        CancellationToken.None)
         .ConfigureAwait(false);
 
     // Loading resolves + validates path dependencies and now-cached registry dependencies.
@@ -1563,12 +1569,11 @@ static int RunTree(string[] a)
         return Usage(0);
     }
 
-    var manifestPath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory())
-        ?? throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    string manifestPath = ResolveProjectFileForCommand(opts.Value("project"));
     var projectDirectory = Path.GetDirectoryName(manifestPath)!;
     var project = ProjectSupport.LoadProject(manifestPath);
 
-    var (edges, versions) = ReadLockGraph(projectDirectory);
+    var (edges, versions) = ReadLockGraph(manifestPath);
     var namespaceByDir = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     foreach (var d in project.Dependencies)
     {
@@ -1601,12 +1606,11 @@ static int RunWhy(string[] a)
     }
 
     var target = ProjectSupport.PascalCase(opts.Positionals[0]);
-    var manifestPath = ProjectSupport.DiscoverProjectFile(Directory.GetCurrentDirectory())
-        ?? throw new CliUserException("No ashes.json found. Run 'ashes init' first.");
+    string manifestPath = ResolveProjectFileForCommand(opts.Value("project"));
     var projectDirectory = Path.GetDirectoryName(manifestPath)!;
     var project = ProjectSupport.LoadProject(manifestPath);
 
-    var (edges, _) = ReadLockGraph(projectDirectory);
+    var (edges, _) = ReadLockGraph(manifestPath);
     var namespaceByDir = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     foreach (var d in project.Dependencies)
     {
@@ -1625,9 +1629,10 @@ static int RunWhy(string[] a)
     return 0;
 }
 
-static (Dictionary<string, IReadOnlyList<string>> Edges, Dictionary<string, string> Versions) ReadLockGraph(string projectDirectory)
+static (Dictionary<string, IReadOnlyList<string>> Edges, Dictionary<string, string> Versions) ReadLockGraph(
+    string projectFilePath)
 {
-    var lockFile = Ashes.Cli.Package.LockFile.Read(projectDirectory);
+    var lockFile = Ashes.Cli.Package.LockFile.Read(projectFilePath);
     var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
     var versions = new Dictionary<string, string>(StringComparer.Ordinal);
     foreach (var p in lockFile?.Package ?? [])
@@ -1720,7 +1725,11 @@ static IReadOnlyList<string>? FindPath(IReadOnlyList<string> roots, string targe
 }
 
 static async Task RestoreRegistryDependenciesAsync(
-    string manifestPath, string projectDirectory, string? registryOption, bool frozen, bool offline, CancellationToken ct)
+    string manifestPath,
+    string? registryOption,
+    bool frozen,
+    bool offline,
+    CancellationToken ct)
 {
     var roots = CollectRegistryRoots(manifestPath);
     if (roots.Count == 0)
@@ -1733,7 +1742,7 @@ static async Task RestoreRegistryDependenciesAsync(
     // --offline: never touch the network. Trust the committed lock and only verify its packages are cached.
     if (offline)
     {
-        VerifyOfflineRegistryCache(projectDirectory, cache);
+        VerifyOfflineRegistryCache(manifestPath, cache);
         return;
     }
 
@@ -1753,10 +1762,12 @@ static async Task RestoreRegistryDependenciesAsync(
     // --frozen: fail if a fresh resolution would change the committed lock.
     if (frozen)
     {
-        var existing = Ashes.Cli.Package.LockFile.Read(projectDirectory);
+        var existing = Ashes.Cli.Package.LockFile.Read(manifestPath);
         if (existing is null || !SameLock(existing.Package, locked))
         {
-            throw new CliUserException("ASH033: dependency resolution differs from ashes.lock (--frozen).");
+            string lockFileName = Path.GetFileName(ProjectSupport.GetLockFilePath(manifestPath));
+            throw new CliUserException(
+                $"ASH033: dependency resolution differs from {lockFileName} (--frozen).");
         }
     }
 
@@ -1764,16 +1775,29 @@ static async Task RestoreRegistryDependenciesAsync(
 
     if (!frozen)
     {
-        new Ashes.Cli.Package.LockFile { Package = locked }.Write(projectDirectory);
+        new Ashes.Cli.Package.LockFile { Package = locked }.Write(manifestPath);
     }
 
-    AnsiConsole.MarkupLine($"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")}{(frozen ? " (frozen)" : " into ashes.lock")}.");
+    string destination = frozen
+        ? " (frozen)"
+        : $" into {Path.GetFileName(ProjectSupport.GetLockFilePath(manifestPath))}";
+    AnsiConsole.MarkupLine(
+        $"[green]Resolved[/] {locked.Count} registry dependenc{(locked.Count == 1 ? "y" : "ies")}{destination}.");
 }
 
-static void VerifyOfflineRegistryCache(string projectDirectory, Ashes.Cli.Package.PackageCache cache)
+static void VerifyOfflineRegistryCache(
+    string projectFilePath,
+    Ashes.Cli.Package.PackageCache cache)
 {
-    var existing = Ashes.Cli.Package.LockFile.Read(projectDirectory)
-        ?? throw new CliUserException("Cannot restore --offline: no ashes.lock. Run 'ashes restore' online first.");
+    var existing = Ashes.Cli.Package.LockFile.Read(projectFilePath);
+    if (existing is null)
+    {
+        string lockFileName = Path.GetFileName(
+            ProjectSupport.GetLockFilePath(projectFilePath));
+        throw new CliUserException(
+            $"Cannot restore --offline: no {lockFileName}. Run 'ashes restore' online first.");
+    }
+
     foreach (var p in existing.Package)
     {
         if (!cache.Has(p.Namespace, p.Version, p.Hash))

@@ -61,6 +61,23 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void GetLockFilePath_should_preserve_colocated_project_identity()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            ProjectSupport.GetLockFilePath(Path.Combine(root, "ashes.json"))
+                .ShouldBe(Path.Combine(root, "ashes.lock"));
+            ProjectSupport.GetLockFilePath(Path.Combine(root, "ashes-test.json"))
+                .ShouldBe(Path.Combine(root, "ashes-test.lock"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void BuildCompilationPlan_should_order_dependencies_before_dependents()
     {
         var root = CreateTempDirectory();

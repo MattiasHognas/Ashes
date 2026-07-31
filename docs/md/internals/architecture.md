@@ -137,17 +137,18 @@ transitive — a dependency's own dependencies are pulled, diamond-deduplicated,
 and the namespace discipline (`ASH028` / `ASH029`) is enforced across the whole resolved set.
 
 **Resolution** is the Cargo model: SemVer constraints, the highest version satisfying all constraints
-across the transitive graph, unified to one version per package, pinned in `ashes.lock`. A first resolve
-pins the newest compatible version; later publishes do not change the build until an explicit update. An
-empty intersection is a typed conflict (`ASH032`). The single-version world makes this simpler than
-npm/Cargo (no multi-version isolation to attempt); unlike Go's MVS it selects newest-compatible rather
-than lowest.
+across the transitive graph, unified to one version per package, pinned in the selected project's lock
+file. A first resolve pins the newest compatible version; later publishes do not change the build until
+an explicit update. An empty intersection is a typed conflict (`ASH032`). The single-version world makes
+this simpler than npm/Cargo (no multi-version isolation to attempt); unlike Go's MVS it selects
+newest-compatible rather than lowest.
 
-**Lock file** (`ashes.lock`) — a generated, committed file holding the resolved graph so every front end
-consumes an identical root set. `restore` writes it; `build` / `run` / `test` read it (auto-restoring a
-missing or stale lock); `restore --frozen` fails if resolution would change it, and `--offline` trusts it
-and only verifies the cache. Each entry records the package's namespace, version, source
-(`registry+<url>` or `git+<url>`), and `ash1:` hash.
+**Lock file** — a generated, committed file holding the resolved graph so every front end consumes an
+identical root set. Its base name follows the selected manifest: `ashes.json` uses `ashes.lock`, while
+`ashes-test.json` uses `ashes-test.lock`. `restore` writes it; `build` / `run` / `test` read it
+(auto-restoring a missing or stale lock); `restore --frozen` fails if resolution would change it, and
+`--offline` trusts it and only verifies the cache. Each entry records the package's namespace, version,
+source (`registry+<url>` or `git+<url>`), and `ash1:` hash.
 
 **Cache** — content-addressed source under `$XDG_CACHE_HOME/ashes` (`cache/pkg/<ns>/<version>/<hash>/…`),
 shared across projects, deduplicated, and safe under concurrent CI. The compiler and the CLI compute cache
