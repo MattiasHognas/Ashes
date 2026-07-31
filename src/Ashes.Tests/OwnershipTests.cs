@@ -551,12 +551,12 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_bytes_append_with_allocating_operand_remains_arena_managed()
+    public void Escaping_bytes_append_with_allocating_operand_uses_owned_result_provenance()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.append(Ashes.Byte.fromList([1u8, 2u8]))(Ashes.Byte.fromText(\"cd\")) in bytes");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]
@@ -583,12 +583,12 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_append_byte_with_allocating_operand_remains_arena_managed()
+    public void Escaping_append_byte_with_allocating_operand_uses_owned_result_provenance()
     {
         IrProgram ir = LowerProgram("let bytes = Ashes.Byte.appendByte(Ashes.Byte.fromList([1u8, 2u8]))(33u8) in bytes");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesAppendByte { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]
@@ -616,12 +616,44 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_bytes_from_borrowed_list_remains_arena_managed()
+    public void Escaping_bytes_from_borrowed_list_uses_owned_result_provenance()
     {
         IrProgram ir = LowerProgram("let values = [7u8, 8u8, 9u8] in let bytes = Ashes.Byte.fromList(values) in bytes");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesFromList { RuntimeManaged: true }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Tco_list_of_borrowed_bytes_materializes_owned_elements()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive build n acc =
+                if n <= 0
+                then acc
+                else build(n - 1)(Ashes.Byte.fromText("xy") :: acc)
+            in build(3)([])
+            """);
+        IrInst[] instructions = ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .ToArray();
+
+        instructions.Any(instruction => instruction is IrInst.CopyOutArena
+        {
+            RuntimeManaged: true,
+            Purpose: IrInst.CopyOutPurpose.RcNormalization,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Bytes",
+            RuntimeManaged: true,
+        }).ShouldBeTrue();
     }
 
     [Test]
@@ -721,12 +753,12 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void Escaping_byte_subtext_with_allocating_source_remains_arena_managed()
+    public void Escaping_byte_subtext_with_allocating_source_uses_owned_result_provenance()
     {
         IrProgram ir = LowerProgram("let text = Ashes.Byte.subText(Ashes.Byte.fromText(Ashes.Text.fromInt(42)))(0)(1) in text");
 
         ir.EntryFunction.Instructions.Any(inst =>
-            inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeFalse();
+            inst is IrInst.BytesSubText { RuntimeManaged: true }).ShouldBeTrue();
     }
 
     [Test]
@@ -2003,6 +2035,20 @@ public sealed class OwnershipTests
             InvokeProducerPredicate(predicate, BuildQualifiedCall(module, member, arity))
                 .ShouldBeFalse($"{predicate} must not recognize {module}.{member} (arity {arity}) -- outside the pre-refactor whitelist.");
         }
+    }
+
+    [Test]
+    public void Bytes_materialization_gate_rejects_program_lifetime_views()
+    {
+        InvokeProducerPredicate(
+            "CanMaterializeOwnedBytes",
+            BuildQualifiedCall("Ashes.Byte", "singleton", 1)).ShouldBeTrue();
+        InvokeProducerPredicate(
+            "CanMaterializeOwnedBytes",
+            BuildQualifiedCall("Ashes.Byte", "subView", 3)).ShouldBeTrue();
+        InvokeProducerPredicate(
+            "CanMaterializeOwnedBytes",
+            BuildQualifiedCall("Ashes.IO.File", "mmap", 1)).ShouldBeFalse();
     }
 
     private static Expr BuildQualifiedCall(string module, string member, int arity)

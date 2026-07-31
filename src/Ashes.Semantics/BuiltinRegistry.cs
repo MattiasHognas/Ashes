@@ -304,6 +304,23 @@ public static class BuiltinRegistry
         BigInt
     }
 
+    /// <summary>
+    /// The ownership origin of byte storage returned by a builtin. This is independent of the
+    /// representation selected later by lowering: a <see cref="FreshOwnedBuffer"/> may still be
+    /// arena-backed until an owning consumer requests a runtime-RC representation.
+    /// </summary>
+    public enum BytesOwnershipProvenance
+    {
+        /// <summary>No byte-storage lifetime is proven.</summary>
+        Unknown,
+        /// <summary>Fresh storage owned exclusively by the returned value.</summary>
+        FreshOwnedBuffer,
+        /// <summary>A non-owning view whose lifetime is bounded by another value.</summary>
+        BorrowedView,
+        /// <summary>A non-owning view backed by a program-lifetime file mapping.</summary>
+        ProgramLifetimeView
+    }
+
     /// <summary>A single intrinsic member exported by a built-in module.</summary>
     /// <param name="Name">The member's unqualified name as written in source (e.g. <c>print</c>).</param>
     /// <param name="Kind">Which compiler intrinsic this member lowers to.</param>
@@ -314,12 +331,16 @@ public static class BuiltinRegistry
     /// yields a fresh, uniquely owned value of the named kind, making it eligible for runtime RC
     /// treatment at its use site.
     /// </param>
+    /// <param name="BytesProvenance">
+    /// The byte-storage origin returned directly, or carried in a builtin aggregate result.
+    /// </param>
     public sealed record BuiltinModuleMember(
         string Name,
         BuiltinValueKind Kind,
         bool IsCallable,
         int Arity,
-        FreshRcResultKind ProducesFreshRcResult = FreshRcResultKind.None);
+        FreshRcResultKind ProducesFreshRcResult = FreshRcResultKind.None,
+        BytesOwnershipProvenance BytesProvenance = BytesOwnershipProvenance.Unknown);
 
     /// <summary>
     /// A built-in module: either a pure intrinsic module whose members are compiler primitives, or a
@@ -469,7 +490,12 @@ public static class BuiltinRegistry
                 {
                     ["readText"] = new("readText", BuiltinValueKind.FileReadText, IsCallable: true, Arity: 1),
                     ["readAllBytes"] = new("readAllBytes", BuiltinValueKind.FileReadAllBytes, IsCallable: true, Arity: 1),
-                    ["mmap"] = new("mmap", BuiltinValueKind.FileMmap, IsCallable: true, Arity: 1),
+                    ["mmap"] = new(
+                        "mmap",
+                        BuiltinValueKind.FileMmap,
+                        IsCallable: true,
+                        Arity: 1,
+                        BytesProvenance: BytesOwnershipProvenance.ProgramLifetimeView),
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
@@ -515,8 +541,8 @@ public static class BuiltinRegistry
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
-                    ["empty"] = new("empty", BuiltinValueKind.BytesEmpty, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["empty"] = new("empty", BuiltinValueKind.BytesEmpty, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["singleton"] = new("singleton", BuiltinValueKind.BytesSingleton, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
                     ["length"] = new("length", BuiltinValueKind.BytesLength, IsCallable: true, Arity: 1),
                     ["get"] = new("get", BuiltinValueKind.BytesGet, IsCallable: true, Arity: 2),
                     ["indexOf"] = new("indexOf", BuiltinValueKind.BytesIndexOf, IsCallable: true, Arity: 3),
@@ -526,15 +552,15 @@ public static class BuiltinRegistry
                     // subView returns a borrowed, non-copying view into existing storage (never a
                     // fresh owned buffer) — deliberately excluded from ProducesFreshRcResult; see
                     // LowerBytesSubView / IrInst.BytesSubView.
-                    ["subView"] = new("subView", BuiltinValueKind.BytesSubView, IsCallable: true, Arity: 3),
-                    ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["fromText"] = new("fromText", BuiltinValueKind.BytesFromText, IsCallable: true, Arity: 1),
+                    ["subView"] = new("subView", BuiltinValueKind.BytesSubView, IsCallable: true, Arity: 3, BytesProvenance: BytesOwnershipProvenance.BorrowedView),
+                    ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["fromText"] = new("fromText", BuiltinValueKind.BytesFromText, IsCallable: true, Arity: 1, BytesProvenance: BytesOwnershipProvenance.BorrowedView),
                     ["hash"] = new("hash", BuiltinValueKind.BytesHash, IsCallable: true, Arity: 1),
-                    ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
-                    ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes),
+                    ["u16Le"] = new("u16Le", BuiltinValueKind.BytesU16Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["u32Le"] = new("u32Le", BuiltinValueKind.BytesU32Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["u64Le"] = new("u64Le", BuiltinValueKind.BytesU64Le, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
                     ["getU16Le"] = new("getU16Le", BuiltinValueKind.BytesGetU16Le, IsCallable: true, Arity: 2),
                     ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
                     ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)

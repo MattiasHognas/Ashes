@@ -198,7 +198,9 @@ internal sealed record LoweredTempOwnershipFact(
     LoweredTempProducerKind Producer,
     IrFunctionOrigin? FunctionOrigin,
     SourceLocation? Location,
-    LoweredTempOwnershipReason Reason);
+    LoweredTempOwnershipReason Reason,
+    BuiltinRegistry.BytesOwnershipProvenance BytesProvenance =
+        BuiltinRegistry.BytesOwnershipProvenance.Unknown);
 
 public sealed partial class Lowering
 {
@@ -305,7 +307,10 @@ public sealed partial class Lowering
             LoweredTempOwnershipKind.NewlyProduced,
             producer,
             location,
-            reason);
+            reason,
+            bytesProvenance: layout == LoweredTempLayoutKind.Bytes
+                ? BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                : BuiltinRegistry.BytesOwnershipProvenance.Unknown);
     }
 
     private void RecordBorrowedViewTemp(int target, int source, SourceLocation? location)
@@ -322,7 +327,8 @@ public sealed partial class Lowering
             LoweredTempOwnershipKind.Borrowed,
             LoweredTempProducerKind.Borrow,
             location,
-            LoweredTempOwnershipReason.BorrowForward);
+            LoweredTempOwnershipReason.BorrowForward,
+            bytesProvenance: BuiltinRegistry.BytesOwnershipProvenance.BorrowedView);
     }
 
     private void PropagateTempOwnership(
@@ -369,7 +375,8 @@ public sealed partial class Lowering
             producer,
             location,
             reason,
-            sourceFact.LayoutCapability);
+            sourceFact.LayoutCapability,
+            sourceFact.BytesProvenance);
     }
 
     private static LoweredTempOwnershipReason CopyOutReason(IrInst instruction)
@@ -409,7 +416,9 @@ public sealed partial class Lowering
                 LoweredTempProducerKind.RcDup,
                 location,
                 LoweredTempOwnershipReason.RcDupForward,
-                sourceFact?.LayoutCapability);
+                sourceFact?.LayoutCapability,
+                sourceFact?.BytesProvenance
+                    ?? BuiltinRegistry.BytesOwnershipProvenance.Unknown);
             return;
         }
 
@@ -481,14 +490,19 @@ public sealed partial class Lowering
             existing?.Producer ?? ProducerForReason(effectiveReason),
             location ?? existing?.Location,
             effectiveReason,
-            type is null ? existing?.LayoutCapability : null);
+            type is null ? existing?.LayoutCapability : null,
+            existing?.BytesProvenance
+                ?? (type is TypeRef.TBytes
+                    ? BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                    : BuiltinRegistry.BytesOwnershipProvenance.Unknown));
     }
 
     private void RecordCallResultTempOwnership(
         int temp,
         TypeRef resultType,
         bool runtimeManagedResult,
-        bool normalizedRuntimeManagedResult)
+        bool normalizedRuntimeManagedResult,
+        BuiltinRegistry.BytesOwnershipProvenance bytesProvenance)
     {
         if (runtimeManagedResult || normalizedRuntimeManagedResult)
         {
@@ -498,6 +512,11 @@ public sealed partial class Lowering
                     ? LoweredTempOwnershipReason.KnownCallResult
                     : LoweredTempOwnershipReason.UnknownCallResult,
                 type: resultType);
+            RefineTempBytesProvenance(
+                temp,
+                normalizedRuntimeManagedResult && Prune(resultType) is TypeRef.TBytes
+                    ? BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                    : bytesProvenance);
             return;
         }
 
@@ -511,6 +530,7 @@ public sealed partial class Lowering
                     resultType,
                     existing.Representation),
                 Reason = LoweredTempOwnershipReason.UnknownCallResult,
+                BytesProvenance = bytesProvenance,
             };
             return;
         }
@@ -520,6 +540,7 @@ public sealed partial class Lowering
             LoweredTempOwnershipReason.UnknownCallResult,
             location: null,
             resultType);
+        RefineTempBytesProvenance(temp, bytesProvenance);
     }
 
     private void RecordControlFlowJoinTemp(
@@ -558,6 +579,113 @@ public sealed partial class Lowering
                     existing.Representation),
             };
         }
+    }
+
+    private void RefineTempBytesProvenance(
+        int temp,
+        BuiltinRegistry.BytesOwnershipProvenance provenance)
+    {
+        if (_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? existing))
+        {
+            _tempOwnershipFacts[temp] = existing with { BytesProvenance = provenance };
+        }
+    }
+
+    private void RecordProgramLifetimeBytesView(int temp)
+    {
+        if (!_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? existing))
+        {
+            RecordUnknownProducedTemp(
+                temp,
+                LoweredTempOwnershipReason.InstructionProducer,
+                location: null);
+            existing = _tempOwnershipFacts[temp];
+        }
+
+        _tempOwnershipFacts[temp] = existing with
+        {
+            DropKind = LoweredTempDropKind.NoRuntimeDrop,
+            BytesProvenance = BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView,
+        };
+    }
+
+    private void RecordBytesReinterpretTemp(int temp)
+    {
+        if (_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? existing))
+        {
+            _tempOwnershipFacts[temp] = existing with
+            {
+                Type = new TypeRef.TBytes(),
+                Layout = LoweredTempLayoutKind.Bytes,
+                BytesProvenance = BuiltinRegistry.BytesOwnershipProvenance.BorrowedView,
+            };
+            return;
+        }
+
+        RecordTempOwnership(
+            temp,
+            LoweredTempRepresentation.BorrowedView,
+            ownerTemp: temp,
+            sourceTemp: temp,
+            new TypeRef.TBytes(),
+            LoweredTempLayoutKind.Bytes,
+            LoweredTempDropKind.BorrowedViewNoDrop,
+            LoweredTempOwnershipKind.Borrowed,
+            LoweredTempProducerKind.Borrow,
+            location: null,
+            LoweredTempOwnershipReason.BorrowForward,
+            bytesProvenance: BuiltinRegistry.BytesOwnershipProvenance.BorrowedView);
+    }
+
+    private void RecordLocalBytesProvenance(int slot, int temp)
+    {
+        if (_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.BytesProvenance != BuiltinRegistry.BytesOwnershipProvenance.Unknown)
+        {
+            _localBytesProvenance[slot] = fact.BytesProvenance;
+        }
+        else
+        {
+            _localBytesProvenance.Remove(slot);
+        }
+    }
+
+    private void RecordAggregateBytesProvenance(
+        int aggregateTemp,
+        IReadOnlyList<LoweredValue> children)
+    {
+        if (!_tempOwnershipFacts.TryGetValue(
+                aggregateTemp,
+                out LoweredTempOwnershipFact? aggregateFact))
+        {
+            return;
+        }
+
+        LoweredValue[] bytesChildren = children
+            .Where(child => ContainsBytesLayout(
+                child.Type,
+                new HashSet<TypeSymbol>()))
+            .ToArray();
+        if (bytesChildren.Length == 0)
+        {
+            return;
+        }
+
+        BuiltinRegistry.BytesOwnershipProvenance provenance = bytesChildren.All(child =>
+            child.Ownership.BytesProvenance
+                == BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer)
+                    ? BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                    : bytesChildren.Any(child => child.Ownership.BytesProvenance
+                        == BuiltinRegistry.BytesOwnershipProvenance.Unknown)
+                        ? BuiltinRegistry.BytesOwnershipProvenance.Unknown
+                        : bytesChildren.Any(child => child.Ownership.BytesProvenance
+                            == BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView)
+                            ? BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView
+                            : BuiltinRegistry.BytesOwnershipProvenance.BorrowedView;
+        _tempOwnershipFacts[aggregateTemp] = aggregateFact with
+        {
+            BytesProvenance = provenance,
+        };
     }
 
     private LoweredValue CreateLoweredValue(int temp, TypeRef type)
@@ -624,7 +752,9 @@ public sealed partial class Lowering
         LoweredTempProducerKind producer,
         SourceLocation? location,
         LoweredTempOwnershipReason reason,
-        OrdinaryHeapLayoutCapability? layoutCapability = null)
+        OrdinaryHeapLayoutCapability? layoutCapability = null,
+        BuiltinRegistry.BytesOwnershipProvenance bytesProvenance =
+            BuiltinRegistry.BytesOwnershipProvenance.Unknown)
     {
         _tempOwnershipFacts[temp] = new LoweredTempOwnershipFact(
             temp,
@@ -640,7 +770,8 @@ public sealed partial class Lowering
             producer,
             _activeFunctionOrigin,
             location,
-            reason);
+            reason,
+            bytesProvenance);
     }
 
     private static LoweredTempLayoutKind LayoutForInstruction(IrInst instruction)

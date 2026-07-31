@@ -13,13 +13,16 @@ namespace Ashes.Tests;
 public sealed class TcoPromotionCostSignalTests
 {
     private static Lowering LowerProgram(string source)
+        => LowerProgramAndIr(source).Lowering;
+
+    private static (Lowering Lowering, IrProgram Program) LowerProgramAndIr(string source)
     {
         var diagnostics = new Diagnostics();
         var program = new Parser(source, diagnostics).ParseProgram();
         var lowering = new Lowering(diagnostics);
-        lowering.Lower(program);
+        IrProgram ir = lowering.Lower(program);
         diagnostics.Errors.ShouldBeEmpty();
-        return lowering;
+        return (lowering, ir);
     }
 
     private static TcoParamPlacementTrace GetPlacement(
@@ -32,6 +35,60 @@ public sealed class TcoPromotionCostSignalTests
             ?? throw new InvalidOperationException($"No TCO placement snapshot for '{functionName}'.");
         return decisions.Single(trace =>
             string.Equals(trace.Current.ParameterName, parameterName, StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Unknown_bytes_nested_in_a_rebuilt_list_element_stays_arena_based()
+    {
+        const string source =
+            """
+            let recursive build bytes n acc =
+                if n <= 0
+                then acc
+                else build(bytes)(n - 1)((bytes, n) :: acc)
+
+            match build(Ashes.Byte.fromText("x"))(3)([]) with
+                | [] -> 0
+                | _ :: _ -> 1
+            """;
+
+        (Lowering lowering, IrProgram ir) = LowerProgramAndIr(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "build", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.Arena);
+        placement.Current.Eligibility.ResolvedLayoutEligible.ShouldBeFalse();
+        ir.Functions.Where(function => string.Equals(
+                function.Origin?.Source?.SourceName,
+                "build",
+                StringComparison.Ordinal))
+            .SelectMany(function => function.Instructions)
+            .Any(instruction => instruction is IrInst.CopyOutArena
+            {
+                StaticSizeBytes: -1,
+                RuntimeManaged: true,
+            }).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Explicit_owned_bytes_nested_in_a_rebuilt_list_element_are_tco_eligible()
+    {
+        const string source =
+            """
+            let recursive build n acc =
+                if n <= 0
+                then acc
+                else build(n - 1)((Ashes.Byte.singleton(1u8), 1) :: acc)
+
+            match build(3)([]) with
+                | [] -> 0
+                | _ :: _ -> 1
+            """;
+
+        Lowering lowering = LowerProgram(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "build", "acc");
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.Eligibility.ResolvedLayoutEligible.ShouldBeTrue();
     }
 
     [Test]

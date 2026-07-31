@@ -1616,6 +1616,7 @@ public sealed partial class Lowering
                 int tailTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
                 Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+                PropagateExtractedBytesProvenance(valueTemp, headTemp, c.Head, bindingTypes);
                 EmitPattern(c.Head, headTemp, failLabel, bindingTypes);
                 EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes);
                 return;
@@ -1625,6 +1626,8 @@ public sealed partial class Lowering
                 {
                     int elemTemp = NewTemp();
                     Emit(new IrInst.LoadMemOffset(elemTemp, valueTemp, i * 8));
+                    PropagateExtractedBytesProvenance(
+                        valueTemp, elemTemp, tuple.Elements[i], bindingTypes);
                     EmitPattern(tuple.Elements[i], elemTemp, failLabel, bindingTypes);
                 }
                 return;
@@ -1665,6 +1668,7 @@ public sealed partial class Lowering
         }
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalBytesProvenance(slot, valueTemp);
         RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
         _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
         _tcoCtx?.RegisterPatternBindingSlot(v, slot);
@@ -1698,8 +1702,56 @@ public sealed partial class Lowering
             // Extract payload at each field index and bind sub-patterns.
             int payloadTemp = NewTemp();
             Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, i));
+            PropagateExtractedBytesProvenance(
+                valueTemp,
+                payloadTemp,
+                ctor.Patterns[i],
+                bindingTypes);
             EmitPattern(ctor.Patterns[i], payloadTemp, failLabel, bindingTypes);
         }
+    }
+
+    private void PropagateExtractedBytesProvenance(
+        int aggregateTemp,
+        int fieldTemp,
+        Pattern fieldPattern,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    {
+        if (!_tempOwnershipFacts.TryGetValue(
+                aggregateTemp,
+                out LoweredTempOwnershipFact? aggregateFact)
+            || aggregateFact.BytesProvenance
+                == BuiltinRegistry.BytesOwnershipProvenance.Unknown
+            || !PatternContainsBytesBinding(fieldPattern, bindingTypes))
+        {
+            return;
+        }
+
+        RecordUnknownProducedTemp(
+            fieldTemp,
+            LoweredTempOwnershipReason.BorrowForward,
+            location: null);
+        RefineTempBytesProvenance(fieldTemp, aggregateFact.BytesProvenance);
+    }
+
+    private bool PatternContainsBytesBinding(
+        Pattern pattern,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    {
+        return pattern switch
+        {
+            Pattern.Var variable => bindingTypes.TryGetValue(
+                    variable.Name,
+                    out TypeRef? type)
+                && Prune(type) is TypeRef.TBytes,
+            Pattern.Cons cons => PatternContainsBytesBinding(cons.Head, bindingTypes)
+                || PatternContainsBytesBinding(cons.Tail, bindingTypes),
+            Pattern.Tuple tuple => tuple.Elements.Any(element =>
+                PatternContainsBytesBinding(element, bindingTypes)),
+            Pattern.Constructor constructor => constructor.Patterns.Any(child =>
+                PatternContainsBytesBinding(child, bindingTypes)),
+            _ => false,
+        };
     }
 
     private void EmitRequireTagMatch(int ptrTemp, int expectedTag, string failLabel)

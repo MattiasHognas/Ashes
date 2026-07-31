@@ -22,19 +22,26 @@ namespace Ashes.Semantics;
 // IsKnownRuntimeNormalizedFunctionArgument's unrelated TCO-argument-normalization question.
 public sealed partial class Lowering
 {
-    private sealed record ResolvedFunctionResultProvenance(bool RcEligible, FuncKey? ForwardsTo);
+    private sealed record ResolvedFunctionResultProvenance(
+        bool RcEligible,
+        FuncKey? ForwardsTo,
+        BuiltinRegistry.BytesOwnershipProvenance BytesProvenance);
 
     private sealed record ProvenanceFunctionNode(
         bool HasDirectEligibleResult,
         bool HasRejectedResult,
         int ConsideredArmCount,
         IReadOnlySet<FuncKey> ForwardTargets,
-        FuncKey? UnambiguousForwardTarget);
+        FuncKey? UnambiguousForwardTarget,
+        IReadOnlySet<BuiltinRegistry.BytesOwnershipProvenance> DirectBytesProvenances,
+        bool HasUnknownBytesResult);
 
     private sealed record ProvenanceComponent(
         bool HasDirectEligibleResult,
         bool HasRejectedResult,
-        IReadOnlySet<int> Dependencies);
+        IReadOnlySet<int> Dependencies,
+        IReadOnlySet<BuiltinRegistry.BytesOwnershipProvenance> DirectBytesProvenances,
+        bool HasUnknownBytesResult);
 
     private sealed record ProvenanceLetBinding(
         Expr Value,
@@ -71,7 +78,10 @@ public sealed partial class Lowering
 
         return _maProvenanceMemo.GetValueOrDefault(
             function,
-            new ResolvedFunctionResultProvenance(false, null));
+            new ResolvedFunctionResultProvenance(
+                false,
+                null,
+                BuiltinRegistry.BytesOwnershipProvenance.Unknown));
     }
 
     private void ComputeFunctionResultProvenanceFixpoint()
@@ -94,12 +104,15 @@ public sealed partial class Lowering
         IReadOnlyList<ProvenanceComponent> components =
             BuildProvenanceComponents(nodes, componentByFunction);
         HashSet<int> eligibleComponents = ComputeEligibleProvenanceComponents(components);
+        IReadOnlyList<BuiltinRegistry.BytesOwnershipProvenance> bytesProvenanceByComponent =
+            ComputeBytesProvenanceComponents(components);
 
         foreach ((FuncKey function, ProvenanceFunctionNode node) in nodes)
         {
             _maProvenanceMemo[function] = new ResolvedFunctionResultProvenance(
                 eligibleComponents.Contains(componentByFunction[function]),
-                node.UnambiguousForwardTarget);
+                node.UnambiguousForwardTarget,
+                bytesProvenanceByComponent[componentByFunction[function]]);
         }
 
         _maProvenanceAnalysisComplete = true;
@@ -216,12 +229,18 @@ public sealed partial class Lowering
         var dependencies = Enumerable.Range(0, componentCount)
             .Select(_ => new HashSet<int>())
             .ToArray();
+        var directBytes = Enumerable.Range(0, componentCount)
+            .Select(_ => new HashSet<BuiltinRegistry.BytesOwnershipProvenance>())
+            .ToArray();
+        var unknownBytes = new bool[componentCount];
         foreach ((FuncKey function, ProvenanceFunctionNode node) in nodes)
         {
             int component = componentByFunction[function];
             direct[component] |= node.HasDirectEligibleResult;
             rejected[component] |= node.HasRejectedResult;
             considered[component] += node.ConsideredArmCount;
+            directBytes[component].UnionWith(node.DirectBytesProvenances);
+            unknownBytes[component] |= node.HasUnknownBytesResult;
             foreach (FuncKey target in node.ForwardTargets)
             {
                 int dependency = componentByFunction[target];
@@ -238,7 +257,9 @@ public sealed partial class Lowering
             result.Add(new ProvenanceComponent(
                 direct[component],
                 rejected[component] || considered[component] == 0,
-                dependencies[component]));
+                dependencies[component],
+                directBytes[component],
+                unknownBytes[component]));
         }
 
         return result;
@@ -272,6 +293,67 @@ public sealed partial class Lowering
         return eligible;
     }
 
+    private static IReadOnlyList<BuiltinRegistry.BytesOwnershipProvenance>
+        ComputeBytesProvenanceComponents(IReadOnlyList<ProvenanceComponent> components)
+    {
+        var results = Enumerable.Repeat(
+            BuiltinRegistry.BytesOwnershipProvenance.Unknown,
+            components.Count).ToArray();
+        var resolved = new bool[components.Count];
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int component = 0; component < components.Count; component++)
+            {
+                if (resolved[component])
+                {
+                    continue;
+                }
+
+                ProvenanceComponent node = components[component];
+                if (node.HasUnknownBytesResult)
+                {
+                    resolved[component] = true;
+                    changed = true;
+                    continue;
+                }
+
+                if (!node.Dependencies.All(dependency => resolved[dependency]))
+                {
+                    continue;
+                }
+
+                if (node.Dependencies.Any(dependency =>
+                        results[dependency]
+                            == BuiltinRegistry.BytesOwnershipProvenance.Unknown))
+                {
+                    resolved[component] = true;
+                    changed = true;
+                    continue;
+                }
+
+                var candidates = new HashSet<BuiltinRegistry.BytesOwnershipProvenance>(
+                    node.DirectBytesProvenances);
+                foreach (int dependency in node.Dependencies)
+                {
+                    BuiltinRegistry.BytesOwnershipProvenance dependencyProvenance =
+                        results[dependency];
+                    candidates.Add(dependencyProvenance);
+                }
+
+                results[component] = candidates.Count == 1
+                    ? candidates.Single()
+                    : BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+                resolved[component] = true;
+                changed = true;
+            }
+        }
+        while (changed);
+
+        return results;
+    }
+
     /// <summary>
     /// Classifies a registered function's result by its terminal arms without resolving forward targets
     /// recursively. Directly eligible constructions seed the later fixpoint; exact saturated forwarding
@@ -283,7 +365,14 @@ public sealed partial class Lowering
     {
         if (!_maFuncs.TryGetValue(function, out var info))
         {
-            return new ProvenanceFunctionNode(false, true, 0, new HashSet<FuncKey>(), null);
+            return new ProvenanceFunctionNode(
+                false,
+                true,
+                0,
+                new HashSet<FuncKey>(),
+                null,
+                new HashSet<BuiltinRegistry.BytesOwnershipProvenance>(),
+                true);
         }
 
         Expr body = _maProvenanceBodies.GetValueOrDefault(function) ?? info.Body;
@@ -293,7 +382,14 @@ public sealed partial class Lowering
         // existing exact-body special case before terminal-arm collection.
         if (body is Expr.StrLit)
         {
-            return new ProvenanceFunctionNode(true, false, 1, new HashSet<FuncKey>(), null);
+            return new ProvenanceFunctionNode(
+                true,
+                false,
+                1,
+                new HashSet<FuncKey>(),
+                null,
+                new HashSet<BuiltinRegistry.BytesOwnershipProvenance>(),
+                true);
         }
 
         var letBindings = new Dictionary<string, ProvenanceLetBinding>(StringComparer.Ordinal);
@@ -312,7 +408,9 @@ public sealed partial class Lowering
         bool hasRejectedResult = false;
         int consideredArmCount = 0;
         var forwardTargets = new HashSet<FuncKey>();
-
+        var directBytesProvenances =
+            new HashSet<BuiltinRegistry.BytesOwnershipProvenance>();
+        bool hasUnknownBytesResult = false;
         foreach (ProvenanceArm arm in arms)
         {
             if (IsSelfRecursiveArm(arm, function))
@@ -321,6 +419,20 @@ public sealed partial class Lowering
             }
 
             consideredArmCount++;
+            if (TryGetBuiltinBytesProvenance(
+                arm.Expression,
+                out BuiltinRegistry.BytesOwnershipProvenance bytesProvenance))
+            {
+                directBytesProvenances.Add(bytesProvenance);
+            }
+            else if (!TryResolveForwardTarget(
+                arm.Expression,
+                arm.FunctionScope,
+                out _))
+            {
+                hasUnknownBytesResult = true;
+            }
+
             if (IsDirectRcConstruction(arm.Expression, arm.LetBindings)
                 || IsRuntimeRcFreshBuiltinProducer(arm.Expression)
                 || arm.Expression is Expr.Add)
@@ -348,7 +460,9 @@ public sealed partial class Lowering
             hasRejectedResult,
             consideredArmCount,
             forwardTargets,
-            unambiguousForwardTarget);
+            unambiguousForwardTarget,
+            directBytesProvenances,
+            hasUnknownBytesResult);
     }
 
     /// <summary>
