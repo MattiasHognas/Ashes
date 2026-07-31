@@ -434,6 +434,12 @@ for proven scratch and explicit scheduler/specialized regions. See the
 [architecture memory model](architecture.md#memory-model) for ownership and
 boundary invariants.
 
+Semantic lowering describes these payloads with one cycle-guarded ordinary
+heap-layout capability. ADT child offsets are relative to the public value
+pointer shown above, so the same constructor-specific descriptor drives
+recursive drops, TCO normalization, and runtime-reuse cleanup independently of
+the optional RC header.
+
 A TCO back edge may reuse an older runtime-owned `List(record)` graph as the
 normalization destination when the replacement is fresh and every record field
 is copied inline. It first checks equal spine length and uniqueness of every old

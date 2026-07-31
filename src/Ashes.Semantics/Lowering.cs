@@ -1790,18 +1790,14 @@ public sealed partial class Lowering
             HeapLayouts.Adt.AllocationSizeBytes(constructor.Arity),
             RuntimeManaged: true,
             IrInst.CopyOutPurpose.RcNormalization));
-        for (int i = 0; i < constructor.Arity; i++)
+        List<OrdinaryHeapLayoutChild> children =
+            GetOwnedOrdinaryHeapChildren(named, constructor);
+        foreach (OrdinaryHeapLayoutChild child in children)
         {
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (CanArenaReset(fieldType))
-            {
-                continue;
-            }
-
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, i));
-            int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, fieldType);
-            Emit(new IrInst.SetAdtField(resultTemp, i, copiedChild));
+            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, child.Index));
+            int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, child.Type);
+            Emit(new IrInst.SetAdtField(resultTemp, child.Index, copiedChild));
         }
 
         MarkRuntimeManagedTemp(resultTemp);

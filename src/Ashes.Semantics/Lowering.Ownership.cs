@@ -505,36 +505,13 @@ public sealed partial class Lowering
         EmitRuntimeManagedChildDrop(headTemp, childType);
     }
 
-    private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named)
-    {
-        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
-        {
-            for (int i = 0; i < constructor.Arity; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (!CanArenaReset(fieldType))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    private bool HasRuntimeManagedChildFields(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).ContainsOwnedChild;
 
     private void EmitRuntimeManagedTupleDrop(int valueTemp, TypeRef.TTuple tuple)
     {
-        List<(int Index, TypeRef Type)> children = [];
-        for (int i = 0; i < tuple.Elements.Count; i++)
-        {
-            TypeRef child = Prune(tuple.Elements[i]);
-            if (child is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                || child is TypeRef.TList
-                || child is TypeRef.TNamedType)
-            {
-                children.Add((i, child));
-            }
-        }
+        List<OrdinaryHeapLayoutChild> children =
+            GetOwnedOrdinaryHeapChildren(tuple);
 
         string sharedLabel = NewLabel("rc_drop_tuple_shared");
         if (children.Count > 0)
@@ -542,11 +519,14 @@ public sealed partial class Lowering
             int uniqueTemp = NewTemp();
             Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
-            foreach ((int index, TypeRef childType) in children)
+            foreach (OrdinaryHeapLayoutChild child in children)
             {
                 int childTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(childTemp, valueTemp, index * 8));
-                EmitRuntimeManagedChildDrop(childTemp, childType);
+                Emit(new IrInst.LoadMemOffset(
+                    childTemp,
+                    valueTemp,
+                    child.OffsetBytes));
+                EmitRuntimeManagedChildDrop(childTemp, child.Type);
             }
 
             Emit(new IrInst.Label(sharedLabel));
@@ -641,15 +621,8 @@ public sealed partial class Lowering
         }
 
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
-        List<(int Index, TypeRef Type)> childFields = [];
-        for (int i = 0; i < constructor.Arity; i++)
-        {
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType))
-            {
-                childFields.Add((i, fieldType));
-            }
-        }
+        List<OrdinaryHeapLayoutChild> childFields =
+            GetOwnedOrdinaryHeapChildren(named, constructor);
 
         if (childFields.Count > 0)
         {
@@ -657,11 +630,11 @@ public sealed partial class Lowering
             string sharedLabel = NewLabel("rc_drop_shared");
             Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
-            foreach ((int fieldIndex, TypeRef childType) in childFields)
+            foreach (OrdinaryHeapLayoutChild child in childFields)
             {
                 int childTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
-                EmitRuntimeManagedChildDrop(childTemp, childType);
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+                EmitRuntimeManagedChildDrop(childTemp, child.Type);
             }
 
             Emit(new IrInst.Label(sharedLabel));
@@ -751,19 +724,12 @@ public sealed partial class Lowering
         bool knownUnique,
         IReadOnlySet<int>? excludedFieldIndices = null)
     {
-        List<(int Index, TypeRef Type)> childFields = [];
-        for (int i = 0; i < constructor.Arity; i++)
+        List<OrdinaryHeapLayoutChild> childFields =
+            GetOwnedOrdinaryHeapChildren(named, constructor);
+        if (excludedFieldIndices is not null)
         {
-            if (excludedFieldIndices is not null && excludedFieldIndices.Contains(i))
-            {
-                continue;
-            }
-
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            if (!CanArenaReset(fieldType))
-            {
-                childFields.Add((i, fieldType));
-            }
+            childFields.RemoveAll(child =>
+                excludedFieldIndices.Contains(child.Index));
         }
 
         if (childFields.Count == 0)
@@ -780,11 +746,11 @@ public sealed partial class Lowering
             Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
         }
 
-        foreach ((int fieldIndex, TypeRef childType) in childFields)
+        foreach (OrdinaryHeapLayoutChild child in childFields)
         {
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, valueTemp, fieldIndex));
-            EmitRuntimeManagedChildDrop(childTemp, childType);
+            Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+            EmitRuntimeManagedChildDrop(childTemp, child.Type);
         }
 
         if (!knownUnique)
@@ -805,18 +771,11 @@ public sealed partial class Lowering
             return;
         }
 
-        var childFields = new List<(int Index, TypeRef Type)>();
-        for (int i = 0; i < cleanup.Constructor.Arity; i++)
+        List<OrdinaryHeapLayoutChild> childFields =
+            GetOwnedOrdinaryHeapChildren(cleanup.Type, cleanup.Constructor);
+        if (transferredFields is not null)
         {
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(
-                cleanup.Constructor,
-                i,
-                cleanup.Type));
-            if (!CanArenaReset(fieldType)
-                && (transferredFields is null || !transferredFields.Contains(i)))
-            {
-                childFields.Add((i, fieldType));
-            }
+            childFields.RemoveAll(child => transferredFields.Contains(child.Index));
         }
 
         if (childFields.Count == 0)
@@ -830,11 +789,11 @@ public sealed partial class Lowering
         Emit(new IrInst.CmpIntNe(hasTokenTemp, tokenTemp, zeroTemp));
         string endLabel = NewLabel("reuse_children_released");
         Emit(new IrInst.JumpIfFalse(hasTokenTemp, endLabel));
-        foreach ((int fieldIndex, TypeRef childType) in childFields)
+        foreach (OrdinaryHeapLayoutChild child in childFields)
         {
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, fieldIndex));
-            EmitRuntimeManagedChildDrop(childTemp, childType);
+            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, child.Index));
+            EmitRuntimeManagedChildDrop(childTemp, child.Type);
         }
         Emit(new IrInst.Label(endLabel));
     }
@@ -908,17 +867,13 @@ public sealed partial class Lowering
         foreach ((string constructorLabel, ConstructorSymbol constructor) in blocks)
         {
             Emit(new IrInst.Label(constructorLabel));
-            for (int i = 0; i < constructor.Arity; i++)
+            List<OrdinaryHeapLayoutChild> children =
+                GetOwnedOrdinaryHeapChildren(named, constructor);
+            foreach (OrdinaryHeapLayoutChild child in children)
             {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (CanArenaReset(fieldType))
-                {
-                    continue;
-                }
-
                 int childTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(childTemp, valueTemp, i));
-                EmitRuntimeManagedChildDrop(childTemp, fieldType);
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+                EmitRuntimeManagedChildDrop(childTemp, child.Type);
             }
 
             Emit(new IrInst.Jump(sharedLabel));
@@ -1544,7 +1499,8 @@ public sealed partial class Lowering
             TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
             TypeRef.TList list => CanArenaReset(Prune(list.Element)),
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-            TypeRef.TNamedType named => IsConcretelyRuntimeManageableAdt(named, null),
+            TypeRef.TNamedType named =>
+                GetOrdinaryHeapLayoutCapability(named).OwnedChildrenDroppable,
             // A closure (TFun) result is deliberately NEVER trusted through this static path, even
             // though a closure is generally safely RC-droppable on its own (its generated __rc_cdrop
             // dropper recursively releases whatever it captured) — FunctionResultProvenance's terminal-
@@ -1562,60 +1518,6 @@ public sealed partial class Lowering
             // this phase (caught by Linux_backend_llvm_runtime_rc_escaping_closure_memory_should_plateau).
             _ => false,
         };
-    }
-
-    /// <summary>
-    /// Whether every constructor field of ADT <paramref name="named"/> (recursively, through any
-    /// nested Tuple/List/ADT field) is a type <see cref="EmitRuntimeManagedAdtDrop"/>'s general per-field
-    /// walk can actually drop — deliberately NOT <see cref="CanRuntimeManageAdt"/>, which additionally
-    /// requires a single named-field constructor (a narrower, unrelated construction-time-optimization
-    /// requirement) and would wrongly reject an ordinary multi-constructor or positional ADT (e.g. a
-    /// plain <c>type Pair = | Pair(Int, Int)</c>) that the general drop path handles fine. A resource-
-    /// bearing field (a <c>File</c>/<c>Socket</c>/<c>Process</c> handle, checked via
-    /// <see cref="IsResourceBearing(TypeRef)"/>) is never supported — those need explicit close semantics, not an
-    /// RC drop. <paramref name="path"/> guards a self-referential ADT (e.g. <c>Tree = Node(Tree, Tree)</c>)
-    /// against infinite recursion; a cycle is assumed sound for the recursive occurrence itself (the drop
-    /// machinery's own recursive-copy paths handle these), so only non-recursive fields are re-verified.
-    /// </summary>
-    private bool IsConcretelyRuntimeManageableAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path)
-    {
-        if (IsResourceBearing(named))
-        {
-            return false;
-        }
-
-        path ??= [];
-        if (!path.Add(named.Symbol))
-        {
-            return true;
-        }
-
-        foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
-        {
-            for (int i = 0; i < constructor.Arity; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (CanArenaReset(fieldType))
-                {
-                    continue;
-                }
-
-                bool supported = fieldType switch
-                {
-                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                    TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-                    TypeRef.TNamedType child => IsConcretelyRuntimeManageableAdt(child, path),
-                    _ => false,
-                };
-                if (!supported)
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -1734,54 +1636,10 @@ public sealed partial class Lowering
     /// </summary>
     private bool CanCopyOutAdt(TypeRef.TNamedType named, out int staticSizeBytes)
     {
-        staticSizeBytes = 0;
-        var sym = named.Symbol;
-        if (sym.Constructors.Count == 0)
-        {
-            return false;
-        }
-
-        // All constructors must have the same arity for static-size copy.
-        int arity = sym.Constructors[0].Arity;
-        for (int i = 1; i < sym.Constructors.Count; i++)
-        {
-            if (sym.Constructors[i].Arity != arity)
-            {
-                return false;
-            }
-        }
-
-        // Build type parameter substitution map: TTypeParam → concrete TypeRef.
-        // Constructor parameter types use TTypeParam placeholders (e.g. Box(T) stores
-        // TTypeParam("T")), while the instantiated TNamedType has the concrete type
-        // arguments (e.g. TNamedType(Box, [TInt])).
-        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
-        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
-        {
-            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
-            for (int i = 0; i < sym.TypeParameters.Count; i++)
-            {
-                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
-            }
-        }
-
-        // Check all field types across all constructors are copy types.
-        // Pointer-containing fields (TStr, TList, TFun, TNamedType) are not safe
-        // because the pointed-to data may be within the freed arena region.
-        foreach (var ctor in sym.Constructors)
-        {
-            foreach (var fieldType in ctor.ParameterTypes)
-            {
-                var resolved = ResolveFieldType(fieldType, typeParamMap);
-                if (!CanArenaReset(resolved))
-                {
-                    return false;
-                }
-            }
-        }
-
-        staticSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(arity);
-        return true;
+        OrdinaryHeapLayoutCapability capability =
+            GetOrdinaryHeapLayoutCapability(named);
+        staticSizeBytes = capability.StaticCopySizeBytes ?? 0;
+        return capability.StructuralCopy == OrdinaryHeapStructuralCopyKind.Shallow;
     }
 
     /// <summary>
@@ -1789,66 +1647,11 @@ public sealed partial class Lowering
     /// type-directed runtime dropper. Constructor freshness is checked separately so an RC record
     /// never captures an arena-owned child. Cyclic and resource-bearing layouts stay on the arena path.
     /// </summary>
-    private bool CanRuntimeManageAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
-    {
-        TypeSymbol symbol = named.Symbol;
-        if (symbol.Constructors.Count != 1
-            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count == 0
-            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
-            || IsResourceBearing(named))
-        {
-            return false;
-        }
+    private bool CanRuntimeManageAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RuntimeRecordAdtSupported;
 
-        path ??= [];
-        if (!path.Add(symbol))
-        {
-            return false;
-        }
-
-        ConstructorSymbol constructor = symbol.Constructors[0];
-        for (int i = 0; i < constructor.Arity; i++)
-        {
-            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-            bool supported = CanArenaReset(fieldType) || fieldType switch
-            {
-                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-                TypeRef.TNamedType child => CanRuntimeManageAdt(child, path),
-                _ => false,
-            };
-            if (!supported)
-            {
-                path.Remove(symbol);
-                return false;
-            }
-        }
-
-        path.Remove(symbol);
-        return true;
-    }
-
-    private bool CanRuntimeManageOwnedTupleType(TypeRef.TTuple tuple)
-    {
-        foreach (TypeRef element in tuple.Elements)
-        {
-            TypeRef elementType = Prune(element);
-            bool supported = CanArenaReset(elementType) || elementType switch
-            {
-                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                TypeRef.TTuple child => CanRuntimeManageOwnedTupleType(child),
-                _ => false,
-            };
-            if (!supported)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    private bool CanRuntimeManageOwnedTupleType(TypeRef.TTuple tuple) =>
+        GetOrdinaryHeapLayoutCapability(tuple).OwnedChildrenDroppable;
 
     private bool TryGetRuntimeManagedListHeadCopy(
         TypeRef elementType,
@@ -1877,83 +1680,11 @@ public sealed partial class Lowering
         return false;
     }
 
-    private bool CanRuntimeManageTcoListElement(TypeRef elementType)
-    {
-        TypeRef element = Prune(elementType);
-        if (RuntimeManagedTcoListElementContainsBytes(element))
-        {
-            return false;
-        }
+    private bool CanRuntimeManageTcoListElement(TypeRef elementType) =>
+        GetOrdinaryHeapLayoutCapability(elementType).RuntimeTcoListElementSupported;
 
-        return CanArenaReset(element) || element switch
-        {
-            TypeRef.TStr or TypeRef.TBigInt => true,
-            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element),
-            TypeRef.TTuple tuple => tuple.Elements.All(CanRuntimeManageTcoListElement),
-            TypeRef.TNamedType named => CanCopyOutAdt(named, out _)
-                || CanRuntimeManageAdt(named)
-                || CanRuntimeManageOwnedChildAdt(named),
-            _ => false,
-        };
-    }
-
-    private bool RuntimeManagedTcoListElementContainsBytes(
-        TypeRef type,
-        HashSet<TypeSymbol>? path = null)
-    {
-        TypeRef valueType = Prune(type);
-        switch (valueType)
-        {
-            case TypeRef.TBytes:
-                return true;
-            case TypeRef.TList list:
-                return RuntimeManagedTcoListElementContainsBytes(list.Element, path);
-            case TypeRef.TTuple tuple:
-                return tuple.Elements.Any(element =>
-                    RuntimeManagedTcoListElementContainsBytes(element, path));
-            case TypeRef.TNamedType named:
-                path ??= [];
-                if (!path.Add(named.Symbol))
-                {
-                    return false;
-                }
-
-                bool containsBytes = named.Symbol.Constructors.Any(constructor =>
-                    Enumerable.Range(0, constructor.Arity).Any(index =>
-                        RuntimeManagedTcoListElementContainsBytes(
-                            InstantiateConstructorParameterType(constructor, index, named),
-                            path)));
-                path.Remove(named.Symbol);
-                return containsBytes;
-            default:
-                return false;
-        }
-    }
-
-    private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named)
-    {
-        TypeSymbol symbol = named.Symbol;
-        if (symbol.Constructors.Count == 0
-            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
-            || IsResourceBearing(named))
-        {
-            return false;
-        }
-
-        foreach (ConstructorSymbol constructor in symbol.Constructors)
-        {
-            for (int i = 0; i < constructor.Arity; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (!CanArenaReset(fieldType))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
+    private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RuntimeCopyAdtSupported;
 
     private bool CanRuntimeManageGenericCopyAdtConstructorApplication(
         ConstructorSymbol constructor,
@@ -2145,113 +1876,11 @@ public sealed partial class Lowering
     /// A heterogeneous ADT boundary: monomorphic variants may own fresh children supported by the
     /// type-directed runtime dropper. Recursive variants and generic payloads use separate gates.
     /// </summary>
-    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
-    {
-        TypeSymbol symbol = named.Symbol;
-        if (symbol.IsBuiltin
-            || symbol.TypeParameters.Count > 0
-            || symbol.Constructors.Count < 2
-            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
-            || IsResourceBearing(named))
-        {
-            return false;
-        }
+    private bool CanRuntimeManageOwnedChildAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RuntimeOwnedChildAdtSupported;
 
-        // CanRuntimeManageTcoOwnedChildAdt's own delegation back to this method (below) means a
-        // nested named-type field can now re-enter this method for a DIFFERENT type — guard against a
-        // mutually-referential pair of heterogeneous ADTs (A has a field of type B, B has a field of
-        // type A) looping forever, the same way CanRuntimeManageAdt already guards its own recursion.
-        path ??= [];
-        if (!path.Add(symbol))
-        {
-            return false;
-        }
-
-        bool hasOwnedChild = false;
-        foreach (ConstructorSymbol constructor in symbol.Constructors)
-        {
-            for (int i = 0; i < constructor.Arity; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (CanArenaReset(fieldType))
-                {
-                    continue;
-                }
-
-                bool supported = fieldType switch
-                {
-                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                    TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
-                    // A nested named-type field only qualifies via CanRuntimeManageAdt's own
-                    // record-syntax requirement OR (the shape a single-constructor, positional
-                    // accumulator type like a TCO loop's own state record actually has)
-                    // CanRuntimeManageTcoOwnedChildAdt's looser positional-constructor-fields test —
-                    // record-vs-positional syntax is not itself an ownership-relevant distinction, so a
-                    // heterogeneous ADT's child field should not be rejected just because the child
-                    // happens to use positional fields.
-                    TypeRef.TNamedType child => CanRuntimeManageAdt(child) || CanRuntimeManageTcoOwnedChildAdt(child, path),
-                    _ => false,
-                };
-                if (!supported)
-                {
-                    path.Remove(symbol);
-                    return false;
-                }
-
-                hasOwnedChild = true;
-            }
-        }
-
-        path.Remove(symbol);
-        return hasOwnedChild;
-    }
-
-    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named, HashSet<TypeSymbol>? path = null)
-    {
-        TypeSymbol symbol = named.Symbol;
-        if (symbol.Constructors.Count != 1
-            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0)
-        {
-            return CanRuntimeManageOwnedChildAdt(named, path);
-        }
-
-        return CanRuntimeManageTcoOwnedChildAdtConstructorFields(named);
-    }
-
-    private bool CanRuntimeManageTcoOwnedChildAdtConstructorFields(TypeRef.TNamedType named)
-    {
-        TypeSymbol symbol = named.Symbol;
-        if (symbol.IsBuiltin
-            || symbol.TypeParameters.Count > 0
-            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
-            || IsResourceBearing(named))
-        {
-            return false;
-        }
-
-        bool hasOwnedChild = false;
-        foreach (ConstructorSymbol constructor in symbol.Constructors)
-        {
-            for (int i = 0; i < constructor.Arity; i++)
-            {
-                TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, named));
-                if (CanArenaReset(fieldType))
-                {
-                    continue;
-                }
-
-                if (fieldType is not TypeRef.TList list || !CanArenaReset(Prune(list.Element)))
-                {
-                    return false;
-                }
-
-                hasOwnedChild = true;
-            }
-        }
-
-        return hasOwnedChild;
-    }
+    private bool CanRuntimeManageTcoOwnedChildAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RuntimeTcoOwnedChildAdtSupported;
 
     private bool CanRuntimeManageOwnedChildAdtConstructorApplication(
         ConstructorSymbol constructor,
@@ -2499,83 +2128,19 @@ public sealed partial class Lowering
     /// no pointer back into the reclaimable region. Unlike <see cref="CanCopyOutAdt"/> (a flat memcpy,
     /// copy-type fields only) this permits pointer fields as long as every one is itself deep-copyable:
     /// a copy type, a String/Bytes, a List of deep-copyable-by-<see cref="EmitDeepCopy"/> elements, or
-    /// another non-resource deep-copyable ADT (recursion guarded by <paramref name="path"/>).
+    /// another non-resource deep-copyable ADT.
     /// Excludes closures (env may share/own resources), BigInt (no ADT-field deep-copy path), and
     /// resource-bearing types (an fd must never be duplicated). Used to let a TCO loop threading a
     /// fixed-shape pointer-bearing accumulator (e.g. fannkuch's <c>State(perm, count)</c>) reset: the
     /// deep clone breaks any tail-sharing with the previous accumulator, so it is fixed-watermark safe.
     /// </summary>
-    private bool CanDeepCopyOutAdt(TypeRef.TNamedType named, HashSet<string>? path = null)
-    {
-        var sym = named.Symbol;
-        if (sym.Constructors.Count == 0 || BuiltinRegistry.IsResourceTypeName(sym.Name) || IsResourceBearing(named))
-        {
-            return false;
-        }
-
-        // Decline SELF-RECURSIVE ADTs (trees like MapTree). Such an accumulator is unbounded, so a full
-        // per-iteration deep copy would be O(size)/iteration, and these are exactly the shapes the in-
-        // place reuse specialization owns — deep-copying one out from under it corrupts it. `path` holds
-        // the ADT types on the current field chain (removed on the way back up, so a diamond of the same
-        // non-recursive sub-ADT is still fine); a name already on the path is a cycle.
-        path ??= new HashSet<string>(StringComparer.Ordinal);
-        if (!path.Add(sym.Name))
-        {
-            return false;
-        }
-
-        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
-        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
-        {
-            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
-            for (int i = 0; i < sym.TypeParameters.Count; i++)
-            {
-                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
-            }
-        }
-
-        bool ok = true;
-        foreach (var ctor in sym.Constructors)
-        {
-            foreach (var fieldType in ctor.ParameterTypes)
-            {
-                if (!IsDeepCopyOutSafeFieldType(ResolveFieldType(fieldType, typeParamMap), path))
-                {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if (!ok)
-            {
-                break;
-            }
-        }
-
-        path.Remove(sym.Name);
-        return ok;
-    }
+    private bool CanDeepCopyOutAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).ArenaDeepCopySupported;
 
     // True if a value of this type can be deep-copied into a self-contained clone (no pointer back into
     // the reclaimable arena) — the condition for carrying it across the reset at the fixed watermark.
-    private bool IsDeepCopyOutSafeType(TypeRef type)
-        => IsDeepCopyOutSafeFieldType(type, new HashSet<string>(StringComparer.Ordinal));
-
-    private bool IsDeepCopyOutSafeFieldType(TypeRef type, HashSet<string> path)
-    {
-        var pruned = Prune(type);
-        return pruned switch
-        {
-            _ when CanArenaReset(pruned) => true,
-            TypeRef.TStr or TypeRef.TBytes => true,
-            // Lists deep-copy element-by-element: copy-type/String/List-of-copy heads via CopyOutList,
-            // any other deep-copyable element via the synthesized recursive list copier.
-            TypeRef.TList list => IsDeepCopyOutSafeFieldType(Prune(list.Element), path),
-            TypeRef.TTuple tup => tup.Elements.All(e => IsDeepCopyOutSafeFieldType(e, path)),
-            TypeRef.TNamedType n => CanDeepCopyOutAdt(n, path),
-            _ => false,
-        };
-    }
+    private bool IsDeepCopyOutSafeType(TypeRef type) =>
+        GetOrdinaryHeapLayoutCapability(type).ArenaDeepCopySupported;
 
     /// <summary>
     /// Resolves a constructor field type by substituting type parameters with their

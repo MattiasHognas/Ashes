@@ -55,6 +55,11 @@ public sealed class LoweredTempOwnershipTests
         facts[4].Layout.ShouldBe(LoweredTempLayoutKind.Bytes);
         facts[4].DropKind.ShouldBe(LoweredTempDropKind.BorrowedViewNoDrop);
         facts[4].OwnerTemp.ShouldBe(1);
+        facts[4].LayoutCapability.ShouldNotBeNull();
+        facts[4].LayoutCapability!.ContainsResourceOrBorrowedView.ShouldBeTrue();
+        (facts[4].LayoutCapability!.Rejections
+            & OrdinaryHeapLayoutRejection.ResourceOrBorrowedViewContainment)
+            .ShouldBe(OrdinaryHeapLayoutRejection.ResourceOrBorrowedViewContainment);
         facts[5].Representation.ShouldBe(LoweredTempRepresentation.ArenaRegion);
         facts[5].DropKind.ShouldBe(LoweredTempDropKind.NoRuntimeDrop);
         facts[6].Representation.ShouldBe(LoweredTempRepresentation.Unknown);
@@ -85,6 +90,13 @@ public sealed class LoweredTempOwnershipTests
         value.Ownership.Representation.ShouldBe(
             LoweredTempRepresentation.RuntimeRc);
         value.Ownership.Layout.ShouldBe(LoweredTempLayoutKind.Bytes);
+        OrdinaryHeapLayoutCapability capability =
+            value.Ownership.LayoutCapability.ShouldNotBeNull();
+        capability.StructuralCopy.ShouldBe(
+            OrdinaryHeapStructuralCopyKind.Shallow);
+
+        Emit(lowering, new IrInst.Borrow(2, 1));
+        Facts(lowering)[2].LayoutCapability.ShouldBeSameAs(capability);
     }
 
     [Test]

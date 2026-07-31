@@ -262,6 +262,12 @@ The following is already implemented and is not part of the backlog:
 - all `_runtimeRc*AllocationRequested` fields and the related ambient list-tail and ADT-child request
   fields have been deleted. Top-cell freshness remains a separate syntactic input to the explicit
   placement request.
+- `OrdinaryHeapLayoutCapability` is the cycle-guarded boundary for resolved ordinary heap layouts.
+  It retains structural-copy support, recursive drop support, constructor-specific child offsets and
+  drop kinds, outer-cell runtime-reuse support, and stable resource/borrowed-view, unsupported-child,
+  unresolved-type, and unsupported-reuse rejection categories. The capability is snapshotted onto
+  lowered-temp ownership facts; tuple/ADT drops, TCO child copies, and reuse cleanup consume the same
+  descriptor while expression freshness and TCO profitability remain separate policies.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -279,36 +285,8 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–2 and tasks 3.1–3.2 are complete. Ten implementation
-tasks remain; Milestone 3.3 is next.
-
-### Milestone 3 — make value/temp ownership forward-propagated
-
-This is the maintenance prerequisite for removing classifier C and for making classifier D ordinary
-Perceus work.
-
-#### 3.3 Centralize ordinary heap layout capability
-
-After temp ownership carries a resolved type, extract the common type/layout question currently
-re-derived across `CanRuntimeManageAdt`, `CanRuntimeManageOwnedChildAdt`,
-`CanRuntimeManageTcoOwnedChildAdt`, `CanRuntimeManageOwnedTupleType`,
-`CanRuntimeManageTcoListElement`, and `CanCopyOutAdt`:
-
-- can this graph be structurally copied;
-- can every owned child be structurally dropped;
-- which child offsets/drop kinds are required;
-- does it contain a resource or borrowed-view exception;
-- is runtime reuse supported for this outer cell.
-
-Use one cycle-guarded layout-capability result for those shared questions. Keep expression-specific
-construction freshness, top-cell freshness, and TCO profitability as separate callers; they are not
-layout facts and should not be folded into the descriptor. Cut over one value category at a time and
-delete only predicates proven to be exact duplicates after the extraction.
-
-The descriptor/result must distinguish the concrete rejection categories already present in the
-implementation—resource or borrowed-view containment, unsupported child/drop layout, unresolved type,
-and unsupported outer-cell reuse—so later representation reporting does not have to rerun these
-predicates against a changed type-inference state.
+teardown prerequisites are in place. Milestones 1–3 are complete. Nine implementation tasks remain;
+Milestone 4.1 is next.
 
 ### Milestone 4 — fold pattern-derived aliases into ordinary Perceus placement
 

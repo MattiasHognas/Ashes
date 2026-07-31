@@ -658,6 +658,18 @@ flags for global or unmodelled reach and internal sharing. The existing
 `UniqueParameters`, `ResultFresh`, and `ResultPoisoned` values are compatibility
 projections of those facts.
 
+Resolved ordinary heap types are described once by a cycle-guarded
+`OrdinaryHeapLayoutCapability`. It records whether the graph can be copied,
+whether every owned child can be dropped, the constructor-specific child
+offsets and drop kinds, and whether runtime reuse is supported for the outer
+cell. Stable rejection flags distinguish resource or borrowed-view containment,
+unsupported child/drop layouts, unresolved types, and unsupported outer-cell
+reuse. Each `LoweredTempOwnershipFact` snapshots this capability when its type
+is refined, so compiler reporting does not need to rerun layout analysis after
+inference has moved on. Tuple/ADT drops, TCO child normalization, and runtime
+reuse cleanup consume the same child descriptors; construction freshness,
+top-cell freshness, and TCO profitability remain independent policies.
+
 Interprocedural result provenance uses a whole-program SCC-aware monotone
 fixpoint over exact lexical `FuncKey` forwarding edges. A mutually-recursive
 component is eligible for the static runtime-RC result path only when every
