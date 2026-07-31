@@ -25,7 +25,12 @@ The CLI supports selecting a project file explicitly:
 
 - `--project <path/to/ashes.json>`
 
-The path may be relative or absolute.
+The path may be relative or absolute. A directory may contain multiple named project manifests, for
+example `ashes.json` and `ashes-test.json`; commands act only on the selected manifest.
+
+Each project manifest has its own lock file beside it. The final `.json` extension is replaced with
+`.lock`, so `ashes.json` uses `ashes.lock` and `ashes-test.json` uses `ashes-test.lock`. This keeps
+colocated projects' resolved dependency graphs independent.
 
 ---
 
@@ -255,35 +260,39 @@ Creates a new Ashes project in the current directory.
 - The project name defaults to the current directory name.
 - Fails if `ashes.json` already exists.
 
-### 6.2 `ashes add <package> [--path <dir>] [--dev]`
+### 6.2 `ashes add <package> [--project <manifest>] [--path <dir>] [--dev]`
 
 Adds a dependency to the project manifest.
 
-- Locates `ashes.json` by walking upward from the current directory.
+- Uses the manifest selected by `--project`, or locates `ashes.json` by walking upward from the
+  current directory.
 - With `--path <dir>`, records `{ "path": "<dir>" }` (a path dependency); otherwise records the SemVer
   string `"*"` (a registry dependency).
 - With `--dev`, writes to `devDependencies` instead of `dependencies`.
 - Fails if no `ashes.json` is found.
 
-### 6.3 `ashes remove <package>`
+### 6.3 `ashes remove <package> [--project <manifest>]`
 
 Removes a dependency from the project manifest.
 
-- Locates `ashes.json` by walking upward from the current directory.
+- Uses the manifest selected by `--project`, or locates `ashes.json` by walking upward from the
+  current directory.
 - Removes the package from `dependencies` or `devDependencies`; an emptied map is omitted.
 - Fails if no `ashes.json` is found or the package is not a dependency.
 
-### 6.4 `ashes restore`
+### 6.4 `ashes restore [--project <manifest>]`
 
 Materializes and validates dependencies.
 
-- Locates `ashes.json` by walking upward from the current directory.
+- Uses the manifest selected by `--project`, or locates `ashes.json` by walking upward from the
+  current directory.
 - Resolves and validates **path dependencies** — a missing path or non-project fails with `ASH030` /
   `ASH031` — and lists each with its namespace.
 - Resolves **registry dependencies** against the configured registry: it selects the highest version
   satisfying all SemVer constraints across the transitive graph, downloads and content-verifies each
-  package into the shared cache, and writes the resolved graph to `ashes.lock`. `--frozen` fails if
-  resolution would change the lock (`ASH033`); `--offline` trusts the lock and only verifies the cache.
+  package into the shared cache, and writes the resolved graph to the selected manifest's lock file.
+  `--frozen` fails if resolution would change that lock (`ASH033`); `--offline` trusts it and only
+  verifies the cache.
 - `ashes build` / `run` / `test` **auto-restore** first when the lock is missing or stale, so running
   `restore` explicitly is rarely necessary.
 - `ashes install` is retired; use `restore` (or `add` to add a dependency).

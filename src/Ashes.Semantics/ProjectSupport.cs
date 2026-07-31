@@ -311,7 +311,7 @@ public static class ProjectSupport
         var name = ReadString(root, "name");
         var target = ReadString(root, "target");
 
-        var dependencies = ResolveDependencies(root, projectDirectory);
+        var dependencies = ResolveDependencies(root, fullProjectPath, projectDirectory);
         ValidateDependencyNamespaces(dependencies);
 
         return new AshesProject(
@@ -354,7 +354,10 @@ public static class ProjectSupport
     /// resolve locally here (deterministic, from disk); registry/git dependencies are materialized by the
     /// CLI restore step into the lock and cache. The compiler is never the dependency solver.
     /// </summary>
-    private static IReadOnlyList<ResolvedDependency> ResolveDependencies(JsonElement root, string projectDirectory)
+    private static IReadOnlyList<ResolvedDependency> ResolveDependencies(
+        JsonElement root,
+        string projectFilePath,
+        string projectDirectory)
     {
         var result = new List<ResolvedDependency>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -364,7 +367,7 @@ public static class ProjectSupport
         // `dependencies`, and dev-ness is inherited down each chain.
         CollectPathDependencies(root, projectDirectory, "dependencies", isDev: false, result, visited, []);
         CollectPathDependencies(root, projectDirectory, "devDependencies", isDev: true, result, visited, []);
-        AddLockedDependencies(projectDirectory, result);
+        AddLockedDependencies(projectFilePath, result);
         return result;
     }
 
@@ -426,13 +429,15 @@ public static class ProjectSupport
     }
 
     /// <summary>
-    /// Add registry/git dependencies recorded in <c>ashes.lock</c>: each is materialized in the shared
-    /// content-addressed cache and consumed exactly like a path dependency (its cached tree is the source
-    /// root). A locked package missing from the cache means the project has not been restored.
+    /// Add registry/git dependencies recorded in the selected manifest's lock file: each is materialized
+    /// in the shared content-addressed cache and consumed exactly like a path dependency (its cached tree
+    /// is the source root). A locked package missing from the cache means the project has not been restored.
     /// </summary>
-    private static void AddLockedDependencies(string projectDirectory, List<ResolvedDependency> accumulator)
+    private static void AddLockedDependencies(
+        string projectFilePath,
+        List<ResolvedDependency> accumulator)
     {
-        var lockPath = Path.Combine(projectDirectory, "ashes.lock");
+        string lockPath = GetLockFilePath(projectFilePath);
         if (!File.Exists(lockPath))
         {
             return;
@@ -467,6 +472,17 @@ public static class ProjectSupport
             var (_, roots, entryFile) = ReadDependencyManifest(manifest, cacheDir, ns, ns);
             accumulator.Add(new ResolvedDependency(ns, ns, roots, cacheDir, IsDev: false) { EntryFile = entryFile });
         }
+    }
+
+    /// <summary>
+    /// Returns the lock file paired with <paramref name="projectFilePath"/>. Replacing the manifest's
+    /// final extension preserves the default <c>ashes.json</c> → <c>ashes.lock</c> convention while
+    /// keeping colocated manifests independent, for example
+    /// <c>ashes-test.json</c> → <c>ashes-test.lock</c>.
+    /// </summary>
+    public static string GetLockFilePath(string projectFilePath)
+    {
+        return Path.ChangeExtension(Path.GetFullPath(projectFilePath), ".lock");
     }
 
     private static (string Namespace, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(

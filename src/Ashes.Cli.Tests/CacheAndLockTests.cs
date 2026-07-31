@@ -9,26 +9,40 @@ namespace Ashes.Cli.Tests;
 public sealed class CacheAndLockTests
 {
     [Test]
-    public void LockFile_round_trips()
+    public void LockFiles_follow_the_selected_project_manifest()
     {
-        var dir = TempDir();
+        string dir = TempDir();
         try
         {
+            string mainProject = Path.Combine(dir, "ashes.json");
+            string testProject = Path.Combine(dir, "ashes-test.json");
             new LockFile
             {
                 Version = 1,
                 Package = [new LockedPackage("Json", "1.2.3", "registry+http://example", "ash1:abc", ["Utf8"])],
-            }.Write(dir);
+            }.Write(mainProject);
+            new LockFile
+            {
+                Version = 1,
+                Package = [new LockedPackage("Verify", "2.0.0", "registry+http://example", "ash1:def", [])],
+            }.Write(testProject);
 
-            var read = LockFile.Read(dir);
+            LockFile? mainLock = LockFile.Read(mainProject);
+            LockFile? testLock = LockFile.Read(testProject);
 
-            read.ShouldNotBeNull();
-            read.Version.ShouldBe(1);
-            var p = read.Package.ShouldHaveSingleItem();
-            p.Namespace.ShouldBe("Json");
-            p.Version.ShouldBe("1.2.3");
-            p.Hash.ShouldBe("ash1:abc");
-            p.Dependencies.ShouldBe(["Utf8"]);
+            File.Exists(Path.Combine(dir, "ashes.lock")).ShouldBeTrue();
+            File.Exists(Path.Combine(dir, "ashes-test.lock")).ShouldBeTrue();
+            mainLock.ShouldNotBeNull();
+            testLock.ShouldNotBeNull();
+            LockedPackage mainPackage = mainLock.Package.ShouldHaveSingleItem();
+            LockedPackage testPackage = testLock.Package.ShouldHaveSingleItem();
+            mainPackage.Namespace.ShouldBe("Json");
+            mainPackage.Version.ShouldBe("1.2.3");
+            mainPackage.Hash.ShouldBe("ash1:abc");
+            mainPackage.Dependencies.ShouldBe(["Utf8"]);
+            testPackage.Namespace.ShouldBe("Verify");
+            testPackage.Version.ShouldBe("2.0.0");
+            testPackage.Hash.ShouldBe("ash1:def");
         }
         finally
         {
