@@ -205,6 +205,33 @@ public sealed record IrFunctionOrigin(
 public abstract record IrInst
 {
     /// <summary>
+    /// Implemented by instructions whose <c>Target</c> is an ordinary value that may use the
+    /// runtime-RC representation. Lowering consumes this contract when it records the canonical
+    /// ownership fact for the produced temp.
+    /// </summary>
+    public interface IRuntimeManagedTargetResult
+    {
+        /// <summary>Temp receiving the instruction result.</summary>
+        int Target { get; }
+
+        /// <summary>Whether the result uses the runtime-RC representation.</summary>
+        bool RuntimeManaged { get; }
+    }
+
+    /// <summary>
+    /// Implemented by copy-out instructions whose <c>DestTemp</c> is an ordinary value that may use
+    /// the runtime-RC representation.
+    /// </summary>
+    public interface IRuntimeManagedDestinationResult
+    {
+        /// <summary>Temp receiving the copied result.</summary>
+        int DestTemp { get; }
+
+        /// <summary>Whether the result uses the runtime-RC representation.</summary>
+        bool RuntimeManaged { get; }
+    }
+
+    /// <summary>
     /// Optional source location for debug info emission (DWARF).
     /// Init-only so that Location is set once (via <c>with</c>) before the
     /// instruction is added to the IR list, keeping record equality stable.
@@ -474,22 +501,26 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the BigInt result.</param>
     /// <param name="ValueTemp">Temp holding the integer to widen.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BigIntFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // Int -> BigInt
+    public sealed record BigIntFromInt(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult; // Int -> BigInt
     /// <summary>Renders a <c>BigInt</c> to its decimal <c>Str</c>.</summary>
     /// <param name="Target">Temp receiving the string result.</param>
     /// <param name="ValueTemp">Temp holding the BigInt to render.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BigIntToString(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // BigInt -> Str
+    public sealed record BigIntToString(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult; // BigInt -> Str
     /// <summary>Narrows a <c>BigInt</c> to <c>Result(Str, Int)</c>, erroring when it does not fit an <c>Int</c>.</summary>
     /// <param name="Target">Temp receiving the result value.</param>
     /// <param name="ValueTemp">Temp holding the BigInt to narrow.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BigIntToInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // BigInt -> Result(Str, Int)
+    public sealed record BigIntToInt(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult; // BigInt -> Result(Str, Int)
     /// <summary>Parses a <c>Str</c> into <c>Result(Str, BigInt)</c>.</summary>
     /// <param name="Target">Temp receiving the result value.</param>
     /// <param name="ValueTemp">Temp holding the string to parse.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BigIntFromString(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst; // Str -> Result(Str, BigInt)
+    public sealed record BigIntFromString(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult; // Str -> Result(Str, BigInt)
     // Op ∈ { "add", "sub", "mul", "div", "mod" }: BigInt -> BigInt -> BigInt.
     /// <summary>Binary <c>BigInt</c> arithmetic selected by <paramref name="Op"/>.</summary>
     /// <param name="Target">Temp receiving the BigInt result.</param>
@@ -497,7 +528,8 @@ public abstract record IrInst
     /// <param name="Right">Temp holding the right operand.</param>
     /// <param name="Op">Operation name, one of <c>add</c>, <c>sub</c>, <c>mul</c>, <c>div</c>, <c>mod</c>.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BigIntBinary(int Target, int Left, int Right, string Op, bool RuntimeManaged = false) : IrInst;
+    public sealed record BigIntBinary(int Target, int Left, int Right, string Op, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Three-way <c>BigInt</c> comparison yielding a negative, zero, or positive <c>Int</c>.</summary>
     /// <param name="Target">Temp receiving the comparison result.</param>
     /// <param name="Left">Temp holding the left operand.</param>
@@ -520,7 +552,8 @@ public abstract record IrInst
     /// <param name="Left">Temp holding the left string.</param>
     /// <param name="Right">Temp holding the right string.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record ConcatStr(int Target, int Left, int Right, bool RuntimeManaged = false) : IrInst;
+    public sealed record ConcatStr(int Target, int Left, int Right, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
     // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
     // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot
@@ -548,7 +581,7 @@ public abstract record IrInst
         int Right,
         int ResvStartSlot,
         int ResvEndSlot,
-        bool RuntimeManaged = false) : IrInst;
+        bool RuntimeManaged = false) : IrInst, IRuntimeManagedTargetResult;
 
     // Ashes.Text.Regex (PCRE2) intrinsics. The 8-bit PCRE2 bitcode is linked into the module when the
     // program uses any of these (ProgramUsesRegexRuntimeAbi), so the pcre2_* symbols resolve
@@ -604,7 +637,7 @@ public abstract record IrInst
         bool RuntimeManaged = false,
         bool ReturnsRuntimeManaged = false,
         bool AcceptsRuntimeManagedArgument = false
-    ) : IrInst; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
+    ) : IrInst, IRuntimeManagedTargetResult; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
     /// <summary>Stack-allocated form of <see cref="MakeClosure"/>, used for a non-escaping closure whose
     /// lifetime is bounded by the current frame.</summary>
     /// <param name="Target">Temp receiving the closure pointer.</param>
@@ -672,7 +705,8 @@ public abstract record IrInst
     /// <param name="SizeBytes">Number of bytes to allocate.</param>
     /// <param name="RuntimeManaged">True to allocate a reference-counted cell (with an RC header); false for
     /// arena-managed memory.</param>
-    public sealed record Alloc(int Target, int SizeBytes, bool RuntimeManaged = false) : IrInst;
+    public sealed record Alloc(int Target, int SizeBytes, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Stack-allocates a fixed-size buffer of <paramref name="SizeBytes"/> and yields its pointer.</summary>
     /// <param name="Target">Temp receiving the allocation pointer.</param>
     /// <param name="SizeBytes">Number of bytes to allocate on the stack.</param>
@@ -686,7 +720,8 @@ public abstract record IrInst
     /// <param name="Tag">Constructor tag written into the cell.</param>
     /// <param name="FieldCount">Number of payload fields the cell holds.</param>
     /// <param name="RuntimeManaged">True to allocate a reference-counted cell (with an RC header).</param>
-    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false) : IrInst;
+    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Stack-allocated form of <see cref="AllocAdt"/> for a non-escaping ADT cell.</summary>
     /// <param name="Target">Temp receiving the cell pointer.</param>
     /// <param name="Tag">Constructor tag written into the cell.</param>
@@ -733,7 +768,7 @@ public abstract record IrInst
         int TokenTemp,
         bool RuntimeManaged = false,
         bool ListCell = false
-    ) : IrInst;
+    ) : IrInst, IRuntimeManagedTargetResult;
     // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
     /// <summary>Writes <paramref name="Source"/> into field <paramref name="FieldIndex"/> of the ADT cell at
     /// <paramref name="Ptr"/> (offset via <c>HeapLayouts.Adt.PayloadWordOffsetBytes</c>).</summary>
@@ -847,45 +882,53 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the optional (head, tail) result.</param>
     /// <param name="TextTemp">Temp holding the string to deconstruct.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextUncons(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextUncons(int Target, int TextTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Parses a string as an integer, yielding a result option into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the parse result.</param>
     /// <param name="TextTemp">Temp holding the string to parse.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextParseInt(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextParseInt(int Target, int TextTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Parses a string as a float, yielding a result option into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the parse result.</param>
     /// <param name="TextTemp">Temp holding the string to parse.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextParseFloat(int Target, int TextTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextParseFloat(int Target, int TextTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Renders an integer to its decimal string into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the rendered string.</param>
     /// <param name="ValueTemp">Temp holding the integer to render.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextFromInt(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFromInt(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Renders a float to its default string form into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the rendered string.</param>
     /// <param name="ValueTemp">Temp holding the float to render.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextFromFloat(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFromFloat(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Renders a float to a string with a fixed number of decimals into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the rendered string.</param>
     /// <param name="ValueTemp">Temp holding the float to render.</param>
     /// <param name="DecimalsTemp">Temp holding the number of decimal places.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextFormatFloat(int Target, int ValueTemp, int DecimalsTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Renders an integer to its hexadecimal string into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the rendered string.</param>
     /// <param name="ValueTemp">Temp holding the integer to render.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextToHex(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextToHex(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     // ASCII-only case map (a-z <-> A-Z by flipping bit 0x20); multibyte UTF-8 (>= 0x80) untouched.
     /// <summary>Maps ASCII letter case (upper/lower) across a string, leaving multibyte UTF-8 untouched.</summary>
     /// <param name="Target">Temp receiving the case-mapped string.</param>
     /// <param name="SourceTemp">Temp holding the string to map.</param>
     /// <param name="Upper">True to uppercase, false to lowercase.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper, bool RuntimeManaged = false) : IrInst;
+    public sealed record TextAsciiCase(int Target, int SourceTemp, bool Upper, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Performs a blocking HTTP GET, yielding the response into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the response.</param>
     /// <param name="UrlTemp">Temp holding the request URL.</param>
@@ -927,12 +970,14 @@ public abstract record IrInst
     /// <summary>Yields the empty byte buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the empty bytes value.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesEmpty(int Target, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesEmpty(int Target, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Builds a one-byte buffer from <paramref name="ByteTemp"/> into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the singleton bytes value.</param>
     /// <param name="ByteTemp">Temp holding the byte value.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesSingleton(int Target, int ByteTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesSingleton(int Target, int ByteTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Yields the length of a byte buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the length.</param>
     /// <param name="BytesTemp">Temp holding the byte buffer.</param>
@@ -968,7 +1013,8 @@ public abstract record IrInst
     /// <param name="StartTemp">Temp holding the start offset.</param>
     /// <param name="LenTemp">Temp holding the sub-range length.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesSubText(int Target, int BytesTemp, int StartTemp, int LenTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Produces a non-copying view over a sub-range of a buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the sub-buffer view.</param>
     /// <param name="BytesTemp">Temp holding the source buffer.</param>
@@ -980,18 +1026,21 @@ public abstract record IrInst
     /// <param name="LeftTemp">Temp holding the left buffer.</param>
     /// <param name="RightTemp">Temp holding the right buffer.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesAppend(int Target, int LeftTemp, int RightTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Appends a single byte to a buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the extended buffer.</param>
     /// <param name="BytesTemp">Temp holding the source buffer.</param>
     /// <param name="ByteTemp">Temp holding the byte to append.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Builds a byte buffer from a list of byte values into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the built buffer.</param>
     /// <param name="ListTemp">Temp holding the source list.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Yields a hash of a byte buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the hash value.</param>
     /// <param name="BytesTemp">Temp holding the buffer to hash.</param>
@@ -1000,17 +1049,20 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the encoded bytes.</param>
     /// <param name="ValueTemp">Temp holding the value to encode.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesU16Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU16Le(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Encodes a value as four little-endian bytes into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the encoded bytes.</param>
     /// <param name="ValueTemp">Temp holding the value to encode.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesU32Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU32Le(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Encodes a value as eight little-endian bytes into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the encoded bytes.</param>
     /// <param name="ValueTemp">Temp holding the value to encode.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesU64Le(int Target, int ValueTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record BytesU64Le(int Target, int ValueTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Reads a little-endian 16-bit value at <paramref name="OffsetTemp"/> from a buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the decoded value.</param>
     /// <param name="BytesTemp">Temp holding the source buffer.</param>
@@ -1084,7 +1136,8 @@ public abstract record IrInst
     /// identity-preserving alias of <paramref name="SourceTemp"/> until runtime reference counting is
     /// enabled; the optimizer erases the marker and remaps uses to the source.
     /// </summary>
-    public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false) : IrInst;
+    public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
 
     /// <summary>
     /// Tests whether a runtime-managed value has exactly one owning reference. This operation is
@@ -1244,7 +1297,7 @@ public abstract record IrInst
         bool RuntimeManaged,
         CopyOutPurpose Purpose,
         TypeRef? DeferredElementType = null
-    ) : IrInst
+    ) : IrInst, IRuntimeManagedDestinationResult
     {
         /// <summary>Sentinel <see cref="StaticSizeBytes"/> selecting the BigInt copy mode (size from
         /// the header limb count). Distinct from -1 (string, size from the length word).</summary>
@@ -1333,7 +1386,7 @@ public abstract record IrInst
         ListHeadCopyKind HeadCopy,
         bool RuntimeManaged,
         CopyOutPurpose Purpose
-    ) : IrInst;
+    ) : IrInst, IRuntimeManagedDestinationResult;
 
     /// <summary>
     /// Copies a closure ({code, env, packed env size, dropper}) and its
@@ -1355,7 +1408,7 @@ public abstract record IrInst
         int SrcTemp,
         bool RuntimeManaged,
         CopyOutPurpose Purpose
-    ) : IrInst;
+    ) : IrInst, IRuntimeManagedDestinationResult;
 
     /// <summary>
     /// TCO-specific: copies a single cons cell (16 bytes) out of the arena and also

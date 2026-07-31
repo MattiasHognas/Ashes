@@ -631,7 +631,7 @@ public sealed partial class Lowering
         }
         if (runtimeManagedCandidate)
         {
-            _runtimeManagedResultTemps.Add(ptrTemp);
+            MarkRuntimeManagedTemp(ptrTemp);
         }
         return (ptrTemp, resultType);
     }
@@ -799,7 +799,7 @@ public sealed partial class Lowering
         }
         if (runtimeManagedCandidate)
         {
-            _runtimeManagedResultTemps.Add(ptrTemp);
+            MarkRuntimeManagedTemp(ptrTemp);
         }
 
         return (ptrTemp, resultType);
@@ -987,7 +987,7 @@ public sealed partial class Lowering
                 IrInst.ListHeadCopyKind.Inline,
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
-            _runtimeManagedResultTemps.Add(normalizedTemp);
+            MarkRuntimeManagedTemp(normalizedTemp);
             lowered = (normalizedTemp, lowered.Type);
         }
         (_runtimeRcStringAllocationRequested,

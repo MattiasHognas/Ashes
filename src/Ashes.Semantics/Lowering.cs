@@ -529,8 +529,8 @@ public sealed partial class Lowering
     // original binder node. This is the primary summary bridge; the name map above remains a
     // compatibility fallback for labels produced by paths that do not yet retain a binder identity.
     private readonly Dictionary<string, FuncKey> _functionKeyByLabel = new(StringComparer.Ordinal);
-    // Whether a lambda's OWN compiled body (keyed by its own label) was proven, by inspecting the actual
-    // emitted instructions (IsRuntimeManagedResultTemp), to produce a RuntimeManaged result — populated
+    // Whether a lambda's OWN compiled body (keyed by its own label) was proven by its canonical
+    // lowered-temp ownership fact to produce a RuntimeManaged result — populated
     // once per LowerLambdaCore invocation, for EVERY lambda (named or anonymous), not just registered
     // top-level functions. This is deliberately NOT derived from FunctionOwnershipSummary.ResultProvenance:
     // ResultProvenance classifies from AST shape alone, before lowering, so it cannot see a result that
@@ -600,7 +600,6 @@ public sealed partial class Lowering
     private TypeRef.TNamedType? _runtimeRcReuseAllocationTypeRequested;
     private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
     private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
-    private readonly HashSet<int> _runtimeManagedResultTemps = [];
     private bool _runtimeRcStringAllocationRequested;
     private bool _runtimeRcBytesAllocationRequested;
     private bool _runtimeRcBigIntAllocationRequested;
@@ -1301,7 +1300,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1436,9 +1435,9 @@ public sealed partial class Lowering
     }
 
     private bool IsRuntimeManagedConcatStrTipResult(int temp)
-        => _inst.Any(instruction =>
-            instruction is IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true }
-            && target == temp);
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Producer == LoweredTempProducerKind.ConcatStrTip;
 
     private int TcoBackEdgeNormalizeRuntimeManagedArg(
         int sourceTemp,
@@ -1501,7 +1500,7 @@ public sealed partial class Lowering
                 IrInst.CopyOutPurpose.RcNormalization));
         }
 
-        _runtimeManagedResultTemps.Add(normalizedTemp);
+        MarkRuntimeManagedTemp(normalizedTemp);
         return normalizedTemp;
     }
 
@@ -1522,7 +1521,7 @@ public sealed partial class Lowering
 
         int duplicatedTemp = NewTemp();
         Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
-        _runtimeManagedResultTemps.Add(duplicatedTemp);
+        MarkRuntimeManagedTemp(duplicatedTemp);
         return duplicatedTemp;
     }
 
@@ -1542,7 +1541,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(duplicatedLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1682,7 +1681,7 @@ public sealed partial class Lowering
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
         }
 
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1740,7 +1739,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(endLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, firstSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1802,7 +1801,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(endLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1832,7 +1831,7 @@ public sealed partial class Lowering
             Emit(new IrInst.SetAdtField(resultTemp, i, copiedChild));
         }
 
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -2264,7 +2263,12 @@ public sealed partial class Lowering
         var savedLocal = _nextLocalSlot;
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+            SnapshotTempOwnershipFacts();
+        IrFunctionOrigin? savedActiveFunctionOrigin = _activeFunctionOrigin;
         _inst.Clear();
+        _tempOwnershipFacts.Clear();
+        _activeFunctionOrigin = f.Origin;
         _nextTempSlot = f.TempCount;
         _nextLocalSlot = f.LocalCount;
         foreach (var inst in f.Instructions)
@@ -2275,6 +2279,7 @@ public sealed partial class Lowering
             }
             else
             {
+                RecordEmittedTempOwnership(inst);
                 _inst.Add(inst);
             }
         }
@@ -2282,6 +2287,8 @@ public sealed partial class Lowering
         _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
         _inst.Clear();
         _inst.AddRange(savedInst);
+        RestoreTempOwnershipFacts(savedTempOwnershipFacts);
+        _activeFunctionOrigin = savedActiveFunctionOrigin;
         _nextTempSlot = savedTemp;
         _nextLocalSlot = savedLocal;
         _localNames.Clear();
@@ -2330,7 +2337,7 @@ public sealed partial class Lowering
                 Unify(operandType, new TypeRef.TInt());
             }
 
-            instructions[i] = Prune(operandType) switch
+            IrInst replacement = Prune(operandType) switch
             {
                 TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(
                     add.Target,
@@ -2344,6 +2351,11 @@ public sealed partial class Lowering
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
             };
+            instructions[i] = replacement;
+            if (ReferenceEquals(instructions, _inst))
+            {
+                ReplaceEmittedTempOwnership(add, replacement);
+            }
         }
     }
 
@@ -2389,7 +2401,15 @@ public sealed partial class Lowering
             }
             else
             {
-                instructions[i] = new IrInst.Borrow(copy.DestTemp, copy.SrcTemp) { Location = copy.Location };
+                IrInst replacement = new IrInst.Borrow(copy.DestTemp, copy.SrcTemp)
+                {
+                    Location = copy.Location,
+                };
+                instructions[i] = replacement;
+                if (ReferenceEquals(instructions, _inst))
+                {
+                    ReplaceEmittedTempOwnership(copy, replacement);
+                }
             }
         }
     }
@@ -2425,12 +2445,17 @@ public sealed partial class Lowering
                 Unify(operandType, new TypeRef.TInt());
             }
 
-            instructions[i] = Prune(operandType) switch
+            IrInst replacement = Prune(operandType) switch
             {
                 TypeRef.TFloat => new IrInst.MulFloat(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
                 TypeRef.TBigInt => new IrInst.BigIntBinary(mul.Target, mul.Left, mul.Right, "mul") { Location = mul.Location },
                 _ => new IrInst.MulInt(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
             };
+            instructions[i] = replacement;
+            if (ReferenceEquals(instructions, _inst))
+            {
+                ReplaceEmittedTempOwnership(mul, replacement);
+            }
         }
     }
 
@@ -2501,14 +2526,18 @@ public sealed partial class Lowering
             var helperLowered = LowerHelperCoroutineTask(pendingHelper);
             RecordExprHoverType(e, helperLowered.Item2);
             _currentSourceExpr = previousExpr;
-            return (helperLowered.Item1, Prune(helperLowered.Item2));
+            TypeRef helperType = Prune(helperLowered.Item2);
+            RefineTempOwnershipType(helperLowered.Item1, helperType);
+            return (helperLowered.Item1, helperType);
         }
 
         var lowered = LowerExprDispatch(e);
 
         RecordExprHoverType(e, lowered.Type);
         _currentSourceExpr = previousExpr;
-        return (lowered.Temp, Prune(lowered.Type));
+        TypeRef prunedType = Prune(lowered.Type);
+        RefineTempOwnershipType(lowered.Temp, prunedType);
+        return (lowered.Temp, prunedType);
     }
 
     private (int Temp, TypeRef Type) LowerExprDispatch(Expr e)
@@ -2640,7 +2669,7 @@ public sealed partial class Lowering
             || b is Binding.Local runtimeLocal && IsRuntimeManagedTcoParamSlot(runtimeLocal);
         if (runtimeManagedResult)
         {
-            _runtimeManagedResultTemps.Add(result.Temp);
+            MarkRuntimeManagedTemp(result.Temp);
         }
         if (ownerInfo is not null && !ownerInfo.IsDropped)
         {
@@ -2650,7 +2679,7 @@ public sealed partial class Lowering
             result = (borrowTemp, result.Type);
             if (runtimeManagedResult)
             {
-                _runtimeManagedResultTemps.Add(borrowTemp);
+                MarkRuntimeManagedTemp(borrowTemp);
             }
         }
 
@@ -2988,7 +3017,7 @@ public sealed partial class Lowering
                 -1,
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
-            _runtimeManagedResultTemps.Add(resultTemp);
+            MarkRuntimeManagedTemp(resultTemp);
             return (resultTemp, sourceType);
         }
 
@@ -3206,7 +3235,7 @@ public sealed partial class Lowering
             (int Temp, TypeRef Type) lowered = LowerExpr(body);
             if (runtimeManagedClosure)
             {
-                _runtimeManagedResultTemps.Add(lowered.Temp);
+                MarkRuntimeManagedTemp(lowered.Temp);
             }
             return lowered;
         }
@@ -3667,7 +3696,7 @@ public sealed partial class Lowering
         try
         {
             lowered = LowerExpr(let.Value);
-            _runtimeManagedResultTemps.Add(lowered.Temp);
+            MarkRuntimeManagedTemp(lowered.Temp);
             return true;
         }
         finally
@@ -4731,6 +4760,7 @@ public sealed partial class Lowering
     private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         var prunedValueType = Prune(valueType);
+        RefineTempOwnershipType(valueTemp, prunedValueType);
         var ownedTypeName = GetOwnedTypeName(prunedValueType);
         if (ownedTypeName is not null)
         {
@@ -4784,39 +4814,8 @@ public sealed partial class Lowering
 
     private bool IsRuntimeManagedResultTemp(int valueTemp)
     {
-        return _runtimeManagedResultTemps.Contains(valueTemp)
-            || _inst.Any(instruction => instruction switch
-            {
-                IrInst.AllocAdt { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.AllocReusing { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.Alloc { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.ConcatStr { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.ConcatStrTip { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesSubText { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextToHex { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextAsciiCase { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextFromFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextFormatFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextParseInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextParseFloat { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BigIntToInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BigIntFromString { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.TextUncons { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BigIntToString { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.MakeClosure { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BigIntFromInt { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BigIntBinary { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesAppend { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesAppendByte { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesFromList { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesSingleton { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesEmpty { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesU16Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesU32Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                IrInst.BytesU64Le { Target: var target, RuntimeManaged: true } => target == valueTemp,
-                _ => false,
-            });
+        return _tempOwnershipFacts.TryGetValue(valueTemp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc;
     }
 
     private (int Temp, TypeRef Type) PopLetScope(int bodyTemp, TypeRef bodyType)
@@ -4835,13 +4834,9 @@ public sealed partial class Lowering
                 return (finalTemp, bodyType);
             }
 
-            bool runtimeManagedResult = IsRuntimeManagedResultTemp(bodyTemp);
             int resultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-            if (runtimeManagedResult)
-            {
-                _runtimeManagedResultTemps.Add(resultTemp);
-            }
+            RecordFrameRestoreTemp(resultTemp, bodyTemp, Prune(bodyType));
             return (resultTemp, bodyType);
         }
 
@@ -5280,16 +5275,19 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
         var resultType = thenType is TypeRef.TNever ? elseType : thenType;
-        MarkUniformRuntimeManagedResult(target, tTemp, eTemp);
+        MarkUniformRuntimeManagedResult(target, tTemp, eTemp, Prune(resultType));
         return (target, Prune(resultType));
     }
 
-    private void MarkUniformRuntimeManagedResult(int resultTemp, int leftTemp, int rightTemp)
+    private void MarkUniformRuntimeManagedResult(
+        int resultTemp,
+        int leftTemp,
+        int rightTemp,
+        TypeRef resultType)
     {
-        if (IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp))
-        {
-            _runtimeManagedResultTemps.Add(resultTemp);
-        }
+        bool runtimeManaged =
+            IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp);
+        RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged);
     }
 
     private (int, TypeRef) LowerLambda(Expr.Lambda lam, bool stackAllocateClosure = false)
@@ -5357,7 +5355,7 @@ public sealed partial class Lowering
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
-        // lambda's own MakeClosure call below (read before RestoreFrame clears _runtimeManagedResultTemps)
+        // lambda's own MakeClosure call below (read before RestoreFrame restores the enclosing temp facts)
         // and persisted by label for LowerVarUnbound/Binding.Self, which reconstruct a reference to this
         // same already-compiled function from a different scope later.
         bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
@@ -5614,7 +5612,7 @@ public sealed partial class Lowering
         }
 
         bool[] reachableInstructions = FindReachableInstructions(_inst);
-        var managedTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        HashSet<int> managedTemps = SnapshotRuntimeManagedTemps();
         var managedLocals = new HashSet<int>();
         bool changed;
         do
@@ -5664,7 +5662,7 @@ public sealed partial class Lowering
 
         if (managedTemps.Contains(bodyTemp))
         {
-            _runtimeManagedResultTemps.Add(bodyTemp);
+            MarkRuntimeManagedTemp(bodyTemp);
         }
     }
 
@@ -5675,12 +5673,16 @@ public sealed partial class Lowering
             if (_inst[index] is IrInst.ConcatStr { RuntimeManaged: false } concat
                 && managedTemps.Contains(concat.Target))
             {
-                _inst[index] = concat with { RuntimeManaged = true };
+                IrInst promoted = concat with { RuntimeManaged = true };
+                _inst[index] = promoted;
+                ReplaceEmittedTempOwnership(concat, promoted);
             }
             else if (_inst[index] is IrInst.ConcatStrTip { RuntimeManaged: false } concatTip
                 && managedTemps.Contains(concatTip.Target))
             {
-                _inst[index] = concatTip with { RuntimeManaged = true };
+                IrInst promoted = concatTip with { RuntimeManaged = true };
+                _inst[index] = promoted;
+                ReplaceEmittedTempOwnership(concatTip, promoted);
             }
         }
     }
@@ -5943,7 +5945,7 @@ public sealed partial class Lowering
         HashSet<string> SpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
-        HashSet<int> RuntimeManagedResultTemps,
+        Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         Dictionary<int, int> PendingRuntimeArgumentFlags,
         Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
         HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
@@ -5989,7 +5991,8 @@ public sealed partial class Lowering
         var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
         var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
         var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
-        var savedRuntimeManagedResultTemps = new HashSet<int>(_runtimeManagedResultTemps);
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+            SnapshotTempOwnershipFacts();
         var savedPendingRuntimeArgumentFlags = new Dictionary<int, int>(_pendingRuntimeArgumentFlags);
         var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
             SaveAndClearRuntimeManagedTcoPatternAliases();
@@ -6002,7 +6005,7 @@ public sealed partial class Lowering
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
-            savedRuntimeManagedResultTemps, savedPendingRuntimeArgumentFlags,
+            savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
             savedRuntimeManagedTcoPatternAliases,
             savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
             savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
@@ -6015,7 +6018,7 @@ public sealed partial class Lowering
         _linearSpecializationAccumulators.Clear();
         _resetSafeAccumulators.Clear();
         _reuseResultTemps.Clear();
-        _runtimeManagedResultTemps.Clear();
+        _tempOwnershipFacts.Clear();
         _pendingRuntimeArgumentFlags.Clear();
         _knownFunctionLabelsBySlot.Clear();
         _knownFunctionLabelsByEnvIndex.Clear();
@@ -6736,13 +6739,15 @@ public sealed partial class Lowering
             if (_inst[i] is IrInst.AllocReusing allocation)
             {
                 ReclassifyRevertedReuseAllocation(allocation);
-                _inst[i] = new IrInst.AllocAdt(
+                IrInst replacement = new IrInst.AllocAdt(
                     allocation.Target,
                     allocation.Tag,
                     allocation.FieldCount)
                 {
                     Location = allocation.Location
                 };
+                _inst[i] = replacement;
+                ReplaceEmittedTempOwnership(allocation, replacement);
             }
         }
 
@@ -6813,7 +6818,11 @@ public sealed partial class Lowering
             int normalizedTemp = slot == 1
                 ? EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, tco.GetRuntimeManagedType(slot))
                 : EmitRuntimeManagedTcoParamCopy(sourceTemp, tco.GetRuntimeManagedType(slot));
-            _runtimeManagedResultTemps.Add(normalizedTemp);
+            MarkRuntimeManagedTemp(
+                normalizedTemp,
+                LoweredTempOwnershipReason.TcoParameterInstall,
+                sourceTemp,
+                tco.GetRuntimeManagedType(slot));
             Emit(new IrInst.StoreLocal(slot, normalizedTemp));
             int activeTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(activeTemp, 1));
@@ -7083,8 +7092,7 @@ public sealed partial class Lowering
         foreach (var n in frame.ResetSafe) _resetSafeAccumulators.Add(n);
         _reuseResultTemps.Clear();
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
-        _runtimeManagedResultTemps.Clear();
-        foreach (var t in frame.RuntimeManagedResultTemps) _runtimeManagedResultTemps.Add(t);
+        RestoreTempOwnershipFacts(frame.TempOwnershipFacts);
         RestoreRuntimeManagedFrameState(frame);
         RestoreRuntimeManagedTcoPatternAliases(frame);
         RestoreKnownFunctionLabels(frame);
@@ -7647,7 +7655,7 @@ public sealed partial class Lowering
         // so reachable arms alone decide whether the function transfers an RC result.
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
-        _runtimeManagedResultTemps.Add(dummy);
+        MarkRuntimeManagedTemp(dummy);
         return (dummy, NewTypeVar());
     }
 
@@ -7892,7 +7900,7 @@ public sealed partial class Lowering
             (int Temp, TypeRef Type) lowered = LowerExpr(argument);
             if (freshClosure)
             {
-                _runtimeManagedResultTemps.Add(lowered.Temp);
+                MarkRuntimeManagedTemp(lowered.Temp);
             }
             return lowered;
         }
@@ -8459,10 +8467,7 @@ public sealed partial class Lowering
             callResultType,
             runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp);
-        if (runtimeManagedResult || normalizesRuntimeManagedResult)
-        {
-            _runtimeManagedResultTemps.Add(currentTemp);
-        }
+        RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult, normalizesRuntimeManagedResult);
 
         return (currentTemp, currentType);
     }
@@ -8903,13 +8908,13 @@ public sealed partial class Lowering
         {
             retainedTemp = NewTemp();
             Emit(new IrInst.RcDup(retainedTemp, argumentTemp, RuntimeManaged: true));
-            _runtimeManagedResultTemps.Add(retainedTemp);
+            MarkRuntimeManagedTemp(retainedTemp);
         }
         Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -9176,7 +9181,7 @@ public sealed partial class Lowering
         }
         if (normalizeToRuntimeOwnership)
         {
-            _runtimeManagedResultTemps.Add(copyDest);
+            MarkRuntimeManagedTemp(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         if (callGuardResultSlot >= 0)
@@ -9274,12 +9279,15 @@ public sealed partial class Lowering
         var savedScopes = _scopes.ToArray();
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+            SnapshotTempOwnershipFacts();
 
         EmitExternalFunctionThunkLayers(externalFunc, layerLabels, referenceSpan);
 
         // Restore outer compilation state.
         _inst.Clear();
         _inst.AddRange(savedInst);
+        RestoreTempOwnershipFacts(savedTempOwnershipFacts);
         _nextTempSlot = savedTemp;
         _nextLocalSlot = savedLocal;
         _localNames.Clear();
@@ -9311,6 +9319,7 @@ public sealed partial class Lowering
         for (int layer = n - 1; layer >= 0; layer--)
         {
             _inst.Clear();
+            _tempOwnershipFacts.Clear();
             _nextTempSlot = 0;
             _nextLocalSlot = 0;
             _localNames.Clear();
@@ -9553,7 +9562,7 @@ public sealed partial class Lowering
             return lowered;
         }
 
-        _runtimeManagedResultTemps.Add(normalizedTemp);
+        MarkRuntimeManagedTemp(normalizedTemp);
         return (normalizedTemp, lowered.Type);
     }
 
@@ -9630,7 +9639,7 @@ public sealed partial class Lowering
             materialized, temp, StaticSizeBytes: -1, RuntimeManaged: true,
             IrInst.CopyOutPurpose.RcNormalization,
             DeferredElementType: pruned is TypeRef.TVar ? type : null));
-        _runtimeManagedResultTemps.Add(materialized);
+        MarkRuntimeManagedTemp(materialized);
         _hasDeferredTupleMaterializations |= pruned is TypeRef.TVar;
         return materialized;
     }

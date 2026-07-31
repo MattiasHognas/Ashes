@@ -61,6 +61,7 @@ public sealed partial class Lowering
             }
         }
 
+        RecordEmittedTempOwnership(inst);
         _inst.Add(inst);
     }
 
