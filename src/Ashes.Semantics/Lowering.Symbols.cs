@@ -606,47 +606,126 @@ public sealed partial class Lowering
 
         // Allocate ADT heap cell: (1 + 0) * 8 = 8 bytes (tag only, no fields): [ctorTag]
         int ptrTemp = NewTemp();
-        if (!stackAllocate && TryConsumeReuseToken(
+        ReuseTokenMatch tokenMatch = !stackAllocate
+            ? TryConsumeReuseToken(
                 0,
                 runtimeManagedCandidate,
-                out int reuseTokenTemp,
-                out RuntimeReuseCleanup? runtimeCleanup,
                 listCell: false,
                 targetConstructor: ctor.Name,
-                location))
+                location)
+            : default;
+        if (tokenMatch.Token is { } reuseToken)
         {
-            // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
-            // below the watermark so the enclosing loop can reset the arena.
-            EmitRuntimeReuseTokenChildrenDrop(reuseTokenTemp, runtimeCleanup);
-            Emit(new IrInst.AllocReusing(
-                ptrTemp,
-                tag,
-                0,
-                reuseTokenTemp,
-                runtimeCleanup is not null));
-            _reuseResultTemps.Add(ptrTemp);
-        }
-        else if (stackAllocate)
-        {
-            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
-        }
-        else if (_inSpecialization)
-        {
-            // Fresh nullary cell (e.g. an Empty leaf of a node Map.set creates for a new key) inside an
-            // in-place reuse specialization: allocate in the persistent to-space so it survives the
-            // loop's per-iteration arena reset. See LowerConstructorApplication / IrInst.AllocAdtToSpace.
-            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, 0));
-            _reuseResultTemps.Add(ptrTemp);
+            EmitReusedNullaryConstructor(ctor, tag, ptrTemp, reuseToken, location);
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManagedCandidate));
+            EmitFreshNullaryConstructor(
+                ctor,
+                tag,
+                ptrTemp,
+                stackAllocate,
+                runtimeManagedCandidate,
+                tokenMatch,
+                location);
         }
         if (runtimeManagedCandidate)
         {
             _runtimeManagedResultTemps.Add(ptrTemp);
         }
         return (ptrTemp, resultType);
+    }
+
+    private void EmitReusedNullaryConstructor(
+        ConstructorSymbol ctor,
+        int tag,
+        int ptrTemp,
+        ReuseToken reuseToken,
+        SourceLocation? location)
+    {
+        // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
+        // below the watermark so the enclosing loop can reset the arena.
+        EmitRuntimeReuseTokenChildrenDrop(
+            reuseToken.Temp,
+            reuseToken.RuntimeCleanup);
+        Emit(new IrInst.AllocReusing(
+            ptrTemp,
+            tag,
+            0,
+            reuseToken.Temp,
+            reuseToken.RuntimeManaged));
+        _reuseResultTemps.Add(ptrTemp);
+        RecordReuseTokenDisposition(
+            reuseToken,
+            ReuseDecisionOutcome.Consumed,
+            ReuseDecisionReason.CompatibleTokenConsumed,
+            ptrTemp,
+            ctor.Name,
+            location);
+        if (reuseToken.RuntimeManaged)
+        {
+            RecordReuseFallbackAllocation(
+                reuseToken,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Available,
+                ReuseDecisionReason.RuntimeUniquenessFallback,
+                ReuseFallbackAllocationKind.RuntimeRc);
+        }
+    }
+
+    private void EmitFreshNullaryConstructor(
+        ConstructorSymbol ctor,
+        int tag,
+        int ptrTemp,
+        bool stackAllocate,
+        bool runtimeManagedCandidate,
+        ReuseTokenMatch tokenMatch,
+        SourceLocation? location)
+    {
+        if (stackAllocate)
+        {
+            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, 0));
+            return;
+        }
+
+        if (_inSpecialization)
+        {
+            // Fresh nullary cell inside a reuse specialization belongs in persistent to-space.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, 0));
+            _reuseResultTemps.Add(ptrTemp);
+            RecordReuseFallbackAllocation(
+                null,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Allocated,
+                ReuseFallbackReason(tokenMatch),
+                ReuseFallbackAllocationKind.ToSpace,
+                fieldCount: 0,
+                listCell: false,
+                runtimeManaged: false);
+            return;
+        }
+
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, 0, runtimeManagedCandidate));
+        if (ShouldRecordReuseFallback(tokenMatch))
+        {
+            RecordReuseFallbackAllocation(
+                null,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Allocated,
+                ReuseFallbackReason(tokenMatch),
+                runtimeManagedCandidate
+                    ? ReuseFallbackAllocationKind.RuntimeRc
+                    : ReuseFallbackAllocationKind.Arena,
+                fieldCount: 0,
+                listCell: false,
+                runtimeManagedCandidate);
+        }
     }
 
     private static Expr BuildConstructorLambda(ConstructorSymbol ctor)
@@ -939,57 +1018,139 @@ public sealed partial class Lowering
         int ptrTemp = NewTemp();
         reuseNode = false;
         consumedTokenTemp = -1;
-        if (!stackAllocate && TryConsumeReuseToken(
+        ReuseTokenMatch tokenMatch = !stackAllocate
+            ? TryConsumeReuseToken(
                 ctor.Arity,
                 runtimeManagedCandidate,
-                out int reuseTokenTemp,
-                out RuntimeReuseCleanup? runtimeCleanup,
                 listCell: false,
                 targetConstructor: ctor.Name,
-                location))
+                location)
+            : default;
+        if (tokenMatch.Token is { } reuseToken)
         {
-            consumedTokenTemp = reuseTokenTemp;
-            // In-place reuse: overwrite a same-size dead cell (the node a linear value was just
-            // deconstructed from) instead of bump-allocating. The args were already read into temps
-            // by the caller, so overwriting the cell now is safe.
-            HashSet<int> transferredFields = PrepareRuntimeReuseTransferredChildren(
+            consumedTokenTemp = reuseToken.Temp;
+            EmitReusedConstructorCell(
+                ctor,
+                tag,
+                ptrTemp,
                 arguments,
                 argumentTemps,
-                reuseTokenTemp,
-                runtimeCleanup);
-            EmitRuntimeReuseTokenChildrenDrop(
-                reuseTokenTemp,
-                runtimeCleanup,
-                transferredFields);
-            Emit(new IrInst.AllocReusing(
-                ptrTemp,
-                tag,
-                ctor.Arity,
-                reuseTokenTemp,
-                runtimeCleanup is not null));
-            _reuseResultTemps.Add(ptrTemp);
+                reuseToken,
+                location);
             reuseNode = true;
-        }
-        else if (stackAllocate)
-        {
-            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
-        }
-        else if (_inSpecialization)
-        {
-            // Genuinely-new cell with no reuse token inside an in-place reuse specialization — e.g. the
-            // node Map.set creates for a NEW key. Allocate it in the persistent to-space so it survives
-            // the loop's per-iteration arena reset (the reset only reclaims the main arena). The cell is
-            // uniquely owned, so it is also a linear reuse result (a rebuild by balance/rotate reuses it
-            // in place, staying in to-space). See IrInst.AllocAdtToSpace / IsFullyReusing.
-            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
-            _reuseResultTemps.Add(ptrTemp);
         }
         else
         {
-            Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate));
+            EmitFreshConstructorCell(
+                ctor,
+                tag,
+                ptrTemp,
+                stackAllocate,
+                runtimeManagedCandidate,
+                tokenMatch,
+                location);
         }
 
         return ptrTemp;
+    }
+
+    private void EmitReusedConstructorCell(
+        ConstructorSymbol ctor,
+        int tag,
+        int ptrTemp,
+        IReadOnlyList<Expr> arguments,
+        List<int> argumentTemps,
+        ReuseToken reuseToken,
+        SourceLocation? location)
+    {
+        // The arguments were lowered before this call, so overwriting the dead cell is safe.
+        HashSet<int> transferredFields = PrepareRuntimeReuseTransferredChildren(
+            arguments,
+            argumentTemps,
+            reuseToken.Temp,
+            reuseToken.RuntimeCleanup);
+        EmitRuntimeReuseTokenChildrenDrop(
+            reuseToken.Temp,
+            reuseToken.RuntimeCleanup,
+            transferredFields);
+        Emit(new IrInst.AllocReusing(
+            ptrTemp,
+            tag,
+            ctor.Arity,
+            reuseToken.Temp,
+            reuseToken.RuntimeManaged));
+        _reuseResultTemps.Add(ptrTemp);
+        RecordReuseTokenDisposition(
+            reuseToken,
+            ReuseDecisionOutcome.Consumed,
+            ReuseDecisionReason.CompatibleTokenConsumed,
+            ptrTemp,
+            ctor.Name,
+            location);
+        if (reuseToken.RuntimeManaged)
+        {
+            RecordReuseFallbackAllocation(
+                reuseToken,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Available,
+                ReuseDecisionReason.RuntimeUniquenessFallback,
+                ReuseFallbackAllocationKind.RuntimeRc);
+        }
+    }
+
+    private void EmitFreshConstructorCell(
+        ConstructorSymbol ctor,
+        int tag,
+        int ptrTemp,
+        bool stackAllocate,
+        bool runtimeManagedCandidate,
+        ReuseTokenMatch tokenMatch,
+        SourceLocation? location)
+    {
+        if (stackAllocate)
+        {
+            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
+            return;
+        }
+
+        if (_inSpecialization)
+        {
+            // New cells in a reuse specialization belong in persistent to-space.
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
+            _reuseResultTemps.Add(ptrTemp);
+            RecordReuseFallbackAllocation(
+                null,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Allocated,
+                ReuseFallbackReason(tokenMatch),
+                ReuseFallbackAllocationKind.ToSpace,
+                ctor.Arity,
+                listCell: false,
+                runtimeManaged: false);
+            return;
+        }
+
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate));
+        if (ShouldRecordReuseFallback(tokenMatch))
+        {
+            RecordReuseFallbackAllocation(
+                null,
+                ptrTemp,
+                ctor.Name,
+                location,
+                ReuseDecisionOutcome.Allocated,
+                ReuseFallbackReason(tokenMatch),
+                runtimeManagedCandidate
+                    ? ReuseFallbackAllocationKind.RuntimeRc
+                    : ReuseFallbackAllocationKind.Arena,
+                ctor.Arity,
+                listCell: false,
+                runtimeManagedCandidate);
+        }
     }
 
     private HashSet<int> PrepareRuntimeReuseTransferredChildren(

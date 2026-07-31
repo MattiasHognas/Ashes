@@ -591,13 +591,13 @@ public sealed partial class Lowering
     /// <summary>
     /// In-place reuse: consumes an available reuse token whose cell has exactly
     /// <paramref name="fieldCount"/> fields (so it is the same size as the constructor being built).
-    /// Returns the dead cell's address temp to overwrite, or false if no matching token is available.
+    /// Returns the matching token plus whether any live token was compared. A null token with
+    /// <see cref="ReuseTokenMatch.CandidateCompared"/> set means the caller must allocate because
+    /// every available token was incompatible.
     /// </summary>
-    private bool TryConsumeReuseToken(
+    private ReuseTokenMatch TryConsumeReuseToken(
         int fieldCount,
         bool allowRuntimeManaged,
-        out int tokenTemp,
-        out RuntimeReuseCleanup? runtimeCleanup,
         bool listCell,
         string targetConstructor,
         SourceLocation? location)
@@ -623,16 +623,139 @@ public sealed partial class Lowering
                 rejectionReason);
             if (rejectionReason is null)
             {
-                tokenTemp = token.Temp;
-                runtimeCleanup = token.RuntimeCleanup;
                 _reuseTokens.RemoveAt(i);
-                return true;
+                return new ReuseTokenMatch(token, CandidateCompared: true);
             }
         }
 
-        tokenTemp = -1;
-        runtimeCleanup = null;
-        return false;
+        return new ReuseTokenMatch(
+            Token: null,
+            CandidateCompared: _reuseTokens.Count > 0);
+    }
+
+    private void RecordReuseTokenProduction(ReuseToken token)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse token must belong to an active function."),
+                ReuseDecisionKind.TokenProduction,
+                ReuseDecisionMechanism.ReuseToken,
+                ReuseDecisionOutcome.Produced,
+                ReuseDecisionReason.MatchedCellBecameDead,
+                ReuseTokenCandidate(token),
+                RelatedGeneratedLabel: null,
+                token.Location,
+                TokenLifecycle: CreateReuseTokenLifecycle(token)));
+    }
+
+    private void RecordReuseTokenDisposition(
+        ReuseToken token,
+        ReuseDecisionOutcome outcome,
+        ReuseDecisionReason reason,
+        int? allocationTemp = null,
+        string? targetConstructor = null,
+        SourceLocation? location = null)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse token disposition must belong to an active function."),
+                ReuseDecisionKind.TokenDisposition,
+                ReuseDecisionMechanism.ReuseToken,
+                outcome,
+                reason,
+                ReuseTokenCandidate(token),
+                RelatedGeneratedLabel: null,
+                location ?? token.Location,
+                TokenLifecycle: CreateReuseTokenLifecycle(
+                    token,
+                    allocationTemp,
+                    targetConstructor)));
+    }
+
+    private void RecordReuseFallbackAllocation(
+        ReuseToken? token,
+        int allocationTemp,
+        string targetConstructor,
+        SourceLocation? location,
+        ReuseDecisionOutcome outcome,
+        ReuseDecisionReason reason,
+        ReuseFallbackAllocationKind fallbackKind,
+        int? fieldCount = null,
+        bool? listCell = null,
+        bool? runtimeManaged = null)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse fallback must belong to an active function."),
+                ReuseDecisionKind.FallbackAllocation,
+                ReuseDecisionMechanism.ReuseToken,
+                outcome,
+                reason,
+                token is null ? null : ReuseTokenCandidate(token),
+                RelatedGeneratedLabel: null,
+                location ?? token?.Location,
+                TokenLifecycle: token is null
+                    ? new ReuseTokenLifecycle(
+                        TokenTemp: null,
+                        SourceValueTemp: null,
+                        allocationTemp,
+                        fieldCount,
+                        listCell,
+                        runtimeManaged,
+                        targetConstructor,
+                        fallbackKind)
+                    : CreateReuseTokenLifecycle(
+                        token,
+                        allocationTemp,
+                        targetConstructor,
+                        fallbackKind)));
+    }
+
+    private static ReuseDecisionCandidate ReuseTokenCandidate(ReuseToken token)
+    {
+        return new ReuseDecisionCandidate(
+            ReuseCandidateKind.Token,
+            token.SourceName,
+            Temp: token.Temp);
+    }
+
+    private static ReuseTokenLifecycle CreateReuseTokenLifecycle(
+        ReuseToken token,
+        int? allocationTemp = null,
+        string? targetConstructor = null,
+        ReuseFallbackAllocationKind? fallbackKind = null)
+    {
+        return new ReuseTokenLifecycle(
+            token.Temp,
+            token.SourceValueTemp,
+            allocationTemp,
+            token.FieldCount,
+            token.ListCell,
+            token.RuntimeManaged,
+            targetConstructor,
+            fallbackKind);
+    }
+
+    private bool ShouldRecordReuseFallback(ReuseTokenMatch tokenMatch)
+    {
+        return tokenMatch.CandidateCompared
+            || _inSpecialization
+            || _activeReuseArmOrigin is not null
+                && Equals(_activeReuseArmOrigin, _activeFunctionOrigin);
+    }
+
+    private static ReuseDecisionReason ReuseFallbackReason(
+        ReuseTokenMatch tokenMatch)
+    {
+        return tokenMatch.CandidateCompared
+            ? ReuseDecisionReason.NoCompatibleReuseToken
+            : ReuseDecisionReason.NoReuseTokenAvailable;
     }
 
     private void RecordReuseLayoutCompatibilityDecision(

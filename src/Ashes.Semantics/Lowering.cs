@@ -235,6 +235,11 @@ public sealed partial class Lowering
     // one through the matching arena/runtime AllocReusing path. See LowerConstructorApplication /
     // LowerMatch.
     private readonly List<ReuseToken> _reuseTokens = new();
+    // Source function whose current match arm produced a reuse token. This remains set while the
+    // arm body lowers even after its token is consumed, so later constructors in that same body can
+    // retain their concrete fresh-allocation fallback. Generated nested functions have a different
+    // origin and therefore do not inherit the enclosing arm's reporting context.
+    private IrFunctionOrigin? _activeReuseArmOrigin;
 
     // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
     private readonly Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> _reuseTokenFieldBindings = new();
@@ -424,6 +429,14 @@ public sealed partial class Lowering
             .ThenBy(decision => decision.Layout?.RequestedListCell)
             .ThenBy(decision => decision.Layout?.RuntimeManagedToken)
             .ThenBy(decision => decision.Layout?.RuntimeManagedAllowed)
+            .ThenBy(decision => decision.TokenLifecycle?.TokenTemp ?? int.MaxValue)
+            .ThenBy(decision => decision.TokenLifecycle?.SourceValueTemp ?? int.MaxValue)
+            .ThenBy(decision => decision.TokenLifecycle?.AllocationTemp ?? int.MaxValue)
+            .ThenBy(decision => decision.TokenLifecycle?.FieldCount ?? int.MaxValue)
+            .ThenBy(decision => decision.TokenLifecycle?.ListCell)
+            .ThenBy(decision => decision.TokenLifecycle?.RuntimeManaged)
+            .ThenBy(decision => decision.TokenLifecycle?.TargetConstructor, StringComparer.Ordinal)
+            .ThenBy(decision => decision.TokenLifecycle?.FallbackKind)
             .ToList();
 
     // Stitched names of the data-parallel combinators. The grain-parameterized `mapGrained`/`reduceGrained`
@@ -6722,6 +6735,7 @@ public sealed partial class Lowering
         {
             if (_inst[i] is IrInst.AllocReusing allocation)
             {
+                ReclassifyRevertedReuseAllocation(allocation);
                 _inst[i] = new IrInst.AllocAdt(
                     allocation.Target,
                     allocation.Tag,
@@ -6733,6 +6747,43 @@ public sealed partial class Lowering
         }
 
         return false;
+    }
+
+    private void ReclassifyRevertedReuseAllocation(IrInst.AllocReusing allocation)
+    {
+        int dispositionIndex = _reuseDecisions.FindLastIndex(decision =>
+            decision.Decision == ReuseDecisionKind.TokenDisposition
+            && decision.Outcome == ReuseDecisionOutcome.Consumed
+            && decision.TokenLifecycle?.AllocationTemp == allocation.Target
+            && Equals(decision.Function, _activeFunctionOrigin));
+        if (dispositionIndex < 0)
+        {
+            return;
+        }
+
+        ReuseDecision consumed = _reuseDecisions[dispositionIndex];
+        _reuseDecisions[dispositionIndex] = consumed with
+        {
+            Outcome = ReuseDecisionOutcome.Discarded,
+            Reason = ReuseDecisionReason.NoStructuralReuse,
+        };
+        _reuseDecisions.RemoveAll(decision =>
+            decision.Decision == ReuseDecisionKind.FallbackAllocation
+            && decision.Outcome == ReuseDecisionOutcome.Available
+            && decision.TokenLifecycle?.AllocationTemp == allocation.Target
+            && Equals(decision.Function, _activeFunctionOrigin));
+        _reuseDecisions.Add(
+            consumed with
+            {
+                Decision = ReuseDecisionKind.FallbackAllocation,
+                Outcome = ReuseDecisionOutcome.Allocated,
+                Reason = ReuseDecisionReason.NoStructuralReuse,
+                Location = allocation.Location ?? consumed.Location,
+                TokenLifecycle = consumed.TokenLifecycle! with
+                {
+                    FallbackKind = ReuseFallbackAllocationKind.Arena,
+                },
+            });
     }
 
     private void LowerLambdaCoreSpliceRuntimeManagedTcoParams(TcoContext? tco, int insertIndex)

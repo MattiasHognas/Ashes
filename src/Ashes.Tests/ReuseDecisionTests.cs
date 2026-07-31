@@ -308,6 +308,259 @@ public sealed class ReuseDecisionTests
     }
 
     [Test]
+    public void ReuseTokenLifecycle_CorrelatesProductionWithOneTerminalDisposition()
+    {
+        const string source = """
+            let recursive bumpAll values =
+                match values with
+                    | [] -> []
+                    | value :: rest -> value + 1 :: bumpAll(rest)
+
+            let recursive repeat turns values =
+                if turns <= 0
+                then values
+                else repeat(turns - 1)(bumpAll(values))
+
+            repeat(3)([1, 2, 3])
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "token-lifecycle.ash").ReuseDecisions;
+        IReadOnlyList<ReuseDecision> productions = decisions
+            .Where(decision =>
+                decision.Decision == ReuseDecisionKind.TokenProduction)
+            .ToList();
+        productions.ShouldNotBeEmpty();
+
+        foreach (ReuseDecision production in productions)
+        {
+            production.Outcome.ShouldBe(ReuseDecisionOutcome.Produced);
+            production.Reason.ShouldBe(ReuseDecisionReason.MatchedCellBecameDead);
+            production.TokenLifecycle.ShouldNotBeNull();
+            ReuseTokenLifecycle productionLifecycle = production.TokenLifecycle;
+            productionLifecycle.TokenTemp.ShouldNotBeNull();
+            productionLifecycle.SourceValueTemp.ShouldNotBeNull();
+            productionLifecycle.FieldCount.ShouldBe(2);
+            productionLifecycle.ListCell.ShouldBe(true);
+            productionLifecycle.RuntimeManaged.ShouldBe(false);
+            production.Location.ShouldNotBeNull();
+            production.Location.Value.FilePath.ShouldBe("token-lifecycle.ash");
+
+            IReadOnlyList<ReuseDecision> dispositions = decisions
+                .Where(decision =>
+                    decision.Decision == ReuseDecisionKind.TokenDisposition
+                    && decision.Function == production.Function
+                    && decision.TokenLifecycle?.TokenTemp
+                        == productionLifecycle.TokenTemp)
+                .ToList();
+            dispositions.Count.ShouldBe(1);
+            dispositions[0].Outcome.ShouldBe(ReuseDecisionOutcome.Consumed);
+            dispositions[0].Reason.ShouldBe(
+                ReuseDecisionReason.CompatibleTokenConsumed);
+            dispositions[0].TokenLifecycle.ShouldNotBeNull();
+            ReuseTokenLifecycle dispositionLifecycle =
+                dispositions[0].TokenLifecycle!;
+            dispositionLifecycle.AllocationTemp.ShouldNotBeNull();
+            dispositionLifecycle.TargetConstructor.ShouldBe("::");
+        }
+    }
+
+    [Test]
+    public void RuntimeReuseFallback_CorrelatesNullTokenPathWithConsumption()
+    {
+        const string source = """
+            type Choice =
+                | Left(Int)
+                | Right(Int)
+
+            let choice = Left(42)
+            match choice with
+                | Left(value) -> Right(value + 1)
+                | Right(value) -> Left(value - 1)
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "runtime-fallback.ash").ReuseDecisions;
+        IReadOnlyList<ReuseDecision> consumptions = decisions
+            .Where(decision =>
+                decision.Decision == ReuseDecisionKind.TokenDisposition
+                && decision.Outcome == ReuseDecisionOutcome.Consumed)
+            .ToList();
+        consumptions.Count.ShouldBe(2);
+
+        foreach (ReuseDecision consumption in consumptions)
+        {
+            consumption.TokenLifecycle.ShouldNotBeNull();
+            ReuseTokenLifecycle consumptionLifecycle =
+                consumption.TokenLifecycle;
+            consumptionLifecycle.RuntimeManaged.ShouldBe(true);
+            ReuseDecision fallback = decisions.Single(decision =>
+                decision.Decision == ReuseDecisionKind.FallbackAllocation
+                && decision.Outcome == ReuseDecisionOutcome.Available
+                && decision.Function == consumption.Function
+                && decision.TokenLifecycle?.TokenTemp
+                    == consumptionLifecycle.TokenTemp
+                && decision.TokenLifecycle?.AllocationTemp
+                    == consumptionLifecycle.AllocationTemp);
+            fallback.Reason.ShouldBe(
+                ReuseDecisionReason.RuntimeUniquenessFallback);
+            fallback.TokenLifecycle.ShouldNotBeNull();
+            fallback.TokenLifecycle.FallbackKind.ShouldBe(
+                ReuseFallbackAllocationKind.RuntimeRc);
+        }
+    }
+
+    [Test]
+    public void ReuseSpecialization_RetainsPersistentToSpaceFallback()
+    {
+        const string source = """
+            type Item =
+                | value: Int
+
+            let recursive make count =
+                if count <= 0
+                then []
+                else Item(value = count) :: make(count - 1)
+
+            let recursive increment amount items =
+                match items with
+                    | [] -> []
+                    | Item(value) :: rest ->
+                        Item(value = value + amount) :: increment(amount)(rest)
+
+            increment(1)(make(2))
+            """;
+
+        ReuseDecision fallback = LowerProgram(
+            source,
+            "to-space-fallback.ash").ReuseDecisions.Single(decision =>
+                decision.Decision == ReuseDecisionKind.FallbackAllocation
+                && decision.TokenLifecycle?.FallbackKind
+                    == ReuseFallbackAllocationKind.ToSpace);
+
+        fallback.Outcome.ShouldBe(ReuseDecisionOutcome.Allocated);
+        fallback.Reason.ShouldBe(ReuseDecisionReason.NoCompatibleReuseToken);
+        fallback.Function.Kind.ShouldBe(IrFunctionOriginKind.ClosureHelper);
+        fallback.Function.Source.ShouldNotBeNull();
+        fallback.Function.Source.SourceName.ShouldBe("increment");
+        fallback.TokenLifecycle.ShouldNotBeNull();
+        fallback.TokenLifecycle.TargetConstructor.ShouldBe("Item");
+        fallback.TokenLifecycle.AllocationTemp.ShouldNotBeNull();
+        fallback.Location.ShouldNotBeNull();
+        fallback.Location.Value.FilePath.ShouldBe("to-space-fallback.ash");
+    }
+
+    [Test]
+    public void DirectReader_RetainsFinalReversionToFreshAllocation()
+    {
+        const string source = """
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            type MaybeInt =
+                | None
+                | Some(Int)
+
+            let recursive find target tree =
+                match tree with
+                    | Leaf -> None
+                    | Node(left, value, _) ->
+                        if value == target
+                        then Some(value)
+                        else find(target)(left)
+
+            find(2)(Node(Node(Leaf)(1)(Leaf))(2)(Leaf))
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "nullary-reversion.ash").ReuseDecisions;
+        IReadOnlyList<ReuseDecision> reverted = decisions
+            .Where(decision =>
+                decision.Decision == ReuseDecisionKind.TokenDisposition
+                && decision.Outcome == ReuseDecisionOutcome.Discarded
+                && decision.Reason == ReuseDecisionReason.NoStructuralReuse)
+            .ToList();
+        reverted.ShouldNotBeEmpty(string.Join(
+            "; ",
+            decisions.Select(decision =>
+                $"{decision.Decision}:{decision.Outcome}:{decision.Reason}:"
+                + $"{decision.TokenLifecycle?.FieldCount}:"
+                + $"{decision.TokenLifecycle?.TargetConstructor}")));
+        foreach (ReuseDecision disposition in reverted)
+        {
+            disposition.TokenLifecycle.ShouldNotBeNull();
+            ReuseDecision fallback = decisions.Single(decision =>
+                decision.Decision == ReuseDecisionKind.FallbackAllocation
+                && decision.Outcome == ReuseDecisionOutcome.Allocated
+                && decision.Reason == ReuseDecisionReason.NoStructuralReuse
+                && decision.Function == disposition.Function
+                && decision.TokenLifecycle?.TokenTemp
+                    == disposition.TokenLifecycle.TokenTemp
+                && decision.TokenLifecycle?.AllocationTemp
+                    == disposition.TokenLifecycle.AllocationTemp);
+            fallback.TokenLifecycle.ShouldNotBeNull();
+            fallback.TokenLifecycle.FallbackKind.ShouldBe(
+                ReuseFallbackAllocationKind.Arena);
+            decisions.Any(decision =>
+                decision.Decision == ReuseDecisionKind.FallbackAllocation
+                && decision.Outcome == ReuseDecisionOutcome.Available
+                && decision.Function == disposition.Function
+                && decision.TokenLifecycle?.AllocationTemp
+                    == disposition.TokenLifecycle.AllocationTemp)
+                .ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public void IncompatibleToken_RetainsFreshFallbackAndDiscard()
+    {
+        const string source = """
+            type Shape =
+                | One(Int)
+                | Pair(Int, Int)
+
+            let recursive rotate turns shape =
+                if turns <= 0
+                then shape
+                else
+                    match shape with
+                        | One(value) -> rotate(turns - 1)(Pair(value)(0))
+                        | Pair(left, _) -> rotate(turns - 1)(One(left))
+
+            rotate(4)(One(1))
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "fallback-allocation.ash").ReuseDecisions;
+        IReadOnlyList<ReuseDecision> fallbacks = decisions
+            .Where(decision =>
+                decision.Decision == ReuseDecisionKind.FallbackAllocation
+                && decision.Outcome == ReuseDecisionOutcome.Allocated
+                && decision.Reason
+                    == ReuseDecisionReason.NoCompatibleReuseToken)
+            .ToList();
+        fallbacks.Count.ShouldBe(2);
+        foreach (ReuseDecision fallback in fallbacks)
+        {
+            fallback.TokenLifecycle.ShouldNotBeNull();
+            fallback.TokenLifecycle.TokenTemp.ShouldBeNull();
+            fallback.TokenLifecycle.AllocationTemp.ShouldNotBeNull();
+            fallback.TokenLifecycle.FallbackKind.ShouldBe(
+                ReuseFallbackAllocationKind.Arena);
+            fallback.Location.ShouldNotBeNull();
+            fallback.Location.Value.FilePath.ShouldBe("fallback-allocation.ash");
+        }
+
+        decisions.Count(decision =>
+            decision.Decision == ReuseDecisionKind.TokenDisposition
+            && decision.Outcome == ReuseDecisionOutcome.Discarded
+            && decision.Reason
+                == ReuseDecisionReason.UnconsumedArenaTokenDiscarded)
+            .ShouldBe(2);
+    }
+
+    [Test]
     public void RejectedSpecializationCandidates_RetainConcreteCallSiteReasons()
     {
         IReadOnlyList<ReuseDecision> rejections =

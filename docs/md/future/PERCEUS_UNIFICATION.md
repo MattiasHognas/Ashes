@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `7ccbef6` on 2026-07-31, together with the specialization-rejection and
-constructor-layout decision capture in this change. This document is intentionally a remaining-work
+Audited against `main` at `dddaff0` on 2026-07-31, together with the reuse-token lifecycle and
+fallback-allocation decision capture in this change. This document is intentionally a remaining-work
 backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -210,6 +210,12 @@ The following is already implemented and is not part of the backlog:
   constructor-layout decision. The record includes the token source and temp, allocation site and
   target constructor, producer/requested field counts, list-cell identities, runtime-management
   regimes, and the exact field-count, cell-kind, or runtime-eligibility mismatch;
+- each `DropReuse` now retains its source value and produced token, and every token has one final
+  consumed, released, discarded, or profitability-reverted disposition. `AllocReusing` records
+  correlate the token with their result temp and constructor. Compile-time arena/runtime-RC/to-space
+  fallbacks and the runtime null-token fallback retain distinct outcomes and reasons; the direct
+  reader profitability rewrite also replaces tentative lifecycle facts with its final fresh-allocation
+  decision;
 - `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
@@ -247,35 +253,13 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
-| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse entry-copy elision and runtime-managed call-result placement, plus immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, and most non-TCO reuse/representation decisions are still transient booleans or reconstructed instruction counts. The structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
+| Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse specialization, rejection, reset-safety, entry-copy, uniqueness, layout, token lifecycle, and fallback decisions, plus runtime-managed call-result placement and immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, remaining representation decisions are still transient or reconstructed from instructions, and the structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestone 1 and tasks 2.1–2.4 are complete. Thirteen
-implementation tasks remain; Milestone 2.5 is next.
-
-### Milestone 2 — separate TCO ownership, placement, and reuse refinements
-
-#### 2.5 Consolidate the remaining reuse refinements
-
-The structural, borrow-inspection, affine-reuse, specialization-generation, candidate-rejection,
-reset-safety, entry-copy, reuse-token uniqueness, and constructor-layout cutovers are complete. The
-remaining work in this milestone is to retain structured facts for reuse decisions that are still
-transient.
-
-When the reuse path produces/consumes a token or leaves a fallback allocation, record that decision
-next to the fact that made it. Use actual stable enum values—not speculative prose—for outcomes the
-implementation can distinguish. At minimum, the remaining `DropReuse` production and
-`AllocReusing` consumption sites must not lose their source function, candidate value/token,
-location, and positive or conservative reason.
-
-#### Milestone 2 acceptance
-
-- `fannkuch-redux` N=8–11 retain their checksums/results and bounded baseline footprint.
-- `1brc` (10M and 100M rows), `reverse-complement`, and `binary-trees` retain their baseline peak RSS
-  and output. These are mandatory because earlier “safe” TCO cleanups regressed them despite passing
-  ordinary tests.
+teardown prerequisites are in place. Milestones 1–2 are complete. Twelve implementation tasks
+remain; Milestone 3.1 is next.
 
 ### Milestone 3 — make value/temp ownership forward-propagated
 
