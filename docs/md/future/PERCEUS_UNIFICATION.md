@@ -285,6 +285,11 @@ The following is already implemented and is not part of the backlog:
   unknown fallback. Lowering consumes that fact directly to create stable binding owners and retains
   the final borrowed, same-parameter transfer, copy-type, arena-erased, or runtime-RC placement
   outcome. Same-named binders in disjoint arms remain distinct by binder, ordinal, and local slot.
+- byte storage origin is explicit and metadata-driven. `BytesOwnershipProvenance` distinguishes fresh
+  owned buffers, owner-borrowed views, program-lifetime mmap views, and conservative unknowns in both
+  function-result summaries and lowered-temp facts. Owning aggregate boundaries materialize
+  owner-borrowed views, conservative and program-lifetime storage remains non-owning, and TCO layout
+  support no longer rejects a type merely because it contains `Bytes`.
 
 These pieces are useful foundations, but the gaps below still retain separate ownership or
 representation paths. Their existence must not be mistaken for a completed migration.
@@ -293,7 +298,6 @@ representation paths. Their existence must not be mistaken for a completed migra
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
 | Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse specialization, rejection, reset-safety, entry-copy, uniqueness, layout, token lifecycle, and fallback decisions, plus runtime-managed call-result placement and immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, remaining representation decisions are still transient or reconstructed from instructions, and the structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
@@ -301,38 +305,8 @@ representation paths. Their existence must not be mistaken for a completed migra
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–4 are complete. Six implementation tasks remain;
-Milestone 5 is next.
-
-### Milestone 5 — represent owned buffers and borrowed `Bytes` views explicitly
-
-`TBytes` must remain the user-visible type, but internal ownership provenance must distinguish:
-
-- a fresh owned buffer with a valid RC header;
-- a borrowed view into another buffer;
-- a program-lifetime mmap view;
-- unknown/conservative provenance.
-
-Build this on existing `BuiltinRegistry` metadata rather than another producer-name whitelist:
-
-- mark `Ashes.Byte.subView` as a borrowed view;
-- mark `Ashes.IO.File.mmap` as a program-lifetime borrowed view;
-- retain explicit owned-result metadata for `append`, `appendByte`, `fromList`, `empty`, `singleton`,
-  and fixed-width encoders;
-- propagate the provenance through `FunctionResultProvenance` and the Milestone 3 temp fact.
-
-Use the provenance to replace:
-
-- hardcoded qualified-name logic in `IsRuntimeRcClosureCaptureSafeBytesProducer`;
-- `IsArenaAllocationFreeBytesOperand` where the forward fact already answers the question;
-- the blanket `RuntimeManagedTcoListElementContainsBytes` rejection.
-
-An RC container may directly own an owned buffer. A borrowed view must either retain a proven-live
-owner/program-lifetime mapping or be materialized before it outlives that owner. Dropping a view must
-never call the RC-header path.
-
-Test view/owner lifetime through closures, ADT/tuple/list fields, function forwarding, TCO, and (after
-Milestone 7) task frames.
+teardown prerequisites are in place. Milestones 1–5 are complete. Five implementation tasks remain;
+Milestone 6 is next.
 
 ### Milestone 6 — narrow the dynamic capability exception
 

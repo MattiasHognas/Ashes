@@ -121,7 +121,14 @@ internal sealed record OwnershipFactConsumption(
 /// function; null when there are no forwarding arms or when multiple distinct immediate targets occur.
 /// This diagnostic correlation is independent of <paramref name="RcEligible"/>.
 /// </param>
-internal sealed record FunctionResultProvenance(bool RcEligible, string? ForwardsTo);
+/// <param name="BytesProvenance">
+/// Stable byte-storage provenance for a direct or forwarded result, independent of its selected
+/// arena or runtime-RC representation.
+/// </param>
+internal sealed record FunctionResultProvenance(
+    bool RcEligible,
+    string? ForwardsTo,
+    BuiltinRegistry.BytesOwnershipProvenance BytesProvenance);
 
 /// <summary>
 /// The shape a self-recursive function's own tail-call argument takes at a given parameter position,
@@ -228,6 +235,11 @@ internal enum TcoParamReuseAffinity
 /// selects between direct closure constructions. This is separate from <paramref name="Shape"/>
 /// because a new closure may legitimately capture and therefore reach an input reference.
 /// </param>
+/// <param name="BytesProvenanceSafeListRebuild">
+/// True when every rebuilt list argument containing byte storage constructs each new element from
+/// explicit owned or materializable borrowed provenance rather than an unknown or program-lifetime
+/// value.
+/// </param>
 /// <param name="UseMode">
 /// The canonical ownership use mode for this parameter and values structurally derived from it.
 /// </param>
@@ -240,6 +252,7 @@ internal sealed record TcoParamStructuralFacts(
     TcoSelfCallArgumentShape Shape,
     bool ArenaSelfContainedListRebuild,
     bool FreshClosureRebuild,
+    bool BytesProvenanceSafeListRebuild,
     TcoParamUseMode UseMode,
     TcoParamReuseAffinity ReuseAffinity);
 

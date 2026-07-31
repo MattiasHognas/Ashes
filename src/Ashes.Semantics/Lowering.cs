@@ -582,6 +582,8 @@ public sealed partial class Lowering
     // binding: m2 is address-stable when every leaf of that match/if is itself stable. Cleared at each
     // function boundary because local slots are numbered per function.
     private readonly Dictionary<int, Expr> _letBindingValues = new();
+    private readonly Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>
+        _localBytesProvenance = new();
 
     // Inlinable-function names currently shadowed by a more-local binding (lambda param / let), so a
     // call to that name is NOT the top-level helper and must not be inlined. Counter per name (a name
@@ -2754,7 +2756,7 @@ public sealed partial class Lowering
         switch (b)
         {
             case Binding.Local loc:
-                Emit(new IrInst.LoadLocal(temp, loc.Slot));
+                LoadLocalWithBytesProvenance(temp, loc, v);
                 result = (temp, loc.Type);
                 break;
 
@@ -2805,6 +2807,22 @@ public sealed partial class Lowering
         }
 
         return result;
+    }
+
+    private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
+    {
+        Emit(new IrInst.LoadLocal(temp, local.Slot));
+        RecordUnknownProducedTemp(
+            temp,
+            LoweredTempOwnershipReason.BorrowForward,
+            ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
+            local.Type);
+        if (_localBytesProvenance.TryGetValue(
+                local.Slot,
+                out BuiltinRegistry.BytesOwnershipProvenance provenance))
+        {
+            RefineTempBytesProvenance(temp, provenance);
+        }
     }
 
     private (int, TypeRef) LowerProgramArgs(int target, TypeRef type)
@@ -2939,6 +2957,7 @@ public sealed partial class Lowering
 
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalBytesProvenance(slot, valueTemp);
         RecordLocalDebugInfo(slot, let.Name, valueType);
         // Record the binding value so a later tail call `loop(<this name>)` can prove the accumulator
         // address-stable by tracing it back through this let into the value's match/if leaves.
@@ -3956,7 +3975,7 @@ public sealed partial class Lowering
                 _)
             && string.Equals(subText.Module, "Ashes.Byte", StringComparison.Ordinal)
             && string.Equals(subText.Name, "subText", StringComparison.Ordinal)
-            && IsArenaAllocationFreeBytesOperand(bytes);
+            && IsStableBytesOperand(bytes);
     }
 
     private static bool IsArenaAllocationFreeStringOperand(Expr expression)
@@ -4068,6 +4087,32 @@ public sealed partial class Lowering
         return kind != BuiltinRegistry.FreshRcResultKind.None;
     }
 
+    private bool TryGetBuiltinBytesProvenance(
+        Expr expression,
+        out BuiltinRegistry.BytesOwnershipProvenance provenance)
+    {
+        provenance = BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+        if (!TryExtractFullyAppliedQualifiedCall(
+                expression,
+                out Expr.QualifiedVar? qualified,
+                out int argumentCount))
+        {
+            return false;
+        }
+
+        string moduleName = ResolveModuleAlias(qualified.Module);
+        if (!BuiltinRegistry.TryGetModule(moduleName, out BuiltinRegistry.BuiltinModule module)
+            || !module.Members.TryGetValue(qualified.Name, out var member)
+            || member.Arity != argumentCount
+            || member.BytesProvenance == BuiltinRegistry.BytesOwnershipProvenance.Unknown)
+        {
+            return false;
+        }
+
+        provenance = member.BytesProvenance;
+        return true;
+    }
+
     private bool IsRuntimeRcStringProducer(Expr expression)
     {
         return expression is Expr.Add
@@ -4081,46 +4126,55 @@ public sealed partial class Lowering
 
     private bool IsRuntimeRcClosureCaptureSafeBytesProducer(Expr expression)
     {
-        if (expression is Expr.Call(
-                Expr.Call(Expr.QualifiedVar binary, Expr left),
-                Expr right)
-            && string.Equals(ResolveModuleAlias(binary.Module), "Ashes.Byte", StringComparison.Ordinal))
-        {
-            if (string.Equals(binary.Name, "append", StringComparison.Ordinal))
-            {
-                return IsArenaAllocationFreeBytesOperand(left)
-                    && IsArenaAllocationFreeBytesOperand(right);
-            }
-
-            if (string.Equals(binary.Name, "appendByte", StringComparison.Ordinal))
-            {
-                return IsArenaAllocationFreeBytesOperand(left)
-                    && right is Expr.UIntLit or Expr.Var or Expr.QualifiedVar;
-            }
-        }
-
-        if (expression is not Expr.Call(Expr.QualifiedVar qualified, Expr argument)
-            || !string.Equals(ResolveModuleAlias(qualified.Module), "Ashes.Byte", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return string.Equals(qualified.Name, "fromList", StringComparison.Ordinal)
-                && IsFreshListConstructionExpression(argument)
-            || string.Equals(qualified.Name, "empty", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "singleton", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u16Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u32Le", StringComparison.Ordinal)
-            || string.Equals(qualified.Name, "u64Le", StringComparison.Ordinal);
+        return GetBytesOwnershipProvenance(expression)
+            == BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer;
     }
 
-    private bool IsArenaAllocationFreeBytesOperand(Expr expression)
+    private BuiltinRegistry.BytesOwnershipProvenance GetBytesOwnershipProvenance(
+        Expr expression)
+    {
+        if (TryGetBuiltinBytesProvenance(expression, out var builtinProvenance))
+        {
+            return builtinProvenance;
+        }
+
+        if (expression is Expr.If conditional)
+        {
+            BuiltinRegistry.BytesOwnershipProvenance thenProvenance =
+                GetBytesOwnershipProvenance(conditional.Then);
+            return thenProvenance == GetBytesOwnershipProvenance(conditional.Else)
+                ? thenProvenance
+                : BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+        }
+
+        if (expression is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Local local
+            && _letBindingValues.TryGetValue(local.Slot, out Expr? value)
+            && !ReferenceEquals(value, expression))
+        {
+            return GetBytesOwnershipProvenance(value);
+        }
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        return GetOwnershipSummaryForCallRoot(root) is { } summary
+            && arguments.Count == summary.Parameters.Count
+                ? summary.ResultProvenance.BytesProvenance
+                : BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+    }
+
+    private bool IsStableBytesOperand(Expr expression)
     {
         return expression is Expr.Var or Expr.QualifiedVar
-            || expression is Expr.Call(Expr.QualifiedVar fromText, Expr text)
-                && string.Equals(ResolveModuleAlias(fromText.Module), "Ashes.Byte", StringComparison.Ordinal)
-                && string.Equals(fromText.Name, "fromText", StringComparison.Ordinal)
-                && IsArenaAllocationFreeStringOperand(text);
+            || GetBytesOwnershipProvenance(expression)
+                != BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+    }
+
+    private bool CanMaterializeOwnedBytes(Expr expression)
+    {
+        return GetBytesOwnershipProvenance(expression) is
+            BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+            or BuiltinRegistry.BytesOwnershipProvenance.BorrowedView;
     }
 
     private bool IsImmediateRuntimeBytesUse(Expr body, string bindingName)
@@ -5032,6 +5086,8 @@ public sealed partial class Lowering
                 loopInvariantParamOrdinals: tcoParamOrdinalFacts.LoopInvariant,
                 freshRebuiltListParamOrdinals: tcoParamOrdinalFacts.ArenaSelfContainedListRebuild,
                 freshClosureRebuildParamOrdinals: tcoParamOrdinalFacts.FreshClosureRebuild,
+                bytesProvenanceSafeListRebuildParamOrdinals:
+                    tcoParamOrdinalFacts.BytesProvenanceSafeListRebuild,
                 affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
@@ -6000,7 +6056,8 @@ public sealed partial class Lowering
         List<PatternBindingPlacementSite> PatternBindingPlacementSites,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
         Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
-        Dictionary<int, Expr> LetBindingValues);
+        Dictionary<int, Expr> LetBindingValues,
+        Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance> LocalBytesProvenance);
 
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
     {
@@ -6048,6 +6105,9 @@ public sealed partial class Lowering
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
         var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
+        var savedLocalBytesProvenance =
+            new Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>(
+                _localBytesProvenance);
         ClearLambdaFrameState();
 
         return new LowerLambdaCoreFrame(
@@ -6056,7 +6116,8 @@ public sealed partial class Lowering
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
             savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
             savedPatternBindingPlacementSites, savedKnownFunctionLabelsBySlot,
-            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
+            savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues,
+            savedLocalBytesProvenance);
     }
 
     private void ClearLambdaFrameState()
@@ -6072,6 +6133,7 @@ public sealed partial class Lowering
         _knownFunctionLabelsBySlot.Clear();
         _knownFunctionLabelsByEnvIndex.Clear();
         _letBindingValues.Clear();
+        _localBytesProvenance.Clear();
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -7136,6 +7198,11 @@ public sealed partial class Lowering
         _reuseTokens.AddRange(frame.ReuseTokens);
         _letBindingValues.Clear();
         foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
+        _localBytesProvenance.Clear();
+        foreach (var pair in frame.LocalBytesProvenance)
+        {
+            _localBytesProvenance[pair.Key] = pair.Value;
+        }
     }
 
     private void RestoreRuntimeManagedFrameState(LowerLambdaCoreFrame frame)
@@ -8535,7 +8602,8 @@ public sealed partial class Lowering
             callResultType,
             runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp);
-        RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult, normalizesRuntimeManagedResult);
+        RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
+            normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
         return (currentTemp, currentType);
     }
@@ -8626,6 +8694,21 @@ public sealed partial class Lowering
                 callResultType,
                 out bool runtimeManaged)
             && runtimeManaged;
+    }
+
+    private BuiltinRegistry.BytesOwnershipProvenance GetKnownFunctionBytesProvenance(
+        Expr rootExpr,
+        int argumentCount)
+    {
+        if (argumentCount == 0
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
+            || GetOwnershipSummaryForLabel(resultLabel) is not { } summary
+            || argumentCount != summary.Parameters.Count)
+        {
+            return BuiltinRegistry.BytesOwnershipProvenance.Unknown;
+        }
+
+        return summary.ResultProvenance.BytesProvenance;
     }
 
     /// <summary>
@@ -9599,8 +9682,36 @@ public sealed partial class Lowering
                 runtimeManagedList && element is Expr.TupleLit,
                 LoweredValueRuntimeRepresentation.Tuple);
         LoweredValue lowered = LowerExpr(element, elementRequest);
+        if (runtimeManagedList)
+        {
+            lowered = NormalizeRuntimeManagedBytesValue(lowered);
+        }
         lowered = NormalizeRuntimeManagedListElement(lowered, listRequest);
         return lowered;
+    }
+
+    private LoweredValue NormalizeRuntimeManagedBytesValue(LoweredValue lowered)
+    {
+        if (Prune(lowered.Type) is not TypeRef.TBytes
+            || lowered.Ownership.BytesProvenance is
+                BuiltinRegistry.BytesOwnershipProvenance.Unknown
+                or BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView
+            || lowered.Ownership.Representation == LoweredTempRepresentation.RuntimeRc
+                && lowered.Ownership.BytesProvenance
+                    == BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer)
+        {
+            return lowered;
+        }
+
+        int normalizedTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            normalizedTemp,
+            lowered.Temp,
+            StaticSizeBytes: -1,
+            RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization));
+        MarkRuntimeManagedTemp(normalizedTemp, type: new TypeRef.TBytes());
+        return CreateLoweredValue(normalizedTemp, lowered.Type);
     }
 
     private LoweredValue NormalizeRuntimeManagedListElement(
@@ -9616,6 +9727,14 @@ public sealed partial class Lowering
         }
 
         TypeRef elementType = Prune(lowered.Type);
+        if (ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
+            && lowered.Ownership.BytesProvenance is
+                BuiltinRegistry.BytesOwnershipProvenance.Unknown
+                or BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView)
+        {
+            return lowered;
+        }
+
         int normalizedTemp = NewTemp();
         if (elementType is TypeRef.TStr)
         {
@@ -9661,6 +9780,10 @@ public sealed partial class Lowering
         {
             Expr element = tuple.Elements[i];
             LoweredValue loweredElement = LowerTupleElement(element, request);
+            if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
+            {
+                loweredElement = NormalizeRuntimeManagedBytesValue(loweredElement);
+            }
             LoweredValue materialized = MaterializeEscapingStringTupleElement(
                 element,
                 loweredElement,
@@ -9682,6 +9805,7 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elements[i].Temp));
         }
+        RecordAggregateBytesProvenance(tupleTemp, elements);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 

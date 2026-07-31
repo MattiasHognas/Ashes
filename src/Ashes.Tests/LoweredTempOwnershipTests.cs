@@ -39,6 +39,7 @@ public sealed class LoweredTempOwnershipTests
         Emit(lowering, new IrInst.Alloc(5, 16, RuntimeManaged: false));
         Emit(lowering, new IrInst.CallKnown(6, "known", 20, 21));
         Emit(lowering, new IrInst.CallClosure(7, 22, 23));
+        Emit(lowering, new IrInst.BytesEmpty(8, RuntimeManaged: true));
 
         IReadOnlyDictionary<int, LoweredTempOwnershipFact> facts = Facts(lowering);
         facts[1].Representation.ShouldBe(LoweredTempRepresentation.RuntimeRc);
@@ -54,6 +55,8 @@ public sealed class LoweredTempOwnershipTests
         facts[4].Representation.ShouldBe(LoweredTempRepresentation.BorrowedView);
         facts[4].Layout.ShouldBe(LoweredTempLayoutKind.Bytes);
         facts[4].DropKind.ShouldBe(LoweredTempDropKind.BorrowedViewNoDrop);
+        facts[4].BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.BorrowedView);
         facts[4].OwnerTemp.ShouldBe(1);
         facts[4].LayoutCapability.ShouldNotBeNull();
         facts[4].LayoutCapability!.ContainsResourceOrBorrowedView.ShouldBeTrue();
@@ -66,6 +69,8 @@ public sealed class LoweredTempOwnershipTests
         facts[6].Reason.ShouldBe(LoweredTempOwnershipReason.KnownCallResult);
         facts[7].Representation.ShouldBe(LoweredTempRepresentation.Unknown);
         facts[7].Reason.ShouldBe(LoweredTempOwnershipReason.UnknownCallResult);
+        facts[8].BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
     }
 
     [Test]
@@ -97,6 +102,58 @@ public sealed class LoweredTempOwnershipTests
 
         Emit(lowering, new IrInst.Borrow(2, 1));
         Facts(lowering)[2].LayoutCapability.ShouldBeSameAs(capability);
+    }
+
+    [Test]
+    public void Mmap_payload_provenance_survives_pattern_extraction_without_an_rc_drop_header()
+    {
+        var diagnostics = new Diagnostics();
+        Program program = new Parser(
+            """
+            match Ashes.IO.File.mmap("data.bin") with
+                | Error(_error) -> 0
+                | Ok(bytes) -> Ashes.Byte.length(bytes)
+            """,
+            diagnostics).ParseProgram();
+        var lowering = new Lowering(diagnostics);
+
+        lowering.Lower(program);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        LoweredTempOwnershipFact[] mappedFacts = Facts(lowering).Values
+            .Where(fact => fact.BytesProvenance
+                == BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView)
+            .ToArray();
+        mappedFacts.ShouldNotBeEmpty();
+        mappedFacts.ShouldAllBe(fact =>
+            fact.DropKind != LoweredTempDropKind.RuntimeRcHeader);
+    }
+
+    [Test]
+    public void Runtime_normalization_reclassifies_a_program_lifetime_view_as_fresh_owned_bytes()
+    {
+        var lowering = new Lowering(new Diagnostics());
+        MethodInfo recordCallResult = typeof(Lowering).GetMethod(
+            "RecordCallResultTempOwnership",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(
+                typeof(Lowering).FullName,
+                "RecordCallResultTempOwnership");
+
+        recordCallResult.Invoke(
+            lowering,
+            [
+                1,
+                new TypeRef.TBytes(),
+                false,
+                true,
+                BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView,
+            ]);
+
+        LoweredTempOwnershipFact normalized = Facts(lowering)[1];
+        normalized.DropKind.ShouldBe(LoweredTempDropKind.RuntimeRcHeader);
+        normalized.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
     }
 
     [Test]

@@ -2907,6 +2907,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.FileMmap(target, pathTemp));
+        RecordProgramLifetimeBytesView(target);
         return (target, CreateStringResultType(new TypeRef.TBytes()));
     }
 
@@ -4388,6 +4389,7 @@ public sealed partial class Lowering
         }
 
         // Identity: the same heap value is a valid Bytes; only the static type changes.
+        RecordBytesReinterpretTemp(textTemp);
         return (textTemp, new TypeRef.TBytes());
     }
 

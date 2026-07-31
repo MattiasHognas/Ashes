@@ -14,8 +14,7 @@ public sealed partial class Lowering
         bool ownedChildrenDroppable = CanDropOrdinaryValueGraph(
             resolved,
             new HashSet<TypeSymbol>());
-        bool containsResourceOrBorrowedView = IsResourceBearing(resolved)
-            || ContainsBytesLayout(resolved, new HashSet<TypeSymbol>());
+        bool containsResourceOrBorrowedView = IsResourceBearing(resolved);
         bool unresolved = ContainsUnresolvedLayoutType(
             resolved,
             new HashSet<TypeSymbol>());
@@ -514,11 +513,6 @@ public sealed partial class Lowering
         HashSet<TypeSymbol> path)
     {
         TypeRef valueType = Prune(type);
-        if (ContainsBytesLayout(valueType, new HashSet<TypeSymbol>()))
-        {
-            return false;
-        }
-
         if (CanArenaReset(valueType))
         {
             return true;
@@ -526,7 +520,7 @@ public sealed partial class Lowering
 
         return valueType switch
         {
-            TypeRef.TStr or TypeRef.TBigInt => true,
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
             TypeRef.TList list => IsRuntimeTcoListElementLayout(list.Element, path),
             TypeRef.TTuple tuple => tuple.Elements.All(element =>
                 IsRuntimeTcoListElementLayout(element, path)),

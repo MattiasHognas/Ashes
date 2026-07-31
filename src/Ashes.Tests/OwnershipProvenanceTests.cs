@@ -607,6 +607,89 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
+    public void Bytes_provenance_flows_from_builtin_metadata_through_function_forwarding()
+    {
+        const string source =
+            """
+            let owned byte = Ashes.Byte.singleton(byte)
+            let forwarded byte = owned(byte)
+            let borrowed text = Ashes.Byte.fromText(text)
+            let mapped path = Ashes.IO.File.mmap(path)
+            in Ashes.Byte.length(forwarded(1u8))
+            """;
+
+        Lowering lowering = LowerProgram(source);
+
+        lowering.GetOwnershipSummary("owned")!.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
+        lowering.GetOwnershipSummary("forwarded")!.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
+        lowering.GetOwnershipSummary("borrowed")!.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.BorrowedView);
+        lowering.GetOwnershipSummary("mapped")!.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView);
+    }
+
+    [Test]
+    public void Builtin_bytes_metadata_covers_owned_borrowed_and_program_lifetime_results()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Byte", out BuiltinRegistry.BuiltinModule bytes)
+            .ShouldBeTrue();
+        BuiltinRegistry.BuiltinModuleMember[] ownedMembers = bytes.Members.Values
+            .Where(member => member.ProducesFreshRcResult
+                == BuiltinRegistry.FreshRcResultKind.Bytes)
+            .ToArray();
+
+        ownedMembers.ShouldNotBeEmpty();
+        ownedMembers.ShouldAllBe(member => member.BytesProvenance
+            == BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
+        bytes.Members["subView"].BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.BorrowedView);
+
+        BuiltinRegistry.TryGetModule("Ashes.IO.File", out BuiltinRegistry.BuiltinModule file)
+            .ShouldBeTrue();
+        file.Members["mmap"].BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.ProgramLifetimeView);
+    }
+
+    [Test]
+    public void Conflicting_bytes_result_origins_fail_closed()
+    {
+        const string source =
+            """
+            let choose owned =
+                if owned
+                then Ashes.Byte.singleton(1u8)
+                else Ashes.Byte.fromText("x")
+            in Ashes.Byte.length(choose(true))
+            """;
+
+        FunctionOwnershipSummary summary = LowerProgram(source).GetOwnershipSummary("choose")!;
+
+        summary.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.Unknown);
+    }
+
+    [Test]
+    public void Unknown_forwarded_bytes_arm_poisons_an_owned_direct_arm()
+    {
+        const string source =
+            """
+            let passthrough bytes = bytes
+            let choose owned =
+                if owned
+                then Ashes.Byte.singleton(1u8)
+                else passthrough(Ashes.Byte.fromText("x"))
+            in Ashes.Byte.length(choose(true))
+            """;
+
+        FunctionOwnershipSummary summary = LowerProgram(source).GetOwnershipSummary("choose")!;
+
+        summary.ResultProvenance.BytesProvenance.ShouldBe(
+            BuiltinRegistry.BytesOwnershipProvenance.Unknown);
+    }
+
+    [Test]
     public void Rewrapping_a_match_extracted_field_is_never_treated_as_fresh()
     {
         // Adversarial false-positive guard, added deliberately (not discovered via an organic e2e

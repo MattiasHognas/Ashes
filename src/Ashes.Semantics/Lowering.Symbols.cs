@@ -1056,7 +1056,13 @@ public sealed partial class Lowering
                     && argument is Expr.TupleLit,
                 LoweredValueRuntimeRepresentation.Tuple)
             .WithRuntimeAdtContext(parentRequest.RuntimeAdtChildBindings);
-        (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
+        LoweredValue loweredValue = LowerExpr(argument, request);
+        if (runtimeManagedParent && fieldType is TypeRef.TBytes)
+        {
+            loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
+        }
+
+        (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
         if (runtimeManagedParent
             && fieldType is TypeRef.TList list
             && CanArenaReset(Prune(list.Element))

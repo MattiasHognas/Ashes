@@ -804,6 +804,7 @@ public sealed partial class Lowering
         IReadOnlySet<int> LoopInvariant,
         IReadOnlySet<int> ArenaSelfContainedListRebuild,
         IReadOnlySet<int> FreshClosureRebuild,
+        IReadOnlySet<int> BytesProvenanceSafeListRebuild,
         IReadOnlySet<int> AffineConsList,
         IReadOnlySet<int> ConsumedListTail,
         IReadOnlySet<int> BorrowInspectOnly,
@@ -812,6 +813,9 @@ public sealed partial class Lowering
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.UnchangedPassthrough),
             GetTcoParameterOrdinals(function, static facts => facts.ArenaSelfContainedListRebuild),
             GetTcoParameterOrdinals(function, static facts => facts.FreshClosureRebuild),
+            GetTcoParameterOrdinals(
+                function,
+                static facts => facts.BytesProvenanceSafeListRebuild),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.GrownCons),
             GetTcoParameterOrdinals(function, TcoSelfCallArgumentShape.ConsumedTail),
             GetTcoParameterOrdinals(
@@ -978,7 +982,10 @@ public sealed partial class Lowering
             && _maKeyName.TryGetValue(forward, out string? targetName)
                 ? targetName
                 : null;
-        var provenance = new FunctionResultProvenance(resolvedProvenance.RcEligible, forwardName);
+        var provenance = new FunctionResultProvenance(
+            resolvedProvenance.RcEligible,
+            forwardName,
+            resolvedProvenance.BytesProvenance);
         var tcoParamFacts = ComputeTcoParamFacts(function, info, expressionFreshness);
         IReadOnlyList<PatternBindingOwnershipFact> patternBindingOwnership =
             ComputePatternBindingOwnership(function, info);
@@ -1030,7 +1037,7 @@ public sealed partial class Lowering
 
     // Mutable accumulator threaded through TcoParamFactsWalk*/ComputeTcoParamFacts: Observed[i]
     // narrows from "unclassified" to one shape, or locks into Mixed the first time two self-call
-    // sites at the same position disagree. The two orthogonal booleans are ANDed across those exact
+    // sites at the same position disagree. The three orthogonal booleans are ANDed across those exact
     // edges. SawSelfCall distinguishes "no self-call found at all" (an empty result) from
     // "self-calls found, every position landed on Mixed."
     private sealed class TcoParamFactsState
@@ -1038,6 +1045,7 @@ public sealed partial class Lowering
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
         public required bool?[] FreshClosureRebuild { get; init; }
+        public required bool?[] BytesProvenanceSafeListRebuild { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
     }
@@ -1045,8 +1053,9 @@ public sealed partial class Lowering
     /// <summary>
     /// Classifies every parameter of <paramref name="function"/> that some self-recursive call site
     /// supplies an argument for, into the <see cref="TcoSelfCallArgumentShape"/> that argument's
-    /// reference-ownership shape takes plus independently aggregated arena-self-contained-list and
-    /// direct-closure-rebuild facts across ALL such call sites. The shape is re-derived from this
+    /// reference-ownership shape takes plus independently aggregated arena-self-contained-list,
+    /// direct-closure-rebuild, and Bytes-provenance-safe-list facts across ALL such call sites. The
+    /// shape is re-derived from this
     /// same fixpoint's already-computed <paramref name="expressionFreshness"/> map. Arena
     /// self-containment uses the narrower reset-boundary predicate, while closure construction stays
     /// separate because a new closure may capture an input reference and therefore is not reference
@@ -1066,6 +1075,7 @@ public sealed partial class Lowering
             Observed = new TcoSelfCallArgumentShape?[paramNames.Count],
             ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
             FreshClosureRebuild = new bool?[paramNames.Count],
+            BytesProvenanceSafeListRebuild = new bool?[paramNames.Count],
             SelfName = _maKeyName[function],
         };
 
@@ -1102,6 +1112,7 @@ public sealed partial class Lowering
                     shape,
                     state.ArenaSelfContainedListRebuild[i] == true,
                     state.FreshClosureRebuild[i] == true,
+                    state.BytesProvenanceSafeListRebuild[i] == true,
                     shape == TcoSelfCallArgumentShape.ConsumedTail
                         && BorrowInspectOnly(function, info, i)
                             ? TcoParamUseMode.BorrowInspectOnly
@@ -2005,6 +2016,8 @@ public sealed partial class Lowering
             bool arenaSelfContainedListRebuild =
                 IsArenaSelfContainedListRebuildExpr(argument);
             bool freshClosureRebuild = IsFreshClosureRebuildExpr(argument);
+            bool bytesProvenanceSafeListRebuild =
+                IsBytesProvenanceSafeListRebuildExpr(argument);
             TcoSelfCallArgumentShape local =
                 argument is Expr.Var argVar
                     && parameterScope.TryGetValue(argVar.Name, out int parameterOrdinal)
@@ -2031,7 +2044,59 @@ public sealed partial class Lowering
             state.FreshClosureRebuild[i] =
                 (state.FreshClosureRebuild[i] ?? true)
                 && freshClosureRebuild;
+            state.BytesProvenanceSafeListRebuild[i] =
+                (state.BytesProvenanceSafeListRebuild[i] ?? true)
+                && bytesProvenanceSafeListRebuild;
         }
+    }
+
+    private bool IsBytesProvenanceSafeListRebuildExpr(Expr expression)
+    {
+        return expression switch
+        {
+            Expr.Cons cons => IsBytesProvenanceSafeAggregateValue(cons.Head),
+            Expr.ListLit list => list.Elements.All(IsBytesProvenanceSafeAggregateValue),
+            Expr.If conditional => IsBytesProvenanceSafeListRebuildExpr(conditional.Then)
+                && IsBytesProvenanceSafeListRebuildExpr(conditional.Else),
+            _ => false,
+        };
+    }
+
+    private bool IsBytesProvenanceSafeAggregateValue(Expr expression)
+    {
+        if (TryGetBuiltinBytesProvenance(expression, out var provenance))
+        {
+            return provenance is BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                or BuiltinRegistry.BytesOwnershipProvenance.BorrowedView;
+        }
+
+        if (expression is Expr.TupleLit tuple)
+        {
+            return tuple.Elements.All(IsBytesProvenanceSafeAggregateValue);
+        }
+
+        if (expression is Expr.ListLit list)
+        {
+            return list.Elements.All(IsBytesProvenanceSafeAggregateValue);
+        }
+
+        if (expression is Expr.Cons cons)
+        {
+            return IsBytesProvenanceSafeAggregateValue(cons.Head)
+                && IsBytesProvenanceSafeAggregateValue(cons.Tail);
+        }
+
+        if (expression is Expr.Call)
+        {
+            var arguments = new List<Expr>();
+            Expr head = CollectCallArgs(expression, arguments);
+            return head is Expr.Var constructor
+                && _constructorSymbols.ContainsKey(constructor.Name)
+                && arguments.All(IsBytesProvenanceSafeAggregateValue);
+        }
+
+        return expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit
+            or Expr.BigIntLit or Expr.StrLit or Expr.Add;
     }
 
     private static bool IsFreshClosureRebuildExpr(Expr expression)
@@ -2072,7 +2137,8 @@ public sealed partial class Lowering
                     : $"reaches{{{string.Join(",", summary.ResultReach.Keys.OrderBy(name => name, StringComparer.Ordinal))}}}";
             int freshExpressions = summary.ExpressionFreshness.Values.Count(fresh => fresh);
             string provenance = $"rc-eligible:{summary.ResultProvenance.RcEligible.ToString().ToLowerInvariant()} "
-                + $"forwards-to:{summary.ResultProvenance.ForwardsTo ?? "none"}";
+                + $"forwards-to:{summary.ResultProvenance.ForwardsTo ?? "none"} "
+                + $"bytes:{summary.ResultProvenance.BytesProvenance.ToString().ToLowerInvariant()}";
             lines.Add(
                 $"[ownership] {summary.Function}({parameters}) unique={{{unique}}} captures={{{captures}}} "
                     + $"result={result} expr-fresh={freshExpressions}/{summary.ExpressionFreshness.Count} "

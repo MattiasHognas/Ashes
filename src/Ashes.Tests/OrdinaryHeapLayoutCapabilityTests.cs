@@ -112,19 +112,19 @@ public sealed class OrdinaryHeapLayoutCapabilityTests
     }
 
     [Test]
-    public void Bytes_graph_retains_the_borrowed_view_exception_used_by_tco()
+    public void Bytes_graph_is_tco_eligible_when_values_are_normalized_at_the_owning_boundary()
     {
         Lowering lowering = LowerProgram("Ashes.IO.print(\"ok\")");
 
         OrdinaryHeapLayoutCapability capability = Describe(
             lowering,
-            new TypeRef.TList(new TypeRef.TBytes()));
+            new TypeRef.TBytes());
 
-        capability.ContainsResourceOrBorrowedView.ShouldBeTrue();
-        capability.RuntimeTcoListElementSupported.ShouldBeFalse();
+        capability.ContainsResourceOrBorrowedView.ShouldBeFalse();
+        capability.RuntimeTcoListElementSupported.ShouldBeTrue();
         (capability.Rejections
             & OrdinaryHeapLayoutRejection.ResourceOrBorrowedViewContainment)
-            .ShouldBe(OrdinaryHeapLayoutRejection.ResourceOrBorrowedViewContainment);
+            .ShouldBe(OrdinaryHeapLayoutRejection.None);
     }
 
     [Test]

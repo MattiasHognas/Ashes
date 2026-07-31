@@ -153,6 +153,7 @@ public sealed partial class Lowering
         // Every exact self-call edge directly constructs a closure (or selects between direct
         // constructions). Resolved TFun layout and per-edge capture safety remain separate gates.
         public bool FreshClosureRebuild { get; init; }
+        public bool BytesProvenanceSafeListRebuild { get; init; }
 
         // Canonical ownership summary proves the param affine across the loop. Resolved string
         // lowering combines this with the loop watermark to license ConcatStrTip reservation growth.
@@ -303,6 +304,7 @@ public sealed partial class Lowering
         private readonly IReadOnlySet<int> _loopInvariantParamOrdinals;
         private readonly IReadOnlySet<int> _freshRebuiltListParamOrdinals;
         private readonly IReadOnlySet<int> _freshClosureRebuildParamOrdinals;
+        private readonly IReadOnlySet<int> _bytesProvenanceSafeListRebuildParamOrdinals;
         private readonly IReadOnlySet<int> _affineConsListParamOrdinals;
         private readonly IReadOnlySet<int> _consumedListTailParamOrdinals;
         private readonly IReadOnlySet<int> _borrowInspectOnlyParamOrdinals;
@@ -381,12 +383,13 @@ public sealed partial class Lowering
         // recursive binding) and an async helper coroutine's restart loop (whose classifier-A/D
         // passes never run at all — see the _usesAsync/_inCoroutineBody gate on
         // LowerLambdaCoreIdentifyRuntimeManagedTcoParams). Every static fact defaults to false, the
-        // same default the twelve original fields' own empty-collection initializers gave both sites.
+        // same conservative default the empty-collection initializers give both sites.
         public TcoContext(string selfName, int paramCount, List<string> paramNames)
             : this(
                 selfName,
                 paramCount,
                 paramNames,
+                EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
@@ -405,6 +408,7 @@ public sealed partial class Lowering
             IReadOnlySet<int> loopInvariantParamOrdinals,
             IReadOnlySet<int> freshRebuiltListParamOrdinals,
             IReadOnlySet<int> freshClosureRebuildParamOrdinals,
+            IReadOnlySet<int> bytesProvenanceSafeListRebuildParamOrdinals,
             IReadOnlySet<int> affineConsListParamOrdinals,
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
@@ -417,6 +421,8 @@ public sealed partial class Lowering
             _loopInvariantParamOrdinals = loopInvariantParamOrdinals;
             _freshRebuiltListParamOrdinals = freshRebuiltListParamOrdinals;
             _freshClosureRebuildParamOrdinals = freshClosureRebuildParamOrdinals;
+            _bytesProvenanceSafeListRebuildParamOrdinals =
+                bytesProvenanceSafeListRebuildParamOrdinals;
             _affineConsListParamOrdinals = affineConsListParamOrdinals;
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
@@ -452,6 +458,8 @@ public sealed partial class Lowering
                     LoopInvariant = _loopInvariantParamOrdinals.Contains(i),
                     FreshRebuiltList = _freshRebuiltListParamOrdinals.Contains(i),
                     FreshClosureRebuild = _freshClosureRebuildParamOrdinals.Contains(i),
+                    BytesProvenanceSafeListRebuild =
+                        _bytesProvenanceSafeListRebuildParamOrdinals.Contains(i),
                     AffineConsList = _affineConsListParamOrdinals.Contains(i),
                     ConsumedListTail = _consumedListTailParamOrdinals.Contains(i),
                     BorrowInspectOnly = _borrowInspectOnlyParamOrdinals.Contains(i),

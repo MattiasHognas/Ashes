@@ -1044,9 +1044,10 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(program).Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "Bytes", RuntimeManaged: true }).ShouldBeTrue();
 
-        IrProgram nestedProducer = LowerProgram(BuildRejectedRcOwnedBytesClosureScratchProgram());
+        IrProgram nestedProducer = LowerProgram(BuildNestedRcOwnedBytesClosureScratchProgram());
         AllInstructions(nestedProducer).Any(instruction =>
-            instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeFalse();
+            instruction is IrInst.BytesAppend { RuntimeManaged: true }).ShouldBeTrue(
+            "fresh Bytes provenance should make nested owned producers closure-safe without a name whitelist.");
 
         ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
 
@@ -7149,7 +7150,7 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
-    private static string BuildRejectedRcOwnedBytesClosureScratchProgram()
+    private static string BuildNestedRcOwnedBytesClosureScratchProgram()
         => """
             let bytes = Ashes.Byte.append(Ashes.Byte.singleton(1u8))(Ashes.Byte.singleton(2u8)) in
             let f =

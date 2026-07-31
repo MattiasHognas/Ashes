@@ -1783,8 +1783,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => IsRuntimeRcStringProducer(arguments[i])
                     && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]),
-                TypeRef.TBytes => IsRuntimeRcBytesProducer(arguments[i])
-                    && IsRuntimeRcClosureCaptureSafeBytesProducer(arguments[i]),
+                TypeRef.TBytes => CanMaterializeOwnedBytes(arguments[i]),
                 TypeRef.TBigInt => IsRuntimeRcBigIntProducer(arguments[i])
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
                 TypeRef.TList list => CanArenaReset(Prune(list.Element))
@@ -1809,8 +1808,7 @@ public sealed partial class Lowering
     {
         return IsRuntimeRcStringProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeStringProducer(expression)
-            || IsRuntimeRcBytesProducer(expression)
-                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression)
+            || CanMaterializeOwnedBytes(expression)
             || IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
             || IsFreshCopyListExpression(expression)
@@ -1850,8 +1848,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => IsRuntimeRcStringProducer(element)
                     && IsRuntimeRcClosureCaptureSafeStringProducer(element),
-                TypeRef.TBytes => IsRuntimeRcBytesProducer(element)
-                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element),
+                TypeRef.TBytes => CanMaterializeOwnedBytes(element),
                 TypeRef.TBigInt => IsRuntimeRcBigIntProducer(element)
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
                 TypeRef.TList list => CanArenaReset(Prune(list.Element))
@@ -1876,8 +1873,7 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => IsRuntimeRcStringProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeStringProducer(expression),
-            TypeRef.TBytes => IsRuntimeRcBytesProducer(expression)
-                && IsRuntimeRcClosureCaptureSafeBytesProducer(expression),
+            TypeRef.TBytes => CanMaterializeOwnedBytes(expression),
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
             TypeRef.TList list => CanArenaReset(Prune(list.Element))

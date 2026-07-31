@@ -364,7 +364,6 @@ public sealed partial class Lowering
                 TcoRuntimeManagedKind.None,
                 TcoRcEligibilityReason.UnresolvedType);
         }
-
         if (IsRcEligibleScalarTupleOrAdtType(parameterType))
         {
             return new TcoRcEligibility(
@@ -376,7 +375,8 @@ public sealed partial class Lowering
 
         if (parameterType is TypeRef.TList list)
         {
-            bool layoutEligible = CanRuntimeManageTcoListElement(list.Element);
+            bool layoutEligible = CanRuntimeManageTcoListElement(list.Element) &&
+                IsBytesProvenanceEligibleTcoListElement(facts, list.Element);
             bool consumedTail = facts.ConsumedListTail
                 && !CanArenaReset(Prune(list.Element))
                 && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
@@ -415,6 +415,14 @@ public sealed partial class Lowering
             ResolvedLayoutEligible: false,
             TcoRuntimeManagedKind.None,
             TcoRcEligibilityReason.UnsupportedLayout);
+    }
+
+    private bool IsBytesProvenanceEligibleTcoListElement(
+        TcoParamStaticFacts facts,
+        TypeRef elementType)
+    {
+        return !ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
+            || facts.BytesProvenanceSafeListRebuild;
     }
 
     private int? FindBlockingSiblingForCandidate(
