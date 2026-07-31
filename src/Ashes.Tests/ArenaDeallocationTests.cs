@@ -1015,13 +1015,18 @@ public sealed class ArenaDeallocationTests
             TypeName: "List",
             RuntimeManaged: true,
         }).ShouldBeTrue();
-        instructions.Any(instruction => instruction is IrInst.RcDup
-        {
-            RuntimeManaged: true,
-        }).ShouldBeTrue();
+        lowering.PatternBindingOwnershipDecisions.ShouldContain(decision =>
+            string.Equals(decision.BindingName, "tail", StringComparison.Ordinal)
+            && decision.PlacementOutcome == PatternBindingPlacementOutcome.TransferredToSameParameter);
+        instructions.OfType<IrInst.Label>().Count(label =>
+            label.Name.Contains("rc_pattern_owner_duplicated", StringComparison.Ordinal)).ShouldBe(1,
+                "Only the head embedded into the rebuilt accumulator needs a binding owner.");
         instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
-                "Nil list aliases must bypass RC header access.");
+            && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
+                "A nil same-parameter transfer must bypass RC header access.");
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeFalse(
+                "The source-name TCO alias path must remain deleted.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
@@ -1302,7 +1307,7 @@ public sealed class ArenaDeallocationTests
         {
             RuntimeManaged: true,
         }).ShouldBe(1,
-            "Borrowing the transferred tail must preserve RC provenance and avoid a second deferred dup.");
+            "The transferred tail receives one reference before the old list owner is released.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
             TypeName: "Tuple",
@@ -1334,7 +1339,8 @@ public sealed class ArenaDeallocationTests
         instructions.Any(instruction => instruction is IrInst.RcDup
         {
             RuntimeManaged: true,
-        }).ShouldBeTrue();
+        }).ShouldBeTrue(
+            "The transferred tail receives one reference before the old list owner is released.");
         instructions.Any(instruction => instruction is IrInst.RcDrop
         {
             TypeName: "Item",

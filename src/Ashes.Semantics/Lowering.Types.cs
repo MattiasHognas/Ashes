@@ -332,49 +332,40 @@ public sealed partial class Lowering
             return true;
         }
 
-        // Pattern binders extracted directly (one pattern level) off a declared TCO parameter
-        // whose only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a
-        // further nested match on the same name, or (b) the bare, unchanged argument at that same
-        // parameter's own slot in a tail self-call. Both of those shapes are already handled without
-        // this table's help — (a) by whatever separate protection the nested match's own bindings
-        // get, (b) by the ordinary per-parameter back-edge argument installation — so a binder limited
-        // to just those is left alone. A binder with any OTHER appearance (embedded in a
-        // returned/constructed value, passed to a different parameter's slot, handed to another
-        // function, ...) genuinely escapes the current iteration independently and needs its own
-        // protective dup; see ResolvePendingNestedTcoPatternAliasSites, the only consumer. The
-        // pre-lowering fact is keyed by the Pattern.Var syntax node's reference identity, not its source
-        // name, so same-named binders in sibling arms and nested scopes cannot share a verdict. As each
-        // binder is emitted, RegisterPatternBindingSlot transports that fact to its distinct local slot;
-        // all post-lowering consumers use only that slot identity.
-        private readonly IReadOnlySet<Pattern.Var> _escapingDirectPatternBinders;
-        private readonly HashSet<int> _escapingDirectPatternBindingSlots = [];
         private readonly IReadOnlyDictionary<Pattern.Var, PatternBindingOwnershipFact>
             _patternBindingOwnershipByBinder;
         private readonly Dictionary<int, PatternBindingOwnershipFact> _patternBindingOwnershipBySlot = [];
+        private readonly Dictionary<Pattern.Var, int> _patternBindingSlots = new(
+            ReferenceEqualityComparer.Instance);
 
-        private static readonly IReadOnlySet<Pattern.Var> EmptyPatternBinders =
-            new HashSet<Pattern.Var>(ReferenceEqualityComparer.Instance);
         private static readonly IReadOnlyList<PatternBindingOwnershipFact> EmptyPatternBindingOwnership = [];
         private static readonly IReadOnlySet<int> EmptyParameterOrdinals = new HashSet<int>();
 
         public void RegisterPatternBindingSlot(Pattern.Var binder, int slot)
         {
-            if (_escapingDirectPatternBinders.Contains(binder))
-            {
-                _escapingDirectPatternBindingSlots.Add(slot);
-            }
-
             if (_patternBindingOwnershipByBinder.TryGetValue(
                 binder,
                 out PatternBindingOwnershipFact? ownership))
             {
                 _patternBindingOwnershipBySlot[slot] = ownership;
+                _patternBindingSlots[binder] = slot;
             }
         }
 
-        public bool IsEscapingDirectPatternBindingSlot(int slot)
+        public bool TryGetPatternBinding(
+            Pattern.Var binder,
+            out int slot,
+            out PatternBindingOwnershipFact? ownership)
         {
-            return _escapingDirectPatternBindingSlots.Contains(slot);
+            if (_patternBindingSlots.TryGetValue(binder, out slot)
+                && _patternBindingOwnershipByBinder.TryGetValue(binder, out ownership))
+            {
+                return true;
+            }
+
+            slot = -1;
+            ownership = null;
+            return false;
         }
 
         public bool TryGetPatternBindingOwnership(
@@ -403,7 +394,6 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
-                EmptyPatternBinders,
                 EmptyPatternBindingOwnership)
         {
         }
@@ -419,7 +409,6 @@ public sealed partial class Lowering
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
             IReadOnlySet<int> affineSelfAppendOnlyParamOrdinals,
-            IReadOnlySet<Pattern.Var> escapingDirectPatternBinders,
             IReadOnlyList<PatternBindingOwnershipFact> patternBindingOwnership)
         {
             SelfName = selfName;
@@ -432,7 +421,6 @@ public sealed partial class Lowering
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
             _affineSelfAppendOnlyParamOrdinals = affineSelfAppendOnlyParamOrdinals;
-            _escapingDirectPatternBinders = escapingDirectPatternBinders;
             var ownershipByBinder = new Dictionary<Pattern.Var, PatternBindingOwnershipFact>(
                 ReferenceEqualityComparer.Instance);
             foreach (PatternBindingOwnershipFact fact in patternBindingOwnership)
@@ -730,7 +718,8 @@ public sealed partial class Lowering
         bool runtimeManaged = false,
         ConstructorSymbol? runtimeConstructor = null,
         bool runtimeDeepUnique = false,
-        IReadOnlySet<int>? excludedDropFieldIndices = null)
+        IReadOnlySet<int>? excludedDropFieldIndices = null,
+        bool perceusPatternOwner = false)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -747,6 +736,12 @@ public sealed partial class Lowering
         public bool IsResourceBearing { get; } = isResourceBearing;
 
         public bool RuntimeManaged { get; } = runtimeManaged;
+
+        /// <summary>
+        /// True when stable pattern-binding ownership gave this local an independent semantic owner.
+        /// Its physical RC representation is resolved after the enclosing TCO parameter types settle.
+        /// </summary>
+        public bool PerceusPatternOwner { get; } = perceusPatternOwner;
 
         /// <summary>
         /// Statically known constructor for a directly-bound runtime-managed ADT value. Allows its

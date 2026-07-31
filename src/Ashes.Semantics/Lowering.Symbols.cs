@@ -1004,6 +1004,7 @@ public sealed partial class Lowering
                 fieldType,
                 runtimeManagedCandidate,
                 childRequest);
+            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(arguments[i], argumentTemp);
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);

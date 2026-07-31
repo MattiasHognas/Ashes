@@ -133,6 +133,22 @@ public sealed partial class Lowering
         }
     }
 
+    private int DuplicatePerceusPatternOwnerForAggregate(Expr argument, int argumentTemp)
+    {
+        if (argument is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not
+            { PerceusPatternOwner: true, IsDropped: false })
+        {
+            return argumentTemp;
+        }
+
+        int duplicatedTemp = NewTemp();
+        // The marker is upgraded to runtime RC by FinalizePerceusPatternBindingOwners when the
+        // root parameter's final placement is runtime-managed; otherwise it remains an identity.
+        Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp));
+        return duplicatedTemp;
+    }
+
     /// <summary>
     /// Resolves an ownership alias chain to the original owner name.
     /// If the name is not an alias, returns itself.
@@ -161,7 +177,8 @@ public sealed partial class Lowering
         bool runtimeManaged = false,
         ConstructorSymbol? runtimeConstructor = null,
         bool runtimeDeepUnique = false,
-        IReadOnlySet<int>? excludedDropFieldIndices = null)
+        IReadOnlySet<int>? excludedDropFieldIndices = null,
+        bool perceusPatternOwner = false)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -178,7 +195,8 @@ public sealed partial class Lowering
                 runtimeManaged,
                 runtimeConstructor,
                 runtimeDeepUnique,
-                excludedDropFieldIndices);
+                excludedDropFieldIndices,
+                perceusPatternOwner);
         }
     }
 
@@ -189,10 +207,21 @@ public sealed partial class Lowering
     /// </summary>
     private OwnershipInfo? LookupOwnedValue(string name)
     {
-        var resolved = ResolveOwnershipAlias(name);
-        foreach (var scope in _ownershipScopes)
+        // A stable pattern owner deliberately supersedes the old parent-alias path. Check that exact
+        // live identity before consulting the compatibility alias map, which is source-name keyed.
+        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
         {
-            if (scope.TryGetValue(resolved, out var info))
+            if (scope.TryGetValue(name, out OwnershipInfo? direct)
+                && direct.PerceusPatternOwner)
+            {
+                return direct;
+            }
+        }
+
+        var resolved = ResolveOwnershipAlias(name);
+        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
+        {
+            if (scope.TryGetValue(resolved, out OwnershipInfo? info))
             {
                 return info;
             }
@@ -329,6 +358,15 @@ public sealed partial class Lowering
     {
         int loadTemp = NewTemp();
         Emit(new IrInst.LoadLocal(loadTemp, info.Slot));
+        if (info.PerceusPatternOwner)
+        {
+            string typeName = info.Type is null
+                ? info.TypeName
+                : GetOwnedTypeName(Prune(info.Type)) ?? info.TypeName;
+            Emit(new IrInst.RcDrop(loadTemp, typeName, info.Slot));
+            return;
+        }
+
         if (TryEmitRuntimeManagedTupleDrop(info, loadTemp))
         {
             return;
@@ -1265,7 +1303,8 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (info.CapturedByClosure && (info.RuntimeManaged || info.IsResource || info.IsResourceBearing))
+            if (info.CapturedByClosure
+                && (info.RuntimeManaged || info.PerceusPatternOwner || info.IsResource || info.IsResourceBearing))
             {
                 // A closure captured this resource, so it may be reachable from a value escaping this
                 // scope through a route the type cannot show (a closure, an aggregate holding one, or a

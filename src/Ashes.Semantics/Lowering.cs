@@ -180,52 +180,19 @@ public sealed partial class Lowering
     // This prevents double-Drop and propagates diagnostics through aliases.
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
-    private sealed record RuntimeManagedTcoPatternAlias(
-        string ParentName,
-        int ParentSlot,
-        int ParentActiveSlot,
-        TypeRef ParentType,
-        int AliasSlot,
-        TypeRef AliasType);
-    private readonly Dictionary<string, RuntimeManagedTcoPatternAlias> _runtimeManagedTcoPatternAliases =
-        new(StringComparer.Ordinal);
-    private readonly HashSet<string> _activeRuntimeManagedTcoPatternAliases = new(StringComparer.Ordinal);
-    private sealed record PendingNestedTcoPatternAliasSite(
-        int ParentSlot,
+    private sealed record PatternBindingPlacementSite(
+        int LocalSlot,
+        int RootParameterSlot,
         int InsertIndex,
-        TypeRef PayloadType,
-        Pattern.Var Binder,
-        SourceLocation? Location);
+        TypeRef Type,
+        PatternBindingOwnershipFact Ownership);
 
-    // A value extracted (via any pattern, not just a list cons) from a TCO loop parameter, or
-    // transitively from another such extraction (a tuple field of a list element, a record field of
-    // a tuple field, ...), needs protecting from that parameter's own eventual drop (the recursive-call
-    // back-edge consume, or the function-exit drop) whenever the extracted value escapes — otherwise the
-    // parameter's drop can free memory a moved-out copy still references (a use-after-free). Recording
-    // this eagerly, at pattern-match time via TrackRuntimeManagedTcoListPatternAliases, is not possible
-    // in general: eligibility (is the root parameter actually runtime-managed at all) depends on its
-    // fully-resolved type, which for a parameter whose type comes from unification with later call sites
-    // is not yet known until the whole body has been lowered — see the comment on
-    // LowerLambdaCoreRefreshRuntimeManagedTcoParams. So every pattern-bound local extracted from another
-    // local is recorded here unconditionally (payload slot → immediate parent slot, the instruction
-    // index right after its extraction was emitted, and the payload's own TypeRef); once the body is
-    // fully lowered and the refresh pass has resolved real eligibility,
-    // ResolvePendingNestedTcoPatternAliasSites walks each entry's chain of parents back to a declared TCO
-    // parameter slot and, only for chains that bottom out at a slot the refresh pass confirmed runtime-
-    // managed, splices in a guarded protective dup at the recorded site — a retroactive fix-up, the same
-    // "record now, resolve and splice later" shape LowerLambdaCoreSpliceRuntimeManagedTcoParams already
-    // uses for the entry-normalization prologue. The payload's copy-type check (CanArenaReset) is
-    // deferred to that same resolution point rather than applied at record time for the same reason
-    // eligibility itself is deferred: a pattern binding's type can still be an unresolved type variable
-    // during the first pass (e.g. a tuple field whose element type only becomes concrete Int once the
-    // whole body's unification has run) — checking early can wrongly treat an about-to-be-Int binding as
-    // heap-managed, and dup'ing a scalar value as if it were a refcounted pointer is a segfault, not just
-    // a missed protection. The payload slot also carries the pre-lowering binder identity into this
-    // post-lowering resolution step, allowing it to consult the parent parameter's static escape fact for a
-    // binding whose immediate parent is itself a declared TCO parameter slot (see the comment there
-    // for why that case needs its own check).
-    private readonly Dictionary<int, PendingNestedTcoPatternAliasSite>
-        _pendingNestedTcoPatternAliasSites = new();
+    // Stable ownership facts are joined to emitted binder slots as soon as a pattern is lowered.
+    // The semantic owner is therefore available to ordinary scope cleanup and move handling even
+    // when the root TCO parameter's physical representation cannot be decided until post-body type
+    // resolution. Finalization only selects arena-erased versus runtime-RC markers; it does not
+    // rediscover escape behavior from source names or emitted instructions.
+    private readonly List<PatternBindingPlacementSite> _patternBindingPlacementSites = [];
     private readonly List<PatternBindingOwnershipDecision> _patternBindingOwnershipDecisions = [];
 
     internal IReadOnlyList<PatternBindingOwnershipDecision> PatternBindingOwnershipDecisions =>
@@ -2669,9 +2636,18 @@ public sealed partial class Lowering
         // This tells the IR that we're taking a non-owning reference — the
         // owning scope is still responsible for the Drop.
         var ownerInfo = LookupOwnedValue(v.Name);
-        bool transfersRuntimeReference = _activeRuntimeManagedTcoPatternAliases.Contains(v.Name);
-        bool runtimeManagedResult = transfersRuntimeReference
-            || ownerInfo is { RuntimeManaged: true }
+        bool stablePatternTransfer = _loweringTcoBackEdgeArguments
+            && b is Binding.Local patternLocal
+            && _tcoCtx?.TryGetPatternBindingOwnership(
+                patternLocal.Slot,
+                out PatternBindingOwnershipFact? patternOwnership) == true
+            && patternOwnership?.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
+            && patternOwnership.RootParameterOrdinal >= 0
+            && patternOwnership.RootParameterOrdinal < _tcoCtx.ParamSlots.Count
+            && _tcoCtx.IsRuntimeManagedSlot(
+                _tcoCtx.ParamSlots[patternOwnership.RootParameterOrdinal]);
+        bool runtimeManagedResult = ownerInfo is { RuntimeManaged: true }
+            || stablePatternTransfer
             || b is Binding.Local runtimeLocal && IsRuntimeManagedTcoParamSlot(runtimeLocal);
         if (runtimeManagedResult)
         {
@@ -5060,7 +5036,6 @@ public sealed partial class Lowering
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
                 affineSelfAppendOnlyParamOrdinals: tcoParamOrdinalFacts.AffineSelfAppendOnly,
-                escapingDirectPatternBinders: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name),
                 patternBindingOwnership: GetPatternBindingOwnershipFacts(ownershipFunction))
             {
                 InTailPosition = false,
@@ -5464,7 +5439,7 @@ public sealed partial class Lowering
         int bodyTemp)
     {
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
-        ResolvePendingNestedTcoPatternAliasSites(tco);
+        FinalizePerceusPatternBindingOwners(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
@@ -5474,251 +5449,136 @@ public sealed partial class Lowering
         LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
     }
 
-    /// <summary>
-    /// The retroactive half of the nested-TCO-pattern-alias fix-up (see the field comment on
-    /// <see cref="_pendingNestedTcoPatternAliasSites"/>): now that <see
-    /// cref="LowerLambdaCoreRefreshRuntimeManagedTcoParams"/> has resolved which TCO parameters are
-    /// actually runtime-managed, walk each recorded site's chain of parent slots back to a declared TCO
-    /// parameter. A chain that bottoms out at a slot the refresh pass confirmed runtime-managed gets a
-    /// guarded protective dup spliced in at its recorded site — any other chain (an ordinary local, a
-    /// parameter that turned out not to be runtime-managed) needs no protection and is left alone.
-    /// Insertions are applied in descending index order so an earlier splice never shifts a later one's
-    /// already-resolved target position — the same ordering <see
-    /// cref="LowerLambdaCoreSpliceRuntimeManagedTcoParams"/> and <see cref="PerceusLifetimePlacement"/>
-    /// use for the same reason.
-    /// </summary>
-    private void ResolvePendingNestedTcoPatternAliasSites(TcoContext? tco)
+    private void FinalizePerceusPatternBindingOwners(TcoContext? tco)
     {
-        if (tco is null || _pendingNestedTcoPatternAliasSites.Count == 0)
+        if (tco is null || _patternBindingPlacementSites.Count == 0)
         {
-            _pendingNestedTcoPatternAliasSites.Clear();
+            _patternBindingPlacementSites.Clear();
             return;
         }
 
-        // A candidate whose immediate parent is itself a declared TCO parameter slot (pair, rest —
-        // bound directly off tbl) is a "direct" binding. Most of these need no help here: a name that
-        // merely flows unchanged into the same parameter's own next tail-call argument (rest) is already
-        // installed by the ordinary per-parameter back-edge argument machinery, and a name used only as
-        // the scrutinee of a further nested match (pair) is covered by that deeper chain's own,
-        // independent accounting once IT escapes — splicing an unconditional extra dup here for either
-        // would double-protect them (every iteration, not just the ones that actually recurse), leaking a
-        // reference each time. But a direct binding CAN independently escape on its own — embedded in a
-        // returned or constructed value, passed to a different parameter's slot, handed to another
-        // function — and TrackRuntimeManagedTcoListPatternAliases's own eager pass, the mechanism that
-        // would normally protect exactly that case, structurally cannot run early enough for an ordinary
-        // unannotated accumulator to catch it (see the field comment on
-        // _runtimeManagedTcoPatternAliases): TcoContext's escaping direct-pattern slots are the structural,
-        // pre-lowering answer to which direct bindings are in that situation, computed once from the raw
-        // AST specifically so this resolution step can tell the two apart. A candidate whose parent is
-        // itself ANOTHER pending candidate (a chain at least two pattern levels deep) is new territory
-        // with no other protection either way, so those are always eligible here regardless of this set.
-        // The copy-type filter is applied here rather than at record time for the same reason eligibility
-        // itself is: a pattern binding's type can still be an unresolved type variable during the first
-        // pass, so checking early can wrongly treat an about-to-be-Int (or -Float, -Bool, -UInt) binding
-        // as heap-managed — and dup'ing a scalar as if it were a refcounted pointer segfaults rather than
-        // merely over-protecting.
-        List<(int PayloadSlot, PendingNestedTcoPatternAliasSite Site)> accepted = [];
-        foreach ((int payloadSlot, PendingNestedTcoPatternAliasSite site) in
-            _pendingNestedTcoPatternAliasSites)
+        List<PatternBindingPlacementSite> placed = [];
+        foreach (PatternBindingPlacementSite site in _patternBindingPlacementSites)
         {
-            bool legacyRequiresProtectiveDup = !tco.ParamSlots.Contains(site.ParentSlot)
-                || tco.IsEscapingDirectPatternBindingSlot(payloadSlot);
-            PatternBindingPlacementOutcome outcome = ResolvePatternBindingPlacementOutcome(
-                payloadSlot,
-                site,
-                legacyRequiresProtectiveDup,
-                tco);
-            RecordPatternBindingOwnershipDecision(
-                payloadSlot,
-                site,
-                legacyRequiresProtectiveDup,
-                outcome,
-                tco);
-            if (outcome == PatternBindingPlacementOutcome.ProtectiveDupInserted)
+            PatternBindingPlacementOutcome outcome = ResolvePatternBindingPlacementOutcome(site, tco);
+            PatternBindingOwnershipFact ownership = site.Ownership;
+            _patternBindingOwnershipDecisions.Add(new PatternBindingOwnershipDecision(
+                ownership.Function,
+                ownership.BindingOrdinal,
+                ownership.BindingName,
+                site.LocalSlot,
+                ownership.RootParameterOrdinal,
+                ownership.RootParameterName,
+                ownership.ParentBindingOrdinal,
+                ownership.ExtractionDepth,
+                ownership.Uses,
+                ownership.Ownership,
+                ownership.Location,
+                outcome));
+            if (outcome == PatternBindingPlacementOutcome.ProtectiveOwnerPlaced)
             {
-                accepted.Add((payloadSlot, site));
+                PromotePatternBindingOwnerMarkers(site);
+                placed.Add(site);
             }
         }
 
-        foreach ((int payloadSlot, PendingNestedTcoPatternAliasSite site) in accepted
-            .OrderByDescending(candidate => candidate.Site.InsertIndex))
+        foreach (PatternBindingPlacementSite site in placed
+            .OrderByDescending(candidate => candidate.InsertIndex)
+            .ThenByDescending(candidate => candidate.Ownership.BindingOrdinal))
         {
-            SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, site.InsertIndex);
+            SplicePerceusPatternBindingOwnerDup(site.LocalSlot, site.InsertIndex);
         }
 
-        _pendingNestedTcoPatternAliasSites.Clear();
+        _patternBindingPlacementSites.Clear();
     }
 
     private PatternBindingPlacementOutcome ResolvePatternBindingPlacementOutcome(
-        int payloadSlot,
-        PendingNestedTcoPatternAliasSite site,
-        bool legacyRequiresProtectiveDup,
+        PatternBindingPlacementSite site,
         TcoContext tco)
     {
-        if (CanArenaReset(Prune(site.PayloadType)))
+        if (CanArenaReset(Prune(site.Type)))
         {
             return PatternBindingPlacementOutcome.CopyType;
         }
 
-        if (_runtimeManagedTcoPatternAliases.Values.Any(alias => alias.AliasSlot == payloadSlot))
+        if (!site.Ownership.RequiresProtectiveDup)
         {
-            return PatternBindingPlacementOutcome.AlreadyProtectedByRuntimeAlias;
+            return site.Ownership.Ownership == PatternBindingOwnershipKind.TransferredToSameParameter
+                ? PatternBindingPlacementOutcome.TransferredToSameParameter
+                : PatternBindingPlacementOutcome.Borrowed;
         }
 
-        if (!legacyRequiresProtectiveDup)
-        {
-            return PatternBindingPlacementOutcome.LegacyEscapeRejected;
-        }
-
-        return IsChainRootRuntimeManaged(site.ParentSlot, tco)
-            ? PatternBindingPlacementOutcome.ProtectiveDupInserted
+        return tco.IsRuntimeManagedSlot(site.RootParameterSlot)
+            ? PatternBindingPlacementOutcome.ProtectiveOwnerPlaced
             : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
     }
 
-    private void RecordPatternBindingOwnershipDecision(
-        int payloadSlot,
-        PendingNestedTcoPatternAliasSite site,
-        bool legacyRequiresProtectiveDup,
-        PatternBindingPlacementOutcome outcome,
-        TcoContext tco)
+    private void PromotePatternBindingOwnerMarkers(PatternBindingPlacementSite site)
     {
-        if (tco.TryGetPatternBindingOwnership(payloadSlot, out PatternBindingOwnershipFact? fact)
-            && fact is not null)
+        string typeName = GetOwnedTypeName(Prune(site.Type)) ?? "PatternBinding";
+        HashSet<int> aliases = [];
+        bool changed;
+        do
         {
-            _patternBindingOwnershipDecisions.Add(new PatternBindingOwnershipDecision(
-                fact.Function,
-                fact.BindingOrdinal,
-                fact.BindingName,
-                payloadSlot,
-                fact.RootParameterOrdinal,
-                fact.RootParameterName,
-                fact.ParentBindingOrdinal,
-                fact.ExtractionDepth,
-                fact.Uses,
-                fact.Ownership,
-                fact.Location,
-                legacyRequiresProtectiveDup,
-                ComparePatternBindingOwnership(fact.RequiresProtectiveDup, legacyRequiresProtectiveDup),
-                outcome));
-            return;
+            changed = false;
+            for (int i = 0; i < _inst.Count; i++)
+            {
+                switch (_inst[i])
+                {
+                    case IrInst.LoadLocal load when load.Slot == site.LocalSlot:
+                        changed |= aliases.Add(load.Target);
+                        break;
+                    case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
+                        changed |= aliases.Add(borrow.Target);
+                        break;
+                    case IrInst.RcDup duplicate when aliases.Contains(duplicate.SourceTemp):
+                        if (!duplicate.RuntimeManaged)
+                        {
+                            _inst[i] = duplicate with { RuntimeManaged = true };
+                        }
+                        changed |= aliases.Add(duplicate.Target);
+                        break;
+                    case IrInst.RcDrop drop when drop.OwnerSlot == site.LocalSlot:
+                        _inst[i] = drop with { TypeName = typeName, RuntimeManaged = true };
+                        break;
+                }
+            }
         }
+        while (changed);
 
-        int rootParameterOrdinal = FindPatternBindingRootParameterOrdinal(site.ParentSlot, tco);
-        string rootParameterName = rootParameterOrdinal >= 0
-            ? tco.ParamNames[rootParameterOrdinal]
-            : "<unknown>";
-        _patternBindingOwnershipDecisions.Add(new PatternBindingOwnershipDecision(
-            _activeFunctionOrigin?.Source,
-            -1,
-            site.Binder.Name,
-            payloadSlot,
-            rootParameterOrdinal,
-            rootParameterName,
-            null,
-            -1,
-            PatternBindingOwnershipUse.ConservativeUnknown,
-            PatternBindingOwnershipKind.ConservativeUnknown,
-            site.Location,
-            legacyRequiresProtectiveDup,
-            PatternBindingShadowComparison.MissingOwnershipFact,
-            outcome));
+        foreach (int temp in aliases)
+        {
+            MarkRuntimeManagedTemp(
+                temp,
+                LoweredTempOwnershipReason.OwnershipTransfer,
+                type: Prune(site.Type),
+                location: site.Ownership.Location);
+        }
     }
 
-    private static PatternBindingShadowComparison ComparePatternBindingOwnership(
-        bool ownershipRequiresProtectiveDup,
-        bool legacyRequiresProtectiveDup)
-    {
-        if (ownershipRequiresProtectiveDup == legacyRequiresProtectiveDup)
-        {
-            return PatternBindingShadowComparison.Agrees;
-        }
-
-        return ownershipRequiresProtectiveDup
-            ? PatternBindingShadowComparison.OwnershipMoreConservative
-            : PatternBindingShadowComparison.LegacyMoreConservative;
-    }
-
-    private int FindPatternBindingRootParameterOrdinal(int slot, TcoContext tco)
-    {
-        HashSet<int> visited = [];
-        int current = slot;
-        while (visited.Add(current))
-        {
-            int parameterOrdinal = tco.ParamSlots.IndexOf(current);
-            if (parameterOrdinal >= 0)
-            {
-                return parameterOrdinal;
-            }
-
-            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(
-                current,
-                out PendingNestedTcoPatternAliasSite? site))
-            {
-                break;
-            }
-
-            current = site.ParentSlot;
-        }
-
-        return -1;
-    }
-
-    // Cycle-guarded: a slot chain can only grow shorter (each hop moves to a strictly earlier
-    // extraction), but a cycle would otherwise spin forever on malformed/adversarial input.
-    private bool IsChainRootRuntimeManaged(int slot, TcoContext tco)
-    {
-        var visited = new HashSet<int>();
-        int current = slot;
-        while (visited.Add(current))
-        {
-            if (tco.ParamSlots.Contains(current))
-            {
-                return tco.IsRuntimeManagedSlot(current);
-            }
-
-            if (!_pendingNestedTcoPatternAliasSites.TryGetValue(
-                current,
-                out PendingNestedTcoPatternAliasSite? entry))
-            {
-                return false;
-            }
-
-            current = entry.ParentSlot;
-        }
-
-        return false;
-    }
-
-    private void SpliceEagerNestedTcoPatternAliasProtection(int payloadSlot, int insertIndex)
+    private void SplicePerceusPatternBindingOwnerDup(int localSlot, int insertIndex)
     {
         int generatedStart = _inst.Count;
-        EmitEagerRuntimeManagedTcoNestedAliasProtection(payloadSlot);
+        EmitPerceusPatternBindingOwnerDup(localSlot);
         int generatedCount = _inst.Count - generatedStart;
         List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
         _inst.RemoveRange(generatedStart, generatedCount);
         _inst.InsertRange(insertIndex, generated);
     }
 
-    /// <summary>
-    /// Protects a pattern binding nested below a TCO loop parameter (directly or transitively): dups
-    /// the just-extracted value in place, skipped when nil, so the parameter's own later drop (a
-    /// recursive-call-site consume, or the function-exit drop) sees a shared reference and decrements
-    /// instead of freeing — leaving an escaped copy of the value (e.g. embedded in the function's
-    /// result) valid.
-    /// </summary>
-    private void EmitEagerRuntimeManagedTcoNestedAliasProtection(int payloadSlot)
+    private void EmitPerceusPatternBindingOwnerDup(int localSlot)
     {
         int valueTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(valueTemp, payloadSlot));
+        Emit(new IrInst.LoadLocal(valueTemp, localSlot));
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int nonNullTemp = NewTemp();
         Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
-        string duplicatedLabel = NewLabel("rc_tco_nested_alias_duplicated");
+        string duplicatedLabel = NewLabel("rc_pattern_owner_duplicated");
         Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
         int duplicatedTemp = NewTemp();
         Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
-        Emit(new IrInst.StoreLocal(payloadSlot, duplicatedTemp));
+        Emit(new IrInst.StoreLocal(localSlot, duplicatedTemp));
         Emit(new IrInst.Label(duplicatedLabel));
     }
 
@@ -6137,8 +5997,7 @@ public sealed partial class Lowering
         HashSet<int> ReuseResultTemps,
         Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         Dictionary<int, int> PendingRuntimeArgumentFlags,
-        Dictionary<string, RuntimeManagedTcoPatternAlias> RuntimeManagedTcoPatternAliases,
-        HashSet<string> ActiveRuntimeManagedTcoPatternAliases,
+        List<PatternBindingPlacementSite> PatternBindingPlacementSites,
         Dictionary<int, string> KnownFunctionLabelsBySlot,
         Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
         Dictionary<int, Expr> LetBindingValues);
@@ -6184,8 +6043,8 @@ public sealed partial class Lowering
         Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
             SnapshotTempOwnershipFacts();
         var savedPendingRuntimeArgumentFlags = new Dictionary<int, int>(_pendingRuntimeArgumentFlags);
-        var (savedRuntimeManagedTcoPatternAliases, savedActiveRuntimeManagedTcoPatternAliases) =
-            SaveAndClearRuntimeManagedTcoPatternAliases();
+        var savedPatternBindingPlacementSites =
+            new List<PatternBindingPlacementSite>(_patternBindingPlacementSites);
         var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
         var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
         var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
@@ -6196,8 +6055,7 @@ public sealed partial class Lowering
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
             savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
-            savedRuntimeManagedTcoPatternAliases,
-            savedActiveRuntimeManagedTcoPatternAliases, savedKnownFunctionLabelsBySlot,
+            savedPatternBindingPlacementSites, savedKnownFunctionLabelsBySlot,
             savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues);
     }
 
@@ -6210,23 +6068,10 @@ public sealed partial class Lowering
         _reuseResultTemps.Clear();
         _tempOwnershipFacts.Clear();
         _pendingRuntimeArgumentFlags.Clear();
+        _patternBindingPlacementSites.Clear();
         _knownFunctionLabelsBySlot.Clear();
         _knownFunctionLabelsByEnvIndex.Clear();
         _letBindingValues.Clear();
-    }
-
-    private (Dictionary<string, RuntimeManagedTcoPatternAlias> Aliases, HashSet<string> ActiveAliases)
-        SaveAndClearRuntimeManagedTcoPatternAliases()
-    {
-        var aliases = new Dictionary<string, RuntimeManagedTcoPatternAlias>(
-            _runtimeManagedTcoPatternAliases,
-            StringComparer.Ordinal);
-        var activeAliases = new HashSet<string>(
-            _activeRuntimeManagedTcoPatternAliases,
-            StringComparer.Ordinal);
-        _runtimeManagedTcoPatternAliases.Clear();
-        _activeRuntimeManagedTcoPatternAliases.Clear();
-        return (aliases, activeAliases);
     }
 
     private int LowerLambdaCoreResetFrame()
@@ -7284,7 +7129,8 @@ public sealed partial class Lowering
         foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
         RestoreTempOwnershipFacts(frame.TempOwnershipFacts);
         RestoreRuntimeManagedFrameState(frame);
-        RestoreRuntimeManagedTcoPatternAliases(frame);
+        _patternBindingPlacementSites.Clear();
+        _patternBindingPlacementSites.AddRange(frame.PatternBindingPlacementSites);
         RestoreKnownFunctionLabels(frame);
         _reuseTokens.Clear();
         _reuseTokens.AddRange(frame.ReuseTokens);
@@ -7298,21 +7144,6 @@ public sealed partial class Lowering
         foreach ((int temp, int parameterSlot) in frame.PendingRuntimeArgumentFlags)
         {
             _pendingRuntimeArgumentFlags[temp] = parameterSlot;
-        }
-    }
-
-    private void RestoreRuntimeManagedTcoPatternAliases(LowerLambdaCoreFrame frame)
-    {
-        _runtimeManagedTcoPatternAliases.Clear();
-        foreach (var pair in frame.RuntimeManagedTcoPatternAliases)
-        {
-            _runtimeManagedTcoPatternAliases[pair.Key] = pair.Value;
-        }
-
-        _activeRuntimeManagedTcoPatternAliases.Clear();
-        foreach (string alias in frame.ActiveRuntimeManagedTcoPatternAliases)
-        {
-            _activeRuntimeManagedTcoPatternAliases.Add(alias);
         }
     }
 
@@ -7796,12 +7627,8 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
-        List<string> transferredPatternAliases = LowerCallTcoTransferPatternAliases(tco, collectedArgs);
+        LowerCallTcoTransferPatternBindings(tco, collectedArgs);
         (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
-        foreach (string alias in transferredPatternAliases)
-        {
-            _activeRuntimeManagedTcoPatternAliases.Remove(alias);
-        }
         LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
         int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
@@ -7850,6 +7677,104 @@ public sealed partial class Lowering
         return LowerCallTcoBackEdgeDummy();
     }
 
+    /// <summary>
+    /// Transfers a binding that canonical ownership proved is the unchanged successor for its root
+    /// parameter. The successor receives one reference before the old parameter graph is released;
+    /// no source-name alias state survives beyond this call site.
+    /// </summary>
+    private void LowerCallTcoTransferPatternBindings(
+        TcoContext tco,
+        IReadOnlyList<Expr> collectedArgs)
+    {
+        HashSet<int> transferredRoots = [];
+        HashSet<int> transferredBindings = [];
+        foreach (Expr argument in collectedArgs)
+        {
+            if (argument is not Expr.Var variable
+                || Lookup(variable.Name) is not Binding.Local local
+                || !tco.TryGetPatternBindingOwnership(
+                    local.Slot,
+                    out PatternBindingOwnershipFact? ownership)
+                || ownership?.Ownership != PatternBindingOwnershipKind.TransferredToSameParameter
+                || ownership.RootParameterOrdinal < 0
+                || ownership.RootParameterOrdinal >= tco.ParamSlots.Count)
+            {
+                continue;
+            }
+
+            int rootSlot = tco.ParamSlots[ownership.RootParameterOrdinal];
+            if (!tco.IsRuntimeManagedSlot(rootSlot))
+            {
+                continue;
+            }
+
+            if (transferredBindings.Add(local.Slot))
+            {
+                int valueTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(valueTemp, local.Slot));
+                int duplicatedTemp = EmitRuntimeManagedNullableDup(valueTemp);
+                Emit(new IrInst.StoreLocal(local.Slot, duplicatedTemp));
+            }
+
+            transferredRoots.Add(rootSlot);
+        }
+
+        foreach (int rootSlot in transferredRoots)
+        {
+            bool rootMovesToNextIteration = collectedArgs.Any(argument =>
+                argument is Expr.Var variable
+                && Lookup(variable.Name) is Binding.Local local
+                && local.Slot == rootSlot);
+            if (rootMovesToNextIteration)
+            {
+                continue;
+            }
+
+            int rootTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(rootTemp, rootSlot));
+            EmitTransferredPatternBindingRootDrop(tco, rootSlot, rootTemp);
+
+            if (tco.TryGetRuntimeManagedActiveSlot(rootSlot, out int activeSlot))
+            {
+                int inactiveTemp = NewTemp();
+                Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+                Emit(new IrInst.StoreLocal(activeSlot, inactiveTemp));
+            }
+        }
+    }
+
+    private void EmitTransferredPatternBindingRootDrop(
+        TcoContext tco,
+        int rootSlot,
+        int rootTemp)
+    {
+        TypeRef rootType = tco.GetRuntimeManagedType(rootSlot);
+        switch (rootType)
+        {
+            case TypeRef.TList list:
+                EmitRuntimeManagedListDrop(rootTemp, list.Element);
+                return;
+            case TypeRef.TTuple tuple:
+                EmitRuntimeManagedTupleDrop(rootTemp, tuple);
+                return;
+            case TypeRef.TNamedType named:
+                EmitRuntimeManagedAdtDrop(rootTemp, named);
+                return;
+            case TypeRef.TFun:
+                if (tco.RuntimeManagedClosureActiveSlots.TryGetValue(rootSlot, out int closureActiveSlot))
+                {
+                    EmitRuntimeManagedClosureDropIfActive(rootTemp, closureActiveSlot);
+                }
+                return;
+            default:
+                Emit(new IrInst.RcDrop(
+                    rootTemp,
+                    GetOwnedTypeName(rootType) ?? "Value",
+                    RuntimeManaged: true));
+                return;
+        }
+    }
+
     private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalBackEdgeArgs(
         TcoContext tco,
         List<Expr> collectedArgs)
@@ -7874,99 +7799,6 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(dummy, 0));
         MarkRuntimeManagedTemp(dummy);
         return (dummy, NewTypeVar());
-    }
-
-    private List<string> LowerCallTcoTransferPatternAliases(
-        TcoContext tco,
-        IReadOnlyList<Expr> collectedArgs)
-    {
-        List<(string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> transfers = [];
-        foreach ((string name, RuntimeManagedTcoPatternAlias alias) in _runtimeManagedTcoPatternAliases)
-        {
-            int parentIndex = tco.ParamSlots.IndexOf(alias.ParentSlot);
-            if (parentIndex < 0)
-            {
-                throw new InvalidOperationException("A TCO pattern alias must originate from a loop parameter.");
-            }
-
-            int uses = collectedArgs.Sum(argument =>
-            {
-                HashSet<Expr.Var> references = CollectNameReferences(argument, name);
-                return references.Count
-                    - CountSafePatternBindingReferences(
-                        argument,
-                        references,
-                        parentIndex,
-                        tco.ParamSlots.Count,
-                        tco.SelfName);
-            });
-            if (uses > 0)
-            {
-                transfers.Add((name, alias, uses));
-            }
-        }
-
-        foreach (IGrouping<int, (string Name, RuntimeManagedTcoPatternAlias Alias, int Uses)> group in
-            transfers.GroupBy(transfer => transfer.Alias.ParentSlot))
-        {
-            foreach ((string name, RuntimeManagedTcoPatternAlias alias, int uses) in group)
-            {
-                LowerCallTcoDuplicatePatternAlias(name, alias, uses);
-            }
-
-            RuntimeManagedTcoPatternAlias parent = group.First().Alias;
-            bool parentMovesToNextIteration = collectedArgs.Any(argument =>
-                CountNameOccurrences(argument, parent.ParentName) > 0);
-            if (!parentMovesToNextIteration)
-            {
-                LowerCallTcoConsumePatternParent(parent);
-            }
-        }
-
-        return transfers.Select(transfer => transfer.Name).ToList();
-    }
-
-    private void LowerCallTcoDuplicatePatternAlias(
-        string name,
-        RuntimeManagedTcoPatternAlias alias,
-        int uses)
-    {
-        int valueTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(valueTemp, alias.AliasSlot));
-        int nonNullTemp = NewTemp();
-        int zeroTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-        Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
-        string duplicatedLabel = NewLabel("rc_tco_alias_duplicated");
-        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
-        int duplicatedTemp = valueTemp;
-        for (int use = 0; use < uses; use++)
-        {
-            duplicatedTemp = NewTemp();
-            Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
-        }
-
-        Emit(new IrInst.StoreLocal(alias.AliasSlot, duplicatedTemp));
-        Emit(new IrInst.Label(duplicatedLabel));
-        _activeRuntimeManagedTcoPatternAliases.Add(name);
-    }
-
-    private void LowerCallTcoConsumePatternParent(RuntimeManagedTcoPatternAlias parent)
-    {
-        int parentTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(parentTemp, parent.ParentSlot));
-        if (parent.ParentType is TypeRef.TList list)
-        {
-            EmitRuntimeManagedListDrop(parentTemp, list.Element);
-        }
-        else
-        {
-            throw new InvalidOperationException("Unsupported runtime-managed TCO pattern parent.");
-        }
-
-        int inactiveTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
-        Emit(new IrInst.StoreLocal(parent.ParentActiveSlot, inactiveTemp));
     }
 
     private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)
@@ -8050,7 +7882,9 @@ public sealed partial class Lowering
     {
         foreach (var arg in collectedArgs)
         {
-            if (arg is Expr.Var argVar && LookupOwnedValue(argVar.Name) is { IsDropped: false } movedOwned)
+            if (arg is Expr.Var argVar
+                && LookupOwnedValue(argVar.Name) is
+                { IsDropped: false, PerceusPatternOwner: false } movedOwned)
             {
                 movedOwned.ReleaseKind = ResourceReleaseKind.Moved;
             }
@@ -8117,6 +7951,7 @@ public sealed partial class Lowering
                         ? LowerCallTcoAdtChildBindings(constructorArguments!)
                         : null);
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
+            lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
             return lowered;
         }
         finally
@@ -8129,7 +7964,8 @@ public sealed partial class Lowering
     {
         return arguments
             .OfType<Expr.Var>()
-            .Where(variable => LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+            .Where(variable => LookupOwnedValue(variable.Name) is { IsDropped: false } info
+                && (info.RuntimeManaged || info.PerceusPatternOwner))
             .GroupBy(variable => variable.Name, StringComparer.Ordinal)
             .ToDictionary(
                 group => group.Key,
@@ -9046,6 +8882,10 @@ public sealed partial class Lowering
             && argument is not Expr.Var
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
             && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
+        if (!borrowsOnly)
+        {
+            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+        }
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
             argumentType,
@@ -9821,10 +9661,12 @@ public sealed partial class Lowering
         {
             Expr element = tuple.Elements[i];
             LoweredValue loweredElement = LowerTupleElement(element, request);
-            elements.Add(MaterializeEscapingStringTupleElement(
+            LoweredValue materialized = MaterializeEscapingStringTupleElement(
                 element,
                 loweredElement,
-                request));
+                request);
+            int ownedTemp = DuplicatePerceusPatternOwnerForAggregate(element, materialized.Temp);
+            elements.Add(CreateLoweredValue(ownedTemp, materialized.Type));
             MarkResourceArgMoved(tuple.Elements[i]);
         }
 
@@ -9954,6 +9796,10 @@ public sealed partial class Lowering
 
         LoweredValue head = LowerRuntimeManagedListElement(cons.Head, request);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        head = CreateLoweredValue(
+            DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
+            head.Type);
+        tailTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {
@@ -9992,7 +9838,13 @@ public sealed partial class Lowering
                 tail.Name,
                 request.RuntimeListTailBinding,
                 StringComparison.Ordinal)
-            || LookupOwnedValue(tail.Name) is not { RuntimeManaged: true, IsDropped: false } info)
+            || LookupOwnedValue(tail.Name) is not { IsDropped: false } info
+            || (!info.RuntimeManaged && !info.PerceusPatternOwner))
+        {
+            return tailTemp;
+        }
+
+        if (info.PerceusPatternOwner)
         {
             return tailTemp;
         }
@@ -10000,7 +9852,10 @@ public sealed partial class Lowering
         if (request.RuntimeListTailShared)
         {
             int duplicatedTemp = NewTemp();
-            Emit(new IrInst.RcDup(duplicatedTemp, tailTemp, RuntimeManaged: true));
+            Emit(new IrInst.RcDup(
+                duplicatedTemp,
+                tailTemp,
+                RuntimeManaged: info.RuntimeManaged));
             info.RuntimeDeepUnique = false;
             return duplicatedTemp;
         }
