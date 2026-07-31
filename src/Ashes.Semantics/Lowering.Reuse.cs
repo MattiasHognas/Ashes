@@ -777,9 +777,12 @@ public sealed partial class Lowering
             new ReuseDecision(
                 specializationOrigin,
                 ReuseDecisionKind.SpecializationGeneration,
+                ReuseDecisionMechanism.Specialization,
                 ReuseDecisionOutcome.Generated,
                 ReuseDecisionReason.SpecializableCall,
-                linearParameter,
+                new ReuseDecisionCandidate(
+                    ReuseCandidateKind.Parameter,
+                    linearParameter),
                 RelatedGeneratedLabel: null,
                 generationLocation));
 
@@ -805,11 +808,14 @@ public sealed partial class Lowering
             new ReuseDecision(
                 specializationOrigin,
                 ReuseDecisionKind.ResetSafetyQualification,
+                ReuseDecisionMechanism.Specialization,
                 resetSafety.Accepted
                     ? ReuseDecisionOutcome.Accepted
                     : ReuseDecisionOutcome.Rejected,
                 resetSafety.Reason,
-                linearParameter,
+                new ReuseDecisionCandidate(
+                    ReuseCandidateKind.Parameter,
+                    linearParameter),
                 reuseLabel,
                 resetSafety.Location ?? generationLocation));
     }

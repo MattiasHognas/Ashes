@@ -388,7 +388,7 @@ public sealed partial class Lowering
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
-    private readonly HashSet<ReuseDecision> _reuseDecisions = new();
+    private readonly List<ReuseDecision> _reuseDecisions = [];
 
     /// <summary>
     /// Reuse decisions retained in deterministic source/function order. This projection prevents
@@ -404,11 +404,18 @@ public sealed partial class Lowering
             .ThenBy(decision => decision.Function.Source?.DeclarationOffset ?? int.MaxValue)
             .ThenBy(decision => decision.Function.GeneratedLabel, StringComparer.Ordinal)
             .ThenBy(decision => decision.Decision)
-            .ThenBy(decision => decision.CandidateParameter, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Mechanism)
+            .ThenBy(decision => decision.Candidate?.Kind)
+            .ThenBy(decision => decision.Candidate?.SourceName, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Candidate?.LocalSlot ?? int.MaxValue)
+            .ThenBy(decision => decision.Candidate?.Temp ?? int.MaxValue)
             .ThenBy(decision => decision.RelatedGeneratedLabel, StringComparer.Ordinal)
             .ThenBy(decision => decision.Location?.FilePath, StringComparer.Ordinal)
             .ThenBy(decision => decision.Location?.Line ?? int.MaxValue)
             .ThenBy(decision => decision.Location?.Column ?? int.MaxValue)
+            .ThenBy(decision => decision.Outcome)
+            .ThenBy(decision => decision.Reason)
+            .ThenBy(decision => decision.MoveSafetyCauses)
             .ToList();
 
     // Stitched names of the data-parallel combinators. The grain-parameterized `mapGrained`/`reduceGrained`
@@ -5307,7 +5314,7 @@ public sealed partial class Lowering
         RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
         LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
 
-        var (isChainLambda, isInnermostTco, reuseDefensiveCopy, directReuseSlots, specElidedAccs, reuseInsertIndex) =
+        var (isChainLambda, isInnermostTco, reuseEntryCopies, specElidedAccs, reuseInsertIndex) =
             LowerLambdaCoreSetupTco(lam, label, captures);
 
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
@@ -5316,7 +5323,7 @@ public sealed partial class Lowering
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
         LowerLambdaCoreFinalizeTcoOwnership(
-            lam, reuseDefensiveCopy, directReuseSlots, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
+            lam, reuseEntryCopies, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
 
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
@@ -5343,8 +5350,10 @@ public sealed partial class Lowering
 
     // TCO: for the innermost lambda in a recursive chain, create local copies of captured params and
     // emit a loop start label so tail self-calls can jump back (see LowerLambdaCoreEnterTcoLoop).
-    private (bool IsChainLambda, bool IsInnermostTco, List<(int Slot, TypeRef TypeRef)> ReuseDefensiveCopy,
-        HashSet<int> DirectReuseSlots, HashSet<string> SpecElidedAccs, int ReuseInsertIndex)
+    private (bool IsChainLambda, bool IsInnermostTco,
+        List<ReuseEntryCopyCandidate> ReuseEntryCopies,
+        HashSet<string> SpecElidedAccs,
+        int ReuseInsertIndex)
         LowerLambdaCoreSetupTco(Expr.Lambda lam, string label, IReadOnlyList<string> captures)
     {
         bool isChainLambda = _tcoCtx?.DescendingChain ?? false;
@@ -5357,22 +5366,30 @@ public sealed partial class Lowering
         }
 
         var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
-        var reuseDefensiveCopy = new List<(int Slot, TypeRef TypeRef)>();
-        var directReuseSlots = new HashSet<int>();
+        var reuseEntryCopies = new List<ReuseEntryCopyCandidate>();
         var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
         int reuseInsertIndex = -1;
         if (isInnermostTco)
         {
-            reuseInsertIndex = LowerLambdaCoreEnterTcoLoop(lam, label, captures, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
+            reuseInsertIndex = LowerLambdaCoreEnterTcoLoop(
+                lam,
+                label,
+                captures,
+                reuseEntryCopies,
+                specElidedAccs);
         }
 
-        return (isChainLambda, isInnermostTco, reuseDefensiveCopy, directReuseSlots, specElidedAccs, reuseInsertIndex);
+        return (
+            isChainLambda,
+            isInnermostTco,
+            reuseEntryCopies,
+            specElidedAccs,
+            reuseInsertIndex);
     }
 
     private void LowerLambdaCoreFinalizeTcoOwnership(
         Expr.Lambda lam,
-        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
-        HashSet<int> directReuseSlots,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
         TcoContext? tco,
         int reuseInsertIndex,
         HashSet<string> specElidedAccs,
@@ -5381,7 +5398,10 @@ public sealed partial class Lowering
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
         ResolvePendingNestedTcoPatternAliasSites(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
-        LowerLambdaCoreSpliceTcoEntryOwnership(reuseDefensiveCopy, directReuseSlots, tco, reuseInsertIndex);
+        LowerLambdaCoreSpliceTcoEntryOwnership(
+            reuseEntryCopies,
+            tco,
+            reuseInsertIndex);
         LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
         LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
     }
@@ -5719,15 +5739,16 @@ public sealed partial class Lowering
 
         tco.ParamLabels[ordinal] = label;
         tco.ParamTypes[ordinal] = parameterType;
+        tco.ParamLocations[ordinal] =
+            ResolveSourceLocation(AstSpans.GetLambdaParameterOrDefault(lambda));
     }
 
     private void LowerLambdaCoreSpliceTcoEntryOwnership(
-        List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy,
-        HashSet<int> directReuseSlots,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
         TcoContext? tco,
         int insertIndex)
     {
-        LowerLambdaCoreSpliceReuseCopies(reuseDefensiveCopy, directReuseSlots, insertIndex);
+        LowerLambdaCoreSpliceReuseCopies(reuseEntryCopies, insertIndex);
         LowerLambdaCoreSpliceRuntimeManagedTcoParams(tco, insertIndex);
     }
 
@@ -6154,7 +6175,12 @@ public sealed partial class Lowering
     // self-call jumps to a label that frame never contains (KeyNotFoundException in codegen).
     // Returns reuseInsertIndex — the instruction index (before the loop body label) where the
     // one-time defensive deep copies are spliced in after the body is lowered.
-    private int LowerLambdaCoreEnterTcoLoop(Expr.Lambda lam, string label, IReadOnlyList<string> captures, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, HashSet<string> specElidedAccs)
+    private int LowerLambdaCoreEnterTcoLoop(
+        Expr.Lambda lam,
+        string label,
+        IReadOnlyList<string> captures,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
+        HashSet<string> specElidedAccs)
     {
         var tco = _tcoCtx!;
         var scope = _scopes.Peek();
@@ -6168,8 +6194,18 @@ public sealed partial class Lowering
             includeFreshClosures: true);
 
         var reuseParamNames = new HashSet<string>(tco.ParamNames, StringComparer.Ordinal) { lam.ParamName };
-        int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, directReuseSlots, specElidedAccs);
-        LowerLambdaCoreScanSpecializationReuse(lam, tco, reuseParamNames, reuseDefensiveCopy, specElidedAccs);
+        int reuseInsertIndex = LowerLambdaCoreScanDirectReuse(
+            lam,
+            tco,
+            reuseParamNames,
+            reuseEntryCopies,
+            specElidedAccs);
+        LowerLambdaCoreScanSpecializationReuse(
+            lam,
+            tco,
+            reuseParamNames,
+            reuseEntryCopies,
+            specElidedAccs);
         LowerLambdaCoreEmitTcoLoopEntry(label, tco);
 
         tco.InTailPosition = true;
@@ -6285,7 +6321,72 @@ public sealed partial class Lowering
     // Ground Rule 6). The copy IR is generated after the body (resolved types) and spliced in
     // here. Type comes from the matched constructor — the param's own type var isn't unified
     // until the body is lowered.
-    private int LowerLambdaCoreScanDirectReuse(Expr.Lambda lam, TcoContext tco, HashSet<string> reuseParamNames, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, HashSet<string> specElidedAccs)
+    private sealed record ReuseEntryCopyCandidate(
+        IrFunctionOrigin Function,
+        int Slot,
+        TypeRef Type,
+        string Parameter,
+        ReuseDecisionMechanism Mechanism,
+        bool OwnershipProvesUnique,
+        ParameterMoveSafetyCause MoveSafetyCauses,
+        SourceLocation? Location);
+
+    private ReuseEntryCopyCandidate CreateReuseEntryCopyCandidate(
+        TcoContext tco,
+        int slot,
+        TypeRef type,
+        string parameter,
+        ReuseDecisionMechanism mechanism,
+        bool ownershipProvesUnique,
+        ParameterMoveSafetyCause moveSafetyCauses)
+    {
+        int parameterOrdinal = tco.ParamSlots.IndexOf(slot);
+        SourceLocation? location = parameterOrdinal >= 0
+            && tco.ParamLocations.TryGetValue(
+                parameterOrdinal,
+                out SourceLocation? parameterLocation)
+                ? parameterLocation
+                : null;
+        return new ReuseEntryCopyCandidate(
+            _activeFunctionOrigin
+                ?? throw new InvalidOperationException(
+                    "A reuse entry-copy candidate must belong to an active function."),
+            slot,
+            type,
+            parameter,
+            mechanism,
+            ownershipProvesUnique,
+            moveSafetyCauses,
+            location);
+    }
+
+    private void RecordReuseEntryCopyDecision(
+        ReuseEntryCopyCandidate candidate,
+        ReuseDecisionOutcome outcome,
+        ReuseDecisionReason reason)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                candidate.Function,
+                ReuseDecisionKind.EntryCopy,
+                candidate.Mechanism,
+                outcome,
+                reason,
+                new ReuseDecisionCandidate(
+                    ReuseCandidateKind.Parameter,
+                    candidate.Parameter,
+                    LocalSlot: candidate.Slot),
+                RelatedGeneratedLabel: null,
+                candidate.Location,
+                candidate.MoveSafetyCauses));
+    }
+
+    private int LowerLambdaCoreScanDirectReuse(
+        Expr.Lambda lam,
+        TcoContext tco,
+        HashSet<string> reuseParamNames,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
+        HashSet<string> specElidedAccs)
     {
         _linearReuseNames.Clear();
         var reuseScan = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -6315,19 +6416,29 @@ public sealed partial class Lowering
                 // call site of this fold, the copy is redundant (and, when the fold is called from
                 // an outer loop, re-executes per re-entry). Skip it only when provably safe; the
                 // conservative default keeps the copy. The slot is still tracked in
-                // directReuseSlots so the non-structural-reuse revert below still governs it — a
+                // decision candidate so the non-structural-reuse revert below still governs it — a
                 // move-safe *pure reader* (nullary-only reuse, result type ≠ accumulator) must
                 // still fall back to a fresh allocation so its returned cell is not a reused
                 // accumulator cell. When the reuse is structural, the AllocReusing fires in place
                 // against the already-unique accumulator with no copy — the actual win.
-                directReuseSlots.Add(accLocal.Slot);
+                ParameterMoveSafetyCause moveSafetyCauses =
+                    ParameterMoveSafetyCause.ConservativeUnknown;
                 bool elideDirect = tco.SelfName.Length > 0
-                    && ReuseAccumulatorIsUnique(tco.OwnershipFunction, tco.SelfName, accName);
-                if (!elideDirect)
-                {
-                    reuseDefensiveCopy.Add((accLocal.Slot, accLocal.T));
-                }
-                else
+                    && ReuseAccumulatorIsUnique(
+                        tco.OwnershipFunction,
+                        tco.SelfName,
+                        accName,
+                        out moveSafetyCauses);
+                reuseEntryCopies.Add(
+                    CreateReuseEntryCopyCandidate(
+                        tco,
+                        accLocal.Slot,
+                        accLocal.T,
+                        accName,
+                        ReuseDecisionMechanism.DirectInPlace,
+                        elideDirect,
+                        moveSafetyCauses));
+                if (elideDirect)
                 {
                     specElidedAccs.Add(accName);
                 }
@@ -6340,7 +6451,12 @@ public sealed partial class Lowering
     // Indirect reuse: an accumulator passed to a specializable recursive function f(acc) is
     // also deep-copied once here (so f$reuse can rewrite it in place) and tracked so the call
     // is routed to f$reuse. Eligibility from f's parameter type (a non-resource recursive ADT).
-    private void LowerLambdaCoreScanSpecializationReuse(Expr.Lambda lam, TcoContext tco, HashSet<string> reuseParamNames, List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<string> specElidedAccs)
+    private void LowerLambdaCoreScanSpecializationReuse(
+        Expr.Lambda lam,
+        TcoContext tco,
+        HashSet<string> reuseParamNames,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
+        HashSet<string> specElidedAccs)
     {
         _linearSpecializationAccumulators.Clear();
         var specScan = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -6369,13 +6485,24 @@ public sealed partial class Lowering
                 // never-overwritable value), the copy is redundant and re-executes on every
                 // re-entry (the nested-reuse leak). Skip it only when provably safe; the
                 // conservative default keeps the copy.
+                ParameterMoveSafetyCause moveSafetyCauses =
+                    ParameterMoveSafetyCause.ConservativeUnknown;
                 bool elide = tco.SelfName.Length > 0
-                    && ReuseAccumulatorIsUnique(tco.OwnershipFunction, tco.SelfName, accName);
-                if (!elide)
-                {
-                    reuseDefensiveCopy.Add((accL.Slot, accL.T));
-                }
-                else
+                    && ReuseAccumulatorIsUnique(
+                        tco.OwnershipFunction,
+                        tco.SelfName,
+                        accName,
+                        out moveSafetyCauses);
+                reuseEntryCopies.Add(
+                    CreateReuseEntryCopyCandidate(
+                        tco,
+                        accL.Slot,
+                        accL.T,
+                        accName,
+                        ReuseDecisionMechanism.Specialization,
+                        elide,
+                        moveSafetyCauses));
+                if (elide)
                 {
                     specElidedAccs.Add(accName);
                 }
@@ -6501,12 +6628,13 @@ public sealed partial class Lowering
     // resolved, generate the one-time defensive deep copies and splice them in at loop entry
     // (before the body label, recorded as reuseInsertIndex). Generated at the end of _inst, then
     // moved up — the block is self-contained (loads the slot, deep-copies, stores it back).
-    // Run when there is any copy to emit, or any direct-reuse slot whose copy was elided by the
-    // move analysis (directReuseSlots without a matching reuseDefensiveCopy entry) — the latter
+    // Run for retained and elided candidates alike: a direct-reuse candidate whose copy was elided
     // still needs the non-structural-reuse revert below to protect a move-safe pure reader.
-    private void LowerLambdaCoreSpliceReuseCopies(List<(int Slot, TypeRef TypeRef)> reuseDefensiveCopy, HashSet<int> directReuseSlots, int reuseInsertIndex)
+    private void LowerLambdaCoreSpliceReuseCopies(
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
+        int reuseInsertIndex)
     {
-        if ((reuseDefensiveCopy.Count == 0 && directReuseSlots.Count == 0) || reuseInsertIndex < 0)
+        if (reuseEntryCopies.Count == 0 || reuseInsertIndex < 0)
         {
             return;
         }
@@ -6521,6 +6649,48 @@ public sealed partial class Lowering
         // AllocReusing fired; otherwise skip the direct-reuse copies AND revert this body's
         // (now unbacked-by-a-copy, hence unsound) nullary reuses to fresh allocations.
         // Specialization copies (reuse lives in a $reuse clone) are unaffected.
+        bool structuralReuse = PrepareDirectReuseBody(reuseInsertIndex);
+
+        int genStart = _inst.Count;
+        foreach (ReuseEntryCopyCandidate candidate in reuseEntryCopies)
+        {
+            if (candidate.Mechanism == ReuseDecisionMechanism.DirectInPlace
+                && !structuralReuse)
+            {
+                RecordReuseEntryCopyDecision(
+                    candidate,
+                    ReuseDecisionOutcome.Omitted,
+                    ReuseDecisionReason.NoStructuralReuse);
+                continue;
+            }
+
+            if (candidate.OwnershipProvesUnique)
+            {
+                RecordReuseEntryCopyDecision(
+                    candidate,
+                    ReuseDecisionOutcome.Elided,
+                    ReuseDecisionReason.OwnershipMoveSafe);
+                continue;
+            }
+
+            int loaded = NewTemp();
+            Emit(new IrInst.LoadLocal(loaded, candidate.Slot));
+            int copied = EmitDeepCopy(loaded, Prune(candidate.Type));
+            Emit(new IrInst.StoreLocal(candidate.Slot, copied));
+            RecordReuseEntryCopyDecision(
+                candidate,
+                ReuseDecisionOutcome.Retained,
+                ReuseDecisionReason.OwnershipMoveSafetyRejected);
+        }
+
+        int genCount = _inst.Count - genStart;
+        var generated = _inst.GetRange(genStart, genCount);
+        _inst.RemoveRange(genStart, genCount);
+        _inst.InsertRange(reuseInsertIndex, generated);
+    }
+
+    private bool PrepareDirectReuseBody(int reuseInsertIndex)
+    {
         bool structuralReuse = false;
         for (int i = reuseInsertIndex; i < _inst.Count; i++)
         {
@@ -6531,35 +6701,26 @@ public sealed partial class Lowering
             }
         }
 
-        if (!structuralReuse)
+        if (structuralReuse)
         {
-            for (int i = reuseInsertIndex; i < _inst.Count; i++)
+            return true;
+        }
+
+        for (int i = reuseInsertIndex; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.AllocReusing allocation)
             {
-                if (_inst[i] is IrInst.AllocReusing ar)
+                _inst[i] = new IrInst.AllocAdt(
+                    allocation.Target,
+                    allocation.Tag,
+                    allocation.FieldCount)
                 {
-                    _inst[i] = new IrInst.AllocAdt(ar.Target, ar.Tag, ar.FieldCount) { Location = ar.Location };
-                }
+                    Location = allocation.Location
+                };
             }
         }
 
-        int genStart = _inst.Count;
-        foreach (var (slot, typeRef) in reuseDefensiveCopy)
-        {
-            if (directReuseSlots.Contains(slot) && !structuralReuse)
-            {
-                continue;
-            }
-
-            int loaded = NewTemp();
-            Emit(new IrInst.LoadLocal(loaded, slot));
-            int copied = EmitDeepCopy(loaded, Prune(typeRef));
-            Emit(new IrInst.StoreLocal(slot, copied));
-        }
-
-        int genCount = _inst.Count - genStart;
-        var generated = _inst.GetRange(genStart, genCount);
-        _inst.RemoveRange(genStart, genCount);
-        _inst.InsertRange(reuseInsertIndex, generated);
+        return false;
     }
 
     private void LowerLambdaCoreSpliceRuntimeManagedTcoParams(TcoContext? tco, int insertIndex)

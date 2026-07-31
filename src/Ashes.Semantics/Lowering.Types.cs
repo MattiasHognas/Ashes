@@ -183,6 +183,7 @@ public sealed partial class Lowering
         public List<string> ParamNames { get; init; }
         public Dictionary<int, string> ParamLabels { get; } = [];
         public Dictionary<int, TypeRef> ParamTypes { get; } = [];
+        public Dictionary<int, SourceLocation?> ParamLocations { get; } = [];
         public List<int> ParamSlots { get; init; } = [];
 
         // Immutable ownership facts and mutable placement orchestration use the same positional slot
