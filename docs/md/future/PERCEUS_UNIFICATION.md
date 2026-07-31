@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `f2a0c4b` on 2026-07-31, together with the canonical affine-reuse
-cutover in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `ceb362b` on 2026-07-31, together with the reuse-specialization decision
+capture in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -64,10 +64,6 @@ The current repository has three temporary ownership-debug paths:
   to `Console.Error`;
 - `Lowering.OwnershipShadowCompare.cs` reads the variable and writes disagreement prose directly to
   `Console.Error`.
-
-`GetOrCreateReuseSpecializationDebugDump` similarly reconstructs reuse facts from generated IR for
-`ASH_DBG_REUSE` instead of retaining the decisions that generated it. These hooks are useful during
-the migration, but they are not an architecture to extend.
 
 Every remaining milestone must therefore preserve the following handoff:
 
@@ -192,6 +188,11 @@ The following is already implemented and is not part of the backlog:
   function, decision, relevant parameter, evaluated and positive facts (including the concrete
   runtime-manageable result-type predicate where applicable), and outcome without exposing the
   mutable analysis tables;
+- reuse specialization generation and `IsFullyReusing` reset-safety qualification retain immutable
+  `ReuseDecision` records in deterministic source/function order. Each record carries the generated
+  function's `IrFunctionOrigin`, reuse-root parameter, related recursive generated label, source
+  location, stable outcome, and a concrete acceptance or rejection reason. The former
+  `GetOrCreateReuseSpecializationDebugDump` console and `/tmp` IR-dump path has been deleted;
 - `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
@@ -241,16 +242,17 @@ implementation tasks remain; Milestone 2.5 is next.
 
 #### 2.5 Consolidate the remaining reuse refinements
 
-The structural, borrow-inspection, and affine-reuse cutovers are complete. The remaining work in
-this milestone is to retain structured facts for the reuse decisions that are still transient.
+The structural, borrow-inspection, affine-reuse, specialization-generation, and reset-safety
+qualification cutovers are complete. The remaining work in this milestone is to retain structured
+facts for reuse decisions that are still transient.
 
-When the reuse path generates or rejects a specialization, retains/elides a defensive entry copy,
-requires a runtime uniqueness check, accepts/rejects a layout, produces/consumes a token, or leaves a
-fallback allocation, record that decision next to the fact that made it. Use actual stable enum
-values—not speculative prose—for outcomes the implementation can distinguish. At minimum, the
-current `ReuseAccumulatorIsUnique`, `GetOrCreateReuseSpecialization`, `IsFullyReusing`, direct-copy
-elision, `DropReuse`, and `AllocReusing` sites must not lose their source function, candidate
-parameter/value, location, and positive or conservative reason.
+When the reuse path rejects a specialization candidate, retains/elides a defensive entry copy,
+requires a runtime uniqueness check, accepts/rejects a constructor layout, produces/consumes a token,
+or leaves a fallback allocation, record that decision next to the fact that made it. Use actual
+stable enum values—not speculative prose—for outcomes the implementation can distinguish. At
+minimum, the current `ReuseAccumulatorIsUnique`, direct-copy elision, `DropReuse`, and
+`AllocReusing` sites must not lose their source function, candidate parameter/value, location, and
+positive or conservative reason.
 
 #### Milestone 2 acceptance
 

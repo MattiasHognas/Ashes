@@ -683,7 +683,11 @@ public sealed partial class Lowering
     /// recursion reuses the unique subtrees). Returns the function label to call. The caller must only
     /// route a provably-unique argument here.
     /// </summary>
-    private string GetOrCreateReuseSpecialization(string name, TypeRef funcType, IReadOnlyList<TypeRef> concreteParamTypes)
+    private string GetOrCreateReuseSpecialization(
+        string name,
+        TypeRef funcType,
+        IReadOnlyList<TypeRef> concreteParamTypes,
+        Expr generationExpression)
     {
         // Cache per concrete instantiation: the spec is monomorphized to the call's argument types, so a
         // function used at two element types gets two specializations.
@@ -693,71 +697,127 @@ public sealed partial class Lowering
             return cached;
         }
 
-        var spec = _specializableFunctions[name];
+        (Expr.Lambda Lambda, string LinearParam, int ArgCount) spec =
+            _specializableFunctions[name];
         string label = _reuseSpecializations.Count == 0 ? $"{name}__reuse" : $"{name}__reuse${_reuseSpecializations.Count}";
         _reuseSpecializations[cacheKey] = label;
 
-        var savedLinear = _specializingLinearParam;
-        var savedReuseLabel = _specializingReuseLabel;
-        var savedInSpec = _inSpecialization;
-        var savedConcrete = _specializationConcreteParamTypes;
-        var savedCursor = _specializationParamCursor;
-        var savedFreshInputs = _specFreshInputNames;
+        string? reuseLabel = LowerReuseSpecializationBody(
+            name,
+            funcType,
+            concreteParamTypes,
+            cacheKey,
+            label,
+            spec);
+        RecordReuseSpecializationDecisions(
+            label,
+            reuseLabel,
+            spec.LinearParam,
+            generationExpression);
+        return label;
+    }
+
+    private string? LowerReuseSpecializationBody(
+        string name,
+        TypeRef funcType,
+        IReadOnlyList<TypeRef> concreteParamTypes,
+        string cacheKey,
+        string label,
+        (Expr.Lambda Lambda, string LinearParam, int ArgCount) spec)
+    {
+        string? savedLinear = _specializingLinearParam;
+        string? savedReuseLabel = _specializingReuseLabel;
+        bool savedInSpec = _inSpecialization;
+        IReadOnlyList<TypeRef>? savedConcrete = _specializationConcreteParamTypes;
+        int savedCursor = _specializationParamCursor;
+        HashSet<string>? savedFreshInputs = _specFreshInputNames;
         _specializingLinearParam = spec.LinearParam;
         _specializingReuseLabel = null;
         _inSpecialization = true;
         _specializationConcreteParamTypes = concreteParamTypes;
         _specializationParamCursor = 0;
         _specFreshInputNames = new HashSet<string>(CollectLambdaParams(spec.Lambda), StringComparer.Ordinal);
-        // forcedLabel + selfName=name make recursive calls resolve to Binding.Self(label) → f$reuse.
-        // LowerLambdaCore adds the function to _funcs and then emits an incidental closure into the
-        // current _inst; we don't need that closure (we build our own at each call site), so discard
-        // the emitted instructions after the function is registered.
-        int instBefore = _inst.Count;
-        LowerReuseSpecializationLambda(spec.Lambda, name, funcType, label, cacheKey);
-        if (_inst.Count > instBefore)
+        try
         {
-            _inst.RemoveRange(instBefore, _inst.Count - instBefore);
-        }
+            // LowerLambdaCore emits an incidental closure after registering the function. Calls
+            // construct their own specialized closure, so discard only those emitted instructions.
+            int instBefore = _inst.Count;
+            LowerReuseSpecializationLambda(spec.Lambda, name, funcType, label, cacheKey);
+            if (_inst.Count > instBefore)
+            {
+                _inst.RemoveRange(instBefore, _inst.Count - instBefore);
+            }
 
+            return _specializingReuseLabel;
+        }
+        finally
+        {
+            _specializingLinearParam = savedLinear;
+            _specializingReuseLabel = savedReuseLabel;
+            _inSpecialization = savedInSpec;
+            _specializationConcreteParamTypes = savedConcrete;
+            _specializationParamCursor = savedCursor;
+            _specFreshInputNames = savedFreshInputs;
+        }
+    }
+
+    private void RecordReuseSpecializationDecisions(
+        string label,
+        string? reuseLabel,
+        string linearParameter,
+        Expr generationExpression)
+    {
         // The recursive reuse function (f$reuse itself, or the inner go for a nested-rec shape) is the
         // one whose return values must be below the watermark. If it is fully reusing, the whole
         // specialized call's result is below the watermark, so mark the callable label reset-safe.
-        var reuseLabel = _specializingReuseLabel;
-        _specializingLinearParam = savedLinear;
-        _specializingReuseLabel = savedReuseLabel;
-        _inSpecialization = savedInSpec;
-        _specializationConcreteParamTypes = savedConcrete;
-        _specializationParamCursor = savedCursor;
-        _specFreshInputNames = savedFreshInputs;
+        IrFunctionOrigin specializationOrigin = _irFunctionOriginsByLabel[label];
+        SourceLocation? generationLocation =
+            ResolveSourceLocation(AstSpans.GetOrDefault(generationExpression));
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                specializationOrigin,
+                ReuseDecisionKind.SpecializationGeneration,
+                ReuseDecisionOutcome.Generated,
+                ReuseDecisionReason.SpecializableCall,
+                linearParameter,
+                RelatedGeneratedLabel: null,
+                generationLocation));
 
-        var recursiveFunc = reuseLabel is not null ? _funcs.LastOrDefault(f => string.Equals(f.Label, reuseLabel, StringComparison.Ordinal)) : null;
-        bool fullyReusing = recursiveFunc is not null && IsFullyReusing(recursiveFunc, reuseLabel!);
-        if (fullyReusing)
+        IrFunction? recursiveFunc = reuseLabel is not null
+            ? _funcs.LastOrDefault(
+                function => string.Equals(
+                    function.Label,
+                    reuseLabel,
+                    StringComparison.Ordinal))
+            : null;
+        FullyReusingResult resetSafety = recursiveFunc is not null
+            ? IsFullyReusing(recursiveFunc, reuseLabel!)
+            : new FullyReusingResult(
+                Accepted: false,
+                ReuseDecisionReason.RecursiveReuseFunctionMissing,
+                Location: null);
+        if (resetSafety.Accepted)
         {
             _fullyReusingLabels.Add(label);
         }
 
-        GetOrCreateReuseSpecializationDebugDump(name, label, funcType, reuseLabel, fullyReusing, recursiveFunc);
-        return label;
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                specializationOrigin,
+                ReuseDecisionKind.ResetSafetyQualification,
+                resetSafety.Accepted
+                    ? ReuseDecisionOutcome.Accepted
+                    : ReuseDecisionOutcome.Rejected,
+                resetSafety.Reason,
+                linearParameter,
+                reuseLabel,
+                resetSafety.Location ?? generationLocation));
     }
 
-    private void GetOrCreateReuseSpecializationDebugDump(string name, string label, TypeRef funcType, string? reuseLabel, bool fullyReusing, IrFunction? recursiveFunc)
-    {
-        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
-        {
-            var rf = recursiveFunc;
-            int toSpace = rf?.Instructions.Count(i => i is IrInst.AllocAdtToSpace) ?? -1;
-            int allocAdt = rf?.Instructions.Count(i => i is IrInst.AllocAdt) ?? -1;
-            int reusing = rf?.Instructions.Count(i => i is IrInst.AllocReusing) ?? -1;
-            Console.Error.WriteLine($"[reuse] spec {name} -> {label}, reuseLabel={reuseLabel ?? "<null>"}, fullyReusing={fullyReusing}, AllocAdtToSpace={toSpace} AllocAdt={allocAdt} AllocReusing={reusing} funcType={Pretty(Prune(funcType))}");
-            if (rf is not null && Environment.GetEnvironmentVariable("ASH_DBG_REUSE_IR") is not null)
-            {
-                System.IO.File.WriteAllLines($"/tmp/spec_{rf.Label}.txt", rf.Instructions.Select((ins, idx) => $"{idx}: {ins}"));
-                Console.Error.WriteLine($"[reuse] dumped {rf.Instructions.Count} instrs of {rf.Label} to /tmp/spec_{rf.Label}.txt");
-            }
-        }
-    }
+    private readonly record struct FullyReusingResult(
+        bool Accepted,
+        ReuseDecisionReason Reason,
+        SourceLocation? Location);
 
     /// <summary>
     /// Conservative soundness check for the loop arena reset: returns true only if every value
@@ -769,11 +829,11 @@ public sealed partial class Lowering
     /// result is built solely from reused cells, scrutinee fields, and recursive self-results — all
     /// below the watermark — while the env/closure scaffolding is dead after the call and reclaimable.
     /// </summary>
-    private static bool IsFullyReusing(IrFunction f, string selfLabel)
+    private static FullyReusingResult IsFullyReusing(IrFunction f, string selfLabel)
     {
-        if (IsFullyReusingHasForbiddenAllocation(f))
+        if (IsFullyReusingFindForbiddenAllocation(f) is { } forbidden)
         {
-            return false;
+            return forbidden;
         }
 
         // Build temp → reading instructions, then require every Alloc to feed only a MakeClosure env
@@ -787,30 +847,32 @@ public sealed partial class Lowering
         return IsFullyReusingAllocationsConsumed(f, readers, slotStores, slotLoads);
     }
 
-    private static bool IsFullyReusingHasForbiddenAllocation(IrFunction f)
+    private static FullyReusingResult? IsFullyReusingFindForbiddenAllocation(IrFunction f)
     {
-        foreach (var inst in f.Instructions)
+        foreach (IrInst instruction in f.Instructions)
         {
-            switch (inst)
+            ReuseDecisionReason? reason = instruction switch
             {
-                case IrInst.AllocAdt:
-                case IrInst.AllocAdtStack:
-                case IrInst.AllocStack:
-                case IrInst.ConcatStr:
-                case IrInst.CopyOutArena:
-                case IrInst.CopyOutList:
-                case IrInst.CopyOutClosure:
-                case IrInst.CopyOutTcoListCell:
-                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
-                    {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected by instruction kind: {inst}");
-                    }
-
-                    return true;
+                IrInst.AllocAdt => ReuseDecisionReason.FreshAdtAllocation,
+                IrInst.AllocAdtStack => ReuseDecisionReason.FreshStackAdtAllocation,
+                IrInst.AllocStack => ReuseDecisionReason.FreshStackAllocation,
+                IrInst.ConcatStr => ReuseDecisionReason.StringConcatenationAllocation,
+                IrInst.CopyOutArena => ReuseDecisionReason.ArenaCopyOut,
+                IrInst.CopyOutList => ReuseDecisionReason.ListCopyOut,
+                IrInst.CopyOutClosure => ReuseDecisionReason.ClosureCopyOut,
+                IrInst.CopyOutTcoListCell => ReuseDecisionReason.TcoListCellCopyOut,
+                _ => null,
+            };
+            if (reason is { } rejection)
+            {
+                return new FullyReusingResult(
+                    Accepted: false,
+                    rejection,
+                    instruction.Location);
             }
         }
 
-        return false;
+        return null;
     }
 
     private static Dictionary<int, List<IrInst>> IsFullyReusingCollectReaders(IrFunction f)
@@ -945,33 +1007,37 @@ public sealed partial class Lowering
         return true;
     }
 
-    private static bool IsFullyReusingAllocationsConsumed(IrFunction f, Dictionary<int, List<IrInst>> readers,
+    private static FullyReusingResult IsFullyReusingAllocationsConsumed(
+        IrFunction f,
+        Dictionary<int, List<IrInst>> readers,
         Dictionary<int, int> slotStores, Dictionary<int, List<int>> slotLoads)
     {
-        foreach (var inst in f.Instructions)
+        foreach (IrInst instruction in f.Instructions)
         {
-            switch (inst)
+            switch (instruction)
             {
                 case IrInst.Alloc alloc when !IsFullyReusingSafelyConsumed(alloc.Target, 0, readers, slotStores, slotLoads):
-                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
-                    {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected: {alloc} readers: {string.Join(" | ", readers.GetValueOrDefault(alloc.Target, []).Select(x => x.ToString()[..Math.Min(90, x.ToString().Length)]))}");
-                    }
-
-                    return false;
+                    return new FullyReusingResult(
+                        Accepted: false,
+                        ReuseDecisionReason.RawAllocationMayEscape,
+                        alloc.Location);
                 case IrInst.MakeClosure mk when !IsFullyReusingClosureConsumedAsCallTarget(mk.Target, 0, readers, slotStores, slotLoads):
-                    if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
-                    {
-                        Console.Error.WriteLine($"[reuse] IsFullyReusing({f.Label}) rejected closure: {mk} readers: {string.Join(" | ", readers.GetValueOrDefault(mk.Target, []).Select(x => x.ToString()[..Math.Min(90, x.ToString().Length)]))}");
-                    }
-
-                    return false;
+                    return new FullyReusingResult(
+                        Accepted: false,
+                        ReuseDecisionReason.ClosureMayEscape,
+                        mk.Location);
                 case IrInst.MakeClosureStack mks when !IsFullyReusingClosureConsumedAsCallTarget(mks.Target, 0, readers, slotStores, slotLoads):
-                    return false;
+                    return new FullyReusingResult(
+                        Accepted: false,
+                        ReuseDecisionReason.StackClosureMayEscape,
+                        mks.Location);
             }
         }
 
-        return true;
+        return new FullyReusingResult(
+            Accepted: true,
+            ReuseDecisionReason.NoResetInvalidatingAllocation,
+            Location: null);
     }
 
     /// <summary>
@@ -1108,7 +1174,11 @@ public sealed partial class Lowering
             concreteParamTypes.Add(Prune(argType));
         }
 
-        string label = GetOrCreateReuseSpecialization(name, funcType, concreteParamTypes);
+        string label = GetOrCreateReuseSpecialization(
+            name,
+            funcType,
+            concreteParamTypes,
+            callExpr);
         // If the specialization fully reuses, its result is the accumulator (the last argument)
         // rewritten in place — address-stable exactly when that argument was. Record the call node so a
         // back-edge stability check can trace through it, and (when the argument is a bare accumulator
