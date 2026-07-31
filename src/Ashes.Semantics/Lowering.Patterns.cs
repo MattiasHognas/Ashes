@@ -560,17 +560,23 @@ public sealed partial class Lowering
                         runtimeConstructor,
                         match.Cases[i].Pattern)
                     : null;
+            bool runtimeManaged = runtimeCleanup is not null;
             int tokenTemp = NewTemp();
             Emit(new IrInst.DropReuse(
                 tokenTemp,
                 valueTemp,
                 reuseArityVal,
-                runtimeCleanup is not null));
+                runtimeManaged));
             _reuseTokens.Add(new ReuseToken(
                 tokenTemp,
                 reuseArityVal,
                 runtimeCleanup,
                 ListCell: match.Cases[i].Pattern is Pattern.Cons));
+            RecordReuseTokenUniquenessDecision(
+                match.Cases[i].Pattern,
+                reuseScrutineeName,
+                valueTemp,
+                runtimeManaged);
             RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
             if (match.Cases[i].Pattern is Pattern.Cons { Head: Pattern.Var head }
                 && _linearReuseNames.Add(head.Name))
@@ -583,6 +589,33 @@ public sealed partial class Lowering
         }
 
         return new ArmReuseContext(reuseTokensBefore, addedLinearNames);
+    }
+
+    private void RecordReuseTokenUniquenessDecision(
+        Pattern pattern,
+        string sourceName,
+        int valueTemp,
+        bool runtimeManaged)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse token must belong to an active function."),
+                ReuseDecisionKind.RuntimeUniquenessCheck,
+                ReuseDecisionMechanism.ReuseToken,
+                runtimeManaged
+                    ? ReuseDecisionOutcome.Required
+                    : ReuseDecisionOutcome.Omitted,
+                runtimeManaged
+                    ? ReuseDecisionReason.RuntimeManagedReuseCandidate
+                    : ReuseDecisionReason.StaticallyUniqueReuseCandidate,
+                new ReuseDecisionCandidate(
+                    ReuseCandidateKind.Value,
+                    sourceName,
+                    Temp: valueTemp),
+                RelatedGeneratedLabel: null,
+                ResolveSourceLocation(AstSpans.GetOrDefault(pattern))));
     }
 
     /// <summary>

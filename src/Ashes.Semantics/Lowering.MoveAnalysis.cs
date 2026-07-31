@@ -702,17 +702,23 @@ public sealed partial class Lowering
     private bool ReuseAccumulatorIsUnique(
         FuncKey? function,
         string funcName,
-        string accParam)
+        string accParam,
+        out ParameterMoveSafetyCause moveSafetyCauses)
     {
         FunctionOwnershipSummary? summary = function is { } key
             ? GetOwnershipSummary(key)
             : GetOwnershipSummary(funcName);
         if (summary is null)
         {
+            moveSafetyCauses = ParameterMoveSafetyCause.ConservativeUnknown;
             return false;
         }
 
-        bool unique = summary.ParameterMoveSafety.GetValueOrDefault(accParam)?.IsMoveSafe == true;
+        ParameterMoveSafetyProof? proof =
+            summary.ParameterMoveSafety.GetValueOrDefault(accParam);
+        bool unique = proof?.IsMoveSafe == true;
+        moveSafetyCauses =
+            proof?.Causes ?? ParameterMoveSafetyCause.ConservativeUnknown;
         RecordOwnershipFactConsumption(
             summary,
             OwnershipDecisionKind.ReuseEntryCopyElision,

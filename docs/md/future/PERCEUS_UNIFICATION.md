@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `ceb362b` on 2026-07-31, together with the reuse-specialization decision
-capture in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `8d2cef8` on 2026-07-31, together with the reuse entry-copy and uniqueness
+decision capture in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -193,6 +193,13 @@ The following is already implemented and is not part of the backlog:
   function's `IrFunctionOrigin`, reuse-root parameter, related recursive generated label, source
   location, stable outcome, and a concrete acceptance or rejection reason. The former
   `GetOrCreateReuseSpecializationDebugDump` console and `/tmp` IR-dump path has been deleted;
+- direct and specialization entry-copy decisions are retained only after structural reuse is known,
+  so the record distinguishes a copy retained after a conservative move-safety result, a copy elided
+  by a positive move-safety proof, and a direct copy omitted because no structural reuse survived.
+  The decision retains the mechanism, source parameter, local slot and location, plus the exact
+  `ParameterMoveSafetyCause` flags. Reuse-token production also records whether the candidate is
+  statically unique or whether `DropReuse.RuntimeManaged` requires a runtime uniqueness check,
+  retaining the source value, IR temp, function origin, and pattern location;
 - `RecursiveGroupExpr` members use group-plus-ordinal `FuncKey` identities, are registered before any
   member body is analyzed, and share one complete sibling scope. Declarations after a group remain
   visible to analysis, and original member labels plus mutual-TCO wrapper labels map back to the same
@@ -242,17 +249,16 @@ implementation tasks remain; Milestone 2.5 is next.
 
 #### 2.5 Consolidate the remaining reuse refinements
 
-The structural, borrow-inspection, affine-reuse, specialization-generation, and reset-safety
-qualification cutovers are complete. The remaining work in this milestone is to retain structured
-facts for reuse decisions that are still transient.
+The structural, borrow-inspection, affine-reuse, specialization-generation, reset-safety,
+entry-copy, and reuse-token uniqueness cutovers are complete. The remaining work in this milestone
+is to retain structured facts for reuse decisions that are still transient.
 
-When the reuse path rejects a specialization candidate, retains/elides a defensive entry copy,
-requires a runtime uniqueness check, accepts/rejects a constructor layout, produces/consumes a token,
-or leaves a fallback allocation, record that decision next to the fact that made it. Use actual
-stable enum values—not speculative prose—for outcomes the implementation can distinguish. At
-minimum, the current `ReuseAccumulatorIsUnique`, direct-copy elision, `DropReuse`, and
-`AllocReusing` sites must not lose their source function, candidate parameter/value, location, and
-positive or conservative reason.
+When the reuse path rejects a specialization candidate, accepts/rejects a constructor layout,
+produces/consumes a token, or leaves a fallback allocation, record that decision next to the fact
+that made it. Use actual stable enum values—not speculative prose—for outcomes the implementation
+can distinguish. At minimum, the remaining `DropReuse` production and `AllocReusing` consumption
+sites must not lose their source function, candidate value/token, location, and positive or
+conservative reason.
 
 #### Milestone 2 acceptance
 
