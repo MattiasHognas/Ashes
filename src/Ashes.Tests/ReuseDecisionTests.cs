@@ -59,6 +59,34 @@ public sealed class ReuseDecisionTests
         in (nested, specialized, keep, updated)
         """;
 
+    private const string CandidateRejectionSource = """
+        type Item =
+            | value: Int
+
+        let recursive make count =
+            if count <= 0
+            then []
+            else Item(value = count) :: make(count - 1)
+
+        let recursive increment amount items =
+            match items with
+                | [] -> []
+                | Item(value) :: rest ->
+                    Item(value = value + amount) :: increment(amount)(rest)
+
+        let recursive find target items =
+            match items with
+                | [] -> -1
+                | Item(value) :: rest ->
+                    if value == target then value else find(target)(rest)
+
+        let shared = make(2)
+        let keep = shared
+        let rejectedUnique = increment(1)(shared)
+        let rejectedShape = find(2)(make(3))
+        in (keep, rejectedUnique, rejectedShape)
+        """;
+
     [Test]
     public void GeneratedSpecialization_RetainsSourceCandidateAndResetSafetyDecision()
     {
@@ -279,6 +307,190 @@ public sealed class ReuseDecisionTests
         staticDecision.Location.Value.FilePath.ShouldBe("static-token.ash");
     }
 
+    [Test]
+    public void RejectedSpecializationCandidates_RetainConcreteCallSiteReasons()
+    {
+        IReadOnlyList<ReuseDecision> rejections =
+            LowerProgram(
+                CandidateRejectionSource,
+                "specialization-candidates.ash").ReuseDecisions
+                .Where(decision =>
+                    decision.Decision
+                        == ReuseDecisionKind.SpecializationCandidateQualification)
+                .ToList();
+        rejections.Count.ShouldBe(
+            2,
+            string.Join(
+                "; ",
+                rejections.Select(decision =>
+                    $"{decision.TargetFunction}:{decision.Candidate?.SourceName}:{decision.Reason}")));
+
+        ReuseDecision unique = rejections.Single(decision =>
+            string.Equals(
+                decision.TargetFunction,
+                "increment",
+                StringComparison.Ordinal));
+        unique.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
+        unique.Reason.ShouldBe(ReuseDecisionReason.AccumulatorNotProvenUnique);
+        unique.Candidate.ShouldNotBeNull();
+        unique.Candidate.Kind.ShouldBe(ReuseCandidateKind.Value);
+        unique.Candidate.SourceName.ShouldBe("shared");
+        unique.Candidate.LocalSlot.ShouldNotBeNull();
+
+        ReuseDecision shape = rejections.Single(decision =>
+            string.Equals(
+                decision.TargetFunction,
+                "find",
+                StringComparison.Ordinal));
+        shape.Reason.ShouldBe(ReuseDecisionReason.ResultDoesNotRebuildAccumulator);
+        shape.Candidate.ShouldNotBeNull();
+        shape.Candidate.SourceName.ShouldBe("make");
+        shape.Candidate.LocalSlot.ShouldBeNull();
+
+        foreach (ReuseDecision decision in new[] { unique, shape })
+        {
+            decision.Mechanism.ShouldBe(ReuseDecisionMechanism.Specialization);
+            decision.Function.Kind.ShouldBe(IrFunctionOriginKind.ProgramEntry);
+            decision.Location.ShouldNotBeNull();
+            decision.Location.Value.FilePath.ShouldBe(
+                "specialization-candidates.ash");
+        }
+    }
+
+    [Test]
+    public void ConstructorLayouts_RetainCompatibleAndFieldCountDecisions()
+    {
+        const string source = """
+            type Shape =
+                | Zero
+                | One(Int)
+                | Other(Int)
+                | Pair(Int, Int)
+
+            let recursive rotate turns shape =
+                if turns <= 0
+                then shape
+                else
+                    match shape with
+                        | Zero -> rotate(turns - 1)(Zero)
+                        | One(value) -> rotate(turns - 1)(Other(value))
+                        | Other(value) -> rotate(turns - 1)(Pair(value)(0))
+                        | Pair(left, _) -> rotate(turns - 1)(One(left))
+
+            rotate(4)(One(1))
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "constructor-layout.ash").ReuseDecisions
+                .Where(decision =>
+                    decision.Decision
+                        == ReuseDecisionKind.ConstructorLayoutCompatibility)
+                .ToList();
+
+        decisions.Count.ShouldBe(4);
+        decisions.Count(decision =>
+            decision.Outcome == ReuseDecisionOutcome.Accepted).ShouldBe(2);
+        decisions.Count(decision =>
+            decision.Reason
+                == ReuseDecisionReason.ConstructorFieldCountMismatch).ShouldBe(2);
+        foreach (ReuseDecision decision in decisions)
+        {
+            decision.Candidate.ShouldNotBeNull();
+            decision.Candidate.Kind.ShouldBe(ReuseCandidateKind.Token);
+            decision.Candidate.SourceName.ShouldBe("shape");
+            decision.Candidate.Temp.ShouldNotBeNull();
+            decision.Layout.ShouldNotBeNull();
+            decision.Layout.TargetConstructor.ShouldNotBeNullOrWhiteSpace();
+            decision.Location.ShouldNotBeNull();
+            decision.Location.Value.FilePath.ShouldBe("constructor-layout.ash");
+        }
+
+        ReuseDecision compatible = decisions.Single(decision =>
+            string.Equals(
+                decision.Layout?.TargetConstructor,
+                "Other",
+                StringComparison.Ordinal));
+        compatible.Reason.ShouldBe(
+            ReuseDecisionReason.CompatibleConstructorLayout);
+        compatible.Layout.ShouldNotBeNull();
+        compatible.Layout.ProducedFieldCount.ShouldBe(1);
+        compatible.Layout.RequestedFieldCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void ConstructorLayouts_RetainCellKindMismatch()
+    {
+        const string cellKindSource = """
+            type Pair =
+                | Pair(Int, Int)
+
+            type Item =
+                | value: Int
+
+            let recursive make count =
+                if count <= 0
+                then []
+                else Item(value = count) :: make(count - 1)
+
+            let recursive pairAll values =
+                match values with
+                    | [] -> []
+                    | Item(value) :: rest ->
+                        Pair(value)(value) :: pairAll(rest)
+
+            pairAll(make(2))
+            """;
+        IReadOnlyList<ReuseDecision> cellKindDecisions =
+            LowerProgram(cellKindSource, "cell-kind-layout.ash").ReuseDecisions;
+        ReuseDecision cellKind = LayoutDecision(
+            cellKindDecisions,
+            ReuseDecisionReason.ConstructorCellKindMismatch);
+        cellKind.Layout.ShouldNotBeNull();
+        cellKind.Layout.ProducedFieldCount.ShouldBe(2);
+        cellKind.Layout.RequestedFieldCount.ShouldBe(2);
+        cellKind.Layout.ProducedListCell.ShouldBeTrue();
+        cellKind.Layout.RequestedListCell.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ConstructorLayouts_RetainRuntimeRegimeMismatch()
+    {
+        const string runtimeSource = """
+            type Choice =
+                | Left(Int, Int)
+                | Right(Int, Int)
+
+            type Callback =
+                | Callback(Int -> Int, Int)
+
+            let choice = Left(1)(2)
+            match choice with
+                | Left(left, right) ->
+                    let callback =
+                        Callback(given value -> value + left)(right)
+                    in Right(left)(right)
+                | Right(left, right) ->
+                    let callback =
+                        Callback(given value -> value + left)(right)
+                    in Left(left)(right)
+            """;
+        IReadOnlyList<ReuseDecision> runtimeDecisions = LowerProgram(
+            runtimeSource,
+            "runtime-layout.ash").ReuseDecisions.Where(decision =>
+                decision.Reason
+                    == ReuseDecisionReason.RuntimeManagedTokenNotAllowed)
+                .ToList();
+        runtimeDecisions.Count.ShouldBe(2);
+        foreach (ReuseDecision runtime in runtimeDecisions)
+        {
+            runtime.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
+            runtime.Layout.ShouldNotBeNull();
+            runtime.Layout.RuntimeManagedToken.ShouldBeTrue();
+            runtime.Layout.RuntimeManagedAllowed.ShouldBeFalse();
+            runtime.Layout.TargetConstructor.ShouldBe("Callback");
+        }
+    }
+
     private static ReuseDecision EntryCopy(
         IReadOnlyList<ReuseDecision> decisions,
         string sourceFunction)
@@ -288,6 +500,31 @@ public sealed class ReuseDecisionTests
                 decision.Function.Source?.SourceName,
                 sourceFunction,
                 StringComparison.Ordinal));
+    }
+
+    private static ReuseDecision LayoutDecision(
+        IReadOnlyList<ReuseDecision> decisions,
+        ReuseDecisionReason reason)
+    {
+        IReadOnlyList<ReuseDecision> matches = decisions
+            .Where(decision =>
+                decision.Decision
+                    == ReuseDecisionKind.ConstructorLayoutCompatibility
+                && decision.Reason == reason)
+            .ToList();
+        matches.Count.ShouldBe(
+            1,
+            string.Join(
+                "; ",
+                decisions
+                    .Select(decision =>
+                        $"{decision.Decision}:{decision.Reason}:"
+                        + $"{decision.Layout?.TargetConstructor}:"
+                        + $"{decision.Layout?.ProducedFieldCount}->"
+                        + $"{decision.Layout?.RequestedFieldCount}:"
+                        + $"{decision.Layout?.ProducedListCell}->"
+                        + $"{decision.Layout?.RequestedListCell}")));
+        return matches[0];
     }
 
     private static Lowering LowerProgram(string source, string filePath)

@@ -52,7 +52,9 @@ public sealed partial class Lowering
         // (rather than resolving any alias to any same-named constructor from an unrelated module).
         if (TryResolveQualifiedConstructor(qv.Name, resolvedModule, out var qualifiedCtorSym))
         {
-            var resolvedCtorReference = LowerConstructorReference(qualifiedCtorSym);
+            var resolvedCtorReference = LowerConstructorReference(
+                qualifiedCtorSym,
+                ResolveSourceLocation(AstSpans.GetOrDefault(qv)));
             RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedCtorReference.Item2);
             return resolvedCtorReference;
         }

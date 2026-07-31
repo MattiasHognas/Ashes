@@ -571,6 +571,8 @@ public sealed partial class Lowering
                 tokenTemp,
                 reuseArityVal,
                 runtimeCleanup,
+                reuseScrutineeName,
+                ResolveSourceLocation(AstSpans.GetOrDefault(match.Cases[i].Pattern)),
                 ListCell: match.Cases[i].Pattern is Pattern.Cons));
             RecordReuseTokenUniquenessDecision(
                 match.Cases[i].Pattern,
@@ -1252,7 +1254,12 @@ public sealed partial class Lowering
                 valueTemp,
                 plan[i].Ctor.Arity,
                 runtimeCleanup is not null));
-            _reuseTokens.Add(new ReuseToken(tokenTemp, plan[i].Ctor.Arity, runtimeCleanup));
+            _reuseTokens.Add(new ReuseToken(
+                tokenTemp,
+                plan[i].Ctor.Arity,
+                runtimeCleanup,
+                reuseScrutineeName,
+                ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern))));
             RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
@@ -1318,7 +1325,12 @@ public sealed partial class Lowering
         return (t, new TypeRef.TList(NewTypeVar()));
     }
 
-    private (int Temp, TypeRef Type) LowerConsCell(int headTemp, int tailTemp, TypeRef headType, TypeRef tailType)
+    private (int Temp, TypeRef Type) LowerConsCell(
+        int headTemp,
+        int tailTemp,
+        TypeRef headType,
+        TypeRef tailType,
+        SourceLocation? location)
     {
         var listType = new TypeRef.TList(headType);
         Unify(tailType, listType);
@@ -1342,7 +1354,9 @@ public sealed partial class Lowering
                 runtimeManaged,
                 out int reuseTokenTemp,
                 out RuntimeReuseCleanup? runtimeCleanup,
-                listCell: true);
+                listCell: true,
+                targetConstructor: "::",
+                location);
         if (reusedCell)
         {
             Debug.Assert(runtimeCleanup is null, "Runtime-managed list reuse requires list-specific child cleanup.");

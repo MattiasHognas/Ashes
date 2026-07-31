@@ -778,6 +778,8 @@ public sealed partial class Lowering
         int Temp,
         int FieldCount,
         RuntimeReuseCleanup? RuntimeCleanup,
+        string? SourceName,
+        SourceLocation? Location,
         bool ListCell = false)
     {
         public bool RuntimeManaged => RuntimeCleanup is not null;

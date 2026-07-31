@@ -11,6 +11,10 @@ internal enum ReuseDecisionKind
     EntryCopy,
     /// <summary>A reuse candidate was classified as statically unique or requiring a runtime check.</summary>
     RuntimeUniquenessCheck,
+    /// <summary>A saturated call was rejected as an in-place-reuse specialization candidate.</summary>
+    SpecializationCandidateQualification,
+    /// <summary>A live reuse token was compared with a constructor allocation layout.</summary>
+    ConstructorLayoutCompatibility,
 }
 
 /// <summary>The reuse mechanism whose decision is being described.</summary>
@@ -66,6 +70,15 @@ internal enum ReuseDecisionReason
     NoStructuralReuse,
     RuntimeManagedReuseCandidate,
     StaticallyUniqueReuseCandidate,
+    CalleeBindingUnavailable,
+    ResultDoesNotRebuildAccumulator,
+    AccumulatorNotProvenUnique,
+    FreshResultNotProven,
+    FreshAccumulatorLayoutUnsupported,
+    CompatibleConstructorLayout,
+    ConstructorFieldCountMismatch,
+    ConstructorCellKindMismatch,
+    RuntimeManagedTokenNotAllowed,
 }
 
 /// <summary>A stable source name plus optional lowering identities for a reuse candidate.</summary>
@@ -78,6 +91,23 @@ internal sealed record ReuseDecisionCandidate(
     string? SourceName,
     int? LocalSlot = null,
     int? Temp = null);
+
+/// <summary>The concrete producer and consumer layouts compared for a reuse token.</summary>
+/// <param name="ProducedFieldCount">The number of payload fields in the dead cell.</param>
+/// <param name="RequestedFieldCount">The number of payload fields required by the new cell.</param>
+/// <param name="ProducedListCell">Whether the dead cell uses the list-cell layout.</param>
+/// <param name="RequestedListCell">Whether the new cell requires the list-cell layout.</param>
+/// <param name="RuntimeManagedToken">Whether the token may name an RC allocation at runtime.</param>
+/// <param name="RuntimeManagedAllowed">Whether this allocation site can consume such a token.</param>
+/// <param name="TargetConstructor">The source constructor or list-cell name being allocated.</param>
+internal sealed record ReuseLayoutCompatibility(
+    int ProducedFieldCount,
+    int RequestedFieldCount,
+    bool ProducedListCell,
+    bool RequestedListCell,
+    bool RuntimeManagedToken,
+    bool RuntimeManagedAllowed,
+    string TargetConstructor);
 
 /// <summary>
 /// One immutable reuse decision retained by lowering. <paramref name="Function"/> identifies the
@@ -93,6 +123,8 @@ internal sealed record ReuseDecisionCandidate(
 /// <param name="RelatedGeneratedLabel">A nested generated function inspected by the decision.</param>
 /// <param name="Location">The call site or rejecting instruction location when available.</param>
 /// <param name="MoveSafetyCauses">The ownership proof's conservative causes for entry-copy decisions.</param>
+/// <param name="TargetFunction">The registered source/compiler function considered at a rejected call site.</param>
+/// <param name="Layout">The concrete token and allocation layouts compared at a constructor site.</param>
 internal sealed record ReuseDecision(
     IrFunctionOrigin Function,
     ReuseDecisionKind Decision,
@@ -102,4 +134,6 @@ internal sealed record ReuseDecision(
     ReuseDecisionCandidate? Candidate,
     string? RelatedGeneratedLabel,
     SourceLocation? Location,
-    ParameterMoveSafetyCause MoveSafetyCauses = ParameterMoveSafetyCause.None);
+    ParameterMoveSafetyCause MoveSafetyCauses = ParameterMoveSafetyCause.None,
+    string? TargetFunction = null,
+    ReuseLayoutCompatibility? Layout = null);

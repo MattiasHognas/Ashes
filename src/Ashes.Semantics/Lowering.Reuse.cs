@@ -598,16 +598,33 @@ public sealed partial class Lowering
         bool allowRuntimeManaged,
         out int tokenTemp,
         out RuntimeReuseCleanup? runtimeCleanup,
-        bool listCell = false)
+        bool listCell,
+        string targetConstructor,
+        SourceLocation? location)
     {
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
-            if (_reuseTokens[i].FieldCount == fieldCount
-                && _reuseTokens[i].ListCell == listCell
-                && (allowRuntimeManaged || !_reuseTokens[i].RuntimeManaged))
+            ReuseToken token = _reuseTokens[i];
+            ReuseDecisionReason? rejectionReason =
+                token.FieldCount != fieldCount
+                    ? ReuseDecisionReason.ConstructorFieldCountMismatch
+                    : token.ListCell != listCell
+                        ? ReuseDecisionReason.ConstructorCellKindMismatch
+                        : !allowRuntimeManaged && token.RuntimeManaged
+                            ? ReuseDecisionReason.RuntimeManagedTokenNotAllowed
+                            : null;
+            RecordReuseLayoutCompatibilityDecision(
+                token,
+                fieldCount,
+                allowRuntimeManaged,
+                listCell,
+                targetConstructor,
+                location,
+                rejectionReason);
+            if (rejectionReason is null)
             {
-                tokenTemp = _reuseTokens[i].Temp;
-                runtimeCleanup = _reuseTokens[i].RuntimeCleanup;
+                tokenTemp = token.Temp;
+                runtimeCleanup = token.RuntimeCleanup;
                 _reuseTokens.RemoveAt(i);
                 return true;
             }
@@ -616,6 +633,42 @@ public sealed partial class Lowering
         tokenTemp = -1;
         runtimeCleanup = null;
         return false;
+    }
+
+    private void RecordReuseLayoutCompatibilityDecision(
+        ReuseToken token,
+        int requestedFieldCount,
+        bool runtimeManagedAllowed,
+        bool requestedListCell,
+        string targetConstructor,
+        SourceLocation? location,
+        ReuseDecisionReason? rejectionReason)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse layout decision must belong to an active function."),
+                ReuseDecisionKind.ConstructorLayoutCompatibility,
+                ReuseDecisionMechanism.ReuseToken,
+                rejectionReason is null
+                    ? ReuseDecisionOutcome.Accepted
+                    : ReuseDecisionOutcome.Rejected,
+                rejectionReason ?? ReuseDecisionReason.CompatibleConstructorLayout,
+                new ReuseDecisionCandidate(
+                    ReuseCandidateKind.Token,
+                    token.SourceName,
+                    Temp: token.Temp),
+                RelatedGeneratedLabel: null,
+                location ?? token.Location,
+                Layout: new ReuseLayoutCompatibility(
+                    token.FieldCount,
+                    requestedFieldCount,
+                    token.ListCell,
+                    requestedListCell,
+                    token.RuntimeManaged,
+                    runtimeManagedAllowed,
+                    targetConstructor)));
     }
 
     /// <summary>
@@ -1121,6 +1174,246 @@ public sealed partial class Lowering
         BuiltinRegistry.IsCopyType(t)
         || t is TypeRef.TStr or TypeRef.TBytes
         || (t is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))));
+
+    private sealed record ReuseSpecializationQualification(
+        string TargetFunction,
+        TypeRef? FunctionType,
+        ReuseDecisionCandidate Candidate,
+        bool Accepted,
+        ReuseDecisionReason Reason);
+
+    /// <summary>
+    /// Applies the existing direct-unique and fresh-composition specialization gates once.
+    /// Returning null means the call does not have one of those candidate shapes; an accepted result
+    /// carries the already-resolved function type used by lowering, while a rejected result carries
+    /// the first concrete failed gate for the reporting path to retain when appropriate.
+    /// </summary>
+    private ReuseSpecializationQualification? QualifyReuseSpecializationCall(
+        Expr rootExpr,
+        IReadOnlyList<Expr> arguments)
+    {
+        if (ResolveSpecializableCalleeName(rootExpr) is not { } targetFunction
+            || !_specializableFunctions.TryGetValue(targetFunction, out var specialization)
+            || arguments.Count != specialization.ArgCount)
+        {
+            return null;
+        }
+
+        Expr accumulator = arguments[^1];
+        if (accumulator is not (Expr.Var or Expr.Call))
+        {
+            return null;
+        }
+
+        ReuseDecisionCandidate candidate = CreateReuseSpecializationCandidate(accumulator);
+        Binding? binding = Lookup(targetFunction);
+        return accumulator switch
+        {
+            Expr.Var variable => QualifyVariableReuseSpecialization(
+                targetFunction,
+                candidate,
+                binding,
+                variable,
+                arguments.Count),
+            Expr.Call freshResult => QualifyFreshResultReuseSpecialization(
+                targetFunction,
+                candidate,
+                binding,
+                freshResult,
+                specialization.ArgCount,
+                arguments.Count),
+            _ => throw new InvalidOperationException(
+                "A reuse specialization candidate must be a variable or call result."),
+        };
+    }
+
+    private bool ShouldRecordReuseSpecializationCandidateRejection(
+        Expr rootExpr,
+        string targetFunction)
+    {
+        return !(rootExpr is Expr.Var selfVariable
+                && Lookup(selfVariable.Name) is Binding.Self)
+            && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
+            && !IsActiveSourceFunction(targetFunction);
+    }
+
+    private bool IsActiveSourceFunction(string targetFunction)
+    {
+        SourceFunctionOrigin? source = _activeFunctionOrigin?.Source;
+        if (source is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(
+                targetFunction,
+                source.SourceName,
+                StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        int separator = source.QualifiedName?.LastIndexOf('.') ?? -1;
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        string stitchedName =
+            ProjectSupport.SanitizeModuleBindingName(
+                source.QualifiedName![..separator])
+            + "_"
+            + source.SourceName;
+        return string.Equals(
+            targetFunction,
+            stitchedName,
+            StringComparison.Ordinal);
+    }
+
+    private ReuseSpecializationQualification QualifyVariableReuseSpecialization(
+        string targetFunction,
+        ReuseDecisionCandidate candidate,
+        Binding? binding,
+        Expr.Var variable,
+        int argumentCount)
+    {
+        if (!_linearSpecializationAccumulators.Contains(variable.Name))
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.AccumulatorNotProvenUnique);
+        }
+
+        return QualifyResolvedReuseSpecialization(
+            targetFunction,
+            candidate,
+            binding,
+            argumentCount);
+    }
+
+    private ReuseSpecializationQualification QualifyFreshResultReuseSpecialization(
+        string targetFunction,
+        ReuseDecisionCandidate candidate,
+        Binding? binding,
+        Expr.Call freshResult,
+        int accumulatorOrdinal,
+        int argumentCount)
+    {
+        if (!IsFreshOwnershipResultCall(freshResult))
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.FreshResultNotProven);
+        }
+
+        if (binding is not null
+            && NthCurriedArgType(
+                Prune(binding.Type),
+                accumulatorOrdinal - 1) is not TypeRef.TList)
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.FreshAccumulatorLayoutUnsupported);
+        }
+
+        return QualifyResolvedReuseSpecialization(
+            targetFunction,
+            candidate,
+            binding,
+            argumentCount);
+    }
+
+    private ReuseSpecializationQualification QualifyResolvedReuseSpecialization(
+        string targetFunction,
+        ReuseDecisionCandidate candidate,
+        Binding? binding,
+        int argumentCount)
+    {
+        if (binding is null)
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.CalleeBindingUnavailable);
+        }
+
+        TypeRef functionType = Prune(binding.Type);
+        return SpecializationRebuildsAccumulator(functionType, argumentCount)
+            ? new ReuseSpecializationQualification(
+                targetFunction,
+                functionType,
+                candidate,
+                Accepted: true,
+                ReuseDecisionReason.SpecializableCall)
+            : CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.ResultDoesNotRebuildAccumulator);
+    }
+
+    private static ReuseSpecializationQualification CreateReuseSpecializationQualification(
+        string targetFunction,
+        ReuseDecisionCandidate candidate,
+        ReuseDecisionReason reason)
+    {
+        return new ReuseSpecializationQualification(
+            targetFunction,
+            FunctionType: null,
+            candidate,
+            Accepted: false,
+            reason);
+    }
+
+    private ReuseDecisionCandidate CreateReuseSpecializationCandidate(Expr accumulator)
+    {
+        string? sourceName = accumulator switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.Call call => ResolveCallResultSourceName(call),
+            _ => null,
+        };
+        int? localSlot = accumulator is Expr.Var localVariable
+            ? Lookup(localVariable.Name) switch
+            {
+                Binding.Local local => local.Slot,
+                Binding.Scheme scheme => scheme.Slot,
+                _ => null,
+            }
+            : null;
+        return new ReuseDecisionCandidate(
+            ReuseCandidateKind.Value,
+            sourceName,
+            localSlot);
+    }
+
+    private string? ResolveCallResultSourceName(Expr.Call call)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(call, arguments);
+        return ResolveSpecializableCalleeName(root);
+    }
+
+    private void RecordReuseSpecializationCandidateRejection(
+        ReuseSpecializationQualification qualification,
+        Expr call)
+    {
+        _reuseDecisions.Add(
+            new ReuseDecision(
+                _activeFunctionOrigin
+                    ?? throw new InvalidOperationException(
+                        "A reuse specialization decision must belong to an active function."),
+                ReuseDecisionKind.SpecializationCandidateQualification,
+                ReuseDecisionMechanism.Specialization,
+                ReuseDecisionOutcome.Rejected,
+                qualification.Reason,
+                qualification.Candidate,
+                RelatedGeneratedLabel: null,
+                ResolveSourceLocation(AstSpans.GetOrDefault(call)),
+                TargetFunction: qualification.TargetFunction));
+    }
 
     // True only if a specializable function actually rebuilds its accumulator in place: its result
     // type (after applying all <paramref name="argCount"/> args) is the same named ADT as its last

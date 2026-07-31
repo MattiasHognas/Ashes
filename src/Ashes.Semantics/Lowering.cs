@@ -409,6 +409,7 @@ public sealed partial class Lowering
             .ThenBy(decision => decision.Candidate?.SourceName, StringComparer.Ordinal)
             .ThenBy(decision => decision.Candidate?.LocalSlot ?? int.MaxValue)
             .ThenBy(decision => decision.Candidate?.Temp ?? int.MaxValue)
+            .ThenBy(decision => decision.TargetFunction, StringComparer.Ordinal)
             .ThenBy(decision => decision.RelatedGeneratedLabel, StringComparer.Ordinal)
             .ThenBy(decision => decision.Location?.FilePath, StringComparer.Ordinal)
             .ThenBy(decision => decision.Location?.Line ?? int.MaxValue)
@@ -416,6 +417,13 @@ public sealed partial class Lowering
             .ThenBy(decision => decision.Outcome)
             .ThenBy(decision => decision.Reason)
             .ThenBy(decision => decision.MoveSafetyCauses)
+            .ThenBy(decision => decision.Layout?.TargetConstructor, StringComparer.Ordinal)
+            .ThenBy(decision => decision.Layout?.ProducedFieldCount ?? int.MaxValue)
+            .ThenBy(decision => decision.Layout?.RequestedFieldCount ?? int.MaxValue)
+            .ThenBy(decision => decision.Layout?.ProducedListCell)
+            .ThenBy(decision => decision.Layout?.RequestedListCell)
+            .ThenBy(decision => decision.Layout?.RuntimeManagedToken)
+            .ThenBy(decision => decision.Layout?.RuntimeManagedAllowed)
             .ToList();
 
     // Stitched names of the data-parallel combinators. The grain-parameterized `mapGrained`/`reduceGrained`
@@ -2664,7 +2672,9 @@ public sealed partial class Lowering
 
         if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
         {
-            return LowerConstructorReference(ctorSym);
+            return LowerConstructorReference(
+                ctorSym,
+                ResolveSourceLocation(AstSpans.GetOrDefault(v)));
         }
 
         if (_topLevelBindingNames.Contains(v.Name))
@@ -2697,10 +2707,12 @@ public sealed partial class Lowering
     /// an unqualified constructor name (<see cref="LowerVarUnbound"/>) and a qualified reference
     /// through a module alias (<see cref="LowerQualifiedVar"/>) — both name the same runtime value.
     /// </summary>
-    private (int, TypeRef) LowerConstructorReference(ConstructorSymbol ctorSym)
+    private (int, TypeRef) LowerConstructorReference(
+        ConstructorSymbol ctorSym,
+        SourceLocation? location = null)
     {
         return ctorSym.Arity == 0
-            ? LowerNullaryConstructor(ctorSym)
+            ? LowerNullaryConstructor(ctorSym, location: location)
             : LowerExpr(BuildConstructorLambda(ctorSym));
     }
 
@@ -7327,7 +7339,10 @@ public sealed partial class Lowering
     {
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
-            return LowerConstructorApplication(ctorSym, collectedArgs);
+            return LowerConstructorApplication(
+                ctorSym,
+                collectedArgs,
+                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)));
         }
 
         // Constructor application through a module alias: json.JsonInt(42) where `json` is
@@ -7337,7 +7352,10 @@ public sealed partial class Lowering
             && !_capabilitySymbols.ContainsKey(ctorQv.Module)
             && TryResolveQualifiedConstructor(ctorQv.Name, ResolveModuleAlias(ctorQv.Module), out var qualifiedCtorSym))
         {
-            return LowerConstructorApplication(qualifiedCtorSym, collectedArgs);
+            return LowerConstructorApplication(
+                qualifiedCtorSym,
+                collectedArgs,
+                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)));
         }
 
         // Capability operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
@@ -7400,63 +7418,27 @@ public sealed partial class Lowering
             return parResult;
         }
 
-        // Indirect in-place reuse: f(acc) where f is a specializable recursive function and acc is a
-        // loop accumulator we deep-copied to uniqueness at loop entry. Route to f$reuse, which rewrites
-        // the unique tree in place. The accumulator is dead after this call (it's the loop's only use).
-        // f may be a plain Var or a qualified stdlib reference (Ashes.Collection.Map.set → Ashes_Map_set).
-        if (ResolveSpecializableCalleeName(rootExpr) is { } specName
-            && _specializableFunctions.TryGetValue(specName, out var specInfo)
-            && collectedArgs.Count == specInfo.ArgCount
-            && collectedArgs[^1] is Expr.Var accArg
-            && _linearSpecializationAccumulators.Contains(accArg.Name)
-            && Lookup(specName) is { } specBinding
-            && SpecializationRebuildsAccumulator(Prune(specBinding.Type), collectedArgs.Count))
+        ReuseSpecializationQualification? qualification =
+            QualifyReuseSpecializationCall(rootExpr, collectedArgs);
+        if (qualification is null)
         {
-            return LowerReuseSpecializedCall(specName, Prune(specBinding.Type), collectedArgs, call);
+            return null;
         }
 
-        return LowerCallTryFreshRuntimeReuse(call, rootExpr, collectedArgs);
-    }
-
-    private (int, TypeRef)? LowerCallTryFreshRuntimeReuse(
-        Expr.Call call,
-        Expr rootExpr,
-        List<Expr> collectedArgs)
-    {
-        // A fresh aggregate call result is a deep-unique arena graph within the enclosing call
-        // window. Route its immediate recursive rewriter through the reuse specialization before
-        // that window escapes. The final enclosing boundary still performs the ordinary RC
-        // normalization; this only removes the redundant intermediate rebuild.
-        if (ResolveSpecializableCalleeName(rootExpr) is { } freshSpecName
-            && _specializableFunctions.TryGetValue(freshSpecName, out var freshSpecInfo)
-            && collectedArgs.Count == freshSpecInfo.ArgCount
-            && collectedArgs[^1] is Expr.Call freshArgument
-            && IsFreshOwnershipResultCall(freshArgument)
-            && Lookup(freshSpecName) is { } freshSpecBinding
-            && NthCurriedArgType(
-                Prune(freshSpecBinding.Type),
-                freshSpecInfo.ArgCount - 1) is TypeRef.TList
-            && SpecializationRebuildsAccumulator(
-                Prune(freshSpecBinding.Type),
-                collectedArgs.Count))
+        if (qualification.Accepted)
         {
             return LowerReuseSpecializedCall(
-                freshSpecName,
-                Prune(freshSpecBinding.Type),
+                qualification.TargetFunction,
+                qualification.FunctionType!,
                 collectedArgs,
                 call);
         }
 
-        if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
-            && ResolveSpecializableCalleeName(rootExpr) is { } candidateName
-            && _specializableFunctions.TryGetValue(candidateName, out var candidateInfo)
-            && collectedArgs.Count == candidateInfo.ArgCount
-            && collectedArgs[^1] is Expr.Call candidateArgument)
+        if (ShouldRecordReuseSpecializationCandidateRejection(
+                rootExpr,
+                qualification.TargetFunction))
         {
-            Console.Error.WriteLine(
-                $"[reuse] fresh candidate {candidateName}: "
-                + $"fresh={IsFreshOwnershipResultCall(candidateArgument)} "
-                + $"bound={Lookup(candidateName) is not null}");
+            RecordReuseSpecializationCandidateRejection(qualification, call);
         }
 
         return null;
@@ -9441,7 +9423,12 @@ public sealed partial class Lowering
             {
                 Unify(headType, elemType);
             }
-            (tailTemp, tailType) = LowerConsCell(headTemp, tailTemp, elemType, tailType);
+            (tailTemp, tailType) = LowerConsCell(
+                headTemp,
+                tailTemp,
+                elemType,
+                tailType,
+                ResolveSourceLocation(AstSpans.GetOrDefault(list)));
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -9658,7 +9645,12 @@ public sealed partial class Lowering
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
-        return LowerConsCell(headTemp, tailTemp, headType, tailType);
+        return LowerConsCell(
+            headTemp,
+            tailTemp,
+            headType,
+            tailType,
+            ResolveSourceLocation(AstSpans.GetOrDefault(cons)));
     }
 
     private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
@@ -10293,7 +10285,10 @@ public sealed partial class Lowering
     {
         if (expr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
         {
-            lowered = LowerNullaryConstructor(nullaryCtor, stackAllocate);
+            lowered = LowerNullaryConstructor(
+                nullaryCtor,
+                stackAllocate,
+                ResolveSourceLocation(AstSpans.GetOrDefault(expr)));
             return true;
         }
 
@@ -10301,7 +10296,11 @@ public sealed partial class Lowering
         var rootExpr = CollectCallArgs(expr, args);
         if (rootExpr is Expr.Var callCtor && _constructorSymbols.TryGetValue(callCtor.Name, out var ctor))
         {
-            lowered = LowerConstructorApplication(ctor, args, stackAllocate);
+            lowered = LowerConstructorApplication(
+                ctor,
+                args,
+                stackAllocate,
+                ResolveSourceLocation(AstSpans.GetOrDefault(expr)));
             return true;
         }
 
