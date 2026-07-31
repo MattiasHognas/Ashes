@@ -567,13 +567,16 @@ public sealed partial class Lowering
                 valueTemp,
                 reuseArityVal,
                 runtimeManaged));
-            _reuseTokens.Add(new ReuseToken(
+            ReuseToken token = new(
                 tokenTemp,
+                valueTemp,
                 reuseArityVal,
                 runtimeCleanup,
                 reuseScrutineeName,
                 ResolveSourceLocation(AstSpans.GetOrDefault(match.Cases[i].Pattern)),
-                ListCell: match.Cases[i].Pattern is Pattern.Cons));
+                ListCell: match.Cases[i].Pattern is Pattern.Cons);
+            _reuseTokens.Add(token);
+            RecordReuseTokenProduction(token);
             RecordReuseTokenUniquenessDecision(
                 match.Cases[i].Pattern,
                 reuseScrutineeName,
@@ -630,7 +633,10 @@ public sealed partial class Lowering
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
-        var (bodyTemp, bodyType) = LowerMatchArmExpression(cases[i].Body, reuseContext.TokensBefore, normalizeStaticStringArms);
+        var (bodyTemp, bodyType) = LowerMatchArmExpressionWithReuseContext(
+            cases[i].Body,
+            reuseContext.TokensBefore,
+            normalizeStaticStringArms);
         foreach (string name in reuseContext.AddedLinearNames)
         {
             _linearReuseNames.Remove(name);
@@ -667,6 +673,30 @@ public sealed partial class Lowering
             runtimeManagedArms.Add(runtimeManaged);
         }
         Emit(new IrInst.Jump(endLabel));
+    }
+
+    private (int Temp, TypeRef Type) LowerMatchArmExpressionWithReuseContext(
+        Expr body,
+        int reuseTokensBefore,
+        bool normalizeStaticStringArm)
+    {
+        IrFunctionOrigin? savedReuseArmOrigin = _activeReuseArmOrigin;
+        if (_reuseTokens.Count > reuseTokensBefore)
+        {
+            _activeReuseArmOrigin = _activeFunctionOrigin;
+        }
+
+        try
+        {
+            return LowerMatchArmExpression(
+                body,
+                reuseTokensBefore,
+                normalizeStaticStringArm);
+        }
+        finally
+        {
+            _activeReuseArmOrigin = savedReuseArmOrigin;
+        }
     }
 
     private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore, bool normalizeStaticStringArm)
@@ -708,6 +738,10 @@ public sealed partial class Lowering
             ReuseToken token = _reuseTokens[i];
             if (token.RuntimeCleanup is not { } cleanup)
             {
+                RecordReuseTokenDisposition(
+                    token,
+                    ReuseDecisionOutcome.Discarded,
+                    ReuseDecisionReason.UnconsumedArenaTokenDiscarded);
                 continue;
             }
 
@@ -723,6 +757,10 @@ public sealed partial class Lowering
                 cleanup.Constructor,
                 knownUnique: true);
             Emit(new IrInst.Label(releasedLabel));
+            RecordReuseTokenDisposition(
+                token,
+                ReuseDecisionOutcome.Released,
+                ReuseDecisionReason.UnconsumedRuntimeTokenReleased);
         }
 
         if (_reuseTokens.Count > reuseTokensBefore)
@@ -1254,12 +1292,15 @@ public sealed partial class Lowering
                 valueTemp,
                 plan[i].Ctor.Arity,
                 runtimeCleanup is not null));
-            _reuseTokens.Add(new ReuseToken(
+            ReuseToken token = new(
                 tokenTemp,
+                valueTemp,
                 plan[i].Ctor.Arity,
                 runtimeCleanup,
                 reuseScrutineeName,
-                ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern))));
+                ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern)));
+            _reuseTokens.Add(token);
+            RecordReuseTokenProduction(token);
             RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
@@ -1338,6 +1379,21 @@ public sealed partial class Lowering
         int nodeTemp = NewTemp();
         bool runtimeManaged = _runtimeRcListAllocationRequested
             && IsRuntimeManageableListElement(headType, headTemp);
+        bool reusedCell = EmitListCellAllocation(nodeTemp, runtimeManaged, location);
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
+        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
+        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailSlot is not null)
+        {
+            _runtimeManagedResultTemps.Add(nodeTemp);
+        }
+        return (nodeTemp, Prune(listType));
+    }
+
+    private bool EmitListCellAllocation(
+        int nodeTemp,
+        bool runtimeManaged,
+        SourceLocation? location)
+    {
         // Reconciled reuse-token rule: a list
         // cons cell satisfied by ANY reuse token — arena or (hypothetically) runtime-managed — is
         // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
@@ -1349,37 +1405,53 @@ public sealed partial class Lowering
         // anyway, which would make a later RcDup/RcDrop read/write a bogus header at that address. Track
         // which branch ran and gate the bookkeeping on that fact directly, instead of re-deriving it from
         // `runtimeManaged` a second time after the emission decision has already been made.
-        bool reusedCell = TryConsumeReuseToken(
-                2,
-                runtimeManaged,
-                out int reuseTokenTemp,
-                out RuntimeReuseCleanup? runtimeCleanup,
-                listCell: true,
-                targetConstructor: "::",
-                location);
-        if (reusedCell)
+        ReuseTokenMatch tokenMatch = TryConsumeReuseToken(
+            2,
+            runtimeManaged,
+            listCell: true,
+            targetConstructor: "::",
+            location);
+        if (tokenMatch.Token is { } reuseToken)
         {
-            Debug.Assert(runtimeCleanup is null, "Runtime-managed list reuse requires list-specific child cleanup.");
+            Debug.Assert(
+                reuseToken.RuntimeCleanup is null,
+                "Runtime-managed list reuse requires list-specific child cleanup.");
             Emit(new IrInst.AllocReusing(
                 nodeTemp,
                 0,
                 2,
-                reuseTokenTemp,
+                reuseToken.Temp,
                 RuntimeManaged: false,
                 ListCell: true));
             _reuseResultTemps.Add(nodeTemp);
+            RecordReuseTokenDisposition(
+                reuseToken,
+                ReuseDecisionOutcome.Consumed,
+                ReuseDecisionReason.CompatibleTokenConsumed,
+                nodeTemp,
+                "::",
+                location);
+            return true;
         }
-        else
+
+        Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
+        if (ShouldRecordReuseFallback(tokenMatch))
         {
-            Emit(new IrInst.Alloc(nodeTemp, HeapLayouts.List.FixedAllocationSizeBytes, runtimeManaged));
+            RecordReuseFallbackAllocation(
+                null,
+                nodeTemp,
+                "::",
+                location,
+                ReuseDecisionOutcome.Allocated,
+                ReuseFallbackReason(tokenMatch),
+                runtimeManaged
+                    ? ReuseFallbackAllocationKind.RuntimeRc
+                    : ReuseFallbackAllocationKind.Arena,
+                fieldCount: 2,
+                listCell: true,
+                runtimeManaged);
         }
-        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
-        Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
-        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailSlot is not null)
-        {
-            _runtimeManagedResultTemps.Add(nodeTemp);
-        }
-        return (nodeTemp, Prune(listType));
+        return false;
     }
 
     private bool IsRuntimeManageableListElement(TypeRef type, int temp)

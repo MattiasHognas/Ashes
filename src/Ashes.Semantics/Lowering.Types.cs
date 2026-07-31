@@ -776,6 +776,7 @@ public sealed partial class Lowering
 
     private sealed record ReuseToken(
         int Temp,
+        int SourceValueTemp,
         int FieldCount,
         RuntimeReuseCleanup? RuntimeCleanup,
         string? SourceName,
@@ -784,6 +785,10 @@ public sealed partial class Lowering
     {
         public bool RuntimeManaged => RuntimeCleanup is not null;
     }
+
+    private readonly record struct ReuseTokenMatch(
+        ReuseToken? Token,
+        bool CandidateCompared);
 
     /// <summary>
     /// Describes the kind of arena copy-out to emit for a given result type.

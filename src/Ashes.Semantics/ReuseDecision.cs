@@ -15,6 +15,12 @@ internal enum ReuseDecisionKind
     SpecializationCandidateQualification,
     /// <summary>A live reuse token was compared with a constructor allocation layout.</summary>
     ConstructorLayoutCompatibility,
+    /// <summary>A dead matched cell was converted into a reuse token.</summary>
+    TokenProduction,
+    /// <summary>A produced token was consumed, released, or discarded.</summary>
+    TokenDisposition,
+    /// <summary>A reuse path retained a compile-time or dynamic fresh-allocation fallback.</summary>
+    FallbackAllocation,
 }
 
 /// <summary>The reuse mechanism whose decision is being described.</summary>
@@ -43,6 +49,12 @@ internal enum ReuseDecisionOutcome
     Retained,
     Omitted,
     Required,
+    Produced,
+    Consumed,
+    Released,
+    Discarded,
+    Allocated,
+    Available,
 }
 
 /// <summary>
@@ -79,6 +91,13 @@ internal enum ReuseDecisionReason
     ConstructorFieldCountMismatch,
     ConstructorCellKindMismatch,
     RuntimeManagedTokenNotAllowed,
+    MatchedCellBecameDead,
+    CompatibleTokenConsumed,
+    UnconsumedRuntimeTokenReleased,
+    UnconsumedArenaTokenDiscarded,
+    NoCompatibleReuseToken,
+    NoReuseTokenAvailable,
+    RuntimeUniquenessFallback,
 }
 
 /// <summary>A stable source name plus optional lowering identities for a reuse candidate.</summary>
@@ -109,6 +128,33 @@ internal sealed record ReuseLayoutCompatibility(
     bool RuntimeManagedAllowed,
     string TargetConstructor);
 
+/// <summary>The physical fresh-allocation path retained by a reuse decision.</summary>
+internal enum ReuseFallbackAllocationKind
+{
+    Arena,
+    RuntimeRc,
+    ToSpace,
+}
+
+/// <summary>Stable semantic IR identities that correlate a reuse token's lifecycle.</summary>
+/// <param name="TokenTemp">The temp defined by <c>DropReuse</c>, when a token exists.</param>
+/// <param name="SourceValueTemp">The matched value consumed by <c>DropReuse</c>.</param>
+/// <param name="AllocationTemp">The result of the reuse or fallback allocation.</param>
+/// <param name="FieldCount">The dead cell's payload field count.</param>
+/// <param name="ListCell">Whether the token names an untagged list cell.</param>
+/// <param name="RuntimeManaged">Whether runtime uniqueness can produce a null token.</param>
+/// <param name="TargetConstructor">The constructor or list cell requested by the consumer.</param>
+/// <param name="FallbackKind">The physical representation of a retained fresh-allocation path.</param>
+internal sealed record ReuseTokenLifecycle(
+    int? TokenTemp,
+    int? SourceValueTemp,
+    int? AllocationTemp,
+    int? FieldCount,
+    bool? ListCell,
+    bool? RuntimeManaged,
+    string? TargetConstructor,
+    ReuseFallbackAllocationKind? FallbackKind = null);
+
 /// <summary>
 /// One immutable reuse decision retained by lowering. <paramref name="Function"/> identifies the
 /// generated function and its source lineage; <paramref name="RelatedGeneratedLabel"/> identifies a
@@ -125,6 +171,7 @@ internal sealed record ReuseLayoutCompatibility(
 /// <param name="MoveSafetyCauses">The ownership proof's conservative causes for entry-copy decisions.</param>
 /// <param name="TargetFunction">The registered source/compiler function considered at a rejected call site.</param>
 /// <param name="Layout">The concrete token and allocation layouts compared at a constructor site.</param>
+/// <param name="TokenLifecycle">The semantic IR identities for token production, disposition, or fallback.</param>
 internal sealed record ReuseDecision(
     IrFunctionOrigin Function,
     ReuseDecisionKind Decision,
@@ -136,4 +183,5 @@ internal sealed record ReuseDecision(
     SourceLocation? Location,
     ParameterMoveSafetyCause MoveSafetyCauses = ParameterMoveSafetyCause.None,
     string? TargetFunction = null,
-    ReuseLayoutCompatibility? Layout = null);
+    ReuseLayoutCompatibility? Layout = null,
+    ReuseTokenLifecycle? TokenLifecycle = null);
