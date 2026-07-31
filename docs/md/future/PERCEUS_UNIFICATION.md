@@ -2,7 +2,7 @@
 
 Status: in progress.
 
-Audited against `main` at `3337460` on 2026-07-31, together with the pattern-binding Perceus cutover
+Audited against `main` at `6cdca2d` on 2026-07-31, together with the handler-effect ownership cutover
 in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
@@ -112,8 +112,12 @@ The following is already implemented and is not part of the backlog:
 - shared top-cell freshness traversal for ADTs, tuples, and lists, including mixed-arm
   reconciliation;
 - closure/function-result provenance, call-result freshness, and match-scrutinee ownership fixes;
-- capability gating narrowed from “any capability declaration” to
-  `_programHasDynamicCapabilityDispatch`;
+- dynamic capability ownership placement is scoped by an identity-correct per-function “may execute
+  under a live handler post” effect. Direct handler owners seed the effect, known calls propagate it,
+  and unresolved calls conservatively include escaped functions. The immutable
+  `FunctionOwnershipSummary` retains the effect, lowering consumes it through an explicit placement
+  context, and `BeginLivePostsGuard`/`LivePostsIndex` still protect values that can cross a pending
+  post;
 - TCO type-shape predicate deduplication, the shared A/C query at the proven joint sites, and
   profitability-gated frame demotion;
 - `TcoSelfCallArgumentShape.GrownCons` and complete expression-freshness recording for self-call
@@ -298,37 +302,14 @@ representation paths. Their existence must not be mistaken for a completed migra
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
 | Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse specialization, rejection, reset-safety, entry-copy, uniqueness, layout, token lifecycle, and fallback decisions, plus runtime-managed call-result placement and immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, remaining representation decisions are still transient or reconstructed from instructions, and the structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–5 are complete. Five implementation tasks remain;
-Milestone 6 is next.
-
-### Milestone 6 — narrow the dynamic capability exception
-
-`_programHasDynamicCapabilityDispatch` is sound but still whole-program. Replace it with a conservative
-per-function “may execute under a live handler post” effect:
-
-- seed functions containing `handle`;
-- propagate through the now identity-correct call graph;
-- treat unresolved higher-order/dynamic calls conservatively;
-- distinguish code that installs or can execute under a handler from unrelated functions in the same
-  program.
-
-Feed that effect into explicit placement context rather than checking a global boolean at each
-allocation/copy-out site. Keep `BeginLivePostsGuard`/`LivePostsIndex` where a value really can cross a
-pending post; this milestone narrows the affected code, not the underlying safety rule.
-
-Acceptance requires:
-
-- existing `CapabilityRcEligibilityTests`;
-- a program with a real `handle` plus an unrelated function that still receives ordinary RC placement;
-- a helper reachable from the handled dynamic extent that stays guarded;
-- higher-order/unknown calls falling back to the safe arena behavior.
+teardown prerequisites are in place. Milestones 1–6 are complete. Four implementation tasks remain;
+Milestone 7.1 is next.
 
 ### Milestone 7 — async/task-frame ownership (last semantic cutover)
 
