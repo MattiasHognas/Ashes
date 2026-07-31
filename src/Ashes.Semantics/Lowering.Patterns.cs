@@ -64,22 +64,36 @@ public sealed partial class Lowering
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        MarkRuntimeManagedMatchResult(resultTemp, runtimeManagedResultArms, match.Cases);
-        return (resultTemp, Prune(resultType));
+        return CompleteMatchResult(resultTemp, resultType, runtimeManagedResultArms, match.Cases);
+    }
+
+    private (int Temp, TypeRef Type) CompleteMatchResult(
+        int resultTemp,
+        TypeRef resultType,
+        IReadOnlyList<bool>? runtimeManagedResultArms,
+        IReadOnlyList<MatchCase> cases)
+    {
+        TypeRef prunedResultType = Prune(resultType);
+        MarkRuntimeManagedMatchResult(
+            resultTemp,
+            prunedResultType,
+            runtimeManagedResultArms,
+            cases);
+        return (resultTemp, prunedResultType);
     }
 
     private void MarkRuntimeManagedMatchResult(
         int resultTemp,
+        TypeRef resultType,
         IReadOnlyList<bool>? runtimeManagedResultArms,
         IReadOnlyList<MatchCase> cases)
     {
-        if (runtimeManagedResultArms is not null
+        bool runtimeManaged = runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.Select((runtimeManaged, index) =>
-                runtimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body)).All(value => value))
-        {
-            _runtimeManagedResultTemps.Add(resultTemp);
-        }
+                runtimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body))
+                .All(value => value);
+        RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged);
     }
 
     private bool MatchArmReturnsRuntimeManagedTcoParam(Expr body)
@@ -664,13 +678,7 @@ public sealed partial class Lowering
         if (_runtimeManagedMatchResultArms.TryPeek(out List<bool>? runtimeManagedArms)
             && runtimeManagedArms is not null)
         {
-            bool runtimeManaged = _runtimeManagedResultTemps.Contains(armFinalTemp)
-                || _inst.Any(instruction =>
-                    (instruction is IrInst.AllocAdt { Target: var adtTarget, RuntimeManaged: true }
-                        && adtTarget == armFinalTemp)
-                    || (instruction is IrInst.AllocReusing { Target: var reusedTarget, RuntimeManaged: true }
-                        && reusedTarget == armFinalTemp));
-            runtimeManagedArms.Add(runtimeManaged);
+            runtimeManagedArms.Add(IsRuntimeManagedResultTemp(armFinalTemp));
         }
         Emit(new IrInst.Jump(endLabel));
     }
@@ -719,7 +727,7 @@ public sealed partial class Lowering
                     -1,
                     RuntimeManaged: true,
                     IrInst.CopyOutPurpose.RcNormalization));
-                _runtimeManagedResultTemps.Add(resultTemp);
+                MarkRuntimeManagedTemp(resultTemp);
                 return (resultTemp, sourceType);
             }
 
@@ -1384,7 +1392,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailSlot is not null)
         {
-            _runtimeManagedResultTemps.Add(nodeTemp);
+            MarkRuntimeManagedTemp(nodeTemp);
         }
         return (nodeTemp, Prune(listType));
     }

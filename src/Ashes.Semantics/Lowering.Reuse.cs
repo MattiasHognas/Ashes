@@ -918,11 +918,14 @@ public sealed partial class Lowering
             // LowerLambdaCore emits an incidental closure after registering the function. Calls
             // construct their own specialized closure, so discard only those emitted instructions.
             int instBefore = _inst.Count;
+            Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+                SnapshotTempOwnershipFacts();
             LowerReuseSpecializationLambda(spec.Lambda, name, funcType, label, cacheKey);
             if (_inst.Count > instBefore)
             {
                 _inst.RemoveRange(instBefore, _inst.Count - instBefore);
             }
+            RestoreTempOwnershipFacts(savedTempOwnershipFacts);
 
             return _specializingReuseLabel;
         }
@@ -1894,11 +1897,14 @@ public sealed partial class Lowering
         _lambdaDepth = savedLambdaDepth == 0 ? 1 : savedLambdaDepth;
 
         int instBefore = _inst.Count;
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+            SnapshotTempOwnershipFacts();
         LowerParallelSpecializationLambda(lambda, name, funcType, label, cacheKey);
         if (_inst.Count > instBefore)
         {
             _inst.RemoveRange(instBefore, _inst.Count - instBefore);
         }
+        RestoreTempOwnershipFacts(savedTempOwnershipFacts);
 
         _inParallelSpecialization = savedInParSpec;
         _specializationConcreteParamTypes = savedConcrete;

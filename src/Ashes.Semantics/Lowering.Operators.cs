@@ -216,7 +216,7 @@ public sealed partial class Lowering
                 runtimeManaged));
             if (runtimeManaged)
             {
-                _runtimeManagedResultTemps.Add(target);
+                MarkRuntimeManagedTemp(target);
             }
             return (target, new TypeRef.TStr());
         }

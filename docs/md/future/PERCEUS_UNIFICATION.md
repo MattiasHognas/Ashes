@@ -2,9 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `dddaff0` on 2026-07-31, together with the reuse-token lifecycle and
-fallback-allocation decision capture in this change. This document is intentionally a remaining-work
-backlog.
+Audited against `main` at `ceb53f0` on 2026-07-31, together with the canonical lowered-temp
+ownership facts in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -240,6 +239,15 @@ The following is already implemented and is not part of the backlog:
   specializations, mutual-recursion dispatchers and wrappers, coroutines, external thunks,
   closure-layout normalizers, structural droppers, and deep-copy helpers. Record-copy IR transforms
   preserve this metadata, and the LLVM backend deliberately ignores it.
+- lowering maintains one canonical, frame-local `LoweredTempOwnershipFact` per relevant value temp.
+  The immutable fact records representation, owner/source identity, resolved type and outer layout,
+  drop capability, ownership transition, function/source origin, and a stable reason. Central
+  emission registers every ordinary instruction carrying a `RuntimeManaged` result; a mechanical
+  test makes new producers opt into that contract. `Borrow`, `RcDup`, borrowed `Bytes` views,
+  control-flow joins, known and unknown calls, copy-out/runtime normalization, TCO installation,
+  frame restoration, deferred rewrites, and synthesized-frame swaps preserve or refine the fact.
+  `IsRuntimeManagedResultTemp` is now a constant-time fact lookup; the parallel
+  `_runtimeManagedResultTemps` set and emitted-instruction scans have been deleted.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -249,7 +257,6 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 | Area | Current implementation | Remaining gap |
 |---|---|---|
 | Pattern-derived aliases | `_pendingNestedTcoPatternAliasSites` is slot-keyed, but `EscapingDirectPatternBindings` is a source-name set derived by a TCO-specific AST walk. | Escape/dup placement remains a special classifier D with string-identity and timing hazards instead of ordinary Perceus alias ownership. |
-| Lowered temp ownership | `_runtimeManagedResultTemps` records many results eagerly. | `IsRuntimeManagedResultTemp` still falls back to a linear `_inst.Any(...)` scan over a long enumeration of RC-producing IR instructions. Propagation through borrows, joins, calls, and transforms is manual. |
 | Bytes | Fresh owned builtin results are metadata-driven. | Borrowed `Bytes` views are represented only as ordinary `TBytes`; `subView`/`mmap` are inferred from producer shape, closure safety is still partly hardcoded, and TCO conservatively rejects every type containing `Bytes`. |
 | Capabilities | Static-`provide`-only programs no longer disable ordinary RC. | One `handle` anywhere still sets a whole-program gate, including functions/values that cannot execute under that handler’s dynamic extent. |
 | Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
@@ -258,43 +265,13 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–2 are complete. Twelve implementation tasks
-remain; Milestone 3.1 is next.
+teardown prerequisites are in place. Milestones 1–2 and task 3.1 are complete. Eleven implementation
+tasks remain; Milestone 3.2 is next.
 
 ### Milestone 3 — make value/temp ownership forward-propagated
 
 This is the maintenance prerequisite for removing classifier C and for making classifier D ordinary
 Perceus work.
-
-#### 3.1 Replace `IsRuntimeManagedResultTemp`’s instruction scan
-
-Introduce one forward-propagated lowered-value fact, keyed by temp, that records at least:
-
-- runtime RC, arena/region, borrowed view, or unknown representation;
-- owner identity (when any);
-- resolved type/layout/drop descriptor;
-- whether the value is borrowed, transferred, or newly produced;
-- stable value/source origin and the reason for any representation transition.
-
-Populate it at the same central emission/lowering boundaries that currently add to
-`_runtimeManagedResultTemps`. Explicitly propagate it through:
-
-- `Borrow` and `RcDup`;
-- `if`/`match` joins;
-- known and unknown call results;
-- constructor/list/tuple/closure construction;
-- copy-out and runtime normalization;
-- TCO parameter loads/back-edge installation;
-- frame save/restore.
-
-Then remove the `_inst.Any(...)` fallback from `IsRuntimeManagedResultTemp`. Once every producer and
-forwarding instruction is covered, replace the remaining set lookup with the canonical temp fact and
-delete `_runtimeManagedResultTemps`.
-
-Tests must mechanically enumerate every IR instruction with a `RuntimeManaged` result field so adding
-a new producer without registering its temp ownership fails loudly. Rewrites in `IrOptimizer` and
-`StateMachineTransform` must either preserve the originating location/value identity or explicitly
-record a generated origin for newly introduced instructions.
 
 #### 3.2 Make lowering return ownership with the value
 

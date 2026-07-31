@@ -957,6 +957,7 @@ public sealed partial class Lowering
         TcoContext? TcoCtx,
         Dictionary<int, string> LocalNames,
         Dictionary<int, TypeRef> LocalTypes,
+        Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> ReuseTokenFieldBindings,
         Dictionary<int, int> ReuseBindingSeenBySlot,
         Dictionary<int, string> ReuseTrackedSlotNames);
@@ -972,9 +973,12 @@ public sealed partial class Lowering
         var savedTcoCtx = _tcoCtx;
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
+            SnapshotTempOwnershipFacts();
         _tcoCtx = null;
 
         _inst.Clear();
+        _tempOwnershipFacts.Clear();
         _nextTempSlot = 0;
         var savedReuseTokenFieldBindings = new Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>>(_reuseTokenFieldBindings);
         var savedReuseBindingSeen = new Dictionary<int, int>(_reuseBindingSeenBySlot);
@@ -996,6 +1000,7 @@ public sealed partial class Lowering
             savedTcoCtx,
             savedLocalNames,
             savedLocalTypes,
+            savedTempOwnershipFacts,
             savedReuseTokenFieldBindings,
             savedReuseBindingSeen,
             savedReuseTrackedSlotNames);
@@ -1052,6 +1057,7 @@ public sealed partial class Lowering
     {
         _inst.Clear();
         _inst.AddRange(saved.Instructions);
+        RestoreTempOwnershipFacts(saved.TempOwnershipFacts);
         _nextTempSlot = saved.NextTempSlot;
         _reuseTokenFieldBindings.Clear();
         foreach (var kv in saved.ReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;

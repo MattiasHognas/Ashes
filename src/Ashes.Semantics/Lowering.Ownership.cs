@@ -605,7 +605,7 @@ public sealed partial class Lowering
         parent.ReleaseKind = ResourceReleaseKind.AutoDropped;
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        _runtimeManagedResultTemps.Add(resultTemp);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -1453,7 +1453,7 @@ public sealed partial class Lowering
             normalizeToRuntimeOwnership);
         if (normalizeToRuntimeOwnership)
         {
-            _runtimeManagedResultTemps.Add(copyDest);
+            MarkRuntimeManagedTemp(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
         _ownershipScopes.Pop();
@@ -2866,7 +2866,6 @@ public sealed partial class Lowering
             : null;
         string label = closureLabel + "$env_normalize";
         _runtimeManagedClosureNormalizerLabels[key] = label;
-        HashSet<int> savedRuntimeManagedTemps = new(_runtimeManagedResultTemps);
         SynthesizedBodyState saved = BeginSynthesizedBody();
 
         int sourceEnvSlot = NewLocal();
@@ -2897,8 +2896,6 @@ public sealed partial class Lowering
             new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true),
             CreateClosureNormalizerOrigin(label, closureLabel, captures));
         RestoreEnclosingBodyState(saved);
-        _runtimeManagedResultTemps.Clear();
-        _runtimeManagedResultTemps.UnionWith(savedRuntimeManagedTemps);
         return label;
     }
 
@@ -3038,6 +3035,7 @@ public sealed partial class Lowering
         int NextLocalSlot,
         Dictionary<int, string> LocalNames,
         Dictionary<int, TypeRef> LocalTypes,
+        Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> ReuseTokenFieldBindings,
         Dictionary<int, int> ReuseBindingSeenBySlot,
         Dictionary<int, string> ReuseTrackedSlotNames);
@@ -3054,10 +3052,12 @@ public sealed partial class Lowering
             _nextLocalSlot,
             new Dictionary<int, string>(_localNames),
             new Dictionary<int, TypeRef>(_localTypes),
+            SnapshotTempOwnershipFacts(),
             new Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>>(_reuseTokenFieldBindings),
             new Dictionary<int, int>(_reuseBindingSeenBySlot),
             new Dictionary<int, string>(_reuseTrackedSlotNames));
         _inst.Clear();
+        _tempOwnershipFacts.Clear();
         _nextTempSlot = 0;
         _reuseTokenFieldBindings.Clear();
         _reuseBindingSeenBySlot.Clear();
@@ -3075,6 +3075,7 @@ public sealed partial class Lowering
     {
         _inst.Clear();
         _inst.AddRange(saved.Instructions);
+        RestoreTempOwnershipFacts(saved.TempOwnershipFacts);
         _nextTempSlot = saved.NextTempSlot;
         _reuseTokenFieldBindings.Clear();
         foreach (var kv in saved.ReuseTokenFieldBindings) _reuseTokenFieldBindings[kv.Key] = kv.Value;
