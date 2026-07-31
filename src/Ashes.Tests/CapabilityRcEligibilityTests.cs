@@ -5,13 +5,10 @@ using Shouldly;
 namespace Ashes.Tests;
 
 /// <summary>
-/// Regression coverage for the capability arena-exception narrowing: <c>_programHasDynamicCapabilityDispatch</c>
-/// (Lowering.Capabilities.cs's <c>DetectDynamicCapabilityDispatch</c>) replaces the old whole-program
-/// <c>CapabilityGlobalCount &gt; 0</c> gate at the RC-eligibility sites in Lowering.cs / Lowering.Ownership.cs /
-/// Lowering.Patterns.cs. A program is only forced onto the conservative arena path when it contains an
-/// actual <c>handle</c> expression somewhere (the only way handler evidence — and therefore a pending
-/// one-shot post — can ever exist); a program whose capabilities are all resolved by static <c>provide</c>
-/// now gets ordinary RC treatment for its values, same as a program with no capabilities at all.
+/// Regression coverage for the capability arena exception. The identity-aware ownership call graph
+/// computes which functions may execute under a live handler post; placement stays conservative only
+/// in those functions and possible higher-order targets, not every function in a program containing a
+/// <c>handle</c>.
 /// </summary>
 public sealed class CapabilityRcEligibilityTests
 {
@@ -39,8 +36,8 @@ public sealed class CapabilityRcEligibilityTests
     {
         // Clock is declared and used, but never `handle`d anywhere in the program — every use
         // resolves statically through `provide`. No `handle` expression exists anywhere, so
-        // `_programHasDynamicCapabilityDispatch` is false and `build`'s returned string should get
-        // the same RC treatment it would if Clock didn't exist at all. Before this change, the mere
+        // No function receives the live-handler effect and `build`'s returned string should get the
+        // same RC treatment it would if Clock didn't exist at all. Before this change, the mere
         // presence of the `capability Clock` declaration (CapabilityGlobalCount > 0) forced `build`'s
         // result to stay arena-managed even though nothing here ever dynamically dispatches.
         var ir = LowerProgram(
@@ -63,13 +60,9 @@ public sealed class CapabilityRcEligibilityTests
     }
 
     [Test]
-    public void Capability_with_a_handle_keeps_conservative_arena_treatment()
+    public void Unrelated_function_in_a_program_with_a_handle_gets_ordinary_rc_placement()
     {
-        // Log is dynamically dispatched through a real `handle`, so the whole program must keep the
-        // conservative (pre-existing) arena behavior: `build`'s returned string stays arena-managed
-        // even though `build` itself has nothing to do with Log or the handle. This is the "no
-        // regression for genuine dynamic dispatch" half of the narrowing.
-        var ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramAndAnalysis(
             """
             capability Log =
                 | log : Str -> Unit
@@ -87,58 +80,89 @@ public sealed class CapabilityRcEligibilityTests
             build(Unit)
             """);
 
+        GetSummary(lowering, "runLogged").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
+        GetSummary(lowering, "build").MayExecuteUnderLiveHandlerPost.ShouldBeFalse();
+        AllInstructions(ir).OfType<IrInst.ConcatStr>().ShouldContain(c => c.RuntimeManaged);
+    }
+
+    [Test]
+    public void Helper_reachable_from_a_handle_stays_on_the_guarded_arena_path()
+    {
+        (Lowering lowering, IrProgram ir) = LowerProgramAndAnalysis(
+            """
+            capability Log =
+                | log : Str -> Str
+
+            let build =
+                given (u) ->
+                    "ab" + "cd"
+
+            let runLogged =
+                given (u) ->
+                    handle Log.log("hi") with
+                        | Log.log(msg) ->
+                            let _ = resume("ok") in
+                            build(Unit)
+
+            runLogged(Unit)
+            """);
+
+        GetSummary(lowering, "runLogged").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
+        GetSummary(lowering, "build").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
         AllInstructions(ir).OfType<IrInst.ConcatStr>().ShouldAllBe(c => !c.RuntimeManaged);
     }
 
     [Test]
-    public void Mixed_program_with_one_handled_and_one_provider_only_capability_stays_conservative_program_wide()
+    public void Higher_order_target_reachable_from_a_handle_falls_back_to_the_safe_arena_path()
     {
-        // Clock is entirely provider-resolved (no handle ever touches it), but Log is dynamically
-        // handled elsewhere in the same program. `_programHasDynamicCapabilityDispatch` is
-        // whole-program, not per-capability, so `build` — unrelated to either capability — still
-        // conservatively stays arena-managed. This documents the intentional granularity limit of
-        // this phase (a coarser, but sound, signal) rather than a crash or an accidental
-        // over-narrowing: the provider-only capability does not "leak" RC eligibility to the rest of
-        // the program once any handle exists anywhere.
-        var ir = LowerProgram(
+        (Lowering lowering, IrProgram ir) = LowerProgramAndAnalysis(
             """
-            capability Clock =
-                | now : Unit -> Int
-
-            provide Clock =
-                | now = given (_) -> 1234
-
             capability Log =
-                | log : Str -> Unit
+                | log : Str -> Str
 
             let build =
                 given (u) ->
                     "ab" + "cd"
 
+            let invoke =
+                given (fn) ->
+                    fn(Unit)
+
             let runLogged =
                 given (u) ->
                     handle Log.log("hi") with
-                        | Log.log(msg) -> resume(Unit)
+                        | Log.log(msg) ->
+                            let _ = resume("ok") in
+                            invoke(build)
 
-            let _ = runLogged(Unit) in
-            let _ = Clock.now(Unit) in
-            build(Unit)
+            runLogged(Unit)
             """);
 
+        GetSummary(lowering, "runLogged").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
+        GetSummary(lowering, "invoke").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
+        GetSummary(lowering, "build").MayExecuteUnderLiveHandlerPost.ShouldBeTrue();
         AllInstructions(ir).OfType<IrInst.ConcatStr>().ShouldAllBe(c => !c.RuntimeManaged);
     }
 
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)
+        => LowerProgramAndAnalysis(source).Program;
+
+    private static (Lowering Lowering, IrProgram Program) LowerProgramAndAnalysis(string source)
     {
         var diagnostics = new Diagnostics();
         var program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
-        var ir = new Lowering(diagnostics).Lower(program);
+        var lowering = new Lowering(diagnostics);
+        IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
-        return ir;
+        return (lowering, ir);
     }
+
+    private static FunctionOwnershipSummary GetSummary(Lowering lowering, string function) =>
+        lowering.GetOwnershipSummary(function)
+            ?? throw new InvalidOperationException($"No ownership summary for '{function}'.");
 
     private static IEnumerable<IrInst> AllInstructions(IrProgram program)
     {

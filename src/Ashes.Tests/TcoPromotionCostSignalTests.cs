@@ -217,7 +217,16 @@ public sealed class TcoPromotionCostSignalTests
                     handle Log.log("hi") with
                         | Log.log(msg) -> resume(Unit)
 
+            let runLoopFromPost =
+                given (u) ->
+                    handle Log.log("hi") with
+                        | Log.log(msg) ->
+                            let _ = resume(Unit) in
+                            let _ = loop(4)("") in
+                            Unit
+
             let _ = runLogged(Unit) in
+            let _ = runLoopFromPost(Unit) in
             Ashes.IO.print(loop(4)(""))
             """;
 

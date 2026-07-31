@@ -326,7 +326,7 @@ public sealed partial class Lowering
         {
             return TcoPlacementReason.CoroutineBoundary;
         }
-        if (_programHasDynamicCapabilityDispatch)
+        if (!AllowsOrdinaryRcPlacement)
         {
             return TcoPlacementReason.DynamicCapabilityBoundary;
         }

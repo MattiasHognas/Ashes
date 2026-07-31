@@ -233,6 +233,7 @@ public sealed partial class Lowering
         _maKeyName.Clear();
         _maFunctionOrigins.Clear();
         _sourceFunctionOriginsByLambda.Clear();
+        ClearHandlerEffectAnalysis();
         _maOriginalBinderByCopy.Clear();
         _maFunctionScopes.Clear();
         _maCallSites.Clear();
@@ -257,6 +258,7 @@ public sealed partial class Lowering
         }
 
         CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
+        ComputeLiveHandlerEffects();
         ComputeResultReach();
         ComputeFunctionResultProvenanceFixpoint();
         _maAnalyzed = true;
@@ -485,6 +487,7 @@ public sealed partial class Lowering
         {
             SourceFunctionOrigin origin = CreateSourceFunctionOrigin(name, nameSpan, enclosingSource);
             _maFunctionOrigins[key] = origin;
+            _maFunctionKeyByLambda[lam] = key;
             if (FindInnermostLambdaUnderLets(value) is { } sourceLambda)
             {
                 _sourceFunctionOriginsByLambda[sourceLambda] = origin;
@@ -1005,6 +1008,7 @@ public sealed partial class Lowering
                     StringComparer.Ordinal),
                 resultReach.Causes),
             expressionFreshness,
+            _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
             provenance,
             tcoParamFacts,
             patternBindingOwnership);
@@ -2142,6 +2146,7 @@ public sealed partial class Lowering
             lines.Add(
                 $"[ownership] {summary.Function}({parameters}) unique={{{unique}}} captures={{{captures}}} "
                     + $"result={result} expr-fresh={freshExpressions}/{summary.ExpressionFreshness.Count} "
+                    + $"handler-post={summary.MayExecuteUnderLiveHandlerPost.ToString().ToLowerInvariant()} "
                     + $"provenance={{{provenance}}}");
         }
 
@@ -4161,12 +4166,7 @@ public sealed partial class Lowering
                 return;
 
             case Expr.QualifiedVar qv:
-                if (ResolveSpecializableCalleeName(qv) is { } qualifiedName
-                    && _maNameIndex.TryGetValue(qualifiedName, out FuncKey qualifiedKey))
-                {
-                    MarkFunctionEscaped(qualifiedKey);
-                }
-
+                CollectQualifiedFunctionValueEscape(qv);
                 return;
 
             case Expr.If i:
@@ -4204,9 +4204,45 @@ public sealed partial class Lowering
                 CollectCallsAndEscapes(lam.Body, enclosing, RemoveFuncNames(scope, [lam.ParamName]));
                 return;
 
+            case Expr.Perform perform: CollectCallsAndEscapes(perform.Operation, enclosing, scope); return;
+
+            case Expr.Handle handle:
+                CollectCallsAndEscapesHandle(handle, enclosing, scope);
+                return;
+
             default:
                 CollectCallsAndEscapesOperators(e, enclosing, scope);
                 return;
+        }
+    }
+
+    private void CollectQualifiedFunctionValueEscape(Expr.QualifiedVar variable)
+    {
+        if (ResolveSpecializableCalleeName(variable) is { } qualifiedName
+            && _maNameIndex.TryGetValue(qualifiedName, out FuncKey function))
+        {
+            MarkFunctionEscaped(function);
+        }
+    }
+
+    private void CollectCallsAndEscapesHandle(
+        Expr.Handle handle,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        CollectCallsAndEscapes(handle.Body, enclosing, scope);
+        foreach (HandlerArm arm in handle.Arms)
+        {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Pattern parameter in arm.Parameters)
+            {
+                CollectPatternBinders(parameter, binders);
+            }
+
+            CollectCallsAndEscapes(
+                arm.Body,
+                enclosing,
+                RemoveFuncNames(scope, binders));
         }
     }
 

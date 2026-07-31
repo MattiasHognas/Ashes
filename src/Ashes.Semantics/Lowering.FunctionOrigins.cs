@@ -34,6 +34,12 @@ public sealed partial class Lowering
 
         IrFunctionOrigin entryOrigin = CreateProgramEntryOrigin();
         _activeFunctionOrigin = entryOrigin;
+        _ownershipPlacementContext = new OwnershipPlacementContext(
+            _maAnalyzed
+                ? _maEntryMayExecuteUnderLiveHandlerPost
+                : ExpressionContainsHandleForOwner(expression, owner: null));
+        _ownershipPlacementByFunctionLabel[entryOrigin.GeneratedLabel] =
+            _ownershipPlacementContext;
         return entryOrigin;
     }
 

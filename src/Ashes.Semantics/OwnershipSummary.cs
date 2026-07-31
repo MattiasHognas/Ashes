@@ -259,6 +259,8 @@ internal sealed record TcoParamStructuralFacts(
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge
 /// between today's move/reuse analyses and the owned and borrowed environments used by RC Perceus.
+/// <paramref name="MayExecuteUnderLiveHandlerPost"/> is the conservative call-graph effect consumed
+/// by representation placement when handler posts may extend arena lifetimes.
 /// </summary>
 internal sealed record FunctionOwnershipSummary(
     string Function,
@@ -271,6 +273,7 @@ internal sealed record FunctionOwnershipSummary(
     IReadOnlyList<string> CapturedValues,
     FunctionResultReachFacts ResultReachFacts,
     IReadOnlyDictionary<Expr, bool> ExpressionFreshness,
+    bool MayExecuteUnderLiveHandlerPost,
     FunctionResultProvenance ResultProvenance,
     IReadOnlyList<TcoParamStructuralFacts> TcoParamFacts,
     IReadOnlyList<PatternBindingOwnershipFact> PatternBindingOwnership)

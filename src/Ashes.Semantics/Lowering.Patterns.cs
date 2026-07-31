@@ -1044,9 +1044,9 @@ public sealed partial class Lowering
         // TryEmitScopeCopyOut/LowerCallCopyOutResult), leaving the value as a raw arena pointer instead
         // of the RC-managed representation this tracking assumes. That skip is only ever reachable once
         // some `handle` has installed a frame, so a program with no `handle` anywhere can never take it
-        // — _programHasDynamicCapabilityDispatch, not the whole-program capability *declaration* count,
-        // is the right test here.
-        if (_usesAsync || _inCoroutineBody || _programHasDynamicCapabilityDispatch)
+        // — the current function's live-handler effect, not a whole-program capability or handler
+        // count, is the right test here.
+        if (_usesAsync || _inCoroutineBody || !AllowsOrdinaryRcPlacement)
         {
             return;
         }

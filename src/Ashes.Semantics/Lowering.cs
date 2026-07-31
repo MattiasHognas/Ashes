@@ -105,22 +105,6 @@ public sealed partial class Lowering
     // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
     private bool _inCoroutineBody;
 
-    // Whether the whole program contains at least one `handle` expression, computed once by
-    // DetectDynamicCapabilityDispatch right after capability/provider registration. A capability op
-    // call resolves either statically (a `provide`, no handler evidence at all) or dynamically
-    // (handler evidence, and — for a one-shot resumptive arm — a pending "post" tracked by
-    // LivePostsIndex). LivePostsIndex can only ever become non-zero once some `handle` has installed
-    // a frame, so a program with none can never have a pending post: ordinary values need no arena
-    // exception for that hazard's sake. Unlike `_inCoroutineBody`, this is whole-program rather than
-    // per-lambda-scoped — a plain helper with no lexical `handle` in sight can still run inside
-    // another function's `handle` dynamic extent, so only "no `handle` anywhere in the program" is a
-    // sound (if coarser) signal without a real call-graph reachability analysis. See
-    // Lowering.Capabilities.cs for where this is computed and Lowering.Ownership.cs /
-    // Lowering.Patterns.cs for the RC-eligibility sites it now gates instead of the old
-    // whole-program `CapabilityGlobalCount > 0` (which fired the moment ANY capability was declared,
-    // even one resolved entirely by static `provide`).
-    private bool _programHasDynamicCapabilityDispatch;
-
     // The `async` intrinsic binding, created once at root-scope setup and re-seeded into every lambda
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
@@ -708,10 +692,6 @@ public sealed partial class Lowering
         // operation becomes a hidden parameter. Runs after capability/provider registration and
         // before value collection so the rest of the pipeline sees ordinary functions.
         program = RegisterAndTransformDictionaryFunctions(program);
-
-        // Whether ordinary values need the capability arena exception at all: only when the program
-        // can actually reach dynamic dispatch (see DetectDynamicCapabilityDispatch).
-        _programHasDynamicCapabilityDispatch = DetectDynamicCapabilityDispatch(program);
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
@@ -2695,7 +2675,7 @@ public sealed partial class Lowering
                 0,
                 RuntimeManaged: request.EmitsRuntime(
                     LoweredValueRuntimeRepresentation.Closure),
-                ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
+                ReturnsRuntimeManaged: !_usesAsync && AllowsOrdinaryRcPlacement
                     && _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
@@ -2774,7 +2754,7 @@ public sealed partial class Lowering
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
-                    ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
+                    ReturnsRuntimeManaged: !_usesAsync && AllowsOrdinaryRcPlacement
                         && _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
@@ -3051,7 +3031,7 @@ public sealed partial class Lowering
         bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
         bool runtimeManagedClosure = !_usesAsync
             && !_inCoroutineBody
-            && !_programHasDynamicCapabilityDispatch
+            && AllowsOrdinaryRcPlacement
             && IsRuntimeRcCopyClosureProducer(body);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
@@ -3660,7 +3640,7 @@ public sealed partial class Lowering
     {
         if (_usesAsync
             || _inCoroutineBody
-            || _programHasDynamicCapabilityDispatch
+            || !AllowsOrdinaryRcPlacement
             || !IsRuntimeRcCopyClosureProducer(let.Value))
         {
             lowered = default;
@@ -5392,9 +5372,8 @@ public sealed partial class Lowering
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
         RecordTcoParamIdentity(lam, paramTy, label);
-        IrFunctionOrigin origin = CreateLambdaOrigin(lam, label, originSeed);
-        IrFunctionOrigin? savedActiveFunctionOrigin = _activeFunctionOrigin;
-        _activeFunctionOrigin = origin;
+        LambdaFunctionPlacementFrame placementFrame =
+            LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
 
         // Build function body IR in isolation
         var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
@@ -5428,14 +5407,44 @@ public sealed partial class Lowering
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
-        LowerLambdaCoreFinishFunction(label, origin);
+        LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
         LowerLambdaCoreRestoreFrame(savedFrame);
-        _activeFunctionOrigin = savedActiveFunctionOrigin;
+        LowerLambdaCoreLeaveFunctionPlacement(placementFrame);
 
         return (
             LowerLambdaCoreMakeClosure(
                 label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged, request),
             funTy);
+    }
+
+    private readonly record struct LambdaFunctionPlacementFrame(
+        IrFunctionOrigin Origin,
+        IrFunctionOrigin? SavedOrigin,
+        OwnershipPlacementContext SavedPlacement);
+
+    private LambdaFunctionPlacementFrame LowerLambdaCoreEnterFunctionPlacement(
+        Expr.Lambda lambda,
+        string label,
+        IrFunctionOriginSeed? originSeed)
+    {
+        IrFunctionOrigin origin = CreateLambdaOrigin(lambda, label, originSeed);
+        var frame = new LambdaFunctionPlacementFrame(
+            origin,
+            _activeFunctionOrigin,
+            _ownershipPlacementContext);
+        _activeFunctionOrigin = origin;
+        _ownershipPlacementContext = EnterFunctionOwnershipPlacement(
+            origin,
+            label,
+            frame.SavedPlacement);
+        return frame;
+    }
+
+    private void LowerLambdaCoreLeaveFunctionPlacement(
+        LambdaFunctionPlacementFrame frame)
+    {
+        _activeFunctionOrigin = frame.SavedOrigin;
+        _ownershipPlacementContext = frame.SavedPlacement;
     }
 
     private (TypeRef Param, TypeRef Ret, TypeRef Row, TypeRef.TFun Function)
@@ -6739,7 +6748,7 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = !_usesAsync && !_programHasDynamicCapabilityDispatch
+        var (bodyTemp, bodyType) = !_usesAsync && AllowsOrdinaryRcPlacement
             ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
             : LowerExpr(lam.Body).AsPair();
         _ambientRow = savedAmbientRow;
@@ -7233,7 +7242,7 @@ public sealed partial class Lowering
         // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        bool returnsRuntimeManaged = !_usesAsync && !_programHasDynamicCapabilityDispatch
+        bool returnsRuntimeManaged = !_usesAsync && AllowsOrdinaryRcPlacement
             && bodyRuntimeManaged;
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
@@ -8045,7 +8054,7 @@ public sealed partial class Lowering
         constructorArguments = null;
         return !_usesAsync
             && !_inCoroutineBody
-            && !_programHasDynamicCapabilityDispatch
+            && AllowsOrdinaryRcPlacement
             && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
     }
 
@@ -8764,9 +8773,9 @@ public sealed partial class Lowering
     {
         runtimeManaged = false;
         // FunctionResultProvenance is computed once, at a whole-program AST pass that precedes
-        // lowering entirely — it has no notion of _usesAsync/_inCoroutineBody/
-        // _programHasDynamicCapabilityDispatch, the three whole-program gates that force EVERY value in
-        // EVERY function to arena regardless of any per-value classifier's answer. Every real
+        // lowering entirely — it has no notion of _usesAsync/_inCoroutineBody or the current
+        // ownership-placement context, the gates that can force values in this function to arena
+        // regardless of any per-value classifier's answer. Every real
         // construction-site classifier
         // (IsDirectRcConstruction's own predecessors, IsRuntimeRcStringProducer, etc.) checks these gates
         // before ever emitting a RuntimeManaged:true instruction, which is exactly why the retired
@@ -8778,7 +8787,7 @@ public sealed partial class Lowering
         // order-pricing pipeline), which printed empty strings instead of "Price: 12.50, Count: 6".
         if (_usesAsync
             || _inCoroutineBody
-            || _programHasDynamicCapabilityDispatch
+            || !AllowsOrdinaryRcPlacement
             || argumentCount == 0
             || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
             || GetOwnershipSummaryForLabel(resultLabel) is not { } summary
@@ -8936,7 +8945,7 @@ public sealed partial class Lowering
                 rootExpr, collectedArgs[i], i,
                 !_usesAsync
                     && !_inCoroutineBody
-                    && !_programHasDynamicCapabilityDispatch
+                    && AllowsOrdinaryRcPlacement
                     && i == collectedArgs.Count - 1
                     && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
                     && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
@@ -9309,7 +9318,7 @@ public sealed partial class Lowering
         int copyDest = NewTemp();
         bool normalizeToRuntimeOwnership = !_usesAsync
             && !_inCoroutineBody
-            && !_programHasDynamicCapabilityDispatch
+            && AllowsOrdinaryRcPlacement
             && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         switch (callCopyOutKind)
         {
