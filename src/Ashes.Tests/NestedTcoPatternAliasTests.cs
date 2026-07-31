@@ -259,6 +259,75 @@ public sealed class NestedTcoPatternAliasTests
             label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void Same_named_binders_in_different_match_arms_keep_distinct_escape_verdicts()
+    {
+        IrProgram program = LowerProgram("""
+            type Box =
+                | v: Str
+
+            let recursive find keep values =
+                match values with
+                    | [] -> None
+                    | value :: tail when keep -> Some(Box(v = value))
+                    | value :: tail -> find(keep)(tail)
+
+            let result =
+                match find(true)(["a", "b"]) with
+                    | Some(box) -> box.v
+                    | None -> "?"
+
+            Ashes.IO.print(result)
+            """);
+
+        IrFunction find = program.Functions.Single(function => function.Instructions
+            .Any(instruction => instruction is IrInst.CmpIntEq));
+
+        find.Instructions
+            .OfType<IrInst.Label>()
+            .Count(label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal))
+            .ShouldBe(1,
+                "Only the guarded arm's escaping value should be protected; the recursive arm's same-named binder is distinct.");
+    }
+
+    [Test]
+    public void Nested_same_named_binder_does_not_make_the_outer_binding_escape()
+    {
+        IrProgram program = LowerProgram("""
+            type Box =
+                | v: Str
+
+            let recursive find keep values =
+                match values with
+                    | [] -> None
+                    | value :: tail ->
+                        let inner = ["inner"]
+                        in
+                            match inner with
+                                | [] -> find(keep)(tail)
+                                | value :: _ ->
+                                    if keep
+                                    then Some(Box(v = value))
+                                    else find(keep)(tail)
+
+            let result =
+                match find(true)(["outer"]) with
+                    | Some(box) -> box.v
+                    | None -> "?"
+
+            Ashes.IO.print(result)
+            """);
+
+        IrFunction find = program.Functions.Single(function => function.Instructions
+            .Any(instruction => instruction is IrInst.CmpIntEq));
+
+        find.Instructions
+            .OfType<IrInst.Label>()
+            .ShouldNotContain(
+                label => label.Name.StartsWith("rc_tco_nested_alias_duplicated", StringComparison.Ordinal),
+                "The escaping inner value must not transfer its verdict to the unused outer value with the same source name.");
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         Diagnostics diagnostics = new();

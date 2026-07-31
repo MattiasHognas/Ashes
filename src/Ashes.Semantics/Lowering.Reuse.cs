@@ -251,7 +251,7 @@ public sealed partial class Lowering
     /// this table); or a bare argument, at any position, to a call whose callee is not a known
     /// constructor (an ordinary function call's own argument-passing convention already borrows or dups
     /// the value correctly at the call boundary — see the comment on <see
-    /// cref="CountSafeDirectPatternBindingUsesAtNode"/> for why this makes the extra protective dup redundant, and
+    /// cref="CountSafePatternBindingReferencesAtNode"/> for why this makes the extra protective dup redundant, and
     /// why it stays excluded when the callee IS a constructor). A name whose every appearance in its own
     /// arm falls into one of those three shapes is left out — it needs no help here. A name with any
     /// other appearance (embedded in a returned or constructed value, passed to a different parameter's
@@ -263,12 +263,12 @@ public sealed partial class Lowering
     /// alone, never from type. Not static (unlike its sibling Collect* helpers): the constructor-call
     /// exclusion needs the real constructor symbol table, not a name-shape heuristic.
     /// </summary>
-    private HashSet<string> CollectEscapingDirectPatternBindings(
+    private HashSet<Pattern.Var> CollectEscapingDirectPatternBindings(
         Expr body,
         IReadOnlyList<string> paramNames,
         string selfName)
     {
-        var escaping = new HashSet<string>(StringComparer.Ordinal);
+        var escaping = new HashSet<Pattern.Var>(ReferenceEqualityComparer.Instance);
 
         void Walk(Expr expression)
         {
@@ -295,18 +295,16 @@ public sealed partial class Lowering
                     {
                         if (parentIndex >= 0)
                         {
-                            foreach (string bindingName in PatternBindings(matchCase.Pattern))
+                            foreach (Pattern.Var binder in PatternVariableBinders(matchCase.Pattern))
                             {
-                                int total = CountNameOccurrences(matchCase.Body, bindingName);
-                                int safe = CountSafeDirectPatternBindingUses(
-                                    matchCase.Body,
-                                    bindingName,
+                                if (DirectPatternBinderEscapes(
+                                    matchCase,
+                                    binder,
                                     parentIndex,
                                     paramNames.Count,
-                                    selfName);
-                                if (total > safe)
+                                    selfName))
                                 {
-                                    escaping.Add(bindingName);
+                                    escaping.Add(binder);
                                 }
                             }
                         }
@@ -324,6 +322,228 @@ public sealed partial class Lowering
         return escaping;
     }
 
+    private bool DirectPatternBinderEscapes(
+        MatchCase matchCase,
+        Pattern.Var binder,
+        int parentIndex,
+        int paramCount,
+        string selfName)
+    {
+        if (_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
+            && constructor.Arity == 0)
+        {
+            return false;
+        }
+
+        HashSet<Expr.Var> references = CollectPatternBindingReferences(matchCase, binder);
+        int safe = CountSafePatternBindingReferences(
+            matchCase.Body,
+            references,
+            parentIndex,
+            paramCount,
+            selfName);
+        return references.Count > safe;
+    }
+
+    /// <summary>
+    /// Resolves the references belonging to one pattern binder within its arm. References are retained
+    /// by AST identity so a later safe-use classification cannot accidentally count an equal-looking
+    /// reference belonging to a shadowing binder. Let, lambda, nested-match, and handler binders all
+    /// replace the target name in their lexical body.
+    /// </summary>
+    private HashSet<Expr.Var> CollectPatternBindingReferences(MatchCase matchCase, Pattern.Var binder)
+    {
+        var references = new HashSet<Expr.Var>(ReferenceEqualityComparer.Instance);
+        WalkPatternBindingReferenceExpr(matchCase.Body, binder, references, shadowed: false);
+        return references;
+    }
+
+    private static HashSet<Expr.Var> CollectNameReferences(object? node, string name)
+    {
+        var references = new HashSet<Expr.Var>(ReferenceEqualityComparer.Instance);
+        CollectNameReferences(node, name, references);
+        return references;
+    }
+
+    private static void CollectNameReferences(object? node, string name, HashSet<Expr.Var> references)
+    {
+        if (node is null or string)
+        {
+            return;
+        }
+
+        if (node is Expr.Var variable && string.Equals(variable.Name, name, StringComparison.Ordinal))
+        {
+            references.Add(variable);
+        }
+
+        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                CollectNameReferences(tuple[i], name, references);
+            }
+
+            return;
+        }
+
+        if (node is System.Collections.IEnumerable sequence)
+        {
+            foreach (object? item in sequence)
+            {
+                CollectNameReferences(item, name, references);
+            }
+
+            return;
+        }
+
+        if (node is not (Expr or Pattern or MatchCase))
+        {
+            return;
+        }
+
+        foreach (System.Reflection.PropertyInfo property in node.GetType().GetProperties())
+        {
+            if (property.GetIndexParameters().Length == 0)
+            {
+                CollectNameReferences(property.GetValue(node), name, references);
+            }
+        }
+    }
+
+    private void WalkPatternBindingReferenceValue(
+        object? value,
+        Pattern.Var binder,
+        HashSet<Expr.Var> references,
+        bool shadowed)
+    {
+        if (value is null or string)
+        {
+            return;
+        }
+
+        if (value is Expr expression)
+        {
+            WalkPatternBindingReferenceExpr(expression, binder, references, shadowed);
+            return;
+        }
+
+        if (value is System.Runtime.CompilerServices.ITuple tuple)
+        {
+            for (int i = 0; i < tuple.Length; i++)
+            {
+                WalkPatternBindingReferenceValue(tuple[i], binder, references, shadowed);
+            }
+
+            return;
+        }
+
+        if (value is System.Collections.IEnumerable sequence)
+        {
+            foreach (object? item in sequence)
+            {
+                WalkPatternBindingReferenceValue(item, binder, references, shadowed);
+            }
+        }
+    }
+
+    private void WalkPatternBindingReferenceExpr(
+        Expr expression,
+        Pattern.Var binder,
+        HashSet<Expr.Var> references,
+        bool shadowed)
+    {
+        switch (expression)
+        {
+            case Expr.Var variable:
+                if (!shadowed && string.Equals(variable.Name, binder.Name, StringComparison.Ordinal))
+                {
+                    references.Add(variable);
+                }
+
+                return;
+            case Expr.Let let:
+                WalkPatternBindingReferenceExpr(let.Value, binder, references, shadowed);
+                WalkPatternBindingReferenceExpr(let.Body, binder, references, ShadowsBinder(let.Name, binder, shadowed));
+                return;
+            case Expr.LetResult letResult:
+                WalkPatternBindingReferenceExpr(letResult.Value, binder, references, shadowed);
+                WalkPatternBindingReferenceExpr(letResult.Body, binder, references, ShadowsBinder(letResult.Name, binder, shadowed));
+                return;
+            case Expr.LetRecursive letRecursive:
+                bool recursiveShadowed = ShadowsBinder(letRecursive.Name, binder, shadowed);
+                WalkPatternBindingReferenceExpr(letRecursive.Value, binder, references, recursiveShadowed);
+                WalkPatternBindingReferenceExpr(letRecursive.Body, binder, references, recursiveShadowed);
+                return;
+            case Expr.Lambda lambda:
+                WalkPatternBindingReferenceExpr(lambda.Body, binder, references, ShadowsBinder(lambda.ParamName, binder, shadowed));
+                return;
+            case Expr.Match match:
+                WalkNestedMatchPatternBindingReferences(match, binder, references, shadowed);
+                return;
+            case Expr.Handle handle:
+                WalkHandlerPatternBindingReferences(handle, binder, references, shadowed);
+                return;
+            default:
+                foreach (System.Reflection.PropertyInfo property in expression.GetType().GetProperties())
+                {
+                    if (property.GetIndexParameters().Length == 0)
+                    {
+                        WalkPatternBindingReferenceValue(property.GetValue(expression), binder, references, shadowed);
+                    }
+                }
+
+                return;
+        }
+    }
+
+    private static bool ShadowsBinder(string name, Pattern.Var binder, bool alreadyShadowed)
+    {
+        return alreadyShadowed || string.Equals(name, binder.Name, StringComparison.Ordinal);
+    }
+
+    private void WalkNestedMatchPatternBindingReferences(
+        Expr.Match match,
+        Pattern.Var binder,
+        HashSet<Expr.Var> references,
+        bool shadowed)
+    {
+        WalkPatternBindingReferenceExpr(match.Value, binder, references, shadowed);
+        foreach (MatchCase nestedCase in match.Cases)
+        {
+            bool armShadowed = shadowed || PatternBindsName(nestedCase.Pattern, binder.Name);
+            if (nestedCase.Guard is not null)
+            {
+                WalkPatternBindingReferenceExpr(nestedCase.Guard, binder, references, armShadowed);
+            }
+
+            WalkPatternBindingReferenceExpr(nestedCase.Body, binder, references, armShadowed);
+        }
+    }
+
+    private void WalkHandlerPatternBindingReferences(
+        Expr.Handle handle,
+        Pattern.Var binder,
+        HashSet<Expr.Var> references,
+        bool shadowed)
+    {
+        WalkPatternBindingReferenceExpr(handle.Body, binder, references, shadowed);
+        foreach (HandlerArm arm in handle.Arms)
+        {
+            bool armShadowed = shadowed
+                || arm.Parameters.Any(parameter => PatternBindsName(parameter, binder.Name));
+            WalkPatternBindingReferenceExpr(arm.Body, binder, references, armShadowed);
+        }
+    }
+
+    private bool PatternBindsName(Pattern pattern, string name)
+    {
+        return PatternVariableBinders(pattern).Any(
+            binder => string.Equals(binder.Name, name, StringComparison.Ordinal)
+                && (!_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
+                    || constructor.Arity != 0));
+    }
+
     private static int IndexOfOrdinal(IReadOnlyList<string> names, string name)
     {
         for (int i = 0; i < names.Count; i++)
@@ -337,15 +557,14 @@ public sealed partial class Lowering
         return -1;
     }
 
-    // Counts, within the same arm a direct pattern binding came from, the occurrences of bindingName
-    // that are either the scrutinee of a further match on it, the bare argument at parentIndex in a
+    // Counts, within the same arm a direct pattern binding came from, the resolved binder references
+    // that are either the scrutinee of a further match, the bare argument at parentIndex in a
     // full-arity self-call, or a bare argument (any position) to a non-constructor call — the three
-    // shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere. Mirrors
-    // CountNameOccurrences's reflection-based AST walk so every occurrence (regardless of surrounding
-    // node shape) is visited exactly once, keeping the two counts comparable.
-    private int CountSafeDirectPatternBindingUses(
+    // shapes CollectEscapingDirectPatternBindings treats as already covered elsewhere. The reference
+    // set is identity-based, so a same-named reference resolved to another binder cannot be counted.
+    private int CountSafePatternBindingReferences(
         object? node,
-        string bindingName,
+        IReadOnlySet<Expr.Var> bindingReferences,
         int parentIndex,
         int paramCount,
         string selfName)
@@ -355,9 +574,9 @@ public sealed partial class Lowering
             return 0;
         }
 
-        int count = CountSafeDirectPatternBindingUsesAtNode(
+        int count = CountSafePatternBindingReferencesAtNode(
             node,
-            bindingName,
+            bindingReferences,
             parentIndex,
             paramCount,
             selfName);
@@ -366,7 +585,7 @@ public sealed partial class Lowering
         {
             for (int i = 0; i < tuple.Length; i++)
             {
-                count += CountSafeDirectPatternBindingUses(tuple[i], bindingName, parentIndex, paramCount, selfName);
+                count += CountSafePatternBindingReferences(tuple[i], bindingReferences, parentIndex, paramCount, selfName);
             }
 
             return count;
@@ -376,7 +595,7 @@ public sealed partial class Lowering
         {
             foreach (var item in seq)
             {
-                count += CountSafeDirectPatternBindingUses(item, bindingName, parentIndex, paramCount, selfName);
+                count += CountSafePatternBindingReferences(item, bindingReferences, parentIndex, paramCount, selfName);
             }
 
             return count;
@@ -400,7 +619,7 @@ public sealed partial class Lowering
                 || typeof(MatchCase).IsAssignableFrom(t)
                 || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
             {
-                count += CountSafeDirectPatternBindingUses(prop.GetValue(node), bindingName, parentIndex, paramCount, selfName);
+                count += CountSafePatternBindingReferences(prop.GetValue(node), bindingReferences, parentIndex, paramCount, selfName);
             }
         }
 
@@ -416,26 +635,26 @@ public sealed partial class Lowering
     // argument-passing convention already borrows the argument for the callee and only dups it if the
     // callee actually retains it (confirmed at the IR level -- every call site emits a Borrow followed by
     // a conditionally-emitted RcDup gated on the callee's own retention flag), so the caller's own copy
-    // of bindingName is left with an unchanged reference count regardless of what the callee does with
+    // of the binding is left with an unchanged reference count regardless of what the callee does with
     // it. Nothing about that convention depends on whether the callee happens to be the enclosing
     // recursion's own self-call. A constructor application is excluded because it is not a call in this
-    // sense -- `Ctor(bindingName)` embeds bindingName's own reference, unchanged, directly into the new
+    // sense -- `Ctor(binding)` embeds the binding's own reference, unchanged, directly into the new
     // cell's field, which is exactly the shape that needs the extra protective dup (the parent's later
     // drop and the new cell's own later drop would otherwise both decrement a single reference).
     // Deliberately a purely syntactic check against the literal callee name (matching this rule's own
     // self-call sibling above, which is equally purely syntactic against selfName): a constructor
     // referenced only indirectly through another binding is not recognized as a constructor here and
     // would be treated as an ordinary call.
-    private int CountSafeDirectPatternBindingUsesAtNode(
+    private int CountSafePatternBindingReferencesAtNode(
         object node,
-        string bindingName,
+        IReadOnlySet<Expr.Var> bindingReferences,
         int parentIndex,
         int paramCount,
         string selfName)
     {
         if (node is Expr.Match match
             && match.Value is Expr.Var scrutinee
-            && string.Equals(scrutinee.Name, bindingName, StringComparison.Ordinal))
+            && bindingReferences.Contains(scrutinee))
         {
             return 1;
         }
@@ -451,7 +670,7 @@ public sealed partial class Lowering
             && string.Equals(function.Name, selfName, StringComparison.Ordinal)
             && arguments.Count == paramCount
             && arguments[parentIndex] is Expr.Var selfArgument
-            && string.Equals(selfArgument.Name, bindingName, StringComparison.Ordinal))
+            && bindingReferences.Contains(selfArgument))
         {
             return 1;
         }
@@ -465,7 +684,7 @@ public sealed partial class Lowering
         return calleeName is not null
             && !_constructorSymbols.ContainsKey(calleeName)
             ? arguments.Count(argument => argument is Expr.Var argumentVar
-                && string.Equals(argumentVar.Name, bindingName, StringComparison.Ordinal))
+                && bindingReferences.Contains(argumentVar))
             : 0;
     }
 

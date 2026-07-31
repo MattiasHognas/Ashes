@@ -202,8 +202,8 @@ public sealed partial class Lowering
     // is not yet known until the whole body has been lowered — see the comment on
     // LowerLambdaCoreRefreshRuntimeManagedTcoParams. So every pattern-bound local extracted from another
     // local is recorded here unconditionally (payload slot → immediate parent slot, the instruction
-    // index right after its extraction was emitted, the payload's own TypeRef, and the binding's own
-    // source name); once the body is fully lowered and the refresh pass has resolved real eligibility,
+    // index right after its extraction was emitted, and the payload's own TypeRef); once the body is
+    // fully lowered and the refresh pass has resolved real eligibility,
     // ResolvePendingNestedTcoPatternAliasSites walks each entry's chain of parents back to a declared TCO
     // parameter slot and, only for chains that bottom out at a slot the refresh pass confirmed runtime-
     // managed, splices in a guarded protective dup at the recorded site — a retroactive fix-up, the same
@@ -214,11 +214,11 @@ public sealed partial class Lowering
     // during the first pass (e.g. a tuple field whose element type only becomes concrete Int once the
     // whole body's unification has run) — checking early can wrongly treat an about-to-be-Int binding as
     // heap-managed, and dup'ing a scalar value as if it were a refcounted pointer is a segfault, not just
-    // a missed protection. The binding name is carried along so the resolution step can additionally
-    // consult the parent parameter's own static escaping-pattern fact for a
+    // a missed protection. The payload slot also carries the pre-lowering binder identity into this
+    // post-lowering resolution step, allowing it to consult the parent parameter's static escape fact for a
     // binding whose immediate parent is itself a declared TCO parameter slot (see the comment there
     // for why that case needs its own check).
-    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType, string BindingName)> _pendingNestedTcoPatternAliasSites = new();
+    private readonly Dictionary<int, (int ParentSlot, int InsertIndex, TypeRef PayloadType)> _pendingNestedTcoPatternAliasSites = new();
 
     // Closure temp → the resource bindings it captures, with each one's env offset and type. When
     // such a closure is a scope's result the captured resources escape with it; the scope moves them
@@ -5043,7 +5043,7 @@ public sealed partial class Lowering
                 consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
                 borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
                 affineSelfAppendOnlyParamOrdinals: tcoParamOrdinalFacts.AffineSelfAppendOnly,
-                escapingDirectPatternBindings: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
+                escapingDirectPatternBinders: CollectEscapingDirectPatternBindings(innermostBody, tcoParamNames, letRecursive.Name))
             {
                 InTailPosition = false,
                 OwnershipFunction = ownershipFunction,
@@ -5489,7 +5489,7 @@ public sealed partial class Lowering
         // function — and TrackRuntimeManagedTcoListPatternAliases's own eager pass, the mechanism that
         // would normally protect exactly that case, structurally cannot run early enough for an ordinary
         // unannotated accumulator to catch it (see the field comment on
-        // _runtimeManagedTcoPatternAliases): TcoContext.EscapingDirectPatternBindings is the structural,
+        // _runtimeManagedTcoPatternAliases): TcoContext's escaping direct-pattern slots are the structural,
         // pre-lowering answer to which direct bindings are in that situation, computed once from the raw
         // AST specifically so this resolution step can tell the two apart. A candidate whose parent is
         // itself ANOTHER pending candidate (a chain at least two pattern levels deep) is new territory
@@ -5504,11 +5504,11 @@ public sealed partial class Lowering
                 && !_runtimeManagedTcoPatternAliases.Values.Any(alias =>
                     alias.AliasSlot == site.Key)
                 && (!tco.ParamSlots.Contains(site.Value.ParentSlot)
-                    || tco.EscapingDirectPatternBindings.Contains(site.Value.BindingName))
+                    || tco.IsEscapingDirectPatternBindingSlot(site.Key))
                 && IsChainRootRuntimeManaged(site.Value.ParentSlot, tco))
             .OrderByDescending(site => site.Value.InsertIndex)
             .ToList();
-        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _, string _)) in accepted)
+        foreach ((int payloadSlot, (int _, int insertIndex, TypeRef _)) in accepted)
         {
             SpliceEagerNestedTcoPatternAliasProtection(payloadSlot, insertIndex);
         }
@@ -7741,13 +7741,16 @@ public sealed partial class Lowering
             }
 
             int uses = collectedArgs.Sum(argument =>
-                CountNameOccurrences(argument, name)
-                - CountSafeDirectPatternBindingUses(
-                    argument,
-                    name,
-                    parentIndex,
-                    tco.ParamSlots.Count,
-                    tco.SelfName));
+            {
+                HashSet<Expr.Var> references = CollectNameReferences(argument, name);
+                return references.Count
+                    - CountSafePatternBindingReferences(
+                        argument,
+                        references,
+                        parentIndex,
+                        tco.ParamSlots.Count,
+                        tco.SelfName);
+            });
             if (uses > 0)
             {
                 transfers.Add((name, alias, uses));

@@ -1052,7 +1052,7 @@ public sealed partial class Lowering
         }
 
         TrackRuntimeManagedTcoListPatternAliases(matchValue, valueType, patternBindings);
-        RecordPendingNestedTcoPatternAliasCandidates(matchValue, patternBindings);
+        RecordPendingNestedTcoPatternAliasCandidates(matchValue, patternBindings, armPattern);
 
         (string? ownerName, HashSet<string>? independentlyTrackedFieldNames) =
             TrackRuntimeManagedMatchScrutineeOwner(matchValue, valueTemp, valueType, patternBindings, armPattern);
@@ -1254,7 +1254,8 @@ public sealed partial class Lowering
     /// </summary>
     private void RecordPendingNestedTcoPatternAliasCandidates(
         Expr matchValue,
-        IReadOnlyDictionary<string, TypeRef> patternBindings)
+        IReadOnlyDictionary<string, TypeRef> patternBindings,
+        Pattern armPattern)
     {
         if (_tcoCtx is null
             || matchValue is not Expr.Var variable
@@ -1263,14 +1264,22 @@ public sealed partial class Lowering
             return;
         }
 
-        foreach ((string bindingName, TypeRef bindingType) in patternBindings)
+        foreach (Pattern.Var binder in PatternVariableBinders(armPattern))
         {
-            if (Lookup(bindingName) is not Binding.Local payload)
+            if (_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
+                && constructor.Arity == 0)
             {
                 continue;
             }
 
-            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType, bindingName);
+            if (!patternBindings.TryGetValue(binder.Name, out TypeRef? bindingType)
+                || Lookup(binder.Name) is not Binding.Local payload)
+            {
+                continue;
+            }
+
+            _tcoCtx.RegisterPatternBindingSlot(binder, payload.Slot);
+            _pendingNestedTcoPatternAliasSites[payload.Slot] = (parent.Slot, _inst.Count, bindingType);
         }
     }
 
@@ -1797,6 +1806,50 @@ public sealed partial class Lowering
                     foreach (var n in PatternBindings(sub))
                     {
                         yield return n;
+                    }
+                }
+
+                yield break;
+            default:
+                yield break;
+        }
+    }
+
+    private static IEnumerable<Pattern.Var> PatternVariableBinders(Pattern pattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.Var variable:
+                yield return variable;
+                yield break;
+            case Pattern.Cons cons:
+                foreach (Pattern.Var binder in PatternVariableBinders(cons.Head))
+                {
+                    yield return binder;
+                }
+
+                foreach (Pattern.Var binder in PatternVariableBinders(cons.Tail))
+                {
+                    yield return binder;
+                }
+
+                yield break;
+            case Pattern.Tuple tuple:
+                foreach (Pattern element in tuple.Elements)
+                {
+                    foreach (Pattern.Var binder in PatternVariableBinders(element))
+                    {
+                        yield return binder;
+                    }
+                }
+
+                yield break;
+            case Pattern.Constructor constructor:
+                foreach (Pattern child in constructor.Patterns)
+                {
+                    foreach (Pattern.Var binder in PatternVariableBinders(child))
+                    {
+                        yield return binder;
                     }
                 }
 

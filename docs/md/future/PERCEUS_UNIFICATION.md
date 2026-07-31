@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `2d9dcc0` on 2026-07-31, together with the explicit lowered-value
-handoffs in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `e34d93e` on 2026-07-31, together with the stable pattern-binding identity
+handoff in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -95,6 +95,10 @@ The following is already implemented and is not part of the backlog:
 
 - the runtime RC header/free-list allocation path, `RcDup`, `RcDrop`, `DropReuse`, structural droppers,
   arena allocation, copy-out, and static/in-place reuse;
+- pattern-derived TCO escape facts keyed by the exact `Pattern.Var` syntax node before lowering and
+  transported to the binder's distinct local slot during emission. Lexical reference resolution
+  prevents same-named binders in sibling arms, nested matches, lets, lambdas, and handler arms from
+  sharing an escape verdict; the late protective-dup fix-up consumes only slot identity;
 - `PerceusLifetimePlacement`, which moves ordinary-value lifetime markers to CFG-aware last uses while
   leaving resource cleanup alone;
 - `FunctionOwnershipSummary` with parameter borrow/consume facts, uniqueness, result reach,
@@ -285,18 +289,12 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–3 are complete. Nine implementation tasks remain;
-Milestone 4.1 is next.
+teardown prerequisites are in place. Milestones 1–3 and 4.1 are complete. Eight implementation tasks
+remain; Milestone 4.2 is next.
 
 ### Milestone 4 — fold pattern-derived aliases into ordinary Perceus placement
 
 Classifier D is the most historically dangerous TCO subsystem and must move in shadow/cutover stages.
-
-#### 4.1 Give pattern bindings stable identity
-
-Stop keying escape facts by source name. Use the pattern binder’s AST identity before lowering and its
-local slot afterward. Add adversarial tests where the same binder name appears in different match arms
-or nested scopes; those occurrences must not share an escape verdict.
 
 #### 4.2 Compute pattern-binding ownership in shadow mode
 

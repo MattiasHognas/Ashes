@@ -332,25 +332,39 @@ public sealed partial class Lowering
             return true;
         }
 
-        // Pattern-bound names extracted directly (one pattern level) off a declared TCO parameter
+        // Pattern binders extracted directly (one pattern level) off a declared TCO parameter
         // whose only appearances elsewhere in the body are NOT limited to (a) the scrutinee of a
         // further nested match on the same name, or (b) the bare, unchanged argument at that same
         // parameter's own slot in a tail self-call. Both of those shapes are already handled without
         // this table's help — (a) by whatever separate protection the nested match's own bindings
-        // get, (b) by the ordinary per-parameter back-edge argument installation — so a name limited
-        // to just those is left alone. A name with any OTHER appearance (embedded in a
+        // get, (b) by the ordinary per-parameter back-edge argument installation — so a binder limited
+        // to just those is left alone. A binder with any OTHER appearance (embedded in a
         // returned/constructed value, passed to a different parameter's slot, handed to another
         // function, ...) genuinely escapes the current iteration independently and needs its own
-        // protective dup; see ResolvePendingNestedTcoPatternAliasSites, the only consumer. Keyed by
-        // the EXTRACTED BINDING's own name (e.g. a pattern-matched "rest", not the parent parameter's
-        // own name), a distinct key space from ParamFacts' per-parameter entries, so this stays a
-        // freestanding set rather than a field on TcoParamStaticFacts. Computed once, structurally, from
-        // the pre-lowering AST, so it is available before types are resolved. Empty when not computed
-        // (conservative — nothing extra gets protected).
-        public IReadOnlySet<string> EscapingDirectPatternBindings { get; }
+        // protective dup; see ResolvePendingNestedTcoPatternAliasSites, the only consumer. The
+        // pre-lowering fact is keyed by the Pattern.Var syntax node's reference identity, not its source
+        // name, so same-named binders in sibling arms and nested scopes cannot share a verdict. As each
+        // binder is emitted, RegisterPatternBindingSlot transports that fact to its distinct local slot;
+        // all post-lowering consumers use only that slot identity.
+        private readonly IReadOnlySet<Pattern.Var> _escapingDirectPatternBinders;
+        private readonly HashSet<int> _escapingDirectPatternBindingSlots = [];
 
-        private static readonly IReadOnlySet<string> EmptyStaticFacts = new HashSet<string>(System.StringComparer.Ordinal);
+        private static readonly IReadOnlySet<Pattern.Var> EmptyPatternBinders =
+            new HashSet<Pattern.Var>(ReferenceEqualityComparer.Instance);
         private static readonly IReadOnlySet<int> EmptyParameterOrdinals = new HashSet<int>();
+
+        public void RegisterPatternBindingSlot(Pattern.Var binder, int slot)
+        {
+            if (_escapingDirectPatternBinders.Contains(binder))
+            {
+                _escapingDirectPatternBindingSlots.Add(slot);
+            }
+        }
+
+        public bool IsEscapingDirectPatternBindingSlot(int slot)
+        {
+            return _escapingDirectPatternBindingSlots.Contains(slot);
+        }
 
         // Used by the two call sites that build a TcoContext without first running the Collect*
         // family over a real recursive body — a synthesized mutual-recursion dispatch lambda (whose
@@ -371,7 +385,7 @@ public sealed partial class Lowering
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
                 EmptyParameterOrdinals,
-                EmptyStaticFacts)
+                EmptyPatternBinders)
         {
         }
 
@@ -386,7 +400,7 @@ public sealed partial class Lowering
             IReadOnlySet<int> consumedListTailParamOrdinals,
             IReadOnlySet<int> borrowInspectOnlyParamOrdinals,
             IReadOnlySet<int> affineSelfAppendOnlyParamOrdinals,
-            IReadOnlySet<string> escapingDirectPatternBindings)
+            IReadOnlySet<Pattern.Var> escapingDirectPatternBinders)
         {
             SelfName = selfName;
             ParamCount = paramCount;
@@ -398,7 +412,7 @@ public sealed partial class Lowering
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
             _affineSelfAppendOnlyParamOrdinals = affineSelfAppendOnlyParamOrdinals;
-            EscapingDirectPatternBindings = escapingDirectPatternBindings;
+            _escapingDirectPatternBinders = escapingDirectPatternBinders;
         }
 
         // Joins each parameter ordinal to the distinct slot established by
