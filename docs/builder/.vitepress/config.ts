@@ -81,6 +81,11 @@ export default defineConfig({
   // module.exports defeats Rollup's named-export detection and breaks the
   // production client bundle at runtime (undefined.shallowRef).
   vite: {
+    build: {
+      // Mermaid's lazily loaded rendering dependencies include a few legitimate
+      // chunks just above Vite's default 500 KiB advisory threshold.
+      chunkSizeWarningLimit: 800,
+    },
     resolve: {
       alias: (() => {
         const vueDir = dirname(require.resolve("vue/package.json"));
