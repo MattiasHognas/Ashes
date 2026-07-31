@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `ceb53f0` on 2026-07-31, together with the canonical lowered-temp
-ownership facts in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `2d9dcc0` on 2026-07-31, together with the explicit lowered-value
+handoffs in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -248,6 +248,20 @@ The following is already implemented and is not part of the backlog:
   frame restoration, deferred rewrites, and synthesized-frame swaps preserve or refine the fact.
   `IsRuntimeManagedResultTemp` is now a constant-time fact lookup; the parallel
   `_runtimeManagedResultTemps` set and emitted-instruction scans have been deleted.
+- expression lowering returns an immutable `LoweredValue` containing the temp, pruned type, and its
+  canonical `LoweredTempOwnershipFact` snapshot. Every expression result has a fact, including
+  ordinary values whose representation remains conservatively unknown, while legacy leaf emitters
+  can still use the temporary pair adapter without losing the ownership-aware expression boundary;
+- runtime-RC production is requested through an explicit `LoweredValueRequest`. Its
+  `ConsumerCanOwn` proof is distinct from the requested physical representation, and the returned
+  temp fact records what lowering actually emitted. The request carries the narrow list-tail,
+  constructor-child, and reuse-layout context needed by producers without retaining an `Expr` graph;
+- strings, `BigInt`, owned `Bytes`, ADTs, records, tuples, lists, closures, call results, TCO
+  arguments, and coroutine expression handoffs now use that explicit request/result path. Deferred
+  overloaded addition retains its requested representation until type resolution;
+- all `_runtimeRc*AllocationRequested` fields and the related ambient list-tail and ADT-child request
+  fields have been deleted. Top-cell freshness remains a separate syntactic input to the explicit
+  placement request.
 
 These pieces are useful foundations, but several remain shadow-only or are still fed by the old
 classifiers. Their existence must not be mistaken for a completed cutover.
@@ -265,37 +279,13 @@ classifiers. Their existence must not be mistaken for a completed cutover.
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–2 and task 3.1 are complete. Eleven implementation
-tasks remain; Milestone 3.2 is next.
+teardown prerequisites are in place. Milestones 1–2 and tasks 3.1–3.2 are complete. Ten implementation
+tasks remain; Milestone 3.3 is next.
 
 ### Milestone 3 — make value/temp ownership forward-propagated
 
 This is the maintenance prerequisite for removing classifier C and for making classifier D ordinary
 Perceus work.
-
-#### 3.2 Make lowering return ownership with the value
-
-Incrementally replace `(int Temp, TypeRef Type)` results with a `LoweredValue`-style record carrying
-the canonical temp ownership fact. Do this by category rather than as one repository-wide rewrite:
-
-1. strings, `BigInt`, and owned `Bytes`;
-2. ADTs and tuples;
-3. lists;
-4. closures and call results;
-5. TCO and coroutine hand-offs.
-
-Replace mutable request booleans only when their category moves to the explicit context/result:
-`_runtimeRc*AllocationRequested` flags currently encode a mixture of “the consumer can own this” and
-“emit this allocation in the RC representation.” Those must become separately named request and
-result facts, not one renamed ambient flag.
-
-Top-cell freshness remains a valid syntactic construction fact. It should feed the ownership/placement
-decision; it should not be deleted or incorrectly substituted with whole-value
-`ExpressionFreshness`.
-
-Do not retain `Expr` graphs in the long-lived lowered-value result solely for future explanation.
-Snapshot the small source identity/location and the final facts needed by later orchestration; keep
-the analysis-only `ExpressionFreshness` map inside the semantic-analysis boundary.
 
 #### 3.3 Centralize ordinary heap layout capability
 

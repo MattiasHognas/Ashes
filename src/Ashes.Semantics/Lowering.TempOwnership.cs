@@ -1,3 +1,5 @@
+using Ashes.Frontend;
+
 namespace Ashes.Semantics;
 
 /// <summary>The physical representation currently selected for one lowered temp.</summary>
@@ -70,6 +72,111 @@ internal enum LoweredTempProducerKind
     RcDup,
     ControlFlowJoin,
     FrameRestore,
+}
+
+[Flags]
+internal enum LoweredValueRuntimeRepresentation
+{
+    None = 0,
+    String = 1 << 0,
+    Bytes = 1 << 1,
+    BigInt = 1 << 2,
+    Adt = 1 << 3,
+    Tuple = 1 << 4,
+    List = 1 << 5,
+    Record = 1 << 6,
+    Closure = 1 << 7,
+    ScalarAdtResult = 1 << 8,
+    BigIntParseResult = 1 << 9,
+    TextUnconsResult = 1 << 10,
+    TcoAdt = 1 << 11,
+}
+
+/// <summary>
+/// Explicit demand passed from an ownership-aware consumer to the expression producing its value.
+/// <see cref="ConsumerCanOwn"/> records the semantic proof; <see cref="RuntimeRepresentation"/>
+/// records the physical representation the producer is permitted to emit. The returned
+/// <see cref="LoweredValue.Ownership"/> records what was actually emitted.
+/// </summary>
+internal readonly record struct LoweredValueRequest(
+    bool ConsumerCanOwn,
+    LoweredValueRuntimeRepresentation RuntimeRepresentation,
+    string? RuntimeListTailBinding,
+    bool RuntimeListTailShared,
+    int? RuntimeTcoListTailSlot,
+    TypeRef.TNamedType? RuntimeReuseAdtType,
+    IReadOnlyDictionary<string, bool>? RuntimeAdtChildBindings)
+{
+    public static LoweredValueRequest None => default;
+
+    public static LoweredValueRequest OwnedRuntime(
+        LoweredValueRuntimeRepresentation representation) =>
+        new(
+            ConsumerCanOwn: true,
+            representation,
+            RuntimeListTailBinding: null,
+            RuntimeListTailShared: false,
+            RuntimeTcoListTailSlot: null,
+            RuntimeReuseAdtType: null,
+            RuntimeAdtChildBindings: null);
+
+    public bool EmitsRuntime(LoweredValueRuntimeRepresentation representation) =>
+        ConsumerCanOwn
+        && (RuntimeRepresentation & representation)
+            != LoweredValueRuntimeRepresentation.None;
+
+    public LoweredValueRequest AddRuntime(
+        bool condition,
+        LoweredValueRuntimeRepresentation representation) =>
+        condition
+            ? this with
+            {
+                ConsumerCanOwn = true,
+                RuntimeRepresentation = RuntimeRepresentation | representation,
+            }
+            : this;
+
+    public LoweredValueRequest WithRuntimeListContext(
+        string? tailBinding,
+        bool tailShared,
+        int? tcoTailSlot) =>
+        this with
+        {
+            ConsumerCanOwn = true,
+            RuntimeRepresentation =
+                RuntimeRepresentation | LoweredValueRuntimeRepresentation.List,
+            RuntimeListTailBinding = tailBinding,
+            RuntimeListTailShared = tailShared,
+            RuntimeTcoListTailSlot = tcoTailSlot,
+        };
+
+    public LoweredValueRequest WithRuntimeAdtContext(
+        IReadOnlyDictionary<string, bool>? childBindings,
+        TypeRef.TNamedType? reuseType = null) =>
+        this with
+        {
+            RuntimeReuseAdtType = reuseType ?? RuntimeReuseAdtType,
+            RuntimeAdtChildBindings = childBindings ?? RuntimeAdtChildBindings,
+        };
+}
+
+/// <summary>
+/// One expression-lowering result paired with the canonical ownership fact for its temp.
+/// The fact is a snapshot of the decision at this hand-off; later rewrites return a new
+/// <see cref="LoweredValue"/> rather than mutating the value already handed to a consumer.
+/// </summary>
+internal readonly record struct LoweredValue(
+    int Temp,
+    TypeRef Type,
+    LoweredTempOwnershipFact Ownership)
+{
+    public void Deconstruct(out int temp, out TypeRef type)
+    {
+        temp = Temp;
+        type = Type;
+    }
+
+    public (int Temp, TypeRef Type) AsPair() => (Temp, Type);
 }
 
 /// <summary>
@@ -440,6 +547,33 @@ public sealed partial class Lowering
                 Layout = LayoutForType(type),
             };
         }
+    }
+
+    private LoweredValue CreateLoweredValue(int temp, TypeRef type)
+    {
+        TypeRef prunedType = Prune(type);
+        RefineTempOwnershipType(temp, prunedType);
+        if (!_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact))
+        {
+            SourceLocation? location = _currentSourceExpr is null
+                ? null
+                : ResolveSourceLocation(AstSpans.GetOrDefault(_currentSourceExpr));
+            RecordTempOwnership(
+                temp,
+                LoweredTempRepresentation.Unknown,
+                ownerTemp: null,
+                sourceTemp: null,
+                prunedType,
+                LayoutForType(prunedType),
+                LoweredTempDropKind.Unknown,
+                LoweredTempOwnershipKind.Unknown,
+                LoweredTempProducerKind.Unknown,
+                location,
+                LoweredTempOwnershipReason.Unknown);
+            fact = _tempOwnershipFacts[temp];
+        }
+
+        return new LoweredValue(temp, prunedType, fact);
     }
 
     private void ReplaceEmittedTempOwnership(IrInst oldInstruction, IrInst newInstruction)

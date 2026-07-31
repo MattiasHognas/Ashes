@@ -2256,7 +2256,8 @@ public sealed partial class Lowering
     private bool CanRuntimeManageOwnedChildAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
-        TypeRef.TNamedType resultType)
+        TypeRef.TNamedType resultType,
+        IReadOnlyDictionary<string, bool>? childBindings = null)
     {
         if (!CanRuntimeManageOwnedChildAdt(resultType)
             || arguments.Count != constructor.Arity)
@@ -2269,7 +2270,10 @@ public sealed partial class Lowering
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
             if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
                 && (fieldType is not TypeRef.TNamedType child
-                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
+                    || !IsRuntimeManagedAdtChildBinding(
+                        arguments[i],
+                        child.Symbol,
+                        childBindings)))
             {
                 return false;
             }
@@ -2345,7 +2349,8 @@ public sealed partial class Lowering
     private bool CanRuntimeManageRecursiveAdtConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
-        TypeRef.TNamedType resultType)
+        TypeRef.TNamedType resultType,
+        IReadOnlyDictionary<string, bool>? childBindings = null)
     {
         if (!CanRuntimeManageRecursiveCopyAdt(resultType) || arguments.Count != constructor.Arity)
         {
@@ -2361,7 +2366,10 @@ public sealed partial class Lowering
             }
 
             if (!IsFreshConstructorTree(arguments[i], resultType.Symbol)
-                && !IsRuntimeManagedAdtChildBinding(arguments[i], resultType.Symbol))
+                && !IsRuntimeManagedAdtChildBinding(
+                    arguments[i],
+                    resultType.Symbol,
+                    childBindings))
             {
                 return false;
             }
@@ -2370,11 +2378,14 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool IsRuntimeManagedAdtChildBinding(Expr expression, TypeSymbol expectedType)
+    private bool IsRuntimeManagedAdtChildBinding(
+        Expr expression,
+        TypeSymbol expectedType,
+        IReadOnlyDictionary<string, bool>? childBindings = null)
     {
         if (expression is not Expr.Var variable
-            || _runtimeRcAdtChildBindings is null
-            || !_runtimeRcAdtChildBindings.ContainsKey(variable.Name)
+            || childBindings is null
+            || !childBindings.ContainsKey(variable.Name)
             || LookupOwnedValue(variable.Name) is not { RuntimeManaged: true, IsDropped: false, Type: not null } info
             || Prune(info.Type) is not TypeRef.TNamedType named)
         {
@@ -2458,7 +2469,8 @@ public sealed partial class Lowering
     private bool CanRuntimeManageConstructorApplication(
         ConstructorSymbol constructor,
         IReadOnlyList<Expr> arguments,
-        TypeRef.TNamedType resultType)
+        TypeRef.TNamedType resultType,
+        IReadOnlyDictionary<string, bool>? childBindings = null)
     {
         if (!CanRuntimeManageAdt(resultType))
         {
@@ -2470,7 +2482,10 @@ public sealed partial class Lowering
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
             if (!CanRuntimeManageFreshOwnedChildExpression(arguments[i], fieldType)
                 && (fieldType is not TypeRef.TNamedType child
-                    || !IsRuntimeManagedAdtChildBinding(arguments[i], child.Symbol)))
+                    || !IsRuntimeManagedAdtChildBinding(
+                        arguments[i],
+                        child.Symbol,
+                        childBindings)))
             {
                 return false;
             }

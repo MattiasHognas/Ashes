@@ -105,8 +105,8 @@ public sealed partial class Lowering
     /// "different constructor of the same type" hazard, but missed a DIFFERENT mixing hazard that
     /// doesn't need one. `if cond then existingList else [fresh, list]` has one arm that is a bare Var
     /// passthrough of an existing (not provably fresh) binding and one arm that IS a fresh construction.
-    /// An existence check sets the ambient `_runtimeRcListAllocationRequested` flag for the WHOLE if,
-    /// so the fresh arm's cons cells get allocated on the RC heap (`Alloc RuntimeManaged: true`) — but
+    /// An existence check requests the runtime-RC List representation for the WHOLE if, so the fresh
+    /// arm's cons cells get allocated on the RC heap (`Alloc RuntimeManaged: true`) — but
     /// the join-level `MarkUniformRuntimeManagedResult`/`MarkRuntimeManagedMatchResult` machinery (which
     /// decides whether the JOINED/matched value is actually treated as owned) requires BOTH/ALL arms to
     /// be independently verified runtime-managed, which the passthrough arm never is. The two mechanisms
@@ -114,8 +114,8 @@ public sealed partial class Lowering
     /// no reachable `RcDrop` anywhere in the lowered program for the fresh arm. This IS a real,
     /// unambiguous bookkeeping inconsistency (the ambient flag's "permission to allocate RC" and the
     /// join's "was it actually RC" verdict disagreeing), and this fix removes it outright — every
-    /// terminal fresh is required before the ambient flag is granted at all, so the two verdicts can no
-    /// longer disagree, by construction.
+    /// terminal fresh is required before the representation request is granted at all, so the two
+    /// verdicts can no longer disagree, by construction.
     ///
     /// What this fix is NOT shown to be: a demonstrated process-memory leak. Compiled-binary testing
     /// (both a discarding loop and a consuming loop, up to 50M iterations, and a version with a much

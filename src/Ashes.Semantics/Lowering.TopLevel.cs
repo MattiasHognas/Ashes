@@ -613,7 +613,9 @@ public sealed partial class Lowering
     /// lowered against one shared environment, and the names then stay in scope — monomorphically, as
     /// the single <c>let rec</c> form already does — for the continuation.
     /// </summary>
-    private (int, TypeRef) LowerRecursiveGroup(RecursiveGroupExpr group)
+    private (int, TypeRef) LowerRecursiveGroup(
+        RecursiveGroupExpr group,
+        LoweredValueRequest request)
     {
         var bindings = group.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
@@ -643,7 +645,14 @@ public sealed partial class Lowering
             Members = members
         };
 
-        LowerRecursiveGroupMembers(bindings, recordTypes, labels, members, slots, groupContext);
+        LowerRecursiveGroupMembers(
+            bindings,
+            recordTypes,
+            labels,
+            members,
+            slots,
+            groupContext,
+            request);
 
         // Mutual-recursion TCO: when the group is eligible, synthesize a single self-recursive
         // dispatch function and rebind each member to a thin wrapper so the existing single-function
@@ -662,7 +671,7 @@ public sealed partial class Lowering
         }
 
         _scopes.Push(child);
-        var (bodyTemp, bodyType) = LowerExpr(group.Body);
+        var (bodyTemp, bodyType) = LowerExpr(group.Body, request);
         _scopes.Pop();
         return (bodyTemp, bodyType);
     }
@@ -728,7 +737,8 @@ public sealed partial class Lowering
         string[] labels,
         (string Name, string Label, TypeRef Type, TextSpan Span)[] members,
         int[] slots,
-        RecursiveGroupContext groupContext)
+        RecursiveGroupContext groupContext,
+        LoweredValueRequest request)
     {
         // Mutual recursion is reached through closure calls, not the single-function tail-call loop, so
         // disable TCO while lowering the group bodies.
@@ -741,14 +751,21 @@ public sealed partial class Lowering
             if (value is not Expr.Lambda lambda)
             {
                 ReportDiagnostic(GetSpan(value), "let recursive currently requires a function value.");
-                var (fallbackTemp, fallbackType) = LowerExpr(value);
+                var (fallbackTemp, fallbackType) = LowerExpr(value, request);
                 Unify(recordTypes[i], fallbackType);
                 Emit(new IrInst.StoreLocal(slots[i], fallbackTemp));
                 RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);
                 continue;
             }
 
-            var (closureTemp, closureType) = LowerLambdaCore(lambda, selfName: null, selfType: null, stackAllocateClosure: false, recursiveGroup: groupContext, forcedLabel: labels[i]);
+            var (closureTemp, closureType) = LowerLambdaCore(
+                lambda,
+                selfName: null,
+                selfType: null,
+                stackAllocateClosure: false,
+                recursiveGroup: groupContext,
+                forcedLabel: labels[i],
+                request: request);
             Unify(recordTypes[i], closureType);
             RecordHoverType(members[i].Span, bindings[i].Name, recordTypes[i]);
             RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);

@@ -563,9 +563,11 @@ public sealed partial class Lowering
     /// perform), then create the post-resume continuation closure and hand it to the perform site
     /// through the pending-post register.
     /// </summary>
-    private (int, TypeRef) LowerCapabilityPost(CapabilityPostExpr post)
+    private (int, TypeRef) LowerCapabilityPost(
+        CapabilityPostExpr post,
+        LoweredValueRequest request)
     {
-        var (valueTemp, valueType) = LowerExpr(post.Value);
+        var (valueTemp, valueType) = LowerExpr(post.Value, request);
         var (postTemp, postType) = LowerExpr(post.PostLambda);
 
         // The post runs after its handle exits, transforming the handle's result: R -> R. Its
@@ -895,7 +897,9 @@ public sealed partial class Lowering
 
     // ---------------- Perform / operation calls / handle ----------------
 
-    private (int, TypeRef) LowerPerform(Expr.Perform perform)
+    private (int, TypeRef) LowerPerform(
+        Expr.Perform perform,
+        LoweredValueRequest request)
     {
         // `perform` is an optional no-op marker; it must wrap a capability operation call.
         var collectedArgs = new List<Expr>();
@@ -916,7 +920,7 @@ public sealed partial class Lowering
         }
 
         ReportDiagnostic(GetSpan(perform), "'perform' must be applied to a capability operation call.", UnknownCapabilityCode);
-        return LowerExpr(perform.Operation);
+        return LowerExpr(perform.Operation, request).AsPair();
     }
 
     private (int, TypeRef) LowerCapabilityOperationCall(CapabilitySymbol capabilitySym, Expr.QualifiedVar qv, List<Expr> args)
@@ -1228,7 +1232,9 @@ public sealed partial class Lowering
         return Walk(signature);
     }
 
-    private (int, TypeRef) LowerHandle(Expr.Handle handle)
+    private (int, TypeRef) LowerHandle(
+        Expr.Handle handle,
+        LoweredValueRequest request)
     {
         using var handleSpan = PushDiagnosticSpan(GetSpan(handle));
 
@@ -1272,13 +1278,15 @@ public sealed partial class Lowering
         var frameTemps = LowerHandleInstallFrames(handledCapabilities, armClosures, out int postsHeadPtrTemp);
 
         // 5. Lower the body under a row that has the handled capabilities discharged.
-        var (bodyTemp, bodyType) = LowerHandleLowerBody(handle, handledCapabilities, capabilityInstances);
+        var (bodyTemp, bodyType) = LowerHandleLowerBody(
+            handle, handledCapabilities, capabilityInstances, request);
 
         // 6. Uninstall: restore each handled capability's global from this frame's own snapshot slot.
         LowerHandleUninstallFrames(handledCapabilities, frameTemps);
 
         // 7. The return arm transforms the body's final value; without one the value passes through.
-        int currentResultTemp = LowerHandleApplyReturnArm(handle, returnArm, bodyTemp, bodyType, resultType);
+        int currentResultTemp = LowerHandleApplyReturnArm(
+            handle, returnArm, bodyTemp, bodyType, resultType, request);
 
         // 8. Fold the collected one-shot post-resume continuations over the result.
         int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp);
@@ -1434,7 +1442,11 @@ public sealed partial class Lowering
 
     // Lowers the body under a row that has the handled capabilities discharged: anything else it
     // performs flows through the fresh tail to the enclosing row.
-    private (int BodyTemp, TypeRef BodyType) LowerHandleLowerBody(Expr.Handle handle, List<CapabilitySymbol> handledCapabilities, Dictionary<string, List<TypeRef>> capabilityInstances)
+    private (int BodyTemp, TypeRef BodyType) LowerHandleLowerBody(
+        Expr.Handle handle,
+        List<CapabilitySymbol> handledCapabilities,
+        Dictionary<string, List<TypeRef>> capabilityInstances,
+        LoweredValueRequest request)
     {
         var outerTail = NewTypeVar();
         var bodyRow = new TypeRef.TRow(
@@ -1445,7 +1457,7 @@ public sealed partial class Lowering
         // Operations of the handled capabilities resolve dynamically (this handler's evidence) while
         // lowering the body — and a static provider for one of them is then an ambiguity error.
         var newlyHandled = handledCapabilities.Where(e => _lexicallyHandledCapabilities.Add(e.Name)).ToList();
-        var (bodyTemp, bodyType) = LowerExpr(handle.Body);
+        var (bodyTemp, bodyType) = LowerExpr(handle.Body, request);
         foreach (var handledCapability in newlyHandled)
         {
             _lexicallyHandledCapabilities.Remove(handledCapability.Name);
@@ -1469,7 +1481,13 @@ public sealed partial class Lowering
     }
 
     // The return arm transforms the body's final value; without one the value passes through.
-    private int LowerHandleApplyReturnArm(Expr.Handle handle, HandlerArm? returnArm, int bodyTemp, TypeRef bodyType, TypeRef resultType)
+    private int LowerHandleApplyReturnArm(
+        Expr.Handle handle,
+        HandlerArm? returnArm,
+        int bodyTemp,
+        TypeRef bodyType,
+        TypeRef resultType,
+        LoweredValueRequest request)
     {
         if (returnArm is null)
         {
@@ -1488,7 +1506,7 @@ public sealed partial class Lowering
         AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
         var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);
         AstSpans.Set(returnMatch, GetSpan(returnArm.Body));
-        var (returnTemp, returnType) = LowerExpr(returnMatch);
+        var (returnTemp, returnType) = LowerExpr(returnMatch, request);
         _scopes.Pop();
         Unify(resultType, returnType);
         return returnTemp;

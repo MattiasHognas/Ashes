@@ -5,7 +5,9 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
-    private (int, TypeRef) LowerMatch(Expr.Match match)
+    private (int, TypeRef) LowerMatch(
+        Expr.Match match,
+        LoweredValueRequest request)
     {
         // The matched value is NOT in tail position
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -14,7 +16,7 @@ public sealed partial class Lowering
         var (valueTemp, valueType) = ShouldStackAllocateImmediateMatchScrutinee(match)
             && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
                 ? loweredMatchValue
-                : LowerExpr(match.Value);
+                : LowerExpr(match.Value).AsPair();
 
 
         // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
@@ -52,7 +54,8 @@ public sealed partial class Lowering
             savedTailPos,
             reuseScrutineeName,
             runtimeReuseType,
-            normalizeStaticStringArms);
+            normalizeStaticStringArms,
+            request);
 
         Emit(new IrInst.Label(noMatchLabel));
         EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
@@ -120,17 +123,18 @@ public sealed partial class Lowering
         bool savedTailPos,
         string? reuseScrutineeName,
         TypeRef.TNamedType? runtimeReuseType,
-        bool normalizeStaticStringArms)
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
     {
         List<bool>? runtimeManagedResultArms = [];
         _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
-            LowerMatchArmsViaTagSwitch(match.Value, match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
+            LowerMatchArmsViaTagSwitch(match.Value, match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
         }
         else
         {
-            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms);
+            LowerMatchArmsLinear(match, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
         }
         _runtimeManagedMatchResultArms.Pop();
         return runtimeManagedResultArms;
@@ -466,7 +470,19 @@ public sealed partial class Lowering
     /// next arm on failure. This is the general path that handles guards, literals, tuples, cons
     /// patterns, and nested refinements.
     /// </summary>
-    private void LowerMatchArmsLinear(Expr.Match match, int valueTemp, TypeRef valueType, TypeRef resultType, int resultSlot, string endLabel, string noMatchLabel, bool savedTailPos, string? reuseScrutineeName = null, TypeRef.TNamedType? runtimeReuseType = null, bool normalizeStaticStringArms = false)
+    private void LowerMatchArmsLinear(
+        Expr.Match match,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
     {
         for (int i = 0; i < match.Cases.Count; i++)
         {
@@ -489,7 +505,7 @@ public sealed partial class Lowering
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms, request);
 
             EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
 
@@ -642,7 +658,16 @@ public sealed partial class Lowering
     /// into the result slot before jumping to the match end label. Shared by the linear and
     /// tag-switch arm lowerings.
     /// </summary>
-    private void LowerMatchArmBodyIntoResult(IReadOnlyList<MatchCase> cases, int i, TypeRef resultType, int resultSlot, string endLabel, bool savedTailPos, ArmReuseContext reuseContext, bool normalizeStaticStringArms)
+    private void LowerMatchArmBodyIntoResult(
+        IReadOnlyList<MatchCase> cases,
+        int i,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        bool savedTailPos,
+        ArmReuseContext reuseContext,
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
     {
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -650,7 +675,8 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerMatchArmExpressionWithReuseContext(
             cases[i].Body,
             reuseContext.TokensBefore,
-            normalizeStaticStringArms);
+            normalizeStaticStringArms,
+            request);
         foreach (string name in reuseContext.AddedLinearNames)
         {
             _linearReuseNames.Remove(name);
@@ -686,7 +712,8 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type) LowerMatchArmExpressionWithReuseContext(
         Expr body,
         int reuseTokensBefore,
-        bool normalizeStaticStringArm)
+        bool normalizeStaticStringArm,
+        LoweredValueRequest request)
     {
         IrFunctionOrigin? savedReuseArmOrigin = _activeReuseArmOrigin;
         if (_reuseTokens.Count > reuseTokensBefore)
@@ -699,7 +726,8 @@ public sealed partial class Lowering
             return LowerMatchArmExpression(
                 body,
                 reuseTokensBefore,
-                normalizeStaticStringArm);
+                normalizeStaticStringArm,
+                request);
         }
         finally
         {
@@ -707,36 +735,34 @@ public sealed partial class Lowering
         }
     }
 
-    private (int Temp, TypeRef Type) LowerMatchArmExpression(Expr body, int reuseTokensBefore, bool normalizeStaticStringArm)
+    private (int Temp, TypeRef Type) LowerMatchArmExpression(
+        Expr body,
+        int reuseTokensBefore,
+        bool normalizeStaticStringArm,
+        LoweredValueRequest request)
     {
         TypeRef.TNamedType? runtimeReuseType = _reuseTokens
             .Skip(reuseTokensBefore)
             .Select(token => token.RuntimeCleanup?.Type)
             .FirstOrDefault(type => type is not null);
-        TypeRef.TNamedType? savedReuseType = _runtimeRcReuseAllocationTypeRequested;
-        _runtimeRcReuseAllocationTypeRequested = runtimeReuseType ?? savedReuseType;
-        try
+        request = request.WithRuntimeAdtContext(
+            childBindings: null,
+            reuseType: runtimeReuseType);
+        if (normalizeStaticStringArm && body is Expr.StrLit literal)
         {
-            if (normalizeStaticStringArm && body is Expr.StrLit literal)
-            {
-                var (sourceTemp, sourceType) = LowerStr(literal);
-                int resultTemp = NewTemp();
-                Emit(new IrInst.CopyOutArena(
-                    resultTemp,
-                    sourceTemp,
-                    -1,
-                    RuntimeManaged: true,
-                    IrInst.CopyOutPurpose.RcNormalization));
-                MarkRuntimeManagedTemp(resultTemp);
-                return (resultTemp, sourceType);
-            }
+            var (sourceTemp, sourceType) = LowerStr(literal);
+            int resultTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                resultTemp,
+                sourceTemp,
+                -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            MarkRuntimeManagedTemp(resultTemp);
+            return (resultTemp, sourceType);
+        }
 
-            return LowerExpr(body);
-        }
-        finally
-        {
-            _runtimeRcReuseAllocationTypeRequested = savedReuseType;
-        }
+        return LowerExpr(body, request).AsPair();
     }
 
     private void ReleaseUnconsumedReuseTokens(int reuseTokensBefore)
@@ -942,7 +968,8 @@ public sealed partial class Lowering
         bool savedTailPos,
         string? reuseScrutineeName = null,
         TypeRef.TNamedType? runtimeReuseType = null,
-        bool normalizeStaticStringArms = false)
+        bool normalizeStaticStringArms = false,
+        LoweredValueRequest request = default)
     {
         int tagTemp = NewTemp();
         Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
@@ -976,7 +1003,7 @@ public sealed partial class Lowering
                 reuseScrutineeName,
                 runtimeReuseType);
 
-            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms);
+            LowerMatchArmBodyIntoResult(cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms, request);
 
             _scopes.Pop();
         }
@@ -1379,18 +1406,20 @@ public sealed partial class Lowering
         int tailTemp,
         TypeRef headType,
         TypeRef tailType,
-        SourceLocation? location)
+        SourceLocation? location,
+        LoweredValueRequest request)
     {
         var listType = new TypeRef.TList(headType);
         Unify(tailType, listType);
 
         int nodeTemp = NewTemp();
-        bool runtimeManaged = _runtimeRcListAllocationRequested
+        bool runtimeManaged =
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(headType, headTemp);
         bool reusedCell = EmitListCellAllocation(nodeTemp, runtimeManaged, location);
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
-        if (!reusedCell && runtimeManaged && _runtimeRcTcoListTailSlot is not null)
+        if (!reusedCell && runtimeManaged && request.RuntimeTcoListTailSlot is not null)
         {
             MarkRuntimeManagedTemp(nodeTemp);
         }
@@ -1407,7 +1436,7 @@ public sealed partial class Lowering
         // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
         // the assert below), so `runtimeManaged` only ever governs the FRESH-allocation branch; it must
         // never also drive the post-emission bookkeeping when the reuse branch actually ran. Before this
-        // fix, the bookkeeping below keyed only off `runtimeManaged` (and `_runtimeRcTcoListTailSlot`),
+        // fix, the bookkeeping below keyed only off `runtimeManaged` (and the ambient TCO-tail slot),
         // independent of which branch emitted the cell — so a reuse-token hit could mark a cell that was
         // just given a plain arena AllocReusing (RuntimeManaged: false, no RC header) as runtime-managed
         // anyway, which would make a later RcDup/RcDrop read/write a bogus header at that address. Track

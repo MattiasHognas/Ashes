@@ -305,6 +305,12 @@ public abstract record IrInst
         /// <summary>The reservation's end-cursor local slot paired with <see cref="AffineResvStartSlot"/>;
         /// -1 when this add was not armed as an affine append.</summary>
         public int AffineResvEndSlot { get; init; } = -1;
+
+        /// <summary>
+        /// Runtime representation requested for a provisional heap-producing addition. This is
+        /// consulted only if <see cref="DeferredType"/> later resolves to Str or BigInt.
+        /// </summary>
+        internal LoweredValueRuntimeRepresentation RequestedRuntimeRepresentation { get; init; }
     }
     /// <summary>Integer subtraction <c>Target = Left - Right</c>.</summary>
     /// <param name="Target">Temp receiving the difference.</param>

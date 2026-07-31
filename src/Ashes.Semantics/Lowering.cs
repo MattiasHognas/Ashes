@@ -587,34 +587,7 @@ public sealed partial class Lowering
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
     private readonly HashSet<int> _reuseResultTemps = new();
 
-    // Set only while lowering a direct local record literal whose uses are copy-field reads. This
-    // narrow boundary cannot escape through calls, returns, matches, updates, or captured variables.
-    private bool _runtimeRcRecordAllocationRequested;
-
-    // Set while lowering a copy-only user ADT that is consumed by its immediately enclosing match.
-    private bool _runtimeRcCopyAdtAllocationRequested;
-    private bool _runtimeRcTcoAdtAllocationRequested;
-    // Set while lowering a match arm with a runtime reuse token. Unlike the general copy-ADT
-    // request, this is restricted to the scrutinee's type so unrelated constructors remain arena
-    // managed and cannot consume the token merely because their layouts happen to match.
-    private TypeRef.TNamedType? _runtimeRcReuseAllocationTypeRequested;
-    private Dictionary<string, bool>? _runtimeRcAdtChildBindings;
     private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
-    private bool _runtimeRcStringAllocationRequested;
-    private bool _runtimeRcBytesAllocationRequested;
-    private bool _runtimeRcBigIntAllocationRequested;
-    private bool _runtimeRcClosureAllocationRequested;
-    private bool _runtimeRcScalarResultAllocationRequested;
-    private bool _runtimeRcBigIntParseResultAllocationRequested;
-    private bool _runtimeRcTextUnconsResultAllocationRequested;
-    private bool _runtimeRcTupleAllocationRequested;
-
-    // Set while lowering a fully fresh list of copy elements consumed by an immediate match.
-    private bool _runtimeRcListAllocationRequested;
-    private string? _runtimeRcListTailBinding;
-    private bool _runtimeRcListTailShared;
-    private int? _runtimeRcTcoListTailSlot;
-
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -2347,7 +2320,23 @@ public sealed partial class Lowering
                     add.AffineResvEndSlot,
                     IsRuntimeManagedResultTemp(add.Left))
                 { Location = add.Location }),
-                TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(add.Target, add.Left, add.Right) { Location = add.Location }),
+                TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(
+                    add.Target,
+                    add.Left,
+                    add.Right,
+                    (add.RequestedRuntimeRepresentation
+                        & LoweredValueRuntimeRepresentation.String)
+                        != LoweredValueRuntimeRepresentation.None)
+                { Location = add.Location }),
+                TypeRef.TBigInt => new IrInst.BigIntBinary(
+                    add.Target,
+                    add.Left,
+                    add.Right,
+                    "add",
+                    (add.RequestedRuntimeRepresentation
+                        & LoweredValueRuntimeRepresentation.BigInt)
+                        != LoweredValueRuntimeRepresentation.None)
+                { Location = add.Location },
                 TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
                 _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
             };
@@ -2513,7 +2502,9 @@ public sealed partial class Lowering
         }
     }
 
-    private (int Temp, TypeRef Type) LowerExpr(Expr e)
+    private LoweredValue LowerExpr(
+        Expr e,
+        LoweredValueRequest request = default)
     {
         var previousExpr = _currentSourceExpr;
         _currentSourceExpr = e;
@@ -2525,34 +2516,34 @@ public sealed partial class Lowering
             _pendingHelperCoroutine = null;
             var helperLowered = LowerHelperCoroutineTask(pendingHelper);
             RecordExprHoverType(e, helperLowered.Item2);
+            LoweredValue helperValue = CreateLoweredValue(helperLowered.Item1, helperLowered.Item2);
             _currentSourceExpr = previousExpr;
-            TypeRef helperType = Prune(helperLowered.Item2);
-            RefineTempOwnershipType(helperLowered.Item1, helperType);
-            return (helperLowered.Item1, helperType);
+            return helperValue;
         }
 
-        var lowered = LowerExprDispatch(e);
+        var lowered = LowerExprDispatch(e, request);
 
         RecordExprHoverType(e, lowered.Type);
+        LoweredValue value = CreateLoweredValue(lowered.Temp, lowered.Type);
         _currentSourceExpr = previousExpr;
-        TypeRef prunedType = Prune(lowered.Type);
-        RefineTempOwnershipType(lowered.Temp, prunedType);
-        return (lowered.Temp, prunedType);
+        return value;
     }
 
-    private (int Temp, TypeRef Type) LowerExprDispatch(Expr e)
+    private (int Temp, TypeRef Type) LowerExprDispatch(
+        Expr e,
+        LoweredValueRequest request)
     {
         return e switch
         {
             Expr.IntLit lit => LowerInt(lit),
             Expr.UIntLit lit => LowerUInt(lit),
-            Expr.BigIntLit lit => LowerBigIntLit(lit),
+            Expr.BigIntLit lit => LowerBigIntLit(lit, request),
             Expr.FloatLit lit => LowerFloat(lit),
             Expr.StrLit str => LowerStr(str),
             Expr.BoolLit b => LowerBool(b),
-            Expr.Var v => LowerVar(v),
-            Expr.QualifiedVar qv => LowerQualifiedVar(qv),
-            Expr.Add add => LowerAdd(add),
+            Expr.Var v => LowerVar(v, request),
+            Expr.QualifiedVar qv => LowerQualifiedVar(qv, request),
+            Expr.Add add => LowerAdd(add, request),
             Expr.Subtract sub => LowerSubtract(sub),
             Expr.Multiply mul => LowerMultiply(mul),
             Expr.Divide div => LowerDivide(div),
@@ -2571,23 +2562,23 @@ public sealed partial class Lowering
             Expr.NotEqual ne => LowerNotEqual(ne),
             Expr.ResultPipe pipe => LowerResultPipe(pipe),
             Expr.ResultMapErrorPipe pipe => LowerResultMapErrorPipe(pipe),
-            Expr.Let let => LowerLet(let),
-            Expr.LetResult letResult => LowerLetResult(letResult),
-            Expr.LetRecursive letRecursive => LowerLetRecursive(letRecursive),
-            RecursiveGroupExpr group => LowerRecursiveGroup(group),
-            Expr.If iff => LowerIf(iff),
-            Expr.Lambda lam => LowerLambda(lam),
-            Expr.Call call => LowerCall(call),
-            Expr.TupleLit tuple => LowerTupleLit(tuple),
-            Expr.ListLit list => LowerListLit(list),
-            Expr.Cons cons => LowerCons(cons),
-            Expr.Match match => LowerMatch(match),
+            Expr.Let let => LowerLet(let, request),
+            Expr.LetResult letResult => LowerLetResult(letResult, request),
+            Expr.LetRecursive letRecursive => LowerLetRecursive(letRecursive, request),
+            RecursiveGroupExpr group => LowerRecursiveGroup(group, request),
+            Expr.If iff => LowerIf(iff, request),
+            Expr.Lambda lam => LowerLambda(lam, request: request),
+            Expr.Call call => LowerCall(call, request),
+            Expr.TupleLit tuple => LowerTupleLit(tuple, request),
+            Expr.ListLit list => LowerListLit(list, request),
+            Expr.Cons cons => LowerCons(cons, request),
+            Expr.Match match => LowerMatch(match, request),
             Expr.Await awaitExpr => LowerAwait(awaitExpr),
-            Expr.RecordLit rl => LowerRecordLit(rl),
-            Expr.RecordUpdate ru => LowerRecordUpdate(ru),
-            Expr.Perform perform => LowerPerform(perform),
-            Expr.Handle handle => LowerHandle(handle),
-            CapabilityPostExpr capabilityPost => LowerCapabilityPost(capabilityPost),
+            Expr.RecordLit rl => LowerRecordLit(rl, request),
+            Expr.RecordUpdate ru => LowerRecordUpdate(ru, request),
+            Expr.Perform perform => LowerPerform(perform, request),
+            Expr.Handle handle => LowerHandle(handle, request),
+            CapabilityPostExpr capabilityPost => LowerCapabilityPost(capabilityPost, request),
             _ => throw new NotSupportedException($"Unknown expr: {e.GetType().Name}")
         };
     }
@@ -2640,7 +2631,9 @@ public sealed partial class Lowering
     private bool IsRuntimeManagedTcoParamSlot(Binding.Local local) =>
         _tcoCtx?.IsRuntimeManagedSlot(local.Slot) == true;
 
-    private (int, TypeRef) LowerVar(Expr.Var v)
+    private (int, TypeRef) LowerVar(
+        Expr.Var v,
+        LoweredValueRequest request = default)
     {
         var b = Lookup(v.Name);
         if (_reuseBindingSeenBySlot.Count > 0 && b is Binding.Local seenLocal
@@ -2651,7 +2644,7 @@ public sealed partial class Lowering
 
         if (b is null)
         {
-            return LowerVarUnbound(v);
+            return LowerVarUnbound(v, request);
         }
 
         var result = LowerVarBound(v, b);
@@ -2686,7 +2679,9 @@ public sealed partial class Lowering
         return result;
     }
 
-    private (int, TypeRef) LowerVarUnbound(Expr.Var v)
+    private (int, TypeRef) LowerVarUnbound(
+        Expr.Var v,
+        LoweredValueRequest request)
     {
         if (_topLevelFunctionRefs.TryGetValue(v.Name, out var topRef))
         {
@@ -2707,6 +2702,8 @@ public sealed partial class Lowering
                 topRef.Label,
                 envTemp,
                 0,
+                RuntimeManaged: request.EmitsRuntime(
+                    LoweredValueRuntimeRepresentation.Closure),
                 ReturnsRuntimeManaged: !_usesAsync && !_programHasDynamicCapabilityDispatch
                     && _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
@@ -2716,7 +2713,8 @@ public sealed partial class Lowering
         {
             return LowerConstructorReference(
                 ctorSym,
-                ResolveSourceLocation(AstSpans.GetOrDefault(v)));
+                ResolveSourceLocation(AstSpans.GetOrDefault(v)),
+                request);
         }
 
         if (_topLevelBindingNames.Contains(v.Name))
@@ -2751,11 +2749,12 @@ public sealed partial class Lowering
     /// </summary>
     private (int, TypeRef) LowerConstructorReference(
         ConstructorSymbol ctorSym,
-        SourceLocation? location = null)
+        SourceLocation? location = null,
+        LoweredValueRequest request = default)
     {
         return ctorSym.Arity == 0
-            ? LowerNullaryConstructor(ctorSym, location: location)
-            : LowerExpr(BuildConstructorLambda(ctorSym));
+            ? LowerNullaryConstructor(ctorSym, location: location, request: request)
+            : LowerExpr(BuildConstructorLambda(ctorSym)).AsPair();
     }
 
     private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
@@ -2934,7 +2933,9 @@ public sealed partial class Lowering
         return args;
     }
 
-    private (int, TypeRef) LowerLet(Expr.Let let)
+    private (int, TypeRef) LowerLet(
+        Expr.Let let,
+        LoweredValueRequest request)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
@@ -2945,7 +2946,7 @@ public sealed partial class Lowering
 
         int depth0Before = _depth0LambdaCount;
 
-        var (valueTemp, valueType) = LowerLetAnnotatedValue(let);
+        var (valueTemp, valueType) = LowerLetAnnotatedValue(let, request);
 
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, valueTemp));
@@ -2972,7 +2973,7 @@ public sealed partial class Lowering
             // so match the defining let by the value object identity recorded at registration.
             || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
-        var (bodyTemp, bodyType) = LowerEscapingResult(let.Body);
+        var (bodyTemp, bodyType) = LowerEscapingResult(let.Body, request: request);
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
@@ -3005,7 +3006,10 @@ public sealed partial class Lowering
         }
     }
 
-    private (int Temp, TypeRef Type) LowerEscapingResult(Expr body, bool normalizeStaticString = false)
+    private (int Temp, TypeRef Type) LowerEscapingResult(
+        Expr body,
+        bool normalizeStaticString = false,
+        LoweredValueRequest request = default)
     {
         if (normalizeStaticString && body is Expr.StrLit literal)
         {
@@ -3021,7 +3025,10 @@ public sealed partial class Lowering
             return (resultTemp, sourceType);
         }
 
-        if (TryLowerRuntimeManagedBuiltinResultBody(body, out (int Temp, TypeRef Type) builtinResult))
+        if (TryLowerRuntimeManagedBuiltinResultBody(
+                body,
+                request,
+                out (int Temp, TypeRef Type) builtinResult))
         {
             return builtinResult;
         }
@@ -3043,7 +3050,7 @@ public sealed partial class Lowering
             && !runtimeManagedBytes && !runtimeManagedBigInt
             && !runtimeManagedTuple && !runtimeManagedRecord && !runtimeManagedClosure)
         {
-            return LowerExpr(body);
+            return LowerExpr(body, request).AsPair();
         }
 
         return LowerEscapingRuntimeManagedResult(
@@ -3055,7 +3062,8 @@ public sealed partial class Lowering
             runtimeManagedBigInt,
             runtimeManagedTuple,
             runtimeManagedRecord,
-            runtimeManagedClosure);
+            runtimeManagedClosure,
+            request);
     }
 
     // True when the escaping result IS a tuple (directly, or through the arms of a match/if or the
@@ -3063,7 +3071,7 @@ public sealed partial class Lowering
     // Lowering.TopCellFreshness.cs). A tuple built in a match arm otherwise stays arena-managed, so a
     // function like `readWord acc text = ... -> (acc, rest)` returns a tuple whose runtime-managed
     // string field lives in the callee's arena; the next call reuses that arena and overwrites it.
-    // Marking the result a fresh tuple sets _runtimeRcTupleAllocationRequested, so LowerTupleLit
+    // Marking the result a fresh tuple adds an explicit Tuple representation request, so LowerTupleLit
     // allocates the tuple in the RC heap (only when its elements are themselves runtime-manageable — a
     // scalar tuple stays arena), keeping it alive across calls.
     //
@@ -3071,9 +3079,9 @@ public sealed partial class Lowering
     // which case it must fail outright. An earlier version of this predicate used a plain existence
     // check on the theory that tuples don't share the ADT CO-38 hazard (PR #299) — that theory was
     // incomplete: `if cond then existingTuple else (fresh, tuple)` (one arm a bare-Var passthrough of an
-    // existing, not-provably-fresh binding, the other a genuine TupleLit) sets the ambient
-    // _runtimeRcTupleAllocationRequested flag for the WHOLE position under a plain existence check, so
-    // the fresh arm's TupleLit gets allocated on the RC heap — but the join-level
+    // existing, not-provably-fresh binding, the other a genuine TupleLit) requests the RC tuple
+    // representation for the WHOLE position under a plain existence check, so the fresh arm's TupleLit
+    // gets allocated on the RC heap — but the join-level
     // MarkUniformRuntimeManagedResult/MarkRuntimeManagedMatchResult machinery (which decides whether the
     // joined/matched value is actually treated as owned) requires every arm independently verified
     // runtime-managed, which the passthrough arm never is. Confirmed by a compiled-binary repro: an
@@ -3205,55 +3213,35 @@ public sealed partial class Lowering
         bool runtimeManagedBigInt,
         bool runtimeManagedTuple,
         bool runtimeManagedRecord,
-        bool runtimeManagedClosure)
+        bool runtimeManagedClosure,
+        LoweredValueRequest request)
     {
-        bool savedStringRequest = _runtimeRcStringAllocationRequested;
-        bool savedAdtRequest = _runtimeRcCopyAdtAllocationRequested;
-        bool savedListRequest = _runtimeRcListAllocationRequested;
-        bool savedBytesRequest = _runtimeRcBytesAllocationRequested;
-        bool savedBigIntRequest = _runtimeRcBigIntAllocationRequested;
-        bool savedTupleRequest = _runtimeRcTupleAllocationRequested;
-        bool savedRecordRequest = _runtimeRcRecordAllocationRequested;
-        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
-        _runtimeRcStringAllocationRequested |= runtimeManagedString;
-        _runtimeRcCopyAdtAllocationRequested |= runtimeManagedAdt;
-        _runtimeRcListAllocationRequested |= runtimeManagedList;
-        _runtimeRcBytesAllocationRequested |= runtimeManagedBytes;
-        _runtimeRcBigIntAllocationRequested |= runtimeManagedBigInt;
+        request = request
+            .AddRuntime(runtimeManagedString, LoweredValueRuntimeRepresentation.String)
+            .AddRuntime(runtimeManagedBytes, LoweredValueRuntimeRepresentation.Bytes)
+            .AddRuntime(runtimeManagedBigInt, LoweredValueRuntimeRepresentation.BigInt)
+            .AddRuntime(runtimeManagedList, LoweredValueRuntimeRepresentation.List)
+            .AddRuntime(runtimeManagedAdt, LoweredValueRuntimeRepresentation.Adt)
+            .AddRuntime(runtimeManagedRecord, LoweredValueRuntimeRepresentation.Record)
+            .AddRuntime(runtimeManagedClosure, LoweredValueRuntimeRepresentation.Closure)
+            .AddRuntime(
+                runtimeManagedTuple
+                    || runtimeManagedAdt
+                    || runtimeManagedList
+                    || runtimeManagedRecord,
+                LoweredValueRuntimeRepresentation.Tuple);
         // A tuple nested inside an escaping ADT/list/record (e.g. `Ok((acc, tail))` from a JSON
         // parser) carries the same dangling-string hazard as a directly-returned tuple: its string
         // fields live in the callee's arena and the next call overwrites them. The enclosing composite
         // is RC-allocated and escapes, so mark tuples runtime-managed too, letting LowerTupleLit
         // materialize (copy out) their string fields. Restricted to string-field materialization —
         // a scalar tuple still stays arena (see IsRuntimeManageableTupleElement).
-        _runtimeRcTupleAllocationRequested |=
-            runtimeManagedTuple || runtimeManagedAdt || runtimeManagedList || runtimeManagedRecord;
-        _runtimeRcRecordAllocationRequested |= runtimeManagedRecord;
-        _runtimeRcClosureAllocationRequested |= runtimeManagedClosure;
-        try
-        {
-            (int Temp, TypeRef Type) lowered = LowerExpr(body);
-            if (runtimeManagedClosure)
-            {
-                MarkRuntimeManagedTemp(lowered.Temp);
-            }
-            return lowered;
-        }
-        finally
-        {
-            _runtimeRcStringAllocationRequested = savedStringRequest;
-            _runtimeRcCopyAdtAllocationRequested = savedAdtRequest;
-            _runtimeRcListAllocationRequested = savedListRequest;
-            _runtimeRcBytesAllocationRequested = savedBytesRequest;
-            _runtimeRcBigIntAllocationRequested = savedBigIntRequest;
-            _runtimeRcTupleAllocationRequested = savedTupleRequest;
-            _runtimeRcRecordAllocationRequested = savedRecordRequest;
-            _runtimeRcClosureAllocationRequested = savedClosureRequest;
-        }
+        return LowerExpr(body, request).AsPair();
     }
 
     private bool TryLowerRuntimeManagedBuiltinResultBody(
         Expr body,
+        LoweredValueRequest request,
         out (int Temp, TypeRef Type) lowered)
     {
         bool scalarResult = IsRuntimeRcScalarResultProducer(body);
@@ -3265,28 +3253,25 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedScalarRequest = _runtimeRcScalarResultAllocationRequested;
-        bool savedBigIntRequest = _runtimeRcBigIntParseResultAllocationRequested;
-        bool savedUnconsRequest = _runtimeRcTextUnconsResultAllocationRequested;
-        _runtimeRcScalarResultAllocationRequested |= scalarResult;
-        _runtimeRcBigIntParseResultAllocationRequested |= bigIntParseResult;
-        _runtimeRcTextUnconsResultAllocationRequested |= textUnconsResult;
-        try
-        {
-            lowered = LowerExpr(body);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcScalarResultAllocationRequested = savedScalarRequest;
-            _runtimeRcBigIntParseResultAllocationRequested = savedBigIntRequest;
-            _runtimeRcTextUnconsResultAllocationRequested = savedUnconsRequest;
-        }
+        request = request
+            .AddRuntime(
+                scalarResult,
+                LoweredValueRuntimeRepresentation.ScalarAdtResult)
+            .AddRuntime(
+                bigIntParseResult,
+                LoweredValueRuntimeRepresentation.BigIntParseResult)
+            .AddRuntime(
+                textUnconsResult,
+                LoweredValueRuntimeRepresentation.TextUnconsResult);
+        lowered = LowerExpr(body, request).AsPair();
+        return true;
     }
 
     // Seed parameter types from the annotation (if any) before lowering the value, so operators on
     // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
-    private (int Temp, TypeRef Type) LowerLetAnnotatedValue(Expr.Let let)
+    private (int Temp, TypeRef Type) LowerLetAnnotatedValue(
+        Expr.Let let,
+        LoweredValueRequest request)
     {
         var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
         var savedAnnotParams = _annotationParamTypes;
@@ -3297,7 +3282,7 @@ public sealed partial class Lowering
             _annotationParamCursor = 0;
         }
 
-        var (valueTemp, valueType) = LowerLetValue(let);
+        var (valueTemp, valueType) = LowerLetValue(let, request);
         _annotationParamTypes = savedAnnotParams;
         _annotationParamCursor = savedAnnotCursor;
 
@@ -3311,7 +3296,9 @@ public sealed partial class Lowering
         return (valueTemp, valueType);
     }
 
-    private (int Temp, TypeRef Type) LowerLetValue(Expr.Let let)
+    private (int Temp, TypeRef Type) LowerLetValue(
+        Expr.Let let,
+        LoweredValueRequest request)
     {
         var stackAllocateClosure = let.Value is Expr.Lambda && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
         if (stackAllocateClosure && let.Value is Expr.Lambda lambda)
@@ -3326,45 +3313,35 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
-        if (TryLowerRuntimeRcStringLet(let, out (int Temp, TypeRef Type) loweredString))
+        if (TryLowerRuntimeManagedLetValue(
+                let,
+                request,
+                out (int Temp, TypeRef Type) lowered))
         {
-            return loweredString;
+            return lowered;
         }
 
-        if (TryLowerRuntimeRcBuiltinResultLet(let, out (int Temp, TypeRef Type) loweredBuiltinResult))
-        {
-            return loweredBuiltinResult;
-        }
-
-        if (TryLowerRuntimeRcBytesLet(let, out (int Temp, TypeRef Type) loweredBytes))
-        {
-            return loweredBytes;
-        }
-
-        if (TryLowerRuntimeRcRecordLet(let, out (int Temp, TypeRef Type) loweredRecord))
-        {
-            return loweredRecord;
-        }
-
-        if (TryLowerRuntimeRcTupleLet(let, out (int Temp, TypeRef Type) loweredTuple))
-        {
-            return loweredTuple;
-        }
-
-        if (TryLowerRuntimeRcListLet(let, out (int Temp, TypeRef Type) loweredList))
-        {
-            return loweredList;
-        }
-
-        if (TryLowerRuntimeRcAdtLet(let, out (int Temp, TypeRef Type) loweredAdtValue))
-        {
-            return loweredAdtValue;
-        }
-
-        return LowerRemainingLetValue(let);
+        return LowerRemainingLetValue(let, request);
     }
 
-    private bool TryLowerRuntimeRcStringLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeManagedLetValue(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
+    {
+        return TryLowerRuntimeRcStringLet(let, request, out lowered)
+            || TryLowerRuntimeRcBuiltinResultLet(let, request, out lowered)
+            || TryLowerRuntimeRcBytesLet(let, request, out lowered)
+            || TryLowerRuntimeRcRecordLet(let, request, out lowered)
+            || TryLowerRuntimeRcTupleLet(let, request, out lowered)
+            || TryLowerRuntimeRcListLet(let, request, out lowered)
+            || TryLowerRuntimeRcAdtLet(let, request, out lowered);
+    }
+
+    private bool TryLowerRuntimeRcStringLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if (!IsRuntimeRcStringProducer(let.Value)
@@ -3380,17 +3357,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcStringAllocationRequested;
-        _runtimeRcStringAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcStringAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.String)).AsPair();
+        return true;
     }
 
     private static bool IsDirectBindingResult(Expr body, string bindingName)
@@ -3399,7 +3371,10 @@ public sealed partial class Lowering
             && string.Equals(variable.Name, bindingName, StringComparison.Ordinal);
     }
 
-    private bool TryLowerRuntimeRcBytesLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcBytesLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if (!IsRuntimeRcBytesProducer(let.Value)
@@ -3415,27 +3390,28 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcBytesAllocationRequested;
-        _runtimeRcBytesAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcBytesAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.Bytes)).AsPair();
+        return true;
     }
 
-    private bool TryLowerRuntimeRcBuiltinResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcBuiltinResultLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
-        return TryLowerRuntimeRcScalarResultLet(let, out lowered)
-            || TryLowerRuntimeRcBigIntParseResultLet(let, out lowered)
-            || TryLowerRuntimeRcTextUnconsResultLet(let, out lowered);
+        return TryLowerRuntimeRcScalarResultLet(let, request, out lowered)
+            || TryLowerRuntimeRcBigIntParseResultLet(let, request, out lowered)
+            || TryLowerRuntimeRcTextUnconsResultLet(let, request, out lowered);
     }
 
-    private bool TryLowerRuntimeRcScalarResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcScalarResultLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcScalarResultProducer(let.Value)
             || (!IsImmediateAdtMatchUse(let.Name, let.Body)
@@ -3445,17 +3421,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcScalarResultAllocationRequested;
-        _runtimeRcScalarResultAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcScalarResultAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.ScalarAdtResult)).AsPair();
+        return true;
     }
 
     private bool IsRuntimeRcScalarResultProducer(Expr expression)
@@ -3473,7 +3444,10 @@ public sealed partial class Lowering
                 && string.Equals(qualified.Name, "toInt", StringComparison.Ordinal);
     }
 
-    private bool TryLowerRuntimeRcBigIntParseResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcBigIntParseResultLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcBigIntParseResultProducer(let.Value)
             || (!IsImmediateRuntimeBigIntParseMatchUse(let.Name, let.Body)
@@ -3483,17 +3457,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcBigIntParseResultAllocationRequested;
-        _runtimeRcBigIntParseResultAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcBigIntParseResultAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.BigIntParseResult)).AsPair();
+        return true;
     }
 
     private bool IsRuntimeRcBigIntParseResultProducer(Expr expression)
@@ -3565,7 +3534,10 @@ public sealed partial class Lowering
                 && string.Equals(rightVariable.Name, bindingName, StringComparison.Ordinal);
     }
 
-    private bool TryLowerRuntimeRcTextUnconsResultLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcTextUnconsResultLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         if (!IsRuntimeRcTextUnconsResultProducer(let.Value)
             || (!IsImmediateRuntimeTextUnconsMatchUse(let.Name, let.Body)
@@ -3575,17 +3547,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcTextUnconsResultAllocationRequested;
-        _runtimeRcTextUnconsResultAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcTextUnconsResultAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.TextUnconsResult)).AsPair();
+        return true;
     }
 
     private bool IsRuntimeRcTextUnconsResultProducer(Expr expression)
@@ -3661,16 +3628,27 @@ public sealed partial class Lowering
         return false;
     }
 
-    private (int Temp, TypeRef Type) LowerRemainingLetValue(Expr.Let let)
+    private (int Temp, TypeRef Type) LowerRemainingLetValue(
+        Expr.Let let,
+        LoweredValueRequest request)
     {
-        return TryLowerRuntimeRcCopyClosureLet(let, out (int Temp, TypeRef Type) loweredClosure)
+        return TryLowerRuntimeRcCopyClosureLet(
+                let,
+                request,
+                out (int Temp, TypeRef Type) loweredClosure)
             ? loweredClosure
-            : TryLowerRuntimeRcBigIntLet(let, out (int Temp, TypeRef Type) loweredBigInt)
+            : TryLowerRuntimeRcBigIntLet(
+                    let,
+                    request,
+                    out (int Temp, TypeRef Type) loweredBigInt)
                 ? loweredBigInt
-                : LowerExpr(let.Value);
+                : LowerExpr(let.Value, request).AsPair();
     }
 
-    private bool TryLowerRuntimeRcCopyClosureLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcCopyClosureLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         if (_usesAsync
             || _inCoroutineBody
@@ -3691,18 +3669,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcClosureAllocationRequested;
-        _runtimeRcClosureAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            MarkRuntimeManagedTemp(lowered.Temp);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcClosureAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.Closure)).AsPair();
+        return true;
     }
 
     private bool IsRuntimeRcCopyClosureProducer(Expr expression)
@@ -3845,7 +3817,10 @@ public sealed partial class Lowering
             && string.Equals(bigInt.Name, "compare", StringComparison.Ordinal);
     }
 
-    private bool TryLowerRuntimeRcBigIntLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcBigIntLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if (!IsRuntimeRcBigIntProducer(let.Value)
@@ -3861,21 +3836,17 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcBigIntAllocationRequested;
-        _runtimeRcBigIntAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcBigIntAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.BigInt)).AsPair();
+        return true;
     }
 
     private bool TryLowerRuntimeRcRecordLet(
         Expr.Let let,
+        LoweredValueRequest request,
         out (int Temp, TypeRef Type) lowered)
     {
         bool directFreshEscape = IsDirectBindingResult(let.Body, let.Name)
@@ -3894,23 +3865,19 @@ public sealed partial class Lowering
         }
 
         TryCollectRuntimeRcRecordChildBindings(let.Value, let.Body, out Dictionary<string, bool>? childBindings);
-        bool savedRequest = _runtimeRcRecordAllocationRequested;
-        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
-        _runtimeRcRecordAllocationRequested = true;
-        _runtimeRcAdtChildBindings = childBindings;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcRecordAllocationRequested = savedRequest;
-            _runtimeRcAdtChildBindings = savedChildBindings;
-        }
+        LoweredValueRequest representationRequest = request
+            .AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.Record)
+            .WithRuntimeAdtContext(childBindings);
+        lowered = LowerExpr(let.Value, representationRequest).AsPair();
+        return true;
     }
 
-    private bool TryLowerRuntimeRcTupleLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcTupleLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         if (let.Value is not Expr.TupleLit
             || (!IsDirectBindingResult(let.Body, let.Name)
@@ -3920,17 +3887,12 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcTupleAllocationRequested;
-        _runtimeRcTupleAllocationRequested = true;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcTupleAllocationRequested = savedRequest;
-        }
+        lowered = LowerExpr(
+            let.Value,
+            request.AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.Tuple)).AsPair();
+        return true;
     }
 
     private bool IsImmediateRuntimeStringUse(Expr body, string bindingName)
@@ -4215,7 +4177,10 @@ public sealed partial class Lowering
         return IsRuntimeRcBigIntProducer(expression);
     }
 
-    private bool TryLowerRuntimeRcAdtLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcAdtLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         bool immediateMatch = IsConstructorExpression(let.Value)
             && IsImmediateSafeAdtMatchUse(let.Name, let.Value, let.Body);
@@ -4240,20 +4205,13 @@ public sealed partial class Lowering
             }
         }
 
-        bool savedRequest = _runtimeRcCopyAdtAllocationRequested;
-        Dictionary<string, bool>? savedChildBindings = _runtimeRcAdtChildBindings;
-        _runtimeRcCopyAdtAllocationRequested = true;
-        _runtimeRcAdtChildBindings = childBindings;
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcCopyAdtAllocationRequested = savedRequest;
-            _runtimeRcAdtChildBindings = savedChildBindings;
-        }
+        LoweredValueRequest representationRequest = request
+            .AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.Adt)
+            .WithRuntimeAdtContext(childBindings);
+        lowered = LowerExpr(let.Value, representationRequest).AsPair();
+        return true;
     }
 
     private bool IsFreshRuntimeManageableAdtExpression(Expr expression)
@@ -4277,7 +4235,10 @@ public sealed partial class Lowering
                     && IsFreshConstructorTree(expression, resultType.Symbol)));
     }
 
-    private bool TryLowerRuntimeRcListLet(Expr.Let let, out (int Temp, TypeRef Type) lowered)
+    private bool TryLowerRuntimeRcListLet(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out (int Temp, TypeRef Type) lowered)
     {
         bool freshConstruction = IsFreshListConstructionExpression(let.Value);
         bool freshRuntimeList = freshConstruction
@@ -4292,24 +4253,17 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool savedRequest = _runtimeRcListAllocationRequested;
-        string? savedTailBinding = _runtimeRcListTailBinding;
-        bool savedTailShared = _runtimeRcListTailShared;
-        _runtimeRcListAllocationRequested = true;
-        _runtimeRcListTailBinding = extendsRuntimeList ? tailBinding : null;
-        _runtimeRcListTailShared = tailBinding is not null
-            && ExprReferencesName(let.Body, tailBinding, shadowed: false);
-        try
-        {
-            lowered = LowerExpr(let.Value);
-            return true;
-        }
-        finally
-        {
-            _runtimeRcListAllocationRequested = savedRequest;
-            _runtimeRcListTailBinding = savedTailBinding;
-            _runtimeRcListTailShared = savedTailShared;
-        }
+        LoweredValueRequest representationRequest = request
+            .AddRuntime(
+                condition: true,
+                LoweredValueRuntimeRepresentation.List)
+            .WithRuntimeListContext(
+                extendsRuntimeList ? tailBinding : null,
+                tailBinding is not null
+                    && ExprReferencesName(let.Body, tailBinding, shadowed: false),
+                tcoTailSlot: null);
+        lowered = LowerExpr(let.Value, representationRequest).AsPair();
+        return true;
     }
 
     private bool IsFreshListConstructionExpression(Expr expression)
@@ -4845,7 +4799,9 @@ public sealed partial class Lowering
         return (finalScopeTemp, bodyType);
     }
 
-    private (int, TypeRef) LowerLetResult(Expr.LetResult letResult)
+    private (int, TypeRef) LowerLetResult(
+        Expr.LetResult letResult,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(letResult);
         if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _))
@@ -4856,7 +4812,7 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (valueTemp, valueType) = LowerExpr(letResult.Value);
+        var (valueTemp, valueType) = LowerExpr(letResult.Value, request);
         if (!TryRequireResultType(valueType, resultSymbol, letResult.Value, "let? requires a Result(E, A) expression.", out var errorType, out var successType))
         {
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -4870,7 +4826,7 @@ public sealed partial class Lowering
         LowerLetResultOkBinding(letResult, valueTemp, okConstructor, successType, errorLabel);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-        var (bodyTemp, bodyType) = LowerExpr(letResult.Body);
+        var (bodyTemp, bodyType) = LowerExpr(letResult.Body, request);
         _scopes.Pop();
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
@@ -4922,7 +4878,9 @@ public sealed partial class Lowering
         RecordHoverType(AstSpans.GetLetResultNameOrDefault(letResult), letResult.Name, successType);
     }
 
-    private (int, TypeRef) LowerLetRecursive(Expr.LetRecursive letRecursive)
+    private (int, TypeRef) LowerLetRecursive(
+        Expr.LetRecursive letRecursive,
+        LoweredValueRequest request)
     {
         int slot = NewLocal();
         // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
@@ -4939,20 +4897,33 @@ public sealed partial class Lowering
             && !IsAsyncIntrinsicCall(GetInnermostBody(lam))
             && ContainsAwaitOutsideNestedLambda(GetInnermostBody(lam)))
         {
-            valueAndType = LowerLetRecursiveCoroutineHelperValue(letRecursive, lam, recursiveType, out helperMarkerAdded);
+            valueAndType = LowerLetRecursiveCoroutineHelperValue(
+                letRecursive,
+                lam,
+                recursiveType,
+                request,
+                out helperMarkerAdded);
         }
         else if (letRecursive.Value is Expr.Lambda lam2)
         {
-            valueAndType = LowerLetRecursiveLambdaValue(letRecursive, lam2, recursiveType);
+            valueAndType = LowerLetRecursiveLambdaValue(
+                letRecursive,
+                lam2,
+                recursiveType,
+                request);
         }
         else if (innerLambda is not null)
         {
-            valueAndType = LowerLetRecursiveAliasChainValue(letRecursive, innerLambda, recursiveType);
+            valueAndType = LowerLetRecursiveAliasChainValue(
+                letRecursive,
+                innerLambda,
+                recursiveType,
+                request);
         }
         else
         {
             ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
-            valueAndType = LowerExpr(letRecursive.Value);
+            valueAndType = LowerExpr(letRecursive.Value, request).AsPair();
         }
 
         _annotationParamTypes = savedAnnotationParamTypes;
@@ -4960,7 +4931,7 @@ public sealed partial class Lowering
 
         LowerLetRecursiveFinalizeValue(letRecursive, slot, recursiveType, valueAndType);
 
-        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body);
+        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body, request);
         if (helperMarkerAdded)
         {
             _coroutineHelperArity.Remove(letRecursive.Name);
@@ -5020,7 +4991,12 @@ public sealed partial class Lowering
     // body, so lower it as a task-returning closure around a transparent coroutine (awaits
     // suspend on the enclosing run; self tail calls restart the coroutine in place). Without
     // this, every await in the helper would compile to a nested blocking scheduler run.
-    private (int, TypeRef) LowerLetRecursiveCoroutineHelperValue(Expr.LetRecursive letRecursive, Expr.Lambda lam, TypeRef recursiveType, out bool helperMarkerAdded)
+    private (int, TypeRef) LowerLetRecursiveCoroutineHelperValue(
+        Expr.LetRecursive letRecursive,
+        Expr.Lambda lam,
+        TypeRef recursiveType,
+        LoweredValueRequest request,
+        out bool helperMarkerAdded)
     {
         var loopParamCount = CountLambdaChain(lam);
         var savedPending = _pendingHelperCoroutine;
@@ -5033,13 +5009,21 @@ public sealed partial class Lowering
             _coroutineHelperArity[letRecursive.Name] = loopParamCount;
         }
 
-        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam);
+        var valueAndType = LowerLambdaRecursive(
+            letRecursive.Name,
+            recursiveType,
+            lam,
+            request: request);
         _pendingHelperCoroutine = savedPending;
         _tcoCtx = savedHelperTco;
         return valueAndType;
     }
 
-    private (int, TypeRef) LowerLetRecursiveLambdaValue(Expr.LetRecursive letRecursive, Expr.Lambda lam2, TypeRef recursiveType)
+    private (int, TypeRef) LowerLetRecursiveLambdaValue(
+        Expr.LetRecursive letRecursive,
+        Expr.Lambda lam2,
+        TypeRef recursiveType,
+        LoweredValueRequest request)
     {
         // Detect lambda chain for TCO: given (x) -> given (y) -> body
         var paramCount = CountLambdaChain(lam2);
@@ -5074,7 +5058,11 @@ public sealed partial class Lowering
             _tcoCtx = null;
         }
 
-        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, lam2);
+        var valueAndType = LowerLambdaRecursive(
+            letRecursive.Name,
+            recursiveType,
+            lam2,
+            request: request);
 
         _tcoCtx = savedTcoCtx;
         return valueAndType;
@@ -5088,7 +5076,11 @@ public sealed partial class Lowering
     // Self-aliases (let unmangledName = mangledSelf) must NOT be processed as regular lets
     // because the mangled slot is uninitialized at this point. Instead, they are collected
     // as selfAliases and given Binding.Self treatment inside LowerLambdaCore.
-    private (int, TypeRef) LowerLetRecursiveAliasChainValue(Expr.LetRecursive letRecursive, Expr.Lambda innerLambda, TypeRef recursiveType)
+    private (int, TypeRef) LowerLetRecursiveAliasChainValue(
+        Expr.LetRecursive letRecursive,
+        Expr.Lambda innerLambda,
+        TypeRef recursiveType,
+        LoweredValueRequest request)
     {
         var savedTcoCtx = _tcoCtx;
         _tcoCtx = null;
@@ -5106,7 +5098,9 @@ public sealed partial class Lowering
             }
             else
             {
-                var (aliasValueTemp, aliasValueType) = LowerExpr(aliasLet.Value);
+                var (aliasValueTemp, aliasValueType) = LowerExpr(
+                    aliasLet.Value,
+                    request);
                 int aliasSlot = NewLocal();
                 Emit(new IrInst.StoreLocal(aliasSlot, aliasValueTemp));
                 RecordLocalDebugInfo(aliasSlot, aliasLet.Name, aliasValueType);
@@ -5119,7 +5113,12 @@ public sealed partial class Lowering
             aliasExpr = aliasLet.Body;
         }
 
-        var valueAndType = LowerLambdaRecursive(letRecursive.Name, recursiveType, innerLambda, selfAliases: selfAliases);
+        var valueAndType = LowerLambdaRecursive(
+            letRecursive.Name,
+            recursiveType,
+            innerLambda,
+            selfAliases: selfAliases,
+            request: request);
 
         for (int i = 0; i < aliasCount; i++)
         {
@@ -5217,7 +5216,9 @@ public sealed partial class Lowering
 
 
 
-    private (int, TypeRef) LowerIf(Expr.If iff)
+    private (int, TypeRef) LowerIf(
+        Expr.If iff,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(iff);
         // Condition is NOT in tail position
@@ -5243,7 +5244,7 @@ public sealed partial class Lowering
 
         int slot = NewLocal();
         var thenCredits = BeginExclusiveBranch([iff.Else]);
-        var (tTemp, tType) = LowerExpr(iff.Then);
+        var (tTemp, tType) = LowerExpr(iff.Then, request);
         EndExclusiveBranch(thenCredits);
         var thenType = Prune(tType);
         Emit(new IrInst.StoreLocal(slot, tTemp));
@@ -5256,7 +5257,7 @@ public sealed partial class Lowering
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var elseCredits = BeginExclusiveBranch([iff.Then]);
-        var (eTemp, eType) = LowerExpr(iff.Else);
+        var (eTemp, eType) = LowerExpr(iff.Else, request);
         EndExclusiveBranch(elseCredits);
         var elseType = Prune(eType);
         Emit(new IrInst.StoreLocal(slot, eTemp));
@@ -5290,14 +5291,34 @@ public sealed partial class Lowering
         RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged);
     }
 
-    private (int, TypeRef) LowerLambda(Expr.Lambda lam, bool stackAllocateClosure = false)
+    private (int, TypeRef) LowerLambda(
+        Expr.Lambda lam,
+        bool stackAllocateClosure = false,
+        LoweredValueRequest request = default)
     {
-        return LowerLambdaCore(lam, null, null, stackAllocateClosure);
+        return LowerLambdaCore(
+            lam,
+            null,
+            null,
+            stackAllocateClosure,
+            request: request);
     }
 
-    private (int, TypeRef) LowerLambdaRecursive(string selfName, TypeRef selfType, Expr.Lambda lam, bool stackAllocateClosure = false, IReadOnlyList<string>? selfAliases = null)
+    private (int, TypeRef) LowerLambdaRecursive(
+        string selfName,
+        TypeRef selfType,
+        Expr.Lambda lam,
+        bool stackAllocateClosure = false,
+        IReadOnlyList<string>? selfAliases = null,
+        LoweredValueRequest request = default)
     {
-        return LowerLambdaCore(lam, selfName, selfType, stackAllocateClosure, selfAliases);
+        return LowerLambdaCore(
+            lam,
+            selfName,
+            selfType,
+            stackAllocateClosure,
+            selfAliases,
+            request: request);
     }
 
     private (int, TypeRef) LowerLambdaCore(
@@ -5308,7 +5329,8 @@ public sealed partial class Lowering
         IReadOnlyList<string>? selfAliases = null,
         RecursiveGroupContext? recursiveGroup = null,
         string? forcedLabel = null,
-        IrFunctionOriginSeed? originSeed = null)
+        IrFunctionOriginSeed? originSeed = null,
+        LoweredValueRequest request = default)
     {
         _usesClosures = true;
 
@@ -5316,14 +5338,12 @@ public sealed partial class Lowering
         // becomes the body's ambient row: every operation performed and capability-performing call made while
         // lowering the body inserts its capabilities there, so the arrow ends up carrying exactly the
         // capabilities the body performs (open, generalized at the enclosing let).
-        var paramTy = NewTypeVar();
-        var retTy = NewTypeVar();
-        var rowTy = NewTypeVar();
-        var funTy = new TypeRef.TFun(paramTy, retTy) { Row = rowTy };
+        var (paramTy, retTy, rowTy, funTy) = CreateLambdaTypes();
         LowerLambdaCoreSeedParamType(lam, paramTy);
 
         // Compute free variables for capture, then allocate and fill the env at the creation site.
-        var (free, captures, envPtrTemp, knownCaptureLabels) = LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure);
+        var (free, captures, envPtrTemp, knownCaptureLabels) =
+            LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure, request);
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
         RecordTcoParamIdentity(lam, paramTy, label);
@@ -5367,8 +5387,19 @@ public sealed partial class Lowering
         LowerLambdaCoreRestoreFrame(savedFrame);
         _activeFunctionOrigin = savedActiveFunctionOrigin;
 
-        int closureTemp = LowerLambdaCoreMakeClosure(label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged);
-        return (closureTemp, funTy);
+        return (
+            LowerLambdaCoreMakeClosure(
+                label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged, request),
+            funTy);
+    }
+
+    private (TypeRef Param, TypeRef Ret, TypeRef Row, TypeRef.TFun Function)
+        CreateLambdaTypes()
+    {
+        TypeRef param = NewTypeVar();
+        TypeRef ret = NewTypeVar();
+        TypeRef row = NewTypeVar();
+        return (param, ret, row, new TypeRef.TFun(param, ret) { Row = row });
     }
 
     // TCO: for the innermost lambda in a recursive chain, create local copies of captured params and
@@ -5831,7 +5862,12 @@ public sealed partial class Lowering
         }
     }
 
-    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(Expr.Lambda lam, string? selfName, RecursiveGroupContext? recursiveGroup, bool stackAllocateClosure)
+    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(
+        Expr.Lambda lam,
+        string? selfName,
+        RecursiveGroupContext? recursiveGroup,
+        bool stackAllocateClosure,
+        LoweredValueRequest request)
     {
         HashSet<string> free = LowerLambdaCoreCollectFreeVariables(lam, selfName);
 
@@ -5851,7 +5887,11 @@ public sealed partial class Lowering
             }
         }
 
-        int envPtrTemp = LowerLambdaCoreBuildEnvAllocation(captures, recursiveGroup, stackAllocateClosure);
+        int envPtrTemp = LowerLambdaCoreBuildEnvAllocation(
+            captures,
+            recursiveGroup,
+            stackAllocateClosure,
+            request);
         return (free, captures, envPtrTemp, knownCaptureLabels);
     }
 
@@ -5871,7 +5911,8 @@ public sealed partial class Lowering
     private int LowerLambdaCoreBuildEnvAllocation(
         IReadOnlyList<string> captures,
         RecursiveGroupContext? recursiveGroup,
-        bool stackAllocateClosure)
+        bool stackAllocateClosure,
+        LoweredValueRequest request)
     {
         int envPtrTemp;
         if (recursiveGroup is not null)
@@ -5894,7 +5935,11 @@ public sealed partial class Lowering
             }
             else
             {
-                Emit(new IrInst.Alloc(envPtrTemp, captures.Count * 8, _runtimeRcClosureAllocationRequested));
+                Emit(new IrInst.Alloc(
+                    envPtrTemp,
+                    captures.Count * 8,
+                    request.EmitsRuntime(
+                        LoweredValueRuntimeRepresentation.Closure)));
             }
 
             for (int i = 0; i < captures.Count; i++)
@@ -6644,7 +6689,7 @@ public sealed partial class Lowering
         _ambientRow = rowTy;
         var (bodyTemp, bodyType) = !_usesAsync && !_programHasDynamicCapabilityDispatch
             ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
-            : LowerExpr(lam.Body);
+            : LowerExpr(lam.Body).AsPair();
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitOpParamScope(opParamScope);
@@ -7134,7 +7179,13 @@ public sealed partial class Lowering
         foreach (var kv in frame.KnownFunctionLabelsByEnvIndex) _knownFunctionLabelsByEnvIndex[kv.Key] = kv.Value;
     }
 
-    private int LowerLambdaCoreMakeClosure(string label, int envPtrTemp, IReadOnlyList<string> captures, bool stackAllocateClosure, bool bodyRuntimeManaged)
+    private int LowerLambdaCoreMakeClosure(
+        string label,
+        int envPtrTemp,
+        IReadOnlyList<string> captures,
+        bool stackAllocateClosure,
+        bool bodyRuntimeManaged,
+        LoweredValueRequest request)
     {
         // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
@@ -7143,13 +7194,8 @@ public sealed partial class Lowering
             && bodyRuntimeManaged;
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
-            closureTemp,
-            label,
-            envPtrTemp,
-            envSizeBytes,
-            stackAllocateClosure,
-            returnsRuntimeManaged,
-            acceptsRuntimeManagedArgument);
+            closureTemp, label, envPtrTemp, envSizeBytes, stackAllocateClosure,
+            returnsRuntimeManaged, acceptsRuntimeManagedArgument, request);
 
         // Record any resource captured by this closure, with its env offset (capture i lives at
         // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
@@ -7171,7 +7217,7 @@ public sealed partial class Lowering
                     resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
                 }
             }
-            else if (_runtimeRcClosureAllocationRequested
+            else if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
                 && owned is { RuntimeManaged: true, Type: not null })
             {
                 owned.CapturedByClosure = true;
@@ -7204,7 +7250,8 @@ public sealed partial class Lowering
         int envSizeBytes,
         bool stackAllocateClosure,
         bool returnsRuntimeManaged,
-        bool acceptsRuntimeManagedArgument)
+        bool acceptsRuntimeManagedArgument,
+        LoweredValueRequest request)
     {
         if (stackAllocateClosure)
         {
@@ -7219,7 +7266,7 @@ public sealed partial class Lowering
         else
         {
             Emit(new IrInst.MakeClosure(closureTemp, label, envPtrTemp, envSizeBytes,
-                _runtimeRcClosureAllocationRequested,
+                request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure),
                 returnsRuntimeManaged,
                 acceptsRuntimeManagedArgument));
         }
@@ -7309,7 +7356,9 @@ public sealed partial class Lowering
 
 
 
-    private (int, TypeRef) LowerCall(Expr.Call call)
+    private (int, TypeRef) LowerCall(
+        Expr.Call call,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(call);
         // Collect all args from the call chain to support multi-arg constructor application:
@@ -7317,7 +7366,7 @@ public sealed partial class Lowering
         var collectedArgs = new List<Expr>();
         var rootExpr = CollectCallArgs(call, collectedArgs);
 
-        if (LowerCallTryDirectForms(call, rootExpr, collectedArgs) is { } directResult)
+        if (LowerCallTryDirectForms(call, rootExpr, collectedArgs, request) is { } directResult)
         {
             return directResult;
         }
@@ -7327,12 +7376,12 @@ public sealed partial class Lowering
             return routedResult;
         }
 
-        if (LowerCallTryGenericInlineForm(rootExpr, collectedArgs) is { } genericInlineResult)
+        if (LowerCallTryGenericInlineForm(rootExpr, collectedArgs, request) is { } genericInlineResult)
         {
             return genericInlineResult;
         }
 
-        if (LowerCallTryReuseInlineForm(rootExpr, collectedArgs) is { } reuseInlineResult)
+        if (LowerCallTryReuseInlineForm(rootExpr, collectedArgs, request) is { } reuseInlineResult)
         {
             return reuseInlineResult;
         }
@@ -7351,7 +7400,7 @@ public sealed partial class Lowering
 
         if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)
         {
-            return LowerCallIntrinsic(rootExpr, intrinsic, collectedArgs);
+            return LowerCallIntrinsic(rootExpr, intrinsic, collectedArgs, request);
         }
 
         if (rootExpr is Expr.Var externalVar && Lookup(externalVar.Name) is Binding.ExternalFunction externalFunction)
@@ -7360,7 +7409,8 @@ public sealed partial class Lowering
         }
 
         // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
-        if (rootExpr is Expr.QualifiedVar qv && LowerCallQualifiedBuiltin(rootExpr, qv, collectedArgs) is { } builtinResult)
+        if (rootExpr is Expr.QualifiedVar qv
+            && LowerCallQualifiedBuiltin(rootExpr, qv, collectedArgs, request) is { } builtinResult)
         {
             return builtinResult;
         }
@@ -7394,14 +7444,19 @@ public sealed partial class Lowering
 
     // Direct call forms resolved from the root expression alone: constructor application, the
     // built-in Stop.stop, a capability operation call, and a dictionary-passing generic function.
-    private (int, TypeRef)? LowerCallTryDirectForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    private (int, TypeRef)? LowerCallTryDirectForms(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
         {
             return LowerConstructorApplication(
                 ctorSym,
                 collectedArgs,
-                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)));
+                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)),
+                request: request);
         }
 
         // Constructor application through a module alias: json.JsonInt(42) where `json` is
@@ -7414,7 +7469,8 @@ public sealed partial class Lowering
             return LowerConstructorApplication(
                 qualifiedCtorSym,
                 collectedArgs,
-                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)));
+                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)),
+                request: request);
         }
 
         // Capability operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
@@ -7510,7 +7566,10 @@ public sealed partial class Lowering
     // Capability-generic and overload-generic (==/+ on two params) functions inline a fresh,
     // type-resolved copy of their body at each concrete call site. For an overload-generic stdlib
     // function called by its imported short name, resolve the alias to the stitched name first.
-    private (int, TypeRef)? LowerCallTryGenericInlineForm(Expr rootExpr, List<Expr> collectedArgs)
+    private (int, TypeRef)? LowerCallTryGenericInlineForm(
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null
             && rootExpr is Expr.Var dbgFn && _inlinableFunctions.TryGetValue(dbgFn.Name, out var dbgInl)
@@ -7535,7 +7594,12 @@ public sealed partial class Lowering
                 && _inlinableFunctions.TryGetValue(capGenName, out var capGenInlinable)
                 && capGenInlinable.Params.Count == collectedArgs.Count)
             {
-                return InlineCall(capGenName, capGenInlinable.Params, capGenInlinable.Body, collectedArgs);
+                return InlineCall(
+                    capGenName,
+                    capGenInlinable.Params,
+                    capGenInlinable.Body,
+                    collectedArgs,
+                    request);
             }
         }
 
@@ -7554,7 +7618,10 @@ public sealed partial class Lowering
     // (Ashes.Collection.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
     // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
     // isolated scope where only inline/by-label resolution works.
-    private (int, TypeRef)? LowerCallTryReuseInlineForm(Expr rootExpr, List<Expr> collectedArgs)
+    private (int, TypeRef)? LowerCallTryReuseInlineForm(
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         if ((_reuseTokens.Count > 0
                 || _inSpecialization
@@ -7567,7 +7634,12 @@ public sealed partial class Lowering
             && _inlinableFunctions.TryGetValue(inlineName, out var inlinable)
             && inlinable.Params.Count == collectedArgs.Count)
         {
-            return InlineCall(inlineName, inlinable.Params, inlinable.Body, collectedArgs);
+            return InlineCall(
+                inlineName,
+                inlinable.Params,
+                inlinable.Body,
+                collectedArgs,
+                request);
         }
 
         return null;
@@ -7862,11 +7934,6 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type) LowerCallTcoEvalArg(TcoContext tco, Expr argument, int index)
     {
         (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
-        bool savedListRequest = _runtimeRcListAllocationRequested;
-        bool savedClosureRequest = _runtimeRcClosureAllocationRequested;
-        bool savedTcoAdtRequest = _runtimeRcTcoAdtAllocationRequested;
-        Dictionary<string, bool>? savedAdtChildBindings = _runtimeRcAdtChildBindings;
-        int? savedTcoTailSlot = _runtimeRcTcoListTailSlot;
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
@@ -7880,38 +7947,33 @@ public sealed partial class Lowering
             && ClosureCapturesOnlyRuntimeManagedOrCopyValues(argument);
         bool freshAdt = LowerCallTcoTryGetAdtArguments(argument, out List<Expr>? constructorArguments);
         LowerCallTcoArmAffineStringArg(tco, argument, index);
-        if (affineConsList)
-        {
-            _runtimeRcListAllocationRequested = true;
-            _runtimeRcTcoListTailSlot = tco.ParamSlots[index];
-        }
-        if (freshClosure)
-        {
-            _runtimeRcClosureAllocationRequested = true;
-        }
-        if (freshAdt)
-        {
-            _runtimeRcTcoAdtAllocationRequested = true;
-            _runtimeRcAdtChildBindings = LowerCallTcoAdtChildBindings(constructorArguments!);
-        }
-
         try
         {
-            (int Temp, TypeRef Type) lowered = LowerExpr(argument);
-            if (freshClosure)
-            {
-                MarkRuntimeManagedTemp(lowered.Temp);
-            }
+            LoweredValueRequest request = affineConsList
+                ? LoweredValueRequest
+                    .OwnedRuntime(LoweredValueRuntimeRepresentation.List)
+                    .WithRuntimeListContext(
+                        tailBinding: null,
+                        tailShared: false,
+                        tcoTailSlot: tco.ParamSlots[index])
+                : LoweredValueRequest.None;
+            request = request
+                .AddRuntime(
+                    freshClosure,
+                    LoweredValueRuntimeRepresentation.Closure)
+                .AddRuntime(
+                    freshAdt,
+                    LoweredValueRuntimeRepresentation.TcoAdt)
+                .WithRuntimeAdtContext(
+                    freshAdt
+                        ? LowerCallTcoAdtChildBindings(constructorArguments!)
+                        : null);
+            (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             return lowered;
         }
         finally
         {
             _affineAppendCtx = savedAffineCtx;
-            _runtimeRcListAllocationRequested = savedListRequest;
-            _runtimeRcClosureAllocationRequested = savedClosureRequest;
-            _runtimeRcTcoAdtAllocationRequested = savedTcoAdtRequest;
-            _runtimeRcAdtChildBindings = savedAdtChildBindings;
-            _runtimeRcTcoListTailSlot = savedTcoTailSlot;
         }
     }
 
@@ -8105,7 +8167,9 @@ public sealed partial class Lowering
             && Lookup(helperVar.Name) is Binding.Local or Binding.Env or Binding.EnvScheme or Binding.Scheme or Binding.Self)
         {
             _coroutineHelperArity.Remove(helperVar.Name);
-            var (helperTaskTemp, helperTaskType) = LowerCall(call);
+            var (helperTaskTemp, helperTaskType) = LowerCall(
+                call,
+                LoweredValueRequest.None);
             _coroutineHelperArity[helperVar.Name] = helperArity;
 
             _usesAsync = true;
@@ -8122,7 +8186,11 @@ public sealed partial class Lowering
         return null;
     }
 
-    private (int, TypeRef) LowerCallIntrinsic(Expr rootExpr, Binding.Intrinsic intrinsic, List<Expr> collectedArgs)
+    private (int, TypeRef) LowerCallIntrinsic(
+        Expr rootExpr,
+        Binding.Intrinsic intrinsic,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         int expectedArity = GetIntrinsicArity(intrinsic.Kind);
         if (collectedArgs.Count != expectedArity)
@@ -8131,105 +8199,111 @@ public sealed partial class Lowering
         }
 
         // The dispatch is split into ordered groups; each group falls through (null) to the next.
-        return LowerCallIntrinsicIoText(intrinsic.Kind, collectedArgs)
-            ?? LowerCallIntrinsicNetBytes(intrinsic.Kind, collectedArgs)
+        return LowerCallIntrinsicIoText(intrinsic.Kind, collectedArgs, request)
+            ?? LowerCallIntrinsicNetBytes(intrinsic.Kind, collectedArgs, request)
             ?? LowerCallIntrinsicMathProcess(intrinsic.Kind, collectedArgs)
             ?? throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}");
     }
 
-    private (int, TypeRef)? LowerCallIntrinsicIoText(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
-    {
-        IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
-        IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
-        IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
-        IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
-        IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
-        IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
-        IntrinsicKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
-        IntrinsicKind.FileMmap => LowerFileMmap(collectedArgs[0]),
-        IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
-        IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
-        IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
-        IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
-        IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
-        IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0]),
-        IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
-        IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
-        IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
-        IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
-        IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
-        IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
-        IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
-        IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
-        IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
-        IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-        IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false),
-        IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false),
-        IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false),
-        IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false),
-        IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false),
-        IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
-        IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0]),
-        IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
-        IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
-        _ => null,
-    };
+    private (int, TypeRef)? LowerCallIntrinsicIoText(
+        IntrinsicKind kind,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request) => kind switch
+        {
+            IntrinsicKind.Print => LowerPrint(collectedArgs[0]),
+            IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+            IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
+            IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+            IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
+            IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+            IntrinsicKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
+            IntrinsicKind.FileMmap => LowerFileMmap(collectedArgs[0]),
+            IntrinsicKind.FileOpen => LowerFileOpen(collectedArgs[0]),
+            IntrinsicKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
+            IntrinsicKind.FileClose => LowerFileClose(collectedArgs[0]),
+            IntrinsicKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+            IntrinsicKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+            IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
+            IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+            IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+            IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.TextParseInt => LowerTextParseInt(collectedArgs[0], request),
+            IntrinsicKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0], request),
+            IntrinsicKind.TextFromInt => LowerTextFromInt(collectedArgs[0], request),
+            IntrinsicKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0], request),
+            IntrinsicKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1], request),
+            IntrinsicKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0], request),
+            IntrinsicKind.BigIntToString => LowerBigIntToString(collectedArgs[0], request),
+            IntrinsicKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0], request),
+            IntrinsicKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0], request),
+            IntrinsicKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false, request),
+            IntrinsicKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false, request),
+            IntrinsicKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false, request),
+            IntrinsicKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false, request),
+            IntrinsicKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false, request),
+            IntrinsicKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
+            IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0], request),
+            IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true, request),
+            IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false, request),
+            _ => null,
+        };
 
-    private (int, TypeRef)? LowerCallIntrinsicNetBytes(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
-    {
-        IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
-        IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
-        IntrinsicKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
-        IntrinsicKind.NetForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
-        IntrinsicKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
-        IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
-        IntrinsicKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
-        IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
-        IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
-        IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
-        IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
-        IntrinsicKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
-        IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
-        IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
-        IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
-        IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
-        IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
-        IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
-        IntrinsicKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
-        IntrinsicKind.BytesHash => LowerBytesHash(collectedArgs[0]),
-        IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
-        IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
-        IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
-        IntrinsicKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
-        IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
-        _ => null,
-    };
+    private (int, TypeRef)? LowerCallIntrinsicNetBytes(
+        IntrinsicKind kind,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request) => kind switch
+        {
+            IntrinsicKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+            IntrinsicKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+            IntrinsicKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+            IntrinsicKind.NetForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
+            IntrinsicKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
+            IntrinsicKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+            IntrinsicKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.Panic => LowerPanic(collectedArgs[0]),
+            IntrinsicKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+            IntrinsicKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
+            IntrinsicKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+            IntrinsicKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+            IntrinsicKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
+            IntrinsicKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+            IntrinsicKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+            IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0], request),
+            IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0], request),
+            IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+            IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2], request),
+            IntrinsicKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            IntrinsicKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1], request),
+            IntrinsicKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1], request),
+            IntrinsicKind.BytesFromList => LowerBytesFromList(collectedArgs[0], request),
+            IntrinsicKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+            IntrinsicKind.BytesHash => LowerBytesHash(collectedArgs[0]),
+            IntrinsicKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0], request),
+            IntrinsicKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0], request),
+            IntrinsicKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0], request),
+            IntrinsicKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+            _ => null,
+        };
 
     private (int, TypeRef)? LowerCallIntrinsicMathProcess(IntrinsicKind kind, List<Expr> collectedArgs) => kind switch
     {
@@ -8261,7 +8335,11 @@ public sealed partial class Lowering
         _ => null,
     };
 
-    private (int, TypeRef)? LowerCallQualifiedBuiltin(Expr rootExpr, Expr.QualifiedVar qv, List<Expr> collectedArgs)
+    private (int, TypeRef)? LowerCallQualifiedBuiltin(
+        Expr rootExpr,
+        Expr.QualifiedVar qv,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         var resolvedModule = ResolveModuleAlias(qv.Module);
         if (!BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule)
@@ -8282,105 +8360,111 @@ public sealed partial class Lowering
         }
 
         // The dispatch is split into ordered groups; each group falls through (null) to the next.
-        return LowerCallBuiltinIoText(builtinMember.Kind, collectedArgs)
-            ?? LowerCallBuiltinNetBytes(builtinMember.Kind, collectedArgs)
+        return LowerCallBuiltinIoText(builtinMember.Kind, collectedArgs, request)
+            ?? LowerCallBuiltinNetBytes(builtinMember.Kind, collectedArgs, request)
             ?? LowerCallBuiltinMathProcess(builtinMember.Kind, collectedArgs)
             ?? StdMemberNotFound(resolvedModule, qv.Name);
     }
 
-    private (int, TypeRef)? LowerCallBuiltinIoText(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
-    {
-        BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
-        BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
-        BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileMmap => LowerFileMmap(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false),
-        BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
-        BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true),
-        BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false),
-        _ => null,
-    };
+    private (int, TypeRef)? LowerCallBuiltinIoText(
+        BuiltinRegistry.BuiltinValueKind kind,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request) => kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.Print => LowerPrint(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.Panic => LowerPanic(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
+            BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+            BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileMmap => LowerFileMmap(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileOpen => LowerFileOpen(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerFileReadChunk(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerFileReadLine(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.FileClose => LowerFileClose(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerInternalDeepCopy(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerParallelBoth(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.RegexCaptures => LowerRegexCaptures(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.RegexSubstitute => LowerRegexSubstitute(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.TextParseInt => LowerTextParseInt(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextParseFloat => LowerTextParseFloat(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextFromInt => LowerTextFromInt(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextFromFloat => LowerTextFromFloat(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextFormatFloat => LowerTextFormatFloat(collectedArgs[0], collectedArgs[1], request),
+            BuiltinRegistry.BuiltinValueKind.BigIntFromInt => LowerBigIntFromInt(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BigIntToString => LowerBigIntToString(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BigIntToInt => LowerBigIntToInt(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BigIntFromString => LowerBigIntFromString(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BigIntAdd => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "add", "Ashes.Number.BigInt.add()", false, request),
+            BuiltinRegistry.BuiltinValueKind.BigIntSub => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "sub", "Ashes.Number.BigInt.sub()", false, request),
+            BuiltinRegistry.BuiltinValueKind.BigIntMul => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mul", "Ashes.Number.BigInt.mul()", false, request),
+            BuiltinRegistry.BuiltinValueKind.BigIntDiv => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "div", "Ashes.Number.BigInt.div()", false, request),
+            BuiltinRegistry.BuiltinValueKind.BigIntMod => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "mod", "Ashes.Number.BigInt.mod()", false, request),
+            BuiltinRegistry.BuiltinValueKind.BigIntCompare => LowerBigIntBinary(collectedArgs[0], collectedArgs[1], "cmp", "Ashes.Number.BigInt.compare()", true),
+            BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true, request),
+            BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false, request),
+            _ => null,
+        };
 
-    private (int, TypeRef)? LowerCallBuiltinNetBytes(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
-    {
-        BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
-        BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesHash => LowerBytesHash(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0]),
-        BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
-        BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
-        _ => null,
-    };
+    private (int, TypeRef)? LowerCallBuiltinNetBytes(
+        BuiltinRegistry.BuiltinValueKind kind,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request) => kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.HttpGet => LowerHttpGet(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.HttpPost => LowerHttpPost(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpConnect => LowerNetTcpConnect(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpSend => LowerNetTcpSend(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpReceive => LowerNetTcpReceive(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpClose => LowerNetTcpClose(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpListen => LowerNetTcpListen(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpForkWorkers => LowerNetForkWorkers(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpSetDrainTimeout => LowerNetSetDrainTimeout(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.NetTcpAccept => LowerNetTcpAccept(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.NetTlsConnect => LowerNetTlsConnect(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTlsSend => LowerNetTlsSend(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTlsReceive => LowerNetTlsReceive(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.NetTlsClose => LowerNetTlsClose(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.NetTlsServerHandshake => LowerNetTlsServerHandshake(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.AsyncRun => LowerAsyncRun(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncTask => LowerAsyncTask(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncFromResult => LowerAsyncFromResult(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncSleep => LowerAsyncSleep(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerAsyncSpawn(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerAsyncAll(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerAsyncRace(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.BytesIndexOf => LowerBytesIndexOf(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.BytesCompare => LowerBytesCompare(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.BytesScanHash => LowerBytesScanHash(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.BytesSubText => LowerBytesSubText(collectedArgs[0], collectedArgs[1], collectedArgs[2], request),
+            BuiltinRegistry.BuiltinValueKind.BytesSubView => LowerBytesSubView(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
+            BuiltinRegistry.BuiltinValueKind.BytesAppend => LowerBytesAppend(collectedArgs[0], collectedArgs[1], request),
+            BuiltinRegistry.BuiltinValueKind.BytesAppendByte => LowerBytesAppendByte(collectedArgs[0], collectedArgs[1], request),
+            BuiltinRegistry.BuiltinValueKind.BytesFromList => LowerBytesFromList(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesFromText => LowerBytesFromText(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.BytesHash => LowerBytesHash(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.BytesU16Le => LowerBytesU16Le(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesU32Le => LowerBytesU32Le(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesU64Le => LowerBytesU64Le(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU16Le => LowerBytesGetU16Le(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU32Le => LowerBytesGetU32Le(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.BytesGetU64Le => LowerBytesGetU64Le(collectedArgs[0], collectedArgs[1]),
+            _ => null,
+        };
 
     private (int, TypeRef)? LowerCallBuiltinMathProcess(BuiltinRegistry.BuiltinValueKind kind, List<Expr> collectedArgs) => kind switch
     {
@@ -8425,7 +8509,7 @@ public sealed partial class Lowering
 
         var (currentTemp, currentType) = rootExpr is Expr.Lambda lam
             ? LowerLambda(lam, stackAllocateClosure: true)
-            : LowerExpr(rootExpr);
+            : LowerExpr(rootExpr).AsPair();
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
@@ -9467,7 +9551,9 @@ public sealed partial class Lowering
 
 
 
-    private (int, TypeRef) LowerListLit(Expr.ListLit list)
+    private (int, TypeRef) LowerListLit(
+        Expr.ListLit list,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(list);
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
@@ -9478,17 +9564,20 @@ public sealed partial class Lowering
 
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
-            var (headTemp, headType) = LowerRuntimeManagedListElement(list.Elements[i]);
+            LoweredValue head = LowerRuntimeManagedListElement(
+                list.Elements[i],
+                request);
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
-                Unify(headType, elemType);
+                Unify(head.Type, elemType);
             }
             (tailTemp, tailType) = LowerConsCell(
-                headTemp,
+                head.Temp,
                 tailTemp,
                 elemType,
                 tailType,
-                ResolveSourceLocation(AstSpans.GetOrDefault(list)));
+                ResolveSourceLocation(AstSpans.GetOrDefault(list)),
+                request);
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -9496,38 +9585,44 @@ public sealed partial class Lowering
         return (tailTemp, Prune(tailType));
     }
 
-    private (int Temp, TypeRef Type) LowerRuntimeManagedListElement(Expr element)
+    private LoweredValue LowerRuntimeManagedListElement(
+        Expr element,
+        LoweredValueRequest listRequest)
     {
-        (bool String, bool Bytes, bool BigInt, bool Tuple) saved = (
-            _runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcTupleAllocationRequested);
-        _runtimeRcStringAllocationRequested = saved.String
-            || _runtimeRcListAllocationRequested && IsRuntimeRcStringProducer(element)
-                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
-        _runtimeRcBytesAllocationRequested = saved.Bytes
-            || _runtimeRcListAllocationRequested && IsRuntimeRcBytesProducer(element)
-                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
-        _runtimeRcBigIntAllocationRequested = saved.BigInt
-            || _runtimeRcListAllocationRequested && IsRuntimeRcBigIntProducer(element)
-                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
-        _runtimeRcTupleAllocationRequested = saved.Tuple
-            || _runtimeRcListAllocationRequested && element is Expr.TupleLit;
-        (int Temp, TypeRef Type) lowered = LowerExpr(element);
-        lowered = NormalizeRuntimeManagedListElement(lowered);
-        (_runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcTupleAllocationRequested) = saved;
+        bool runtimeManagedList = listRequest.EmitsRuntime(
+            LoweredValueRuntimeRepresentation.List);
+        LoweredValueRequest elementRequest = listRequest
+            .AddRuntime(
+                runtimeManagedList
+                    && IsRuntimeRcStringProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(element),
+                LoweredValueRuntimeRepresentation.String)
+            .AddRuntime(
+                runtimeManagedList
+                    && IsRuntimeRcBytesProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element),
+                LoweredValueRuntimeRepresentation.Bytes)
+            .AddRuntime(
+                runtimeManagedList
+                    && IsRuntimeRcBigIntProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
+                LoweredValueRuntimeRepresentation.BigInt)
+            .AddRuntime(
+                runtimeManagedList && element is Expr.TupleLit,
+                LoweredValueRuntimeRepresentation.Tuple);
+        LoweredValue lowered = LowerExpr(element, elementRequest);
+        lowered = NormalizeRuntimeManagedListElement(lowered, listRequest);
         return lowered;
     }
 
-    private (int Temp, TypeRef Type) NormalizeRuntimeManagedListElement((int Temp, TypeRef Type) lowered)
+    private LoweredValue NormalizeRuntimeManagedListElement(
+        LoweredValue lowered,
+        LoweredValueRequest request)
     {
-        if (!_runtimeRcListAllocationRequested
-            || _runtimeRcTcoListTailSlot is null
-            || IsRuntimeManagedResultTemp(lowered.Temp))
+        if (!request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || request.RuntimeTcoListTailSlot is null
+            || lowered.Ownership.Representation
+                == LoweredTempRepresentation.RuntimeRc)
         {
             return lowered;
         }
@@ -9563,51 +9658,60 @@ public sealed partial class Lowering
         }
 
         MarkRuntimeManagedTemp(normalizedTemp);
-        return (normalizedTemp, lowered.Type);
+        return CreateLoweredValue(normalizedTemp, lowered.Type);
     }
 
-    private (int, TypeRef) LowerTupleLit(Expr.TupleLit tuple)
+    private (int, TypeRef) LowerTupleLit(
+        Expr.TupleLit tuple,
+        LoweredValueRequest request)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var elementTypes = new List<TypeRef>(tuple.Elements.Count);
-        var elementTemps = new List<int>(tuple.Elements.Count);
+        var elements = new List<LoweredValue>(tuple.Elements.Count);
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
             Expr element = tuple.Elements[i];
-            (int temp, TypeRef type) = LowerTupleElement(element);
-            elementTemps.Add(MaterializeEscapingStringTupleElement(element, temp, type));
-            elementTypes.Add(type);
+            LoweredValue loweredElement = LowerTupleElement(element, request);
+            elements.Add(MaterializeEscapingStringTupleElement(
+                element,
+                loweredElement,
+                request));
             MarkResourceArgMoved(tuple.Elements[i]);
         }
 
         int tupleTemp = NewTemp();
-        bool runtimeManaged = _runtimeRcTupleAllocationRequested;
-        for (int i = 0; i < elementTypes.Count && runtimeManaged; i++)
+        bool runtimeManaged = request.EmitsRuntime(
+            LoweredValueRuntimeRepresentation.Tuple);
+        for (int i = 0; i < elements.Count && runtimeManaged; i++)
         {
-            runtimeManaged = IsRuntimeManageableTupleElement(elementTypes[i], elementTemps[i]);
+            runtimeManaged = IsRuntimeManageableTupleElement(elements[i]);
         }
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
-        for (int i = 0; i < elementTemps.Count; i++)
+        for (int i = 0; i < elements.Count; i++)
         {
-            Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elementTemps[i]));
+            Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elements[i].Temp));
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
-        return (tupleTemp, new TypeRef.TTuple(elementTypes));
+        return (
+            tupleTemp,
+            new TypeRef.TTuple(elements.Select(element => element.Type).ToList()));
     }
 
     // A bare string variable placed into a tuple that ESCAPES the function (the tuple is the
-    // runtime-managed result — _runtimeRcTupleAllocationRequested is set) points at a value in the
+    // runtime-managed result — the explicit request includes Tuple) points at a value in the
     // callee's arena (a loop accumulator, a match-bound suffix). The next call reuses that arena and
     // overwrites it, so the returned tuple reads back a later value. A directly-returned string is
     // copied out at the call boundary; a string nested in a tuple field is not. Copy it out here so
     // the escaping tuple owns an independent RC string. Gated on the escape flag, so non-escaping
     // internal tuples (e.g. inside a fully-reusing specialization, where CopyOut is forbidden) are
     // untouched. Producers (`a + b`, `fromInt`) already allocate fresh and are left alone.
-    private int MaterializeEscapingStringTupleElement(Expr element, int temp, TypeRef type)
+    private LoweredValue MaterializeEscapingStringTupleElement(
+        Expr element,
+        LoweredValue lowered,
+        LoweredValueRequest request)
     {
         // A bare string variable placed into an escaping tuple only dangles when it lives in an arena
         // that is reused in place — the accumulator / match-bound suffix (`acc`, `tail`) of a TCO loop,
@@ -9624,81 +9728,88 @@ public sealed partial class Lowering
         // PROVISIONALLY with DeferredElementType and let ResolveDeferredTupleMaterializations undo it
         // (rewrite to a plain Borrow) once the type resolves to a scalar. Concrete non-string heap
         // accumulators (List/Adt/BigInt) resolve to their own type node and take their own copy paths.
-        var pruned = Prune(type);
-        if (!_runtimeRcTupleAllocationRequested
+        var pruned = Prune(lowered.Type);
+        if (!request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
             || _tcoCtx is null
             || element is not Expr.Var varElement
             || pruned is not (TypeRef.TStr or TypeRef.TVar)
             || LookupOwnedValue(varElement.Name) is { RuntimeManaged: true })
         {
-            return temp;
+            return lowered;
         }
 
         int materialized = NewTemp();
         Emit(new IrInst.CopyOutArena(
-            materialized, temp, StaticSizeBytes: -1, RuntimeManaged: true,
+            materialized, lowered.Temp, StaticSizeBytes: -1, RuntimeManaged: true,
             IrInst.CopyOutPurpose.RcNormalization,
-            DeferredElementType: pruned is TypeRef.TVar ? type : null));
+            DeferredElementType: pruned is TypeRef.TVar ? lowered.Type : null));
         MarkRuntimeManagedTemp(materialized);
         _hasDeferredTupleMaterializations |= pruned is TypeRef.TVar;
-        return materialized;
+        return CreateLoweredValue(materialized, lowered.Type);
     }
 
-    private (int Temp, TypeRef Type) LowerTupleElement(Expr element)
+    private LoweredValue LowerTupleElement(
+        Expr element,
+        LoweredValueRequest tupleRequest)
     {
-        (bool String, bool Bytes, bool BigInt, bool List, bool Adt, bool Record) saved = (
-            _runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested,
-            _runtimeRcCopyAdtAllocationRequested,
-            _runtimeRcRecordAllocationRequested);
-        _runtimeRcStringAllocationRequested = saved.String
-            || _runtimeRcTupleAllocationRequested && IsRuntimeRcStringProducer(element)
-                && IsRuntimeRcClosureCaptureSafeStringProducer(element);
-        _runtimeRcBytesAllocationRequested = saved.Bytes
-            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBytesProducer(element)
-                && IsRuntimeRcClosureCaptureSafeBytesProducer(element);
-        _runtimeRcBigIntAllocationRequested = saved.BigInt
-            || _runtimeRcTupleAllocationRequested && IsRuntimeRcBigIntProducer(element)
-                && IsRuntimeRcClosureCaptureSafeBigIntProducer(element);
-        _runtimeRcListAllocationRequested = saved.List
-            || _runtimeRcTupleAllocationRequested && IsFreshListConstructionExpression(element);
-        _runtimeRcCopyAdtAllocationRequested = saved.Adt
-            || _runtimeRcTupleAllocationRequested && IsConstructorExpression(element);
-        _runtimeRcRecordAllocationRequested = saved.Record
-            || _runtimeRcTupleAllocationRequested && element is Expr.RecordLit;
-        (int Temp, TypeRef Type) lowered = LowerExpr(element);
-        (_runtimeRcStringAllocationRequested,
-            _runtimeRcBytesAllocationRequested,
-            _runtimeRcBigIntAllocationRequested,
-            _runtimeRcListAllocationRequested,
-            _runtimeRcCopyAdtAllocationRequested,
-            _runtimeRcRecordAllocationRequested) = saved;
-        return lowered;
+        bool runtimeManagedTuple = tupleRequest.EmitsRuntime(
+            LoweredValueRuntimeRepresentation.Tuple);
+        LoweredValueRequest elementRequest = tupleRequest
+            .AddRuntime(
+                runtimeManagedTuple
+                    && IsRuntimeRcStringProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(element),
+                LoweredValueRuntimeRepresentation.String)
+            .AddRuntime(
+                runtimeManagedTuple
+                    && IsRuntimeRcBytesProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBytesProducer(element),
+                LoweredValueRuntimeRepresentation.Bytes)
+            .AddRuntime(
+                runtimeManagedTuple
+                    && IsRuntimeRcBigIntProducer(element)
+                    && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
+                LoweredValueRuntimeRepresentation.BigInt)
+            .AddRuntime(
+                runtimeManagedTuple && IsFreshListConstructionExpression(element),
+                LoweredValueRuntimeRepresentation.List)
+            .AddRuntime(
+                runtimeManagedTuple && element is Expr.TupleLit,
+                LoweredValueRuntimeRepresentation.Tuple)
+            .AddRuntime(
+                runtimeManagedTuple && IsConstructorExpression(element),
+                LoweredValueRuntimeRepresentation.Adt)
+            .AddRuntime(
+                runtimeManagedTuple && element is Expr.RecordLit,
+                LoweredValueRuntimeRepresentation.Record);
+        return LowerExpr(element, elementRequest);
     }
 
-    private bool IsRuntimeManageableTupleElement(TypeRef type, int temp)
+    private bool IsRuntimeManageableTupleElement(LoweredValue value)
     {
-        TypeRef pruned = Prune(type);
+        TypeRef pruned = Prune(value.Type);
         return CanArenaReset(pruned)
-            || IsRuntimeManagedResultTemp(temp)
+            || value.Ownership.Representation
+                == LoweredTempRepresentation.RuntimeRc
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
                     || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element))
                     || pruned is TypeRef.TNamedType);
     }
 
-    private (int, TypeRef) LowerCons(Expr.Cons cons)
+    private (int, TypeRef) LowerCons(
+        Expr.Cons cons,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(cons);
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (headTemp, headType) = LowerRuntimeManagedListElement(cons.Head);
+        LoweredValue head = LowerRuntimeManagedListElement(cons.Head, request);
         var (tailTemp, tailType) = LowerExpr(cons.Tail);
-        if (_runtimeRcListAllocationRequested && IsRuntimeManageableListElement(headType, headTemp))
+        if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            && IsRuntimeManageableListElement(head.Type, head.Temp))
         {
-            tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp);
+            tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp, request);
         }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
@@ -9706,17 +9817,21 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return LowerConsCell(
-            headTemp,
+            head.Temp,
             tailTemp,
-            headType,
+            head.Type,
             tailType,
-            ResolveSourceLocation(AstSpans.GetOrDefault(cons)));
+            ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
+            request);
     }
 
-    private int PrepareRuntimeRcListTail(Expr tailExpression, int tailTemp)
+    private int PrepareRuntimeRcListTail(
+        Expr tailExpression,
+        int tailTemp,
+        LoweredValueRequest request)
     {
         if (tailExpression is Expr.Var tcoTail
-            && _runtimeRcTcoListTailSlot is { } tcoTailSlot
+            && request.RuntimeTcoListTailSlot is { } tcoTailSlot
             && Lookup(tcoTail.Name) is Binding.Local tcoTailLocal
             && tcoTailLocal.Slot == tcoTailSlot)
         {
@@ -9724,14 +9839,17 @@ public sealed partial class Lowering
         }
 
         if (tailExpression is not Expr.Var tail
-            || _runtimeRcListTailBinding is null
-            || !string.Equals(tail.Name, _runtimeRcListTailBinding, StringComparison.Ordinal)
+            || request.RuntimeListTailBinding is null
+            || !string.Equals(
+                tail.Name,
+                request.RuntimeListTailBinding,
+                StringComparison.Ordinal)
             || LookupOwnedValue(tail.Name) is not { RuntimeManaged: true, IsDropped: false } info)
         {
             return tailTemp;
         }
 
-        if (_runtimeRcListTailShared)
+        if (request.RuntimeListTailShared)
         {
             int duplicatedTemp = NewTemp();
             Emit(new IrInst.RcDup(duplicatedTemp, tailTemp, RuntimeManaged: true));

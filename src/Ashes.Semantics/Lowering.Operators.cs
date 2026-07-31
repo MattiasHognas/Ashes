@@ -25,7 +25,9 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    private (int, TypeRef) LowerAdd(Expr.Add add)
+    private (int, TypeRef) LowerAdd(
+        Expr.Add add,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(add);
         var (leftTemp, leftType, rightTemp, rightType) = LowerAddOperands(add);
@@ -35,7 +37,14 @@ public sealed partial class Lowering
 
         var (affineResvStart, affineResvEnd) = ResolveAffineAppendReservation(add);
 
-        if (TryLowerDeferredAdd(leftTemp, rightTemp, leftPruned, rightPruned, affineResvStart, affineResvEnd) is { } deferredAdd)
+        if (TryLowerDeferredAdd(
+                leftTemp,
+                rightTemp,
+                leftPruned,
+                rightPruned,
+                affineResvStart,
+                affineResvEnd,
+                request) is { } deferredAdd)
         {
             return deferredAdd;
         }
@@ -63,37 +72,54 @@ public sealed partial class Lowering
 
         if (leftPruned is TypeRef.TBigInt && rightPruned is TypeRef.TBigInt)
         {
-            int target = NewTemp();
-            Emit(new IrInst.BigIntBinary(target, leftTemp, rightTemp, "add"));
-            return (target, new TypeRef.TBigInt());
+            return LowerBigIntAdd(leftTemp, rightTemp, request);
         }
 
         if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
-            return LowerStringAdd(leftTemp, rightTemp, affineResvStart, affineResvEnd);
+            return LowerStringAdd(
+                leftTemp,
+                rightTemp,
+                affineResvStart,
+                affineResvEnd,
+                request);
         }
 
-        var addTypes = PrettyPair(leftPruned, rightPruned);
+        return ReportInvalidAdd(add, leftPruned, rightPruned);
+    }
+
+    private (int Temp, TypeRef Type) ReportInvalidAdd(
+        Expr.Add add,
+        TypeRef leftType,
+        TypeRef rightType)
+    {
+        var addTypes = PrettyPair(leftType, rightType);
         ReportDiagnostic(GetSpan(add), $"'+' requires Int+Int, Float+Float, or Str+Str, got {addTypes.Left} and {addTypes.Right}.", DiagnosticCodes.TypeMismatch);
         int errorTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(errorTemp, 0));
         return (errorTemp, new TypeRef.TInt());
     }
 
+    private (int Temp, TypeRef Type) LowerBigIntAdd(
+        int leftTemp,
+        int rightTemp,
+        LoweredValueRequest request)
+    {
+        int target = NewTemp();
+        Emit(new IrInst.BigIntBinary(
+            target,
+            leftTemp,
+            rightTemp,
+            "add",
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.BigInt)));
+        return (target, new TypeRef.TBigInt());
+    }
+
     private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerAddOperands(Expr.Add add)
     {
-        bool savedRuntimeStringRequest = _runtimeRcStringAllocationRequested;
-        _runtimeRcStringAllocationRequested = false;
-        try
-        {
-            var (leftTemp, leftType) = LowerExpr(add.Left);
-            var (rightTemp, rightType) = LowerExpr(add.Right);
-            return (leftTemp, leftType, rightTemp, rightType);
-        }
-        finally
-        {
-            _runtimeRcStringAllocationRequested = savedRuntimeStringRequest;
-        }
+        var (leftTemp, leftType) = LowerExpr(add.Left);
+        var (rightTemp, rightType) = LowerExpr(add.Right);
+        return (leftTemp, leftType, rightTemp, rightType);
     }
 
     // Whether this add is an armed affine-accumulator append: the left operand's chain leaf is
@@ -128,7 +154,14 @@ public sealed partial class Lowering
     // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
     // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
     // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
-    private (int, TypeRef)? TryLowerDeferredAdd(int leftTemp, int rightTemp, TypeRef leftPruned, TypeRef rightPruned, int affineResvStart, int affineResvEnd)
+    private (int, TypeRef)? TryLowerDeferredAdd(
+        int leftTemp,
+        int rightTemp,
+        TypeRef leftPruned,
+        TypeRef rightPruned,
+        int affineResvStart,
+        int affineResvEnd,
+        LoweredValueRequest request)
     {
         if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
         {
@@ -138,7 +171,12 @@ public sealed partial class Lowering
                 _addConstrainedVars.Add(sharedVar);
                 _hasDeferredAdds = true;
                 int deferredTarget = NewTemp();
-                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar) { AffineResvStartSlot = affineResvStart, AffineResvEndSlot = affineResvEnd });
+                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar)
+                {
+                    AffineResvStartSlot = affineResvStart,
+                    AffineResvEndSlot = affineResvEnd,
+                    RequestedRuntimeRepresentation = request.RuntimeRepresentation,
+                });
                 return (deferredTarget, sharedVar);
             }
         }
@@ -193,7 +231,12 @@ public sealed partial class Lowering
         return (wrapped, luint);
     }
 
-    private (int, TypeRef) LowerStringAdd(int leftTemp, int rightTemp, int affineResvStart, int affineResvEnd)
+    private (int, TypeRef) LowerStringAdd(
+        int leftTemp,
+        int rightTemp,
+        int affineResvStart,
+        int affineResvEnd,
+        LoweredValueRequest request)
     {
         _usesConcatStr = true;
         int target = NewTemp();
@@ -225,7 +268,7 @@ public sealed partial class Lowering
             target,
             leftTemp,
             rightTemp,
-            _runtimeRcStringAllocationRequested));
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
         return (target, new TypeRef.TStr());
     }
 
