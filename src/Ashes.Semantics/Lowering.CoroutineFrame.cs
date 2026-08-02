@@ -12,6 +12,37 @@ public sealed partial class Lowering
         _coroutineRepresentationRecords;
 
     /// <summary>
+    /// Takes the task frame's own reference to a captured runtime-managed value. The frame outlives
+    /// the expression that created the task, so it cannot borrow: the creator releases its reference
+    /// at its own last use while the frame keeps this one until teardown.
+    /// </summary>
+    private int RetainCoroutineCapture(string name, int captureTemp, TypeRef captureType)
+    {
+        if (LookupOwnedValue(name) is not { RuntimeManaged: true, IsDropped: false })
+        {
+            return captureTemp;
+        }
+
+        TypeRef resolved = Prune(captureType);
+        if (CoroutineFrameDropKind(resolved) == OrdinaryHeapChildDropKind.None)
+        {
+            return captureTemp;
+        }
+
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(
+            retainedTemp,
+            captureTemp,
+            RuntimeManaged: true,
+            MayBeEmpty: MayUseEmptyListRepresentation(resolved)));
+        MarkRuntimeManagedTemp(
+            retainedTemp,
+            LoweredTempOwnershipReason.OwnershipTransfer,
+            type: resolved);
+        return retainedTemp;
+    }
+
+    /// <summary>
     /// Describes every task-frame word a coroutine owns or borrows: its captures, and the temps and
     /// locals the state-machine transform saves across a suspend. The frame dropper releases exactly
     /// the frame-owned words, so this is the one place the async teardown obligation is decided.

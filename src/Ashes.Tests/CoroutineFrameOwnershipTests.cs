@@ -92,6 +92,56 @@ public sealed class CoroutineFrameOwnershipTests
             .ShouldBeFalse();
     }
 
+    [Test]
+    public void Owned_capture_is_frame_owned_and_gets_a_dropper()
+    {
+        // The creating function cannot run inside a coroutine, so its value is reference-counted.
+        // Capturing it hands the frame its own reference, which teardown must release.
+        (IrProgram program, Lowering lowering) = LowerOwnedCaptureProgram();
+
+        lowering.CoroutineRepresentationDecisions.ShouldContain(record =>
+            record.Kind == CoroutineFrameSlotKind.Capture
+            && record.Decision == CoroutineValueRepresentationDecision.SavedInTaskFrame
+            && record.Reason == CoroutineFrameSlotReason.RuntimeRcDroppableLayout);
+
+        IrInst.CreateTask task = program.Functions
+            .Concat([program.EntryFunction])
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.CreateTask>()
+            .Single();
+        task.FrameDropperLabel.ShouldNotBeNull();
+
+        IrFunction dropper = program.Functions.Single(function =>
+            string.Equals(function.Label, task.FrameDropperLabel, StringComparison.Ordinal));
+        dropper.Origin!.Kind.ShouldBe(IrFunctionOriginKind.CoroutineFrameDropper);
+        dropper.HasEnvAndArgParams.ShouldBeTrue();
+        // Releases the word, then clears it, so a second call finds nothing to release.
+        dropper.Instructions.OfType<IrInst.RcDrop>().ShouldNotBeEmpty();
+        dropper.Instructions.OfType<IrInst.StoreMemOffset>().ShouldNotBeEmpty();
+    }
+
+    private static (IrProgram Program, Lowering Lowering) LowerOwnedCaptureProgram()
+    {
+        var diagnostics = new Frontend.Diagnostics();
+        var parsed = new Frontend.Parser(
+            """
+            let build = given (n) -> Ashes.Text.fromInt(n) + "-tail" in
+            let text = build(7) in
+            let job = async(match await Ashes.Task.sleep(1) with
+                | Ok(_u) -> text + "!"
+                | Error(_e) -> "err") in
+            match Ashes.Task.run(job) with
+                | Ok(t) -> Ashes.IO.print(t)
+                | Error(_e2) -> Ashes.IO.print("bad")
+            """,
+            diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        IrProgram ir = lowering.Lower(parsed);
+        diagnostics.ThrowIfAny();
+        return (ir, lowering);
+    }
+
     private static List<IrInst> LiveAcrossAwaitBody() =>
     [
         new IrInst.LoadConstStr(OwnerTemp, "text"),

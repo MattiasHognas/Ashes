@@ -1907,7 +1907,7 @@ public sealed partial class Lowering
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
                 captureNames.Add(name);
-                captureTemps.Add(capTemp);
+                captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
         }
@@ -2078,7 +2078,7 @@ public sealed partial class Lowering
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
                 captureNames.Add(name);
-                captureTemps.Add(capTemp);
+                captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
         }

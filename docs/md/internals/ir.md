@@ -369,7 +369,11 @@ to the innermost installed handler frame for that capability, 0 when none. See
 
 `AwaitTask` appears in the IR before the state machine transform. The transform
 replaces each `AwaitTask` with a `Suspend`/`Resume` pair that saves and restores
-live temps and locals across the await point. Perceus lifetime placement runs on
+live temps and locals across the await point. A suspend hands its saved values to
+the frame and the matching resume clears each word as it restores it, so exactly
+one owner holds each reference: while the task is parked the frame owns them and
+`FrameDropper` releases them on cancellation; once resumed the body owns them
+again and its ordinary lifetime markers do. Perceus lifetime placement runs on
 that pre-transform body, where the await is still an ordinary control-flow edge;
 an owner whose placed `RcDrop` follows an await is therefore live across it and
 enters the transform's save/restore set.
@@ -384,7 +388,8 @@ enters the transform's save/restore set.
 | 104-112 | private arena | Detached root cursor and end |
 | 120-136 | scheduler links | Ready-next, waiter, and arena owner |
 | 144 | `LoopResetOk` | Whether an async TCO restart may reset its region |
-| 152+ | captures/live vars | Captures followed by variables live across suspension |
+| 152 | `FrameDropper` | Frame teardown helper, or 0 when the frame owns nothing |
+| 160+ | captures/live vars | Captures followed by variables live across suspension |
 
 ---
 
