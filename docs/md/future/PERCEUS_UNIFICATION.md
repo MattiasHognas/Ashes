@@ -357,6 +357,30 @@ Remaining:
 Remove `_inCoroutineBody` from ordinary RC eligibility sites only as their replacement facts become
 live.
 
+**Falsified: removing the gate wholesale.** Dropping the `_inCoroutineBody` conjunct from the eight
+ordinary-value ownership sites (leaving the TCO promotion restriction alone) keeps every existing
+gate green — C# 1904, LSP 52, e2e 548, and the HTTP/TLS fixtures repeated in isolation — but leaks.
+A coroutine body that binds an owned string and reads it after an await grows from a flat 256 KB to
+1280 KB when its loop goes from 2 000 to 20 000 iterations, about 58 bytes per iteration, where the
+same program on the current gate stays flat:
+
+```ash
+let build n = Ashes.Text.fromInt(n) + "-tail-with-a-longer-payload-so-leaks-show"
+let once n =
+    async(
+        let made = build(n)
+        in
+            match await Ashes.Task.sleep(0) with
+                | Ok(_u) -> "A" + made + "!"
+                | Error(_e) -> "err")
+```
+
+The existing suites do not catch it: the async fixtures preserve copy scalars across awaits, so a
+growing-workload resident-set measurement is the signal. The two remaining bullets above are
+therefore per-value obligations, not a gate to delete — a value needs either a proof that it dies
+before the first suspend, or a frame slot that owns it with a descriptor. Re-attempting the removal
+without one of those will reproduce this leak.
+
 #### Milestone 7 acceptance
 
 Existing async fixtures mostly preserve copy scalars across awaits and are insufficient. Add native
