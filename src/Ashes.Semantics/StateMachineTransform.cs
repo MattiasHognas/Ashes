@@ -7,11 +7,15 @@ namespace Ashes.Semantics;
 /// <param name="StateCount">Number of states (N await points produce N+1 states).</param>
 /// <param name="StateStructSize">Total size of the task/state struct in bytes (header + captures + live vars).</param>
 /// <param name="MaxTemp">Highest temp index used (including temps added by the transform).</param>
+/// <param name="SavedTempOffsets">Body temp → its byte offset in the state struct, for temps saved across a suspend.</param>
+/// <param name="SavedLocalOffsets">Local slot → its byte offset in the state struct, for locals saved across a suspend.</param>
 public sealed record StateMachineResult(
     List<IrInst> Instructions,
     int StateCount,
     int StateStructSize,
-    int MaxTemp
+    int MaxTemp,
+    IReadOnlyDictionary<int, int> SavedTempOffsets,
+    IReadOnlyDictionary<int, int> SavedLocalOffsets
 );
 
 /// <summary>
@@ -92,7 +96,8 @@ public static class StateMachineTransform
         if (awaitPositions.Count == 0)
         {
             EmitSingleStateBody(instructions, result, stateStructTemp, statusTemp, captureCount, ref maxTemp);
-            return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+            return new StateMachineResult(
+                result, stateCount, stateStructSize, maxTemp, tempToSlotOffset, localToSlotOffset);
         }
 
         // --- Multi-state coroutine ---
@@ -101,7 +106,8 @@ public static class StateMachineTransform
             tempToSlotOffset, localToSlotOffset, stateCount,
             stateStructTemp, stateIdxTemp, statusTemp, captureCount, ref maxTemp);
 
-        return new StateMachineResult(result, stateCount, stateStructSize, maxTemp);
+        return new StateMachineResult(
+            result, stateCount, stateStructSize, maxTemp, tempToSlotOffset, localToSlotOffset);
     }
 
     /// <summary>
@@ -304,6 +310,13 @@ public static class StateMachineTransform
         Dictionary<int, int> tempToSlotOffset, Dictionary<int, int> localToSlotOffset,
         int stateStructTemp, int stateIdx, ref int maxTemp)
     {
+        // Restoring a saved word moves ownership back from the frame to the body, whose ordinary
+        // lifetime markers release it from here on. Clearing the word is that transfer: a later
+        // cancellation or completion tears down only what the frame still holds, so no value is
+        // released twice and none is missed while the task is parked.
+        int clearedConst = ++maxTemp;
+        result.Add(new IrInst.LoadConstInt(clearedConst, 0));
+
         // Resume: restore live temps from state struct
         var liveTempsAtThisPoint = liveAcross[stateIdx - 1];
         var restoreVars = new List<(int SlotOffset, int TargetTemp)>();
@@ -312,6 +325,7 @@ public static class StateMachineTransform
             if (tempToSlotOffset.TryGetValue(temp, out int offset))
             {
                 result.Add(new IrInst.LoadMemOffset(temp, stateStructTemp, offset));
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, clearedConst));
                 restoreVars.Add((offset, temp));
             }
         }
@@ -324,6 +338,7 @@ public static class StateMachineTransform
             {
                 int loadTemp = ++maxTemp;
                 result.Add(new IrInst.LoadMemOffset(loadTemp, stateStructTemp, offset));
+                result.Add(new IrInst.StoreMemOffset(stateStructTemp, offset, clearedConst));
                 result.Add(new IrInst.StoreLocal(local, loadTemp));
             }
         }
@@ -360,6 +375,16 @@ public static class StateMachineTransform
             {
                 // Final state: store result and return COMPLETED
                 result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.ResultSlot, ret.Source));
+                // The result leaves the frame. Clearing the saved word it also occupies is the
+                // explicit transfer state that keeps frame teardown from releasing a value the
+                // awaiter is about to read.
+                if (tempToSlotOffset.TryGetValue(ret.Source, out int transferredOffset))
+                {
+                    int clearedConst = ++maxTemp;
+                    result.Add(new IrInst.LoadConstInt(clearedConst, 0));
+                    result.Add(new IrInst.StoreMemOffset(stateStructTemp, transferredOffset, clearedConst));
+                }
+
                 int completedConst = ++maxTemp;
                 result.Add(new IrInst.LoadConstInt(completedConst, -1));
                 result.Add(new IrInst.StoreMemOffset(stateStructTemp, TaskStructLayout.StateIndex, completedConst));

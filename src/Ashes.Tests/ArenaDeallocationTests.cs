@@ -1988,13 +1988,13 @@ public sealed class ArenaDeallocationTests
             let result = choose([1, 2, 3])
             match result with | [] -> 0 | head :: _ -> head
             """);
+        // Reached from an async body, so a suspend can observe its values and the region path stays.
         IrProgram taskRegion = LowerProgram(
             """
-            let pending = async(1)
             let choose : List(Int) -> List(Int) = given source ->
                 let marker = "owned" in source
-            let result = choose([1, 2, 3])
-            match result with | [] -> 0 | head :: _ -> head
+            let pending = async(match choose([1, 2, 3]) with | [] -> 0 | head :: _ -> head)
+            pending
             """);
         IrProgram clone = LowerProgram(
             """
@@ -2044,11 +2044,11 @@ public sealed class ArenaDeallocationTests
     {
         IrProgram taskTcoRegion = LowerProgram(
             """
-            let pending = async(1)
             let recursive build : Int -> List(Str) -> List(Str) = given n -> given values ->
                 if n <= 0 then values
                 else build(n - 1)("value" :: values)
-            match build(3)([]) with | [] -> 0 | _ :: _ -> 1
+            let pending = async(match build(3)([]) with | [] -> 0 | _ :: _ -> 1)
+            pending
             """);
 
         CopyOutInstructions(taskTcoRegion).Any(instruction => instruction switch

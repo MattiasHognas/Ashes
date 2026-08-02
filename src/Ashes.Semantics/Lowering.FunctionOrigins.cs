@@ -37,7 +37,10 @@ public sealed partial class Lowering
         _ownershipPlacementContext = new OwnershipPlacementContext(
             _maAnalyzed
                 ? _maEntryMayExecuteUnderLiveHandlerPost
-                : ExpressionContainsHandleForOwner(expression, owner: null));
+                : ExpressionContainsHandleForOwner(expression, owner: null),
+            // The entry expression itself runs outside every coroutine: the async body it may create
+            // becomes its own function, and everything that body reaches is marked separately.
+            MayExecuteInsideCoroutine: false);
         _ownershipPlacementByFunctionLabel[entryOrigin.GeneratedLabel] =
             _ownershipPlacementContext;
         return entryOrigin;

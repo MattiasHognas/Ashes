@@ -5,9 +5,16 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
     private readonly record struct OwnershipPlacementContext(
-        bool MayExecuteUnderLiveHandlerPost)
+        bool MayExecuteUnderLiveHandlerPost,
+        bool MayExecuteInsideCoroutine)
     {
         public bool AllowsOrdinaryRc => !MayExecuteUnderLiveHandlerPost;
+
+        /// <summary>
+        /// True when the function cannot run inside a coroutine, so a suspend can never observe its
+        /// values and ordinary placement applies even though the program creates tasks elsewhere.
+        /// </summary>
+        public bool AllowsAsyncIndependentRc => !MayExecuteInsideCoroutine;
     }
 
     private readonly HashSet<FuncKey> _maFunctionsMayExecuteUnderLiveHandlerPost = [];
@@ -22,8 +29,16 @@ public sealed partial class Lowering
 
     private bool AllowsOrdinaryRcPlacement => _ownershipPlacementContext.AllowsOrdinaryRc;
 
+    /// <summary>
+    /// True when the function being lowered cannot execute inside a coroutine. This replaces the
+    /// whole-program "the program uses async" gate: creating a task elsewhere no longer forces every
+    /// unrelated function onto region placement.
+    /// </summary>
+    private bool AllowsAsyncIndependentRcPlacement => _ownershipPlacementContext.AllowsAsyncIndependentRc;
+
     private void ClearHandlerEffectAnalysis()
     {
+        ClearCoroutineEffectAnalysis();
         _maFunctionsMayExecuteUnderLiveHandlerPost.Clear();
         _maFunctionKeyByLambda.Clear();
         _ownershipPlacementBySource.Clear();
@@ -43,11 +58,13 @@ public sealed partial class Lowering
             entryCallees,
             unknownDynamicCallers,
             entryHasUnknownDynamicCall);
+        ComputeCoroutineEffects(calleesByCaller, unknownDynamicCallers);
 
         foreach ((FuncKey function, SourceFunctionOrigin source) in _maFunctionOrigins)
         {
             _ownershipPlacementBySource[source] = new OwnershipPlacementContext(
-                _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function));
+                _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
+                _maFunctionsMayExecuteInsideCoroutine.Contains(function));
         }
     }
 

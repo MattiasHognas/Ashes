@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `34ad81f` on 2026-08-02, together with the coroutine lifetime-placement
-ordering in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `a955eea` on 2026-08-02, together with the task-frame teardown and the
+first async-ownership narrowing in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -297,6 +297,21 @@ The following is already implemented and is not part of the backlog:
   already-placed function rather than re-deriving owners from resume prologues and dispatch chains.
   Live-across-await owners are saved and restored by the existing transform because a placed drop
   counts as a use of its owner;
+- task frames have an explicit ownership description and teardown. `StateMachineTransform` publishes
+  where it saves each temp and local; lowering turns those offsets and the capture words into
+  `CoroutineFrameSlot` descriptors recording owner, type-directed release, empty-list tolerance, and
+  a stable reason, retained as `CoroutineRepresentationRecord` values. A frame that owns references
+  gets a generated dropper which releases each owned word and clears it, so scheduler completion,
+  `ashes_cancel_task` (covering race losers and recursive cancellation of an awaited child), and
+  spawned-task reaping may each reach it. Ownership moves rather than being shared: creation clears
+  the live-variable region, a suspend hands its saved values to the frame, the matching resume
+  clears each word as it restores it, and completion clears the word holding the transferred result;
+- ordinary RC placement is scoped by a per-function "may execute inside a coroutine" effect instead
+  of a whole-program async flag. An async body seeds the functions written inside it and the
+  functions it references, the call census propagates, and an unresolvable call inside such a body
+  conservatively includes escaped functions. A function that cannot run inside a coroutine keeps
+  ordinary placement even though the program creates tasks elsewhere, and a captured value it owns
+  becomes a frame-owned reference released by the dropper;
 - byte storage origin is explicit and metadata-driven. `BytesOwnershipProvenance` distinguishes fresh
   owned buffers, owner-borrowed views, program-lifetime mmap views, and conservative unknowns in both
   function-result summaries and lowered-temp facts. Owning aggregate boundaries materialize
@@ -310,55 +325,37 @@ representation paths. Their existence must not be mistaken for a completed migra
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`, and lifetime placement runs on the linear body before the split. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
+| Async/task frames | Lifetime placement runs on the linear body before the split; task frames carry slot ownership descriptors and a teardown helper invoked on every terminal path; ordinary functions unreachable from a coroutine use normal placement. | Inside a coroutine body `_inCoroutineBody` still forces region treatment, so a value dead before suspension or live across an await does not yet use ordinary placement. A capture that arrives as a parameter has no static representation and needs the dynamic argument-ownership path before the frame can own it. |
 | Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse specialization, rejection, reset-safety, entry-copy, uniqueness, layout, token lifecycle, and fallback decisions, plus runtime-managed call-result placement and immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, remaining representation decisions are still transient or reconstructed from instructions, and the structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–6 and 7.1 are complete. Three implementation tasks
-remain; Milestone 7.2 is next.
+teardown prerequisites are in place. Milestones 1–6, 7.1 and 7.2 are complete, and 7.3's first
+bullet has landed. Two implementation tasks remain; the rest of Milestone 7.3 is next.
 
 ### Milestone 7 — async/task-frame ownership (last semantic cutover)
 
 This milestone must be sequenced as teardown and control-flow correctness first, narrowing second.
 
-#### 7.2 Add task-frame ownership descriptors and teardown
-
-`StateMachineTransform` currently returns instructions, state count, frame size, and max temp. Extend
-the transform/coroutine metadata with the owned frame slots and their structural drop descriptors.
-
-Generate a per-coroutine frame dropper (or equivalent descriptor-driven hook) and invoke it exactly
-once on every terminal path:
-
-- normal completion after the result has been transferred;
-- explicit cancellation;
-- losing `Ashes.Task.race` tasks;
-- spawned-task reaping;
-- recursive cancellation of an awaited child;
-- any error/early-completion path.
-
-Saved slots must be cleared or have explicit transfer state so resume/completion/cancellation cannot
-double-drop them. Captures and live locals/temps need the same accounting. Resource cleanup stays on
-its existing path and must not be silently folded into the ordinary RC frame dropper.
-
-Retain representation decisions for values copied across a worker boundary, saved in a task frame, or
-kept arena-based because the suspend/call graph is unknown. These are distinct from ordinary
-runtime-RC/region placement and must keep their source function/value origin and decisive reason.
-
 #### 7.3 Replace `_usesAsync`/`_inCoroutineBody` allocation gates
 
-Only after 7.2:
+The first bullet has landed: ordinary functions proven unreachable from a coroutine now use normal
+ownership/placement, and a value such a function owns and captures becomes a frame-owned reference
+that the dropper releases. `_usesAsync` remains only for its real control-flow purpose (whether
+`await` lowers to `AwaitTask` or `RunTask`).
 
-- allow ordinary functions proven unreachable from a coroutine to use normal ownership/placement even
-  when the program creates tasks elsewhere;
+Remaining:
+
 - inside a coroutine, allow values dead before suspension to use ordinary Perceus placement;
 - save live-across-await RC values in the frame with an owned reference and descriptor;
+- own a capture whose representation is not statically known, which arrives as a parameter of the
+  creating function. The existing runtime argument-ownership flag (`LoadArgumentOwnership`) is the
+  mechanism; until then such a capture stays region-backed;
 - retain conservative arena behavior for unknown call reachability or unsupported layouts.
 
-Remove `_usesAsync`/`_inCoroutineBody` from ordinary RC eligibility sites only as their replacement
-facts become live. The flags may remain for their real control-flow purpose (whether `await` lowers to
-`AwaitTask` or `RunTask`); that is separate from ownership.
+Remove `_inCoroutineBody` from ordinary RC eligibility sites only as their replacement facts become
+live.
 
 #### Milestone 7 acceptance
 
@@ -467,6 +464,7 @@ dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/Ow
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/OwnershipProvenanceTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/PerceusLifetimePlacementTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/CoroutineLifetimePlacementTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/CoroutineFrameOwnershipTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/NestedTcoPatternAliasTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/TcoPromotionCostSignalTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/TcoRcEligibilityPredicateTests/**"

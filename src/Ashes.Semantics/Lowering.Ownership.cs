@@ -1435,7 +1435,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
         int copyDest = NewTemp();
-        bool normalizeToRuntimeOwnership = !_usesAsync
+        bool normalizeToRuntimeOwnership = AllowsAsyncIndependentRcPlacement
             && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && copyOutKind is CopyOutKind.Shallow or CopyOutKind.List;

@@ -1926,7 +1926,8 @@ internal static partial class LlvmCodegen
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
-                    createTask.StateStructSize, createTask.CaptureCount, createTask.LoopResetEligible)),
+                    createTask.StateStructSize, createTask.CaptureCount,
+                    createTask.FrameDropperLabel, createTask.LoopResetEligible)),
             // CreateCompletedTask: pre-completed task with result already available.
             IrInst.CreateCompletedTask cct => StoreTemp(state, cct.Target,
                 EmitCreateCompletedTask(state, LoadTemp(state, cct.ResultTemp))),

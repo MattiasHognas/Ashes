@@ -956,11 +956,12 @@ public sealed partial class Lowering
         _arenaWatermarks.Clear();
         _arenaWatermarks.Push((-1, -1));
 
-        int stateStructSize = LowerCapturedStringTaskBuildCoroutine(
+        CoroutineEmission coroutine = LowerCapturedStringTaskBuildCoroutine(
             captureTemps,
             emitBody,
             coroutineLabel,
-            origin);
+            origin,
+            saved.TempOwnershipFacts);
 
         LowerCapturedStringTaskRestoreState(saved);
 
@@ -969,7 +970,15 @@ public sealed partial class Lowering
         int closureTemp = NewTemp();
         Emit(new IrInst.MakeClosure(closureTemp, coroutineLabel, envPtrTemp, captureTemps.Count * 8));
         int taskTemp = NewTemp();
-        Emit(new IrInst.CreateTask(taskTemp, closureTemp, stateStructSize, captureTemps.Count) { LoopResetEligible = loopResetEligible });
+        Emit(new IrInst.CreateTask(
+            taskTemp,
+            closureTemp,
+            coroutine.StateStructSize,
+            captureTemps.Count,
+            coroutine.FrameDropperLabel)
+        {
+            LoopResetEligible = loopResetEligible,
+        });
         return (taskTemp, taskType);
     }
 
@@ -1053,11 +1062,15 @@ public sealed partial class Lowering
             savedReuseTrackedSlotNames);
     }
 
-    private int LowerCapturedStringTaskBuildCoroutine(
+    /// <summary>A generated coroutine: its frame size and the label of its frame dropper, if any.</summary>
+    private sealed record CoroutineEmission(int StateStructSize, string? FrameDropperLabel);
+
+    private CoroutineEmission LowerCapturedStringTaskBuildCoroutine(
         IReadOnlyList<int> captureTemps,
         Func<IReadOnlyList<int>, int> emitBody,
         string coroutineLabel,
-        Expr generationExpression)
+        Expr generationExpression,
+        IReadOnlyDictionary<int, LoweredTempOwnershipFact> enclosingTempFacts)
     {
         var coroutineCaptureTemps = new int[captureTemps.Count];
         for (int i = 0; i < captureTemps.Count; i++)
@@ -1108,7 +1121,12 @@ public sealed partial class Lowering
             $"coroutine:{generationSpan.Start}:{generationSpan.Length}",
             ResolveSourceLocation(generationSpan));
         AddFunction(coroutineFunc, coroutineOrigin);
-        return transformResult.StateStructSize;
+
+        List<CoroutineFrameSlot> frameSlots = BuildCoroutineFrameSlots(
+            transformResult, captureTemps, enclosingTempFacts, placementResult.Instructions);
+        RecordCoroutineFrameRepresentation(coroutineLabel, coroutineOrigin, frameSlots);
+        string? frameDropperLabel = SynthesizeCoroutineFrameDropper(coroutineLabel, frameSlots, coroutineOrigin);
+        return new CoroutineEmission(transformResult.StateStructSize, frameDropperLabel);
     }
 
     private void LowerCapturedStringTaskRestoreState(CapturedStringTaskSavedState saved)
@@ -1889,7 +1907,7 @@ public sealed partial class Lowering
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
                 captureNames.Add(name);
-                captureTemps.Add(capTemp);
+                captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
         }
@@ -2060,7 +2078,7 @@ public sealed partial class Lowering
             {
                 var (capTemp, capType) = LowerVar(new Expr.Var(name));
                 captureNames.Add(name);
-                captureTemps.Add(capTemp);
+                captureTemps.Add(RetainCoroutineCapture(name, capTemp, capType));
                 captureTypes.Add(Prune(capType));
             }
         }

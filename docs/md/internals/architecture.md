@@ -766,6 +766,16 @@ lifetime operations from lexical anchors to control-flow-precise positions:
 - TCO back-edges drop replaced owners, and function exit transfers only the
   returned root while dropping every other active owner.
 
+A task frame carries its own ownership description. The transform publishes
+where it saves each value; lowering turns those offsets and the capture words
+into slot descriptors and, when the frame owns references, generates a frame
+dropper that releases each owned word and clears it. Scheduler completion,
+`ashes_cancel_task` and spawned-task reaping each run it, so a cancelled or
+abandoned task releases what it held without any path releasing it twice.
+Ordinary RC placement is scoped by a per-function "may execute inside a
+coroutine" effect, so creating a task does not force unrelated functions onto
+region placement.
+
 A coroutine is placed before its state machine transform rather than by the
 program-wide pass. On the linear body an `AwaitTask` is an ordinary control-flow
 edge, whereas the split form suspends by returning to the scheduler and resumes
