@@ -381,6 +381,43 @@ therefore per-value obligations, not a gate to delete — a value needs either a
 before the first suspend, or a frame slot that owns it with a descriptor. Re-attempting the removal
 without one of those will reproduce this leak.
 
+**What leaks, precisely.** The leaked values are the coroutine's *freshly built* result: the
+`CopyOutArena` with `RuntimeManaged: true` and `Purpose: RcNormalization` emitted where the body's
+escaping expression becomes the task result. No `RcDrop` covers it anywhere. Varying one thing at a
+time isolates it:
+
+| coroutine result | resident set at 2 000 / 10 000 / 50 000 iterations |
+|---|---|
+| a freshly built string | 256 KB / 256 KB / 1536 KB |
+| `Ashes.Text.byteLength` of that same string | flat |
+| an already-owned binding the body created | flat |
+
+The frame slots themselves are correct — a saved temp or local classifies as `SavedInTaskFrame` and
+its body drop is placed. What has no owner is the value handed out through the task's result slot,
+which frame teardown deliberately does not touch because completion transfers it to the awaiter.
+Nothing on the awaiting side then takes ownership of a reference-counted result. Under region
+placement the region reclaimed it, so the missing contract was invisible.
+
+**Prerequisite for both remaining bullets.** Define the task-result ownership contract before
+touching the gates again: either the awaiting side takes ownership when it consumes an `AwaitTask` or
+`RunTask` result, or the result stays frame-owned until the awaiter has copied it out. Any
+in-coroutine reference-counted value can end up as the result, so neither remaining bullet is
+implementable without it.
+
+**Separate pre-existing leak.** An `async` block containing no `await` that returns a heap string
+leaks about 68 bytes per iteration on `main` today — 256 KB, 1280 KB and 6912 KB at 2 000, 20 000 and
+100 000 iterations — while the same program with an `await` stays flat, and the same no-`await` shape
+returning an `Int` stays flat. This is independent of the work above and needs its own investigation.
+
+**Measuring this class of leak.** The shared plateau harness runs its program through a Python
+wrapper whose `subprocess.run` forks before exec, so the child's `ru_maxrss` inherits the
+interpreter's image: the floor is about 13.5 MB with several hundred KB of run-to-run noise, which
+cannot resolve a leak of this size, and the 8 MB default growth budget reflects that floor.
+`Linux_backend_llvm_async_coroutine_value_memory_should_plateau` therefore measures through
+`/usr/bin/time` — a floor of about 256 KB — and optimizes the IR first so it sees what actually
+ships. It fails deterministically with the gate lifted and passes with it in place. Lowering the
+floor for the other plateau workloads would make them meaningfully more sensitive too.
+
 #### Milestone 7 acceptance
 
 Existing async fixtures mostly preserve copy scalars across awaits and are insufficient. Add native
