@@ -8757,6 +8757,46 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Whether this caller may trust the callee's ownership summary about its result. Without async
+    /// in the program every function shares one placement context, so the summary and the compiled
+    /// body always agree. With async they can disagree: a body lowered inside a coroutine, or inline
+    /// for a block that completes without suspending, produces a region value while the AST-level
+    /// summary still reports an RC-eligible result. Trusting it there skips the copy-out, so the
+    /// result points into a reclaimed region and is released as if it carried a reference count. The
+    /// compiled body's own recorded representation is the only fact that settles it.
+    /// </summary>
+    private bool CalleeCompiledResultIsRuntimeManaged(string label)
+        => !_usesAsync || _bodyRuntimeManagedByLabel.GetValueOrDefault(label);
+
+    /// <summary>
+    /// Resolves the callee whose result this caller may take ownership of. Beyond the placement
+    /// context, the callee's ACTUAL compiled result must be runtime-managed: the ownership summary is
+    /// an AST-level fact and can report an RC-eligible result for a function whose body compiled to a
+    /// region value under its own placement context. Trusting the summary alone lets the caller skip
+    /// the copy-out, then reclaim the region the result still points into and release it as if it
+    /// carried a reference count.
+    /// </summary>
+    private bool TryResolveCalleeWithRuntimeManagedResult(
+        Expr rootExpr,
+        int argumentCount,
+        out FunctionOwnershipSummary? summary)
+    {
+        summary = null;
+        if (!AllowsAsyncIndependentRcPlacement
+            || _inCoroutineBody
+            || !AllowsOrdinaryRcPlacement
+            || argumentCount == 0
+            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
+            || !CalleeCompiledResultIsRuntimeManaged(resultLabel))
+        {
+            return false;
+        }
+
+        summary = GetOwnershipSummaryForLabel(resultLabel);
+        return summary is not null && argumentCount == summary.Parameters.Count;
+    }
+
+    /// <summary>
     /// Resolves whether a saturated call rooted at <paramref name="rootExpr"/> (applied to exactly
     /// <paramref name="argumentCount"/> arguments, with concrete post-unification result type
     /// <paramref name="callResultType"/>) is statically KNOWN to produce an RC-eligible result, via the
@@ -8821,13 +8861,8 @@ public sealed partial class Lowering
         // its ACTUAL compiled result is always arena, letting the caller's arena-reclaim-without-copy
         // path silently invalidate the result — caught empirically by readme_showcase.ash (an async
         // order-pricing pipeline), which printed empty strings instead of "Price: 12.50, Count: 6".
-        if (!AllowsAsyncIndependentRcPlacement
-            || _inCoroutineBody
-            || !AllowsOrdinaryRcPlacement
-            || argumentCount == 0
-            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
-            || GetOwnershipSummaryForLabel(resultLabel) is not { } summary
-            || argumentCount != summary.Parameters.Count)
+        if (!TryResolveCalleeWithRuntimeManagedResult(rootExpr, argumentCount, out FunctionOwnershipSummary? resolved)
+            || resolved is not { } summary)
         {
             return false;
         }

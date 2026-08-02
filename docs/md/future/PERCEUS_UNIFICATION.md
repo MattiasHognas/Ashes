@@ -404,10 +404,12 @@ touching the gates again: either the awaiting side takes ownership when it consu
 in-coroutine reference-counted value can end up as the result, so neither remaining bullet is
 implementable without it.
 
-**Separate pre-existing leak.** An `async` block containing no `await` that returns a heap string
-leaks about 68 bytes per iteration on `main` today — 256 KB, 1280 KB and 6912 KB at 2 000, 20 000 and
-100 000 iterations — while the same program with an `await` stays flat, and the same no-`await` shape
-returning an `Int` stays flat. This is independent of the work above and needs its own investigation.
+**Separate pre-existing leak.** An `async` block containing no `await` whose result the awaiter then
+*discards* leaks about 68 bytes per iteration — 256 KB, 1280 KB and 6912 KB at 2 000, 20 000 and
+100 000 iterations — on both sides of the task-frame work, so it predates it. The same shape whose
+result is consumed stays flat, as does the same shape with an `await`. This is the same task-result
+ownership boundary described above, seen under region placement: a result nobody consumes is a result
+nobody reclaims. Fixing it and defining the contract are likely the same change.
 
 **Measuring this class of leak.** The shared plateau harness runs its program through a Python
 wrapper whose `subprocess.run` forks before exec, so the child's `ru_maxrss` inherits the
