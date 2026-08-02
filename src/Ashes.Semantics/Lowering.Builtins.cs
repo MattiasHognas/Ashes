@@ -1069,7 +1069,15 @@ public sealed partial class Lowering
         int bodyTemp = emitBody(coroutineCaptureTemps);
         Emit(new IrInst.Return(bodyTemp));
 
-        var transformResult = StateMachineTransform.Transform(_inst, captureTemps.Count);
+        // Place lifetime markers on the linear body, where an await is still an ordinary CFG edge.
+        // After the split a suspend returns to the scheduler and its resume state is entered by a
+        // later invocation, so the state-dispatch form has no edge from suspend to resume and
+        // control-flow-precise placement would be reading a CFG the coroutine does not have.
+        LifetimePlacementResult placementResult = PerceusLifetimePlacement.Place(
+            _inst, _nextTempSlot, coroutineLabel, _borrowedArgumentCalls);
+        _nextTempSlot = placementResult.TempCount;
+
+        var transformResult = StateMachineTransform.Transform(placementResult.Instructions, captureTemps.Count);
         var coroutineFunc = new IrFunction(
             Label: coroutineLabel,
             Instructions: new List<IrInst>(transformResult.Instructions),
@@ -1083,7 +1091,10 @@ public sealed partial class Lowering
             ),
             LocalNames: new Dictionary<int, string>(_localNames),
             LocalTypes: SnapshotLocalTypes()
-        );
+        )
+        {
+            LifetimesPlaced = true,
+        };
         TextSpan generationSpan = AstSpans.GetOrDefault(generationExpression);
         IrFunctionOrigin? parent = _activeFunctionOrigin;
         var coroutineOrigin = new IrFunctionOrigin(

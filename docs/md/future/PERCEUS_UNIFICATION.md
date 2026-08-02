@@ -2,8 +2,8 @@
 
 Status: in progress.
 
-Audited against `main` at `6cdca2d` on 2026-07-31, together with the handler-effect ownership cutover
-in this change. This document is intentionally a remaining-work backlog.
+Audited against `main` at `34ad81f` on 2026-08-02, together with the coroutine lifetime-placement
+ordering in this change. This document is intentionally a remaining-work backlog.
 Completed implementation history belongs in
 [`docs/md/internals/changelog.md`](../internals/changelog.md), especially the RC Perceus chronology,
 and is repeated here only when it constrains unfinished work.
@@ -289,6 +289,14 @@ The following is already implemented and is not part of the backlog:
   unknown fallback. Lowering consumes that fact directly to create stable binding owners and retains
   the final borrowed, same-parameter transfer, copy-type, arena-erased, or runtime-RC placement
   outcome. Same-named binders in disjoint arms remain distinct by binder, ordinal, and local slot.
+- coroutine lifetime markers are placed on the linear pre-transform body, immediately before
+  `StateMachineTransform.Transform`, where the `AwaitTask` boundary is still an ordinary control-flow
+  edge. Placement therefore sees real branch, loop, and join structure instead of the state-dispatch
+  form whose suspend returns to the scheduler and whose resume is entered by a later invocation. The
+  emitted coroutine records `IrFunction.LifetimesPlaced`, and the program-wide pass skips an
+  already-placed function rather than re-deriving owners from resume prologues and dispatch chains.
+  Live-across-await owners are saved and restored by the existing transform because a placed drop
+  counts as a use of its owner;
 - byte storage origin is explicit and metadata-driven. `BytesOwnershipProvenance` distinguishes fresh
   owned buffers, owner-borrowed views, program-lifetime mmap views, and conservative unknowns in both
   function-result summaries and lowered-temp facts. Owning aggregate boundaries materialize
@@ -302,39 +310,18 @@ representation paths. Their existence must not be mistaken for a completed migra
 
 | Area | Current implementation | Remaining gap |
 |---|---|---|
-| Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; Perceus placement runs after the coroutine has been split; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
+| Async/task frames | `StateMachineTransform` computes live temps/locals across each `AwaitTask`, and lifetime placement runs on the linear body before the split. | `_usesAsync`/`_inCoroutineBody` still force broad arena treatment; task frames carry no RC slot/drop metadata and cancellation has no ordinary-value frame teardown. |
 | Observability | `FunctionOwnershipSummary` carries `SourceFunctionOrigin`, structured call-census/move-safety/result-reach causes, and compatibility projections for the existing positive facts. Lowering retains structured fact-consumption records for reuse specialization, rejection, reset-safety, entry-copy, uniqueness, layout, token lifecycle, and fallback decisions, plus runtime-managed call-result placement and immutable TCO placement traces. Production `IrFunction` values carry typed `IrFunctionOrigin` lineage which survives semantic IR rewrites and is ignored by the backend. `IrInst` has `SourceLocation`, colliding summaries are retained internally, and `CompileToImage` optimizes the `IrProgram` immediately before backend compilation. | The compatibility ownership formatter does not yet expose the stable origins or structured causes, ownership/placement debug output is environment-driven and emitted inside semantic passes, remaining representation decisions are still transient or reconstructed from instructions, and the structured facts are not yet exposed through an immutable compilation snapshot paired with the final optimized IR. |
 
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–6 are complete. Four implementation tasks remain;
-Milestone 7.1 is next.
+teardown prerequisites are in place. Milestones 1–6 and 7.1 are complete. Three implementation tasks
+remain; Milestone 7.2 is next.
 
 ### Milestone 7 — async/task-frame ownership (last semantic cutover)
 
 This milestone must be sequenced as teardown and control-flow correctness first, narrowing second.
-
-#### 7.1 Place lifetimes before coroutine splitting
-
-Today `LowerCapturedStringTaskBuildCoroutine` calls `StateMachineTransform.Transform` before the final
-program-wide `PerceusLifetimePlacement.Place`, so placement sees a state-dispatch function whose
-`Suspend` path returns and whose resumed state is reached through a later invocation, not an ordinary
-CFG edge.
-
-Prefer placing lifetimes on the linear pre-transform coroutine IR, immediately before
-`StateMachineTransform.Transform`, so its normal CFG contains the `AwaitTask` boundary. Ensure the final
-program-wide placement does not process that function a second time. If this ordering proves
-incompatible, the alternative is an explicit suspend-to-resume edge model in
-`PerceusLifetimePlacement.BuildBlocks`; do not narrow async allocation while neither solution exists.
-
-Add focused placement tests with an RC owner:
-
-- used only before an await;
-- live across one await;
-- live across multiple awaits;
-- live across an await in a coroutine TCO loop;
-- live on only one branch after resume.
 
 #### 7.2 Add task-frame ownership descriptors and teardown
 
@@ -361,7 +348,7 @@ runtime-RC/region placement and must keep their source function/value origin and
 
 #### 7.3 Replace `_usesAsync`/`_inCoroutineBody` allocation gates
 
-Only after 7.1 and 7.2:
+Only after 7.2:
 
 - allow ordinary functions proven unreachable from a coroutine to use normal ownership/placement even
   when the program creates tasks elsewhere;
@@ -479,6 +466,7 @@ dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/Un
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/OwnershipTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/OwnershipProvenanceTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/PerceusLifetimePlacementTests/**"
+dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/CoroutineLifetimePlacementTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/NestedTcoPatternAliasTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/TcoPromotionCostSignalTests/**"
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/TcoRcEligibilityPredicateTests/**"
