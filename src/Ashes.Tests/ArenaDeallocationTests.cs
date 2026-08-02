@@ -1018,12 +1018,10 @@ public sealed class ArenaDeallocationTests
         lowering.PatternBindingOwnershipDecisions.ShouldContain(decision =>
             string.Equals(decision.BindingName, "tail", StringComparison.Ordinal)
             && decision.PlacementOutcome == PatternBindingPlacementOutcome.TransferredToSameParameter);
-        instructions.OfType<IrInst.Label>().Count(label =>
-            label.Name.Contains("rc_pattern_owner_duplicated", StringComparison.Ordinal)).ShouldBe(1,
-                "Only the head embedded into the rebuilt accumulator needs a binding owner.");
-        instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
-                "A nil same-parameter transfer must bypass RC header access.");
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(1,
+            "Only the head embedded into the rebuilt accumulator needs a binding owner.");
+        instructions.Any(instruction => instruction is IrInst.RcDup { MayBeEmpty: true }).ShouldBeTrue(
+            "A nil same-parameter transfer must bypass RC header access.");
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeFalse(
                 "The source-name TCO alias path must remain deleted.");
@@ -1374,9 +1372,8 @@ public sealed class ArenaDeallocationTests
             HeadCopy: IrInst.ListHeadCopyKind.String,
             RuntimeManaged: true,
         }).ShouldBeTrue();
-        instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_nullable_duplicated", StringComparison.Ordinal)).ShouldBeTrue(
-                "The resolved consumed tail must gain its independent reference before the old parent drops.");
+        instructions.Any(instruction => instruction is IrInst.RcDup { MayBeEmpty: true }).ShouldBeTrue(
+            "The resolved consumed tail must gain its independent reference before the old parent drops.");
         instructions.Count(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
                 "Exactly one matching active parameter transfers; the other parameter follows its exit-drop path.");

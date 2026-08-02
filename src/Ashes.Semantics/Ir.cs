@@ -1134,7 +1134,8 @@ public abstract record IrInst
         int SourceTemp,
         string TypeName,
         int OwnerSlot = -1, // Lowering provenance used by precise placement; -1 for already-placed markers.
-        bool RuntimeManaged = false
+        bool RuntimeManaged = false,
+        bool MayBeEmpty = false // The empty-list representation; see the remarks on RcDup.
     ) : IrInst;
 
     /// <summary>
@@ -1142,8 +1143,19 @@ public abstract record IrInst
     /// identity-preserving alias of <paramref name="SourceTemp"/> until runtime reference counting is
     /// enabled; the optimizer erases the marker and remaps uses to the source.
     /// </summary>
-    public sealed record RcDup(int Target, int SourceTemp, bool RuntimeManaged = false)
-        : IrInst, IRuntimeManagedTargetResult;
+    /// <remarks>
+    /// <paramref name="MayBeEmpty"/> records that the source's resolved type admits the empty-list
+    /// representation, which is the null pointer rather than a cell carrying
+    /// <see cref="HeapLayouts.RcHeader"/>. Codegen must then skip the reference-count update instead
+    /// of reading a header that does not exist. Lowering computes the fact from the resolved type;
+    /// codegen never re-derives it.
+    /// </remarks>
+    public sealed record RcDup(
+        int Target,
+        int SourceTemp,
+        bool RuntimeManaged = false,
+        bool MayBeEmpty = false
+    ) : IrInst, IRuntimeManagedTargetResult;
 
     /// <summary>
     /// Tests whether a runtime-managed value has exactly one owning reference. This operation is

@@ -22,24 +22,19 @@ public sealed partial class Lowering
 
         var resolvedModule = ResolveModuleAlias(qv.Module);
 
-        if (BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule))
+        if (TryLowerBuiltinModuleMember(qv, resolvedModule, out var builtinMember))
         {
-            if (builtinModule.Members.ContainsKey(qv.Name))
-            {
-                var resolvedStdMember = ResolveBuiltinModuleMember(builtinModule, qv.Name);
-                RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedStdMember.Item2);
-                return resolvedStdMember;
-            }
-
-            if (builtinModule.ResourceName is null)
-            {
-                return StdMemberNotFound(resolvedModule, qv.Name, GetSpan(qv));
-            }
+            return builtinMember;
         }
 
         var sanitizedModuleName = ProjectSupport.SanitizeModuleBindingName(resolvedModule);
         var exportedBindingName = $"{sanitizedModuleName}_{qv.Name}";
-        if (Lookup(exportedBindingName) is not null)
+        // An inlined helper body or a reuse specialization re-lowers an expression outside the
+        // declaration scope it was written in, where the stitched module binding is no longer on the
+        // scope chain. Membership in the lowered top-level function references proves the binding was
+        // already emitted, so resolve it the same way an unqualified backward reference resolves
+        // there rather than reporting the module as unknown.
+        if (Lookup(exportedBindingName) is not null || _topLevelFunctionRefs.ContainsKey(exportedBindingName))
         {
             var resolvedQualifiedBinding = LowerVar(
                 new Expr.Var(exportedBindingName),
@@ -73,6 +68,38 @@ public sealed partial class Lowering
         }
 
         return LowerRecordFieldAccessFallback(qv, binding);
+    }
+
+    /// <summary>
+    /// Resolves a member of a built-in module. A resource module may also expose non-member names,
+    /// so only a non-resource module turns an unknown member into a diagnostic here.
+    /// </summary>
+    private bool TryLowerBuiltinModuleMember(
+        Expr.QualifiedVar qv,
+        string resolvedModule,
+        out (int, TypeRef) lowered)
+    {
+        if (!BuiltinRegistry.TryGetModule(resolvedModule, out var builtinModule))
+        {
+            lowered = default;
+            return false;
+        }
+
+        if (builtinModule.Members.ContainsKey(qv.Name))
+        {
+            lowered = ResolveBuiltinModuleMember(builtinModule, qv.Name);
+            RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", lowered.Item2);
+            return true;
+        }
+
+        if (builtinModule.ResourceName is null)
+        {
+            lowered = StdMemberNotFound(resolvedModule, qv.Name, GetSpan(qv));
+            return true;
+        }
+
+        lowered = default;
+        return false;
     }
 
     /// <summary>

@@ -14,7 +14,7 @@ public sealed class NestedTcoPatternAliasTests
     [Test]
     public void Tuple_field_nested_below_a_list_cons_gets_a_protective_dup()
     {
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Entry =
                 | text: Str
                 | n: Int
@@ -42,12 +42,10 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction lookup = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpStrEq));
 
-        // The guarded protective dup this fix-up inserts: a null check followed by an RcDup into the
-        // same stable owner slot, landing on the ordinary pattern-owner duplication label.
-        lookup.Instructions
-            .OfType<IrInst.Label>()
-            .ShouldContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
-        lookup.Instructions.OfType<IrInst.RcDup>().ShouldContain(dup => dup.RuntimeManaged);
+        // The protective dup this fix-up inserts: a runtime-managed RcDup of the binding's own slot
+        // stored straight back into it, so the binding holds its own reference.
+        lowering.CountProtectivePatternBindingOwners().ShouldBeGreaterThan(0);
+        lookup.PatternBindingOwnerSlots().ShouldNotBeEmpty();
         lookup.Instructions.OfType<IrInst.RcDrop>().ShouldContain(drop =>
             drop.RuntimeManaged && drop.OwnerSlot >= 0,
             "The binding owner must retain an ordinary Perceus final-drop anchor.");
@@ -59,7 +57,7 @@ public sealed class NestedTcoPatternAliasTests
         // "n" (Int) sits in the same tuple as "lit" (Str) but is a copy type: it must never be
         // treated as a candidate for the protective dup, whose RcDup assumes a refcounted heap
         // pointer -- applying it to a raw integer is a crash, not just a missed optimization.
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Entry =
                 | text: Str
                 | n: Int
@@ -94,10 +92,8 @@ public sealed class NestedTcoPatternAliasTests
 
         // Exactly one lexical owner in this shape (the escaping string "lit"). The tail transfer is
         // duplicated at the back edge, while the copy-typed "n" must never enter RC.
-        lookup.Instructions
-            .OfType<IrInst.Label>()
-            .Count(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal))
-            .ShouldBe(1);
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(1);
+        lookup.PatternBindingOwnerSlots().Count.ShouldBe(1);
     }
 
     [Test]
@@ -110,7 +106,7 @@ public sealed class NestedTcoPatternAliasTests
         // argument machinery) and must still get its own protective dup: tbl's cons cell that "s" came
         // from is dropped once the loop exits without recursing, and without a dup the returned Box
         // would keep a dangling pointer into that just-freed cell.
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Box =
                 | v: Str
 
@@ -140,10 +136,8 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction findFirst = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpStrEq));
 
-        findFirst.Instructions
-            .OfType<IrInst.Label>()
-            .ShouldContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
-        findFirst.Instructions.OfType<IrInst.RcDup>().ShouldContain(dup => dup.RuntimeManaged);
+        lowering.CountProtectivePatternBindingOwners().ShouldBeGreaterThan(0);
+        findFirst.PatternBindingOwnerSlots().ShouldNotBeEmpty();
     }
 
     // The adversarial counterpart -- proving a direct binding used ONLY as a further match scrutinee
@@ -169,7 +163,7 @@ public sealed class NestedTcoPatternAliasTests
         // recurs -- an unbounded leak, not a redundant-but-harmless dup. This is the real shape
         // (`rotateFirst`/`getAt`/`setAt` consuming a TCO-parameter-derived binding as a plain call
         // argument) that caused a factorial-scaling regression in the fannkuch-redux challenge program.
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Box =
                 | v: Str
 
@@ -203,15 +197,13 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction walk = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpIntEq));
 
-        walk.Instructions
-            .OfType<IrInst.Label>()
-            .ShouldNotContain(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(0);
     }
 
     [Test]
     public void Early_resolved_direct_alias_is_not_also_protected_by_the_late_fixup()
     {
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             let recursive reverse : List((Str, Int)) -> List((Str, Int)) -> List((Str, Int)) =
                 given values -> given reversed ->
                     match values with
@@ -231,15 +223,14 @@ public sealed class NestedTcoPatternAliasTests
         labels.ShouldNotContain(label =>
             label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal),
                 "The source-name TCO alias path has been removed.");
-        labels.Count(label =>
-            label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal)).ShouldBe(1,
-                "Only the head embedded in the rebuilt list needs a lexical Perceus owner.");
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(1,
+            "Only the head embedded in the rebuilt list needs a lexical Perceus owner.");
     }
 
     [Test]
     public void Qualified_inspection_of_a_direct_alias_does_not_transfer_ownership()
     {
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             let recursive consume : List(Str) -> Int -> Int = given values -> given total ->
                 match values with
                     | [] -> total
@@ -257,14 +248,13 @@ public sealed class NestedTcoPatternAliasTests
         labels.ShouldNotContain(label =>
             label.Name.StartsWith("rc_tco_alias_duplicated", StringComparison.Ordinal),
                 "Same-parameter transfer is handled at the exact back edge, without a binding alias table.");
-        labels.ShouldNotContain(label =>
-            label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal));
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(0);
     }
 
     [Test]
     public void Same_named_binders_in_different_match_arms_keep_distinct_escape_verdicts()
     {
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Box =
                 | v: Str
 
@@ -285,17 +275,82 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction find = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpIntEq));
 
-        find.Instructions
-            .OfType<IrInst.Label>()
-            .Count(label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal))
-            .ShouldBe(1,
-                "Only the guarded arm's escaping value receives a lexical owner; the tail transfers at its back edge.");
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(1,
+            "Only the guarded arm's escaping value receives a lexical owner; the tail transfers at its back edge.");
+    }
+
+    [Test]
+    public void List_typed_binding_owner_marks_its_reference_counting_as_empty_tolerant()
+    {
+        // "perm" is bound to a list field and embedded in a new cons cell, so it becomes a lexical
+        // owner. The empty list is the null pointer and carries no reference-count header, so both
+        // the owner's duplicate and its final drop must be marked empty-tolerant or the first
+        // iteration reads a header 16 bytes below address zero.
+        (IrProgram program, Lowering lowering) = LowerProgram("""
+            type State =
+                | S(List(Int), List(Int))
+
+            let recursive walk r st =
+                match st with
+                    | S(perm, count) ->
+                        if r == 3
+                        then perm
+                        else walk(r + 1)(S(r :: perm)(count))
+
+            let head =
+                match walk(0)(S([])([1, 2])) with
+                    | [] -> 0
+                    | h :: _ -> h
+
+            Ashes.IO.print(head)
+            """);
+
+        lowering.CountProtectivePatternBindingOwners().ShouldBeGreaterThan(0);
+        List<IrInst> instructions = [.. program.Functions.SelectMany(function => function.Instructions)];
+        program.Functions
+            .SelectMany(function => function.PatternBindingOwnerDups())
+            .ShouldContain(owner => owner.Dup.MayBeEmpty);
+        instructions.OfType<IrInst.RcDrop>().ShouldContain(drop =>
+            drop.RuntimeManaged && drop.MayBeEmpty && string.Equals(drop.TypeName, "List", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Non_list_binding_owner_keeps_unconditional_reference_counting()
+    {
+        // "s" is a Str, which can never be the empty-list null pointer, so its owner must not pay
+        // for the empty-tolerant branch.
+        (IrProgram program, Lowering lowering) = LowerProgram("""
+            type Box =
+                | v: Str
+
+            let table = ["a", "b", "c", "d"]
+
+            let recursive findFirst target tbl =
+                match tbl with
+                    | [] -> None
+                    | s :: rest ->
+                        if s == target
+                        then Some(Box(v = s))
+                        else findFirst(target)(rest)
+
+            let r1 =
+                match findFirst("c")(table) with
+                    | Some(b) -> b.v
+                    | None -> "?"
+
+            Ashes.IO.print(r1)
+            """);
+
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(1);
+        program.Functions
+            .SelectMany(function => function.PatternBindingOwnerDups())
+            .ShouldNotContain(owner => owner.Dup.MayBeEmpty);
     }
 
     [Test]
     public void Nested_same_named_binder_does_not_make_the_outer_binding_escape()
     {
-        IrProgram program = LowerProgram("""
+        (IrProgram program, Lowering lowering) = LowerProgram("""
             type Box =
                 | v: Str
 
@@ -323,20 +378,18 @@ public sealed class NestedTcoPatternAliasTests
         IrFunction find = program.Functions.Single(function => function.Instructions
             .Any(instruction => instruction is IrInst.CmpIntEq));
 
-        find.Instructions
-            .OfType<IrInst.Label>()
-            .ShouldNotContain(
-                label => label.Name.StartsWith("rc_pattern_owner_duplicated", StringComparison.Ordinal),
-                "The escaping inner value must not transfer its verdict to the unused outer value with the same source name.");
+        lowering.CountProtectivePatternBindingOwners().ShouldBe(0,
+            "The escaping inner value must not transfer its verdict to the unused outer value with the same source name.");
     }
 
-    private static IrProgram LowerProgram(string source)
+    private static (IrProgram Program, Lowering Lowering) LowerProgram(string source)
     {
         Diagnostics diagnostics = new();
         Program program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
-        IrProgram ir = new Lowering(diagnostics).Lower(program);
+        Lowering lowering = new(diagnostics);
+        IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
-        return ir;
+        return (ir, lowering);
     }
 }
