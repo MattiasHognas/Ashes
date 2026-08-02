@@ -1849,10 +1849,61 @@ internal static partial class LlvmCodegen
     private static bool EmitRuntimeManagedDropInstruction(LlvmCodegenState state, IrInst.RcDrop instruction)
     {
         LlvmValueHandle value = LoadTemp(state, instruction.SourceTemp);
-        return string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
+        if (!instruction.MayBeEmpty)
+        {
+            return EmitDropCountedValue(state, instruction, value);
+        }
+
+        // The empty list is the null pointer, which carries no reference-count header.
+        LlvmBasicBlockHandle dropBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_present");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_after_empty");
+        LlvmApi.BuildCondBr(state.Target.Builder, IsNonEmptyValue(state, value, "rc_drop"), dropBlock, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, dropBlock);
+        _ = EmitDropCountedValue(state, instruction, value);
+        LlvmApi.BuildBr(state.Target.Builder, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, afterBlock);
+        return false;
+    }
+
+    private static bool EmitDropCountedValue(LlvmCodegenState state, IrInst.RcDrop instruction, LlvmValueHandle value)
+        => string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
             ? EmitRuntimeRcClosureDrop(state, value)
             : EmitRuntimeRcDrop(state, value);
+
+    /// <summary>
+    /// Increments a runtime-managed value's reference count, skipping a value that is the empty
+    /// list. The duplicate is identity-preserving, so the null pointer is its own result and no
+    /// merge is needed.
+    /// </summary>
+    private static LlvmValueHandle EmitRuntimeManagedDupValue(LlvmCodegenState state, IrInst.RcDup instruction)
+    {
+        LlvmValueHandle value = LoadTemp(state, instruction.SourceTemp);
+        if (!instruction.MayBeEmpty)
+        {
+            return EmitRuntimeRcDup(state, value);
+        }
+
+        LlvmBasicBlockHandle dupBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_dup_present");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_dup_after_empty");
+        LlvmApi.BuildCondBr(state.Target.Builder, IsNonEmptyValue(state, value, "rc_dup"), dupBlock, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, dupBlock);
+        _ = EmitRuntimeRcDup(state, value);
+        LlvmApi.BuildBr(state.Target.Builder, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(state.Target.Builder, afterBlock);
+        return value;
     }
+
+    private static LlvmValueHandle IsNonEmptyValue(LlvmCodegenState state, LlvmValueHandle value, string prefix)
+        => LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Ne, value,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_present");
 
     private static bool? EmitInstructionGroup3(LlvmCodegenState state, IrInst instruction)
     {
@@ -1867,7 +1918,7 @@ internal static partial class LlvmCodegen
                     ? EmitRuntimeDropReuse(state, LoadTemp(state, token.SourceTemp))
                     : LoadTemp(state, token.SourceTemp)),
             IrInst.RcDup { RuntimeManaged: true } dup => StoreTemp(state, dup.Target,
-                EmitRuntimeRcDup(state, LoadTemp(state, dup.SourceTemp))),
+                EmitRuntimeManagedDupValue(state, dup)),
             // Erased Perceus marker: identity-preserving for arena-managed values.
             IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
             IrInst.RcIsUnique unique => StoreTemp(state, unique.Target,

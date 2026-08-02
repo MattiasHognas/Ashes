@@ -154,8 +154,8 @@ Each instruction that consumes values reads from `Source`, `Left`,
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
 | `Borrow` | `Target`, `SourceTemp` | Create a non-owning compiler-tracked alias |
-| `RcDup` | `Target`, `SourceTemp`, `RuntimeManaged` | Split ownership; increments the count for an RC value |
-| `RcDrop` | `SourceTemp`, `TypeName`, `OwnerSlot`, `RuntimeManaged` | End one ordinary ownership path; runtime-managed forms perform type-directed RC release |
+| `RcDup` | `Target`, `SourceTemp`, `RuntimeManaged`, `MayBeEmpty` | Split ownership; increments the count for an RC value |
+| `RcDrop` | `SourceTemp`, `TypeName`, `OwnerSlot`, `RuntimeManaged`, `MayBeEmpty` | End one ordinary ownership path; runtime-managed forms perform type-directed RC release |
 | `RcIsUnique` | `Target`, `SourceTemp` | Test whether an RC value has count 1 |
 | `CleanupResource` | `SourceTemp`, `TypeName` | Deterministically close/reap a language resource; distinct from ordinary RC |
 
@@ -164,6 +164,13 @@ anchors and places drops after last use or at dead branch entry. Constructor,
 match, closure, and TCO lowering emit additional shape-aware ownership
 operations. `RuntimeManaged: false` marks a compiler fact used by a scoped or
 specialized region; it is not an instruction to read an RC header.
+
+`MayBeEmpty` records that the value's resolved type admits the empty-list
+representation, which is the null pointer and carries no reference-count header.
+Codegen then skips the count update instead of reading a header 16 bytes below
+address zero. Lowering computes the fact from the resolved type at the one place
+a marker is promoted to runtime RC; codegen never re-derives it, and the
+duplicate stays identity-preserving so an empty value is its own result.
 
 ### Integer Arithmetic
 

@@ -489,6 +489,10 @@ public sealed partial class Lowering
     // inlining it. This lets non-allocating helpers (e.g. an AVL height/max reader) stay out of the
     // reuse-inline set, keeping the specialized function small. See LowerVar's specialization fallback.
     private readonly Dictionary<string, (string Label, TypeScheme Scheme)> _topLevelFunctionRefs = new(StringComparer.Ordinal);
+
+    // Top-level bindings each inline candidate's body reads, computed once per candidate. An inline
+    // site checks these against the scope it would splice the body into.
+    private readonly Dictionary<string, HashSet<string>> _inlinableBodyExternalReferences = new(StringComparer.Ordinal);
     // Compatibility reverse lookup from a declaration-site label to its source name. Exact ownership
     // consumers use _functionKeyByLabel; this remains for older lowering paths whose labels do not yet
     // retain a binder identity.
@@ -1453,7 +1457,7 @@ public sealed partial class Lowering
             return sourceTemp;
         }
 
-        if (argType is TypeRef.TList)
+        if (MayUseEmptyListRepresentation(argType))
         {
             return EmitRuntimeManagedNullableDup(sourceTemp);
         }
@@ -1464,24 +1468,17 @@ public sealed partial class Lowering
         return duplicatedTemp;
     }
 
+    /// <summary>
+    /// Duplicates a runtime-managed value whose type admits the empty-list representation. The
+    /// duplicate is identity-preserving, so an empty value is its own result and codegen skips the
+    /// reference-count update rather than reading a header the null pointer does not have.
+    /// </summary>
     private int EmitRuntimeManagedNullableDup(int sourceTemp)
     {
-        int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
-        int zeroTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-        int nonNullTemp = NewTemp();
-        Emit(new IrInst.CmpIntNe(nonNullTemp, sourceTemp, zeroTemp));
-        string duplicatedLabel = NewLabel("rc_nullable_duplicated");
-        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
         int duplicatedTemp = NewTemp();
-        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true));
-        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
-        Emit(new IrInst.Label(duplicatedLabel));
-        int resultTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        MarkRuntimeManagedTemp(resultTemp);
-        return resultTemp;
+        Emit(new IrInst.RcDup(duplicatedTemp, sourceTemp, RuntimeManaged: true, MayBeEmpty: true));
+        MarkRuntimeManagedTemp(duplicatedTemp);
+        return duplicatedTemp;
     }
 
     private void TcoBackEdgeDropRuntimeManagedArg(PendingTcoReset info, int index, TypeRef argType)
@@ -5551,7 +5548,10 @@ public sealed partial class Lowering
             .OrderByDescending(candidate => candidate.InsertIndex)
             .ThenByDescending(candidate => candidate.Ownership.BindingOrdinal))
         {
-            SplicePerceusPatternBindingOwnerDup(site.LocalSlot, site.InsertIndex);
+            SplicePerceusPatternBindingOwnerDup(
+                site.LocalSlot,
+                site.InsertIndex,
+                MayUseEmptyListRepresentation(site.Type));
         }
 
         _patternBindingPlacementSites.Clear();
@@ -5581,6 +5581,7 @@ public sealed partial class Lowering
     private void PromotePatternBindingOwnerMarkers(PatternBindingPlacementSite site)
     {
         string typeName = GetOwnedTypeName(Prune(site.Type)) ?? "PatternBinding";
+        bool mayBeEmpty = MayUseEmptyListRepresentation(site.Type);
         HashSet<int> aliases = [];
         bool changed;
         do
@@ -5599,12 +5600,17 @@ public sealed partial class Lowering
                     case IrInst.RcDup duplicate when aliases.Contains(duplicate.SourceTemp):
                         if (!duplicate.RuntimeManaged)
                         {
-                            _inst[i] = duplicate with { RuntimeManaged = true };
+                            _inst[i] = duplicate with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty };
                         }
                         changed |= aliases.Add(duplicate.Target);
                         break;
                     case IrInst.RcDrop drop when drop.OwnerSlot == site.LocalSlot:
-                        _inst[i] = drop with { TypeName = typeName, RuntimeManaged = true };
+                        _inst[i] = drop with
+                        {
+                            TypeName = typeName,
+                            RuntimeManaged = true,
+                            MayBeEmpty = mayBeEmpty,
+                        };
                         break;
                 }
             }
@@ -5621,31 +5627,31 @@ public sealed partial class Lowering
         }
     }
 
-    private void SplicePerceusPatternBindingOwnerDup(int localSlot, int insertIndex)
+    private void SplicePerceusPatternBindingOwnerDup(int localSlot, int insertIndex, bool mayBeEmpty)
     {
         int generatedStart = _inst.Count;
-        EmitPerceusPatternBindingOwnerDup(localSlot);
+        EmitPerceusPatternBindingOwnerDup(localSlot, mayBeEmpty);
         int generatedCount = _inst.Count - generatedStart;
         List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
         _inst.RemoveRange(generatedStart, generatedCount);
         _inst.InsertRange(insertIndex, generated);
     }
 
-    private void EmitPerceusPatternBindingOwnerDup(int localSlot)
+    private void EmitPerceusPatternBindingOwnerDup(int localSlot, bool mayBeEmpty)
     {
         int valueTemp = NewTemp();
         Emit(new IrInst.LoadLocal(valueTemp, localSlot));
-        int zeroTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
-        int nonNullTemp = NewTemp();
-        Emit(new IrInst.CmpIntNe(nonNullTemp, valueTemp, zeroTemp));
-        string duplicatedLabel = NewLabel("rc_pattern_owner_duplicated");
-        Emit(new IrInst.JumpIfFalse(nonNullTemp, duplicatedLabel));
         int duplicatedTemp = NewTemp();
-        Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true));
+        Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true, MayBeEmpty: mayBeEmpty));
         Emit(new IrInst.StoreLocal(localSlot, duplicatedTemp));
-        Emit(new IrInst.Label(duplicatedLabel));
     }
+
+    /// <summary>
+    /// True when the resolved type's values can be the empty list, whose representation is the null
+    /// pointer rather than a cell carrying a reference-count header. Reference-count updates on such
+    /// a value must be skipped rather than applied to a header that does not exist.
+    /// </summary>
+    private bool MayUseEmptyListRepresentation(TypeRef type) => Prune(type) is TypeRef.TList;
 
     private void LowerLambdaCoreRefreshRuntimeManagedTcoParams(TcoContext? tco)
     {
@@ -7658,6 +7664,35 @@ public sealed partial class Lowering
         return null;
     }
 
+    /// <summary>
+    /// True when every top-level binding an inline candidate's body reads can be resolved at the
+    /// current site. Inlining splices the body into a scope the caller's free-variable analysis
+    /// never saw, so a top-level value the body reads is neither on the scope chain nor recoverable
+    /// by label the way a top-level function is. Leaving such a call un-inlined resolves it through
+    /// the ordinary call path instead of failing to resolve the spliced reference.
+    /// </summary>
+    private bool InlinedBodyReferencesResolveHere(string inlineName, IReadOnlyList<string> parameters, Expr body)
+    {
+        if (!_inlinableBodyExternalReferences.TryGetValue(inlineName, out HashSet<string>? references))
+        {
+            references = FreeVars(body, [.. parameters]);
+            _inlinableBodyExternalReferences[inlineName] = references;
+        }
+
+        foreach (string reference in references)
+        {
+            if (Lookup(reference) is null
+                && !_topLevelFunctionRefs.ContainsKey(reference)
+                && !_constructorSymbols.ContainsKey(reference)
+                && !_inlinableFunctions.ContainsKey(reference))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     // In-place reuse: inside a reuse arm (a dead-cell token is live), a saturated call to a
     // non-recursive top-level helper is inlined, so the helper's constructor becomes local to
     // this arm and can reuse the token (e.g. loop(...)(mk(l)(v+n)(r)) where mk rebuilds a node).
@@ -7684,7 +7719,8 @@ public sealed partial class Lowering
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
             && !_inliningInProgress.Contains(inlineName)
             && _inlinableFunctions.TryGetValue(inlineName, out var inlinable)
-            && inlinable.Params.Count == collectedArgs.Count)
+            && inlinable.Params.Count == collectedArgs.Count
+            && InlinedBodyReferencesResolveHere(inlineName, inlinable.Params, inlinable.Body))
         {
             return InlineCall(
                 inlineName,

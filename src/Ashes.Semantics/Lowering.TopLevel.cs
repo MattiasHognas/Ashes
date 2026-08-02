@@ -131,13 +131,7 @@ public sealed partial class Lowering
                 _parallelSpecializable[parLet.Name] = (parLam, arity);
             }
 
-            // The project stitcher may wrap an exported function with local alias lets, for
-            // example `let paint = Ansi_paint in given (s) -> ...`.  Registering only the
-            // innermost lambda loses those lexical captures; a reuse specialization which inlines
-            // it then sees the aliases as forward/unresolved references.  Keep such functions as
-            // ordinary closures, which preserves their captured bindings.  Direct lambda values
-            // have no discarded wrapper and remain eligible for reuse inlining.
-            if (item is TopLevelItem.LetDecl { IsRecursive: false, Value: Expr.Lambda lam } let)
+            if (item is TopLevelItem.LetDecl { IsRecursive: false } let && RegisterInlinableStrip(let.Value) is Expr.Lambda lam)
             {
                 RegisterInlinableNonRecursiveLet(let, lam);
             }
