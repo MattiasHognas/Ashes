@@ -404,12 +404,40 @@ touching the gates again: either the awaiting side takes ownership when it consu
 in-coroutine reference-counted value can end up as the result, so neither remaining bullet is
 implementable without it.
 
-**Separate pre-existing leak.** An `async` block containing no `await` whose result the awaiter then
-*discards* leaks about 68 bytes per iteration — 256 KB, 1280 KB and 6912 KB at 2 000, 20 000 and
-100 000 iterations — on both sides of the task-frame work, so it predates it. The same shape whose
-result is consumed stays flat, as does the same shape with an `await`. This is the same task-result
-ownership boundary described above, seen under region placement: a result nobody consumes is a result
-nobody reclaims. Fixing it and defining the contract are likely the same change.
+**The task-result boundary, diagnosed.** An `async` block containing no `await` leaks about 60 bytes
+per task — 256 KB at 2 000 iterations against 6144 KB at 100 000 — whether or not the awaiter consumes
+the result. The body must allocate for it to happen: `async(n + 1)` and `async("literal")` are flat,
+`async(build(n))` and `async("A" + build(n) + "!")` leak.
+
+Reading the emitted IR explains the asymmetry with the `await` form, which is flat:
+
+- a block that completes without suspending is lowered inline, *outside* the coroutine-body context,
+  so its call-boundary result takes the ordinary runtime-RC normalization path — one
+  `CopyOutArena` with `RuntimeManaged: true` and `Purpose: RcNormalization` per task. That allocation
+  is stored into the task's result and handed to the awaiter, and no `RcDrop` exists anywhere in the
+  program. The enclosing loop's region reset reclaims the task struct and the `Ok(…)` wrapper, but
+  not the reference-counted payload;
+- with an `await` the same body is lowered under `_inCoroutineBody`, so its result stays
+  region-backed — the executed arm concatenates with `RuntimeManaged: false` and the coroutine's
+  result leaves through an `ArenaScopeBoundary` copy-out. The region reset reclaims it. The one
+  RC-normalizing copy-out in that program sits on the never-taken `Error` arm.
+
+So this is not a separate defect: it is the missing task-result ownership contract, reached through
+the no-suspend path instead of through lifted gates. Two ways to settle it:
+
+- **the awaiting side takes ownership.** A runtime-managed value delivered through `ResultSlot`
+  becomes an owned value in the consumer's scope when `RunTask` or `AwaitTask` yields it, and the
+  existing lifetime placement drops it. Whether a given task's result is runtime-managed has to be
+  readable at the consumption site — tasks are first class, so a header word set at creation
+  (alongside `FrameDropper`) generalizes to `Ashes.Task.all`, `race`, and spawned tasks, where a
+  creation-site-only fact does not;
+- **suppress the normalization on the task-result path**, so a value destined for a task result stays
+  region-backed exactly as the `await` form already does.
+
+The second is the smaller change and fixes the leak, but leaves 7.3 with nothing: it keeps async
+values on regions by construction. The first is the contract both remaining 7.3 bullets need, because
+any in-coroutine reference-counted value can end up as the result. Prefer it, and treat this leak as
+its acceptance test.
 
 **Measuring this class of leak.** The shared plateau harness runs its program through a Python
 wrapper whose `subprocess.run` forks before exec, so the child's `ru_maxrss` inherits the
