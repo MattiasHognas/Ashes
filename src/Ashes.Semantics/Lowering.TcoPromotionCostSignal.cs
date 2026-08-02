@@ -318,7 +318,7 @@ public sealed partial class Lowering
         TcoParamStaticFacts facts,
         bool applyReuseRestrictions)
     {
-        if (_usesAsync)
+        if (!AllowsAsyncIndependentRcPlacement)
         {
             return TcoPlacementReason.AsyncBoundary;
         }

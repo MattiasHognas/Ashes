@@ -2672,7 +2672,7 @@ public sealed partial class Lowering
                 0,
                 RuntimeManaged: request.EmitsRuntime(
                     LoweredValueRuntimeRepresentation.Closure),
-                ReturnsRuntimeManaged: !_usesAsync && AllowsOrdinaryRcPlacement
+                ReturnsRuntimeManaged: AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
                     && _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
@@ -2751,7 +2751,7 @@ public sealed partial class Lowering
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
-                    ReturnsRuntimeManaged: !_usesAsync && AllowsOrdinaryRcPlacement
+                    ReturnsRuntimeManaged: AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
                         && _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
                 result = (temp, self.Type);
                 break;
@@ -3026,7 +3026,7 @@ public sealed partial class Lowering
         bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
         bool runtimeManagedTuple = ProducesFreshTuple(body);
         bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
-        bool runtimeManagedClosure = !_usesAsync
+        bool runtimeManagedClosure = AllowsAsyncIndependentRcPlacement
             && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && IsRuntimeRcCopyClosureProducer(body);
@@ -3635,7 +3635,7 @@ public sealed partial class Lowering
         LoweredValueRequest request,
         out (int Temp, TypeRef Type) lowered)
     {
-        if (_usesAsync
+        if (!AllowsAsyncIndependentRcPlacement
             || _inCoroutineBody
             || !AllowsOrdinaryRcPlacement
             || !IsRuntimeRcCopyClosureProducer(let.Value))
@@ -6754,7 +6754,7 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = !_usesAsync && AllowsOrdinaryRcPlacement
+        var (bodyTemp, bodyType) = AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
             ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
             : LowerExpr(lam.Body).AsPair();
         _ambientRow = savedAmbientRow;
@@ -7248,7 +7248,7 @@ public sealed partial class Lowering
         // Produce the closure object and its optional lifecycle metadata.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        bool returnsRuntimeManaged = !_usesAsync && AllowsOrdinaryRcPlacement
+        bool returnsRuntimeManaged = AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
             && bodyRuntimeManaged;
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
@@ -8088,7 +8088,7 @@ public sealed partial class Lowering
     private bool LowerCallTcoTryGetAdtArguments(Expr argument, out List<Expr>? constructorArguments)
     {
         constructorArguments = null;
-        return !_usesAsync
+        return AllowsAsyncIndependentRcPlacement
             && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
@@ -8821,7 +8821,7 @@ public sealed partial class Lowering
         // its ACTUAL compiled result is always arena, letting the caller's arena-reclaim-without-copy
         // path silently invalidate the result — caught empirically by readme_showcase.ash (an async
         // order-pricing pipeline), which printed empty strings instead of "Price: 12.50, Count: 6".
-        if (_usesAsync
+        if (!AllowsAsyncIndependentRcPlacement
             || _inCoroutineBody
             || !AllowsOrdinaryRcPlacement
             || argumentCount == 0
@@ -8979,7 +8979,7 @@ public sealed partial class Lowering
 
             currentTemp = LowerAppliedClosureCall(
                 rootExpr, collectedArgs[i], i,
-                !_usesAsync
+                AllowsAsyncIndependentRcPlacement
                     && !_inCoroutineBody
                     && AllowsOrdinaryRcPlacement
                     && i == collectedArgs.Count - 1
@@ -9352,7 +9352,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         int copyDest = NewTemp();
-        bool normalizeToRuntimeOwnership = !_usesAsync
+        bool normalizeToRuntimeOwnership = AllowsAsyncIndependentRcPlacement
             && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
