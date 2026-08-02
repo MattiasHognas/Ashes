@@ -138,6 +138,8 @@ public enum IrFunctionOriginKind
     MutualRecursionWrapper,
     /// <summary>An async coroutine state-machine function.</summary>
     Coroutine,
+    /// <summary>A coroutine task-frame teardown helper.</summary>
+    CoroutineFrameDropper,
     /// <summary>A curried wrapper layer for a first-class external function.</summary>
     ExternalThunk,
     /// <summary>A runtime-RC recursive ADT drop helper.</summary>
@@ -1480,7 +1482,21 @@ public abstract record IrInst
     /// StateStructSize includes the header, captures, and live variable slots.
     /// CaptureCount is the number of captured environment variables to copy.
     /// </summary>
-    public sealed record CreateTask(int Target, int ClosureTemp, int StateStructSize, int CaptureCount) : IrInst
+    /// <param name="Target">Temp receiving the created task pointer.</param>
+    /// <param name="ClosureTemp">Closure holding the coroutine function and its captured environment.</param>
+    /// <param name="StateStructSize">Total task/state struct size in bytes.</param>
+    /// <param name="CaptureCount">Number of captured environment words copied into the frame.</param>
+    /// <param name="FrameDropperLabel">
+    /// Function releasing the task frame's owned words, or null when the frame owns none. The
+    /// backend stores it in the task header so completion, cancellation, and reaping can tear the
+    /// frame down without knowing the coroutine's layout.
+    /// </param>
+    public sealed record CreateTask(
+        int Target,
+        int ClosureTemp,
+        int StateStructSize,
+        int CaptureCount,
+        string? FrameDropperLabel = null) : IrInst
     {
         /// <summary>
         /// True for an async tail-recursive loop coroutine that emits a flagged arena reset at its
@@ -1860,8 +1876,12 @@ public static class TaskStructLayout
     public const int ArenaOwner = 136;     // nearest spawned-ancestor whose arena this task shares; 0 = global (i64)
     /// <summary>Offset of the flag (1 = this async-loop coroutine may reset its arena at the restart back-edge) (i64).</summary>
     public const int LoopResetOk = 144;    // 1 = this async-loop coroutine may reset its arena at the restart back-edge (i64)
+    /// <summary>
+    /// Offset of the coroutine's frame-teardown function, or 0 when the frame owns nothing (i64).
+    /// </summary>
+    public const int FrameDropper = 152;   // coroutine frame teardown function; 0 when nothing is owned (i64)
     /// <summary>Total header size in bytes; captures and live slots follow at this offset.</summary>
-    public const int HeaderSize = 152;     // total header size in bytes
+    public const int HeaderSize = 160;     // total header size in bytes
     // Captures follow at [HeaderSize + i*8]
     // Live variable slots follow captures
 

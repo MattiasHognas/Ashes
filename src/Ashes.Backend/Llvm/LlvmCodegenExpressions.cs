@@ -438,14 +438,78 @@ internal static partial class LlvmCodegen
     /// (re-cleared by the scheduler when a composite ancestor shares the arena).
     /// </summary>
     private static LlvmValueHandle EmitCreateTask(LlvmCodegenState state, LlvmValueHandle closurePtr,
-        int stateStructSize, int captureCount, bool loopResetEligible = false)
+        int stateStructSize, int captureCount, string? frameDropperLabel, bool loopResetEligible = false)
     {
         // Allocate task/state struct
         LlvmValueHandle taskPtr = EmitAlloc(state, stateStructSize);
         EmitCreateTaskInitHeader(state, taskPtr, closurePtr);
         EmitCreateTaskInitScheduler(state, taskPtr, stateStructSize, loopResetEligible);
+        EmitCreateTaskInitFrame(state, taskPtr, stateStructSize, captureCount, frameDropperLabel);
         EmitCreateTaskCopyCaptures(state, taskPtr, closurePtr, captureCount);
         return taskPtr;
+    }
+
+    /// <summary>
+    /// Records the frame's teardown function and clears its live-variable region. A saved word the
+    /// coroutine never reached must read as absent, or teardown would release whatever the region's
+    /// memory happened to hold.
+    /// </summary>
+    private static void EmitCreateTaskInitFrame(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        int stateStructSize,
+        int captureCount,
+        string? frameDropperLabel)
+    {
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameDropper,
+            frameDropperLabel is null
+                ? zero
+                : LlvmApi.BuildPtrToInt(
+                    state.Target.Builder,
+                    state.LiftedFunctions[frameDropperLabel],
+                    state.I64,
+                    "task_frame_dropper"),
+            "task_frame_dropper_store");
+
+        int liveVarBase = TaskStructLayout.HeaderSize + captureCount * 8;
+        for (int offset = liveVarBase; offset + 8 <= stateStructSize; offset += 8)
+        {
+            StoreMemory(state, taskPtr, offset, zero, "task_frame_slot_clear");
+        }
+    }
+
+    /// <summary>
+    /// Runs a task's frame teardown, if it has one. The dropper clears every word it releases, so
+    /// completion, cancellation, and reaping may each reach this without double-releasing.
+    /// </summary>
+    private static void EmitTaskFrameTeardown(LlvmCodegenState state, LlvmValueHandle taskPtr, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle dropper = LoadMemory(state, taskPtr, TaskStructLayout.FrameDropper, prefix + "_frame_dropper");
+        LlvmBasicBlockHandle dropBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, prefix + "_frame_drop");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, prefix + "_frame_drop_done");
+        LlvmApi.BuildCondBr(
+            builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, dropper, zero, prefix + "_has_frame_dropper"),
+            dropBlock,
+            afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, dropBlock);
+        LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(
+            builder, dropper, LlvmApi.PointerTypeInContext(state.Target.Context, 0), prefix + "_frame_dropper_ptr");
+        _ = LlvmApi.BuildCall2(
+            builder,
+            LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]),
+            dropperPtr,
+            [taskPtr, zero, zero],
+            prefix + "_frame_drop_call");
+        LlvmApi.BuildBr(builder, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterBlock);
     }
 
     private static void EmitCreateTaskInitHeader(LlvmCodegenState state, LlvmValueHandle taskPtr, LlvmValueHandle closurePtr)
@@ -528,6 +592,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCreateCompletedTask(LlvmCodegenState state, LlvmValueHandle resultValue)
     {
         LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameDropper,
+            LlvmApi.ConstInt(state.I64, 0, 0), "ctask_frame_dropper_zero");
 
         // state_index = -1 (COMPLETED)
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
@@ -580,6 +646,8 @@ internal static partial class LlvmCodegen
         string prefix)
     {
         LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameDropper,
+            LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_frame_dropper_zero");
 
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
             LlvmApi.ConstInt(state.I64, unchecked((ulong)taskState), 1), prefix + "_state");
@@ -1744,6 +1812,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitAsyncSleep(LlvmCodegenState state, LlvmValueHandle millisecondsValue)
     {
         LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameDropper,
+            LlvmApi.ConstInt(state.I64, 0, 0), "sleep_frame_dropper_zero");
 
         // state_index = -2 (SLEEPING)
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
@@ -2454,6 +2524,9 @@ internal static partial class LlvmCodegen
         // Completed: hand the result to the waiter (if any) and re-enqueue it.
         LlvmApi.PositionBuilderAtEnd(builder, layout.CompleteBlock);
         LlvmValueHandle completedTask = LlvmApi.BuildLoad2(builder, state.I64, taskSlot, "sched_completed");
+        // The coroutine's own epilogue cleared the frame word holding its result, so the value being
+        // delivered below is no longer frame-owned and this releases only what the frame kept.
+        EmitTaskFrameTeardown(state, completedTask, "sched_complete");
         LlvmValueHandle waiter = LoadMemory(state, completedTask, TaskStructLayout.Waiter, "sched_waiter");
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, waiter, zero, "sched_has_waiter"), layout.DeliverBlock, layout.NoWaiterBlock);
 
@@ -3594,6 +3667,7 @@ internal static partial class LlvmCodegen
     {
         LlvmValueHandle taskPtr = EmitAlloc(state, TaskStructLayout.HeaderSize);
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        StoreMemory(state, taskPtr, TaskStructLayout.FrameDropper, zero, "comp_frame_dropper_zero");
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex, LlvmApi.ConstInt(state.I64, unchecked((ulong)compositeState), 1), "comp_state");
         StoreMemory(state, taskPtr, TaskStructLayout.CoroutineFn, zero, "comp_fn");
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot, zero, "comp_result");

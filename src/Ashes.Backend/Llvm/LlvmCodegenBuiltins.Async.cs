@@ -330,6 +330,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, afterAwaitedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, afterAwaitedBlock);
+        // Ordinary frame-owned values die with the cancelled task. Resource cleanup above stays on
+        // its own path; this releases only the reference-counted words the frame owns.
+        EmitTaskFrameTeardown(state, taskPtr, "cancel");
         StoreMemory(state, taskPtr, TaskStructLayout.ResultSlot,
             EmitResultOk(state, LlvmApi.ConstInt(state.I64, 0, 0)), "cancel_result");
         StoreMemory(state, taskPtr, TaskStructLayout.StateIndex,
