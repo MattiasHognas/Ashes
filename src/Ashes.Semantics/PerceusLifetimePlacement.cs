@@ -1,6 +1,14 @@
 namespace Ashes.Semantics;
 
 /// <summary>
+/// An instruction list whose ordinary-value lifetime markers have been placed, together with the
+/// temp count after the placement's own dup temps.
+/// </summary>
+/// <param name="Instructions">The instruction list with placed lifetime markers.</param>
+/// <param name="TempCount">The temp count including temps the placement introduced.</param>
+internal sealed record LifetimePlacementResult(List<IrInst> Instructions, int TempCount);
+
+/// <summary>
 /// Moves erased ordinary-value lifetime markers from lexical scope exits to control-flow precise
 /// last-use points. Resource cleanup is deliberately outside this pass.
 /// </summary>
@@ -20,8 +28,36 @@ internal static class PerceusLifetimePlacement
 
     public static IrFunction Place(IrFunction function, IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls = null)
     {
-        List<IrInst> instructions = [.. function.Instructions];
-        int tempCount = function.TempCount;
+        // A coroutine's markers are placed on its linear pre-transform body, where the await
+        // boundary is still an ordinary CFG edge. Its split state-dispatch form is not a second
+        // placement candidate.
+        if (function.LifetimesPlaced)
+        {
+            return function;
+        }
+
+        LifetimePlacementResult placed = Place([.. function.Instructions], function.TempCount, function.Label, borrowedArgumentCalls);
+        return function with
+        {
+            Instructions = placed.Instructions,
+            TempCount = placed.TempCount,
+            LifetimesPlaced = true,
+        };
+    }
+
+    /// <summary>
+    /// Places lifetime markers on a linear instruction list. A coroutine body uses this before its
+    /// state-machine split, so the placement sees the <see cref="IrInst.AwaitTask"/> boundary as an
+    /// ordinary control-flow edge rather than a suspend that returns to its caller.
+    /// </summary>
+    public static LifetimePlacementResult Place(
+        List<IrInst> body,
+        int bodyTempCount,
+        string functionLabel,
+        IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls = null)
+    {
+        List<IrInst> instructions = [.. body];
+        int tempCount = bodyTempCount;
         int[] ownerSlots = instructions
             .OfType<IrInst.RcDrop>()
             .Where(drop => drop.OwnerSlot >= 0)
@@ -40,10 +76,10 @@ internal static class PerceusLifetimePlacement
                 continue;
             }
 
-            PlaceOwner(instructions, ownerSlot, anchor, anchors[0].index, ref tempCount, function.Label, borrowedArgumentCalls);
+            PlaceOwner(instructions, ownerSlot, anchor, anchors[0].index, ref tempCount, functionLabel, borrowedArgumentCalls);
         }
 
-        return function with { Instructions = instructions, TempCount = tempCount };
+        return new LifetimePlacementResult(instructions, tempCount);
     }
 
     private static void PlaceOwner(

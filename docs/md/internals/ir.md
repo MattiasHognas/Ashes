@@ -43,6 +43,7 @@ A single function with a flat instruction list:
 | `LocalNames` | `IReadOnlyDictionary<int, string>?` | Optional source names for local slots |
 | `LocalTypes` | `IReadOnlyDictionary<int, TypeRef>?` | Optional inferred types for local slots |
 | `Origin` | `IrFunctionOrigin?` | Stable source/generated lineage for compiler reporting |
+| `LifetimesPlaced` | `bool` | `true` once lifetime markers are placed; the program-wide pass skips these |
 
 ### Function origin metadata
 
@@ -361,7 +362,10 @@ to the innermost installed handler frame for that capability, 0 when none. See
 
 `AwaitTask` appears in the IR before the state machine transform. The transform
 replaces each `AwaitTask` with a `Suspend`/`Resume` pair that saves and restores
-live temps and locals across the await point.
+live temps and locals across the await point. Perceus lifetime placement runs on
+that pre-transform body, where the await is still an ordinary control-flow edge;
+an owner whose placed `RcDrop` follows an await is therefore live across it and
+enters the transform's save/restore set.
 
 **Task/state struct layout** (`TaskStructLayout`):
 

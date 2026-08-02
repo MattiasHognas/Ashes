@@ -329,7 +329,8 @@
           Kind: Program,
           Name: program entry
         }
-      }
+      },
+      LifetimesPlaced: true
     },
     Functions: [
       {
@@ -370,7 +371,8 @@
           },
           ParentGeneratedLabel: lambda_0,
           StableDiscriminator: lambda:23:18:y
-        }
+        },
+        LifetimesPlaced: true
       },
       {
         Label: lambda_0,
@@ -416,7 +418,8 @@
             SourceName: add,
             DeclarationOffset: 4
           }
-        }
+        },
+        LifetimesPlaced: true
       }
     ],
     UsesPrintInt: true,

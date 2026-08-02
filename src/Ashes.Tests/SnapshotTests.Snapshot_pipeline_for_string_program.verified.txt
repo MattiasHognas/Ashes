@@ -106,7 +106,8 @@
           Kind: Program,
           Name: program entry
         }
-      }
+      },
+      LifetimesPlaced: true
     },
     StringLiterals: [
       {

@@ -766,6 +766,15 @@ lifetime operations from lexical anchors to control-flow-precise positions:
 - TCO back-edges drop replaced owners, and function exit transfers only the
   returned root while dropping every other active owner.
 
+A coroutine is placed before its state machine transform rather than by the
+program-wide pass. On the linear body an `AwaitTask` is an ordinary control-flow
+edge, whereas the split form suspends by returning to the scheduler and resumes
+through a later invocation, so its dispatch chain carries no suspend-to-resume
+edge for placement to follow. The emitted coroutine records
+`IrFunction.LifetimesPlaced` and the program-wide pass leaves it alone. An owner
+live across an await is saved and restored by the transform's existing liveness
+because its placed drop counts as a use.
+
 Affine string accumulation gives `ConcatStrTip` a consuming ownership contract
 when its accumulator is runtime-managed. Extending in place transfers the same
 reference; allocating a larger reservation copies the bytes and releases the

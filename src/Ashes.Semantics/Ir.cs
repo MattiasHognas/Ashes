@@ -1948,6 +1948,13 @@ public sealed record IrFunction(
     /// preserve it through record copies and the backend deliberately does not inspect it.
     /// </summary>
     public IrFunctionOrigin? Origin { get; init; }
+
+    /// <summary>
+    /// True once ordinary-value lifetime markers have been placed on this function's control flow.
+    /// A coroutine is placed on its linear body before the state-machine split, so the program-wide
+    /// placement must not run again over its state-dispatch form.
+    /// </summary>
+    public bool LifetimesPlaced { get; init; }
 }
 
 /// <summary>The whole lowered program handed to the backend: the entry function, every other function,
