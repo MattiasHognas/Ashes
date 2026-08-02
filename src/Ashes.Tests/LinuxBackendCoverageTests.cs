@@ -2193,6 +2193,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_async_coroutine_value_memory_should_plateau()
+    {
+        // No existing suite catches a per-iteration leak inside a coroutine: the async fixtures
+        // preserve copy scalars across awaits, so an owned heap value that is never released still
+        // produces the right answer. These workloads run a task per iteration and hold a quarter of
+        // a megabyte, so the budget is tight enough for a per-iteration leak to show as a slope.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> coroutineOwned = await MeasureLowFloorMemoryGrowthAsync(
+            BuildAsyncCoroutineOwnedStringMemoryProgram,
+            outputPerIteration: 8).ConfigureAwait(false);
+        List<MemoryExecutionResult> frameCaptured = await MeasureLowFloorMemoryGrowthAsync(
+            BuildAsyncFrameCapturedStringMemoryProgram,
+            outputPerIteration: 7).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("async coroutine-owned string", coroutineOwned, growthBudgetKb: 512);
+        AssertMemoryPlateaus("async frame-captured string", frameCaptured, growthBudgetKb: 512);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_higher_order_list_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -5293,6 +5316,94 @@ public sealed class LinuxBackendCoverageTests
         return samples;
     }
 
+    /// <summary>
+    /// Peak resident set measured through a tiny wrapper. The shared Python-based measurement forks
+    /// before exec, so the child's <c>ru_maxrss</c> inherits the interpreter's image and reports a
+    /// floor around 13 MB — enough to hide a sub-megabyte per-iteration leak. Measuring through
+    /// <c>/usr/bin/time</c> keeps the floor at the program's own quarter megabyte.
+    /// </summary>
+    private static async Task<MemoryExecutionResult> RunLinuxExecutableLowFloorPeakRssAsync(string exePath)
+    {
+        ProcessStartInfo startInfo = new("/usr/bin/time")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("-f");
+        startInfo.ArgumentList.Add("__ASHES_RSS__=%M");
+        startInfo.ArgumentList.Add(exePath);
+
+        using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
+        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+
+        const string marker = "__ASHES_RSS__=";
+        string? usage = stderr
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(line => line.StartsWith(marker, StringComparison.Ordinal));
+        usage.ShouldNotBeNull($"time wrapper did not report peak RSS. stderr: {stderr}");
+        return new MemoryExecutionResult(stdout, long.Parse(usage[marker.Length..].Trim(), CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Growth measurement for workloads whose leak is small relative to the shared harness's
+    /// measurement floor: the semantic optimizer runs first, as <c>CompileToImage</c> does, and the
+    /// low-floor wrapper above reports the resident set.
+    /// </summary>
+    private static async Task<List<MemoryExecutionResult>> MeasureLowFloorMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = IrOptimizer.Optimize(LowerProgram(sourceFactory(iterations)));
+            byte[] elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+            string tmpDir = CreateTempDirectory();
+            string exePath = Path.Combine(tmpDir, $"llvm_lowfloor_{Guid.NewGuid():N}");
+            try
+            {
+                TestProcessHelper.WriteExecutable(exePath, elfBytes);
+                MemoryExecutionResult sample = await RunLinuxExecutableLowFloorPeakRssAsync(exePath).ConfigureAwait(false);
+                sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+                samples.Add(sample);
+            }
+            finally
+            {
+                DeleteFileIfExists(exePath);
+                DeleteDirectoryIfExists(tmpDir);
+            }
+        }
+
+        return samples;
+    }
+
+    /// <summary>
+    /// Measures growth over the IR that actually ships: the semantic optimizer runs first, exactly as
+    /// <c>CompileToImage</c> does. The unoptimized measurement above cannot see a leak that only
+    /// appears once ownership operations have been fused, sunk, or elided.
+    /// </summary>
+    private static async Task<List<MemoryExecutionResult>> MeasureOptimizedMemoryGrowthAsync(
+        Func<int, string> sourceFactory,
+        int outputPerIteration)
+    {
+        int[] iterationCounts = [2_000, 10_000, 50_000];
+        List<MemoryExecutionResult> samples = new(iterationCounts.Length);
+        foreach (int iterations in iterationCounts)
+        {
+            IrProgram ir = IrOptimizer.Optimize(LowerProgram(sourceFactory(iterations)));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{iterations * outputPerIteration}\n");
+            samples.Add(sample);
+        }
+
+        return samples;
+    }
+
     private static async Task<List<MemoryExecutionResult>> MeasureImportedMemoryGrowthAsync(
         Func<int, string> sourceFactory,
         int outputPerIteration)
@@ -6341,6 +6452,54 @@ public sealed class LinuxBackendCoverageTests
                                                 let box = Box((40, 2)) in box
                                             in match tupleBox with
                                                 | Box((left, right)) -> loop(n - 1)(total + Ashes.Text.byteLength(text) + head + left + right)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A coroutine whose result is a freshly built string. The value is handed to the awaiter through
+    // the task's result slot, which frame teardown deliberately does not touch, so it needs an owner
+    // on the consuming side once in-coroutine values move to reference counting.
+    private static string BuildAsyncCoroutineOwnedStringMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let once n =
+                async(
+                    let made = build(n)
+                    in
+                        match await Ashes.Task.sleep(0) with
+                            | Ok(_u) -> "A" + made + "!"
+                            | Error(_e) -> "e")
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match Ashes.Task.run(once(7)) with
+                        | Ok(v) -> loop(n - 1)(total + Ashes.Text.byteLength(v))
+                        | Error(_e) -> 0 - 1
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A value the creating function owns and the async block captures. The task frame holds its own
+    // reference, so the generated frame dropper is the only thing that releases it.
+    private static string BuildAsyncFrameCapturedStringMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let once n =
+                (let text = build(n)
+                in
+                    async(match await Ashes.Task.sleep(0) with
+                        | Ok(_u) -> text + "!"
+                        | Error(_e) -> "e"))
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match Ashes.Task.run(once(7)) with
+                        | Ok(v) -> loop(n - 1)(total + Ashes.Text.byteLength(v))
+                        | Error(_e) -> 0 - 1
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
