@@ -1868,7 +1868,19 @@ public sealed partial class Lowering
             return LowerAsyncTaskCoroutine(valueArg);
         }
 
+        // Lower the body as what it is: a coroutine body that happens to complete without
+        // suspending. Without this it is lowered as ordinary code, so a call inside it takes the
+        // runtime-RC result path and produces a counted allocation per task that the enclosing
+        // region reset cannot reclaim and no owner releases. The suspending form has always lowered
+        // its body region-backed for the same reason; the two now agree. There is no `await` in this
+        // branch by construction, so the flag's control-flow meaning cannot be reached here.
+        bool savedInCoroutineBody = _inCoroutineBody;
+        OwnershipPlacementContext savedPlacement = _ownershipPlacementContext;
+        _inCoroutineBody = true;
+        _ownershipPlacementContext = savedPlacement with { MayExecuteInsideCoroutine = true };
         var (valueTemp, valueType) = LowerExpr(valueArg);
+        _ownershipPlacementContext = savedPlacement;
+        _inCoroutineBody = savedInCoroutineBody;
 
         if (!TryGetStandardResultParts(out var resultSymbol, out var okConstructor, out _)
             || !_typeSymbols.TryGetValue("Task", out var taskSymbol))

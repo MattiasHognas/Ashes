@@ -438,6 +438,13 @@ The second is the smaller change and fixes the leak, but leaves 7.3 with nothing
 values on regions by construction. The first is the contract both remaining 7.3 bullets need, because
 any in-coroutine reference-counted value can end up as the result.
 
+**Partly fixed at the producer.** A non-suspending `async` body is now lowered as the coroutine body
+it is, so its result stays region-backed exactly as the suspending form's does and the enclosing
+region reset reclaims it. That removes the leak for a body whose result is a call or a concatenation.
+A body that binds the value with a `let` before returning it still leaks: the request reaching that
+concatenation still asks for a counted string, and neither the coroutine-body flag nor the placement
+context suppresses it, so the request's origin is the next thing to find.
+
 **Attempting the awaiting-side contract found the ordering is the reverse of that.** Two obstacles,
 both measured:
 
