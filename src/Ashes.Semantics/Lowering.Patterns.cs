@@ -1046,7 +1046,7 @@ public sealed partial class Lowering
         // some `handle` has installed a frame, so a program with no `handle` anywhere can never take it
         // — the current function's live-handler effect, not a whole-program capability or handler
         // count, is the right test here.
-        if (!AllowsAsyncIndependentRcPlacement || _inCoroutineBody || !AllowsOrdinaryRcPlacement)
+        if (!AllowsAsyncIndependentRcPlacement || !AllowsOrdinaryRcPlacement)
         {
             return;
         }

@@ -1950,6 +1950,55 @@ public sealed partial class Lowering
                 coroutineCaptureTemps, valueArg, successType, okConstructor, globalBindings, captureNames, captureTypes));
     }
 
+    /// <summary>
+    /// Normalizes the value a coroutine hands out. Everything inside the body may use whichever
+    /// representation its own placement chose, but the value leaving through the task's result slot
+    /// crosses a boundary with no owner on the other side: the region reset that reclaims the task
+    /// does not reclaim a reference-counted allocation, and nothing releases it. Copying it back to
+    /// the region here is the one place that decision belongs — gating each producer that might
+    /// reach the boundary cannot converge, because any producer can be the one that does.
+    /// </summary>
+    private int NormalizeCoroutineResultToRegion(int valueTemp, TypeRef valueType)
+    {
+        if (!IsRuntimeManagedResultTemp(valueTemp))
+        {
+            return valueTemp;
+        }
+
+        TypeRef resolved = Prune(valueType);
+        if (GetCallCopyOutKind(resolved, out int copySize, out IrInst.ListHeadCopyKind listHeadCopy)
+            is not (CopyOutKind.Shallow or CopyOutKind.List))
+        {
+            return valueTemp;
+        }
+
+        int regionTemp = NewTemp();
+        if (GetCallCopyOutKind(resolved, out _, out _) == CopyOutKind.List)
+        {
+            Emit(new IrInst.CopyOutList(
+                regionTemp,
+                valueTemp,
+                listHeadCopy,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.ArenaScopeBoundary));
+        }
+        else
+        {
+            Emit(new IrInst.CopyOutArena(
+                regionTemp,
+                valueTemp,
+                copySize,
+                RuntimeManaged: false,
+                IrInst.CopyOutPurpose.ArenaScopeBoundary));
+        }
+
+        Emit(new IrInst.RcDrop(
+            valueTemp,
+            GetOwnedTypeName(resolved) ?? "TaskResult",
+            RuntimeManaged: true));
+        return regionTemp;
+    }
+
     private int LowerAsyncTaskCoroutineEmitBody(
         IReadOnlyList<int> coroutineCaptureTemps,
         Expr valueArg,
@@ -1978,7 +2027,8 @@ public sealed partial class Lowering
 
         var (valueTemp, valueType) = LowerExpr(valueArg);
         Unify(valueType, successType);
-        int okTemp = LowerSingleFieldConstructorValue(okConstructor, valueTemp);
+        int okTemp = LowerSingleFieldConstructorValue(
+            okConstructor, NormalizeCoroutineResultToRegion(valueTemp, valueType));
 
         _inCoroutineBody = savedInCoroutine;
         return okTemp;

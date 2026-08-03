@@ -3018,18 +3018,22 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        bool runtimeManagedString = IsRuntimeRcStringProducer(body);
-        bool runtimeManagedAdt = ProducesFreshRuntimeManageableAdt(body);
-        bool runtimeManagedList = ProducesFreshRuntimeManageableList(body);
-        bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
+        // Every representation decision here answers the same question as the closure one below it,
+        // and must respect the same placement context. Deciding from expression shape alone gave a
+        // coroutine body a reference-counted escaping result while everything around it stayed
+        // region-backed, so the enclosing region reset could not reclaim it and no owner released it.
+        bool placementAllowsRuntimeRc = AllowsAsyncIndependentRcPlacement
+            && AllowsOrdinaryRcPlacement;
+        bool runtimeManagedString = placementAllowsRuntimeRc && IsRuntimeRcStringProducer(body);
+        bool runtimeManagedAdt = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableAdt(body);
+        bool runtimeManagedList = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableList(body);
+        bool runtimeManagedBytes = placementAllowsRuntimeRc
+            && IsRuntimeRcBytesProducer(body)
             && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
-        bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
-        bool runtimeManagedTuple = ProducesFreshTuple(body);
-        bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
-        bool runtimeManagedClosure = AllowsAsyncIndependentRcPlacement
-            && !_inCoroutineBody
-            && AllowsOrdinaryRcPlacement
-            && IsRuntimeRcCopyClosureProducer(body);
+        bool runtimeManagedBigInt = placementAllowsRuntimeRc && IsRuntimeRcBigIntProducer(body);
+        bool runtimeManagedTuple = placementAllowsRuntimeRc && ProducesFreshTuple(body);
+        bool runtimeManagedRecord = placementAllowsRuntimeRc && IsFreshRuntimeManageableRecordTree(body);
+        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
             && !runtimeManagedBytes && !runtimeManagedBigInt
@@ -3285,13 +3289,20 @@ public sealed partial class Lowering
         Expr.Let let,
         LoweredValueRequest request)
     {
-        var stackAllocateClosure = let.Value is Expr.Lambda && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        // A coroutine body's stack frame does not survive its own suspension: the coroutine returns to
+        // the scheduler and is re-entered later on a fresh frame. A closure or ADT that only ever
+        // appears as a direct callee or scrutinee still cannot live on that stack, because the use may
+        // sit after an await. Both stay region-backed inside a coroutine.
+        var stackAllocateClosure = !_inCoroutineBody
+            && let.Value is Expr.Lambda
+            && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
         if (stackAllocateClosure && let.Value is Expr.Lambda lambda)
         {
             return LowerLambda(lambda, stackAllocateClosure: true);
         }
 
-        var stackAllocateAdt = IsConstructorExpression(let.Value)
+        var stackAllocateAdt = !_inCoroutineBody
+            && IsConstructorExpression(let.Value)
             && IsImmediateSingleArmAdtDestructuringMatch(let.Name, let.Body);
         if (stackAllocateAdt && TryLowerConstructorExpression(let.Value, stackAllocate: true, out var loweredAdt))
         {
@@ -3636,7 +3647,6 @@ public sealed partial class Lowering
         out (int Temp, TypeRef Type) lowered)
     {
         if (!AllowsAsyncIndependentRcPlacement
-            || _inCoroutineBody
             || !AllowsOrdinaryRcPlacement
             || !IsRuntimeRcCopyClosureProducer(let.Value))
         {
@@ -8089,7 +8099,6 @@ public sealed partial class Lowering
     {
         constructorArguments = null;
         return AllowsAsyncIndependentRcPlacement
-            && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && TryDescribeConstructorExpression(argument, out _, out constructorArguments, out _);
     }
@@ -8783,7 +8792,6 @@ public sealed partial class Lowering
     {
         summary = null;
         if (!AllowsAsyncIndependentRcPlacement
-            || _inCoroutineBody
             || !AllowsOrdinaryRcPlacement
             || argumentCount == 0
             || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
@@ -9015,7 +9023,6 @@ public sealed partial class Lowering
             currentTemp = LowerAppliedClosureCall(
                 rootExpr, collectedArgs[i], i,
                 AllowsAsyncIndependentRcPlacement
-                    && !_inCoroutineBody
                     && AllowsOrdinaryRcPlacement
                     && i == collectedArgs.Count - 1
                     && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
@@ -9388,7 +9395,6 @@ public sealed partial class Lowering
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         int copyDest = NewTemp();
         bool normalizeToRuntimeOwnership = AllowsAsyncIndependentRcPlacement
-            && !_inCoroutineBody
             && AllowsOrdinaryRcPlacement
             && callCopyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
         switch (callCopyOutKind)
