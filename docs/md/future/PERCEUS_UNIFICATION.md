@@ -454,6 +454,45 @@ list, `Bytes`, `BigInt`, tuple, record — fired on expression shape alone. They
 an escaping result inside a coroutine body stays region-backed like the body around it. Every
 measured shape is flat.
 
+**Gating each producer is the wrong shape.** Lifting `_inCoroutineBody` from the ordinary placement
+sites while keeping it wherever a value crosses the task boundary makes every non-suspending shape
+flat and leaves the frame machinery working exactly as designed — a saved temp and local classify as
+`SavedInTaskFrame`, the dropper is generated, and the body's own drops are placed. The suspending
+shape still leaks, and closing it one site at a time found four separate places that decide the
+representation of a value on its way out of a coroutine: `LowerEscapingResult`, the call-boundary
+normalization in `LowerCallRestoreArena`, the applied-closure call result, and the match-arm result
+in `LowerMatchArmExpression`. Each gate closed one and revealed the next.
+
+**A race and a spawn in one program crash, and it predates this work.** A program that resolves an
+`Ashes.Task.race` and then drives a task which spawns another segfaults when the racing coroutines
+hold any owned heap value — a string, a list or an ADT is enough; the same program with scalar-only
+bodies is fine, and either construct alone is fine. The scheduler calls a task's `CoroutineFn`
+through offset 8 of a task pointer and finds it null, so a task whose function pointer is zero
+reaches the coroutine-call path. It reproduces at `a955eea`, before the task-frame work, so it is an
+older defect in the race/spawn scheduler interaction rather than an ownership one. The acceptance
+coverage keeps race and spawn in separate programs until it is fixed.
+
+**Two findings from starting the acceptance matrix, both blocking it.** Normalizing the result in one
+place and then lifting the in-coroutine gates makes every leak shape flat, both suites green, nine
+async fixtures clean under Memcheck, and seven of the thirty-two coroutines in the corpus carry
+reference-counted operations against none before — but a **closure capturing an owned value across a
+suspend segfaults**, reading its captured value as null after the resume. The same program is correct
+without the lift. Keeping in-coroutine closures region-backed does not help, so the fault is in the
+captured value's own representation rather than the closure's: the value is reference counted, the
+closure environment holds a raw pointer to it, and something releases or clears it across the
+suspend. The narrowing waits on that diagnosis.
+
+Separately, one program holding **six async tasks of different value kinds** — string, list, ADT,
+tuple, `Bytes`, closure, each built before an await and read after it — exhausts the heap on the
+unoptimized pipeline the test runner uses, while the same program through the optimizing path runs
+correctly. It reproduces on `main`, so it predates the coroutine work, and it blocks writing the
+acceptance matrix because every entry has that shape.
+
+That count is the finding. The decision belongs in one place: the point where the body's value
+becomes the task result. Normalize there — to a region representation, or to a frame-owned reference
+with a descriptor — and leave every decision inside the body free. Gating producers individually
+cannot converge, because any producer can be the one whose value happens to reach the boundary.
+
 **Attempting the awaiting-side contract found the ordering is the reverse of that.** Two obstacles,
 both measured:
 
@@ -501,6 +540,16 @@ soak tests for strings, lists, ADTs, tuples, owned `Bytes`, and closures:
 
 Release blockers are any invalid read/write, double free, stale arena pointer, or unbounded RC leak.
 Use Valgrind or an equivalent native memory checker plus growing-workload RSS measurements.
+Covered so far by `tests/async_owned_values_across_awaits.ash`,
+`tests/async_owned_values_task_lifecycle.ash` and `tests/async_owned_values_spawn_reap.ash`: every
+supported value shape read on both sides of one suspension point and across two, returned as the
+task result, cancelled as a race loser, abandoned unrun, and held by a spawned task until it is
+reaped. All three run clean under Memcheck, whose leak accounting is blind here because the runtime
+allocates through `mmap` rather than `malloc` — growing-workload resident-set measurement remains the
+leak signal, and `Linux_backend_llvm_async_coroutine_value_memory_should_plateau` is its gate.
+
+Still to add: a value abandoned in a task that never completes, and the same matrix over owned
+`Bytes` and closures on the cancellation and reap paths rather than only across suspension.
 
 ### Milestone 8 — establish the structured compiler-decision handoff
 
