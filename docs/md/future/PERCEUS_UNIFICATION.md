@@ -436,8 +436,31 @@ the no-suspend path instead of through lifted gates. Two ways to settle it:
 
 The second is the smaller change and fixes the leak, but leaves 7.3 with nothing: it keeps async
 values on regions by construction. The first is the contract both remaining 7.3 bullets need, because
-any in-coroutine reference-counted value can end up as the result. Prefer it, and treat this leak as
-its acceptance test.
+any in-coroutine reference-counted value can end up as the result.
+
+**Attempting the awaiting-side contract found the ordering is the reverse of that.** Two obstacles,
+both measured:
+
+- a `RunTask` or `AwaitTask` result carries no lowered-temp ownership fact. The registration contract
+  covers instructions that *produce* an ordinary value; these deliver one produced elsewhere, so
+  "is this result counted?" cannot be answered at the consumption site from existing facts. Making
+  the result wrapper reference-counted when its payload is — confirmed in the emitted IR — does not
+  help on its own, because the consumer still has nothing to consult;
+- a runtime-flag-guarded release cannot serve as the drop anchor. `PerceusLifetimePlacement` removes
+  a single `RcDrop` together with the `LoadLocal` immediately before it and re-emits that one
+  instruction elsewhere, rewritten to the owner's definition temp. A guarded tree, or a drop that
+  first extracts a payload field, does not survive the move. So the consumer's release cannot depend
+  on a per-task header flag while still being placed at the value's last use.
+
+Together these say the task result wants to be *uniformly* reference-counted rather than counted-or-
+region depending on the task, and uniformity at the result requires the payload to be uniformly
+counted too — that is, in-coroutine values must already use reference counting. The result contract
+is therefore not a prerequisite for narrowing in-coroutine placement; the two are one change, and the
+narrowing has to come first so the result boundary becomes a static fact instead of a dynamic one.
+The task-frame teardown that narrowing needs is already in place.
+
+This reverses the order suggested above. It would be falsified by a way to place a representation-
+guarded release at a value's last use, which would let the two coexist during a transition.
 
 **Measuring this class of leak.** The shared plateau harness runs its program through a Python
 wrapper whose `subprocess.run` forks before exec, so the child's `ru_maxrss` inherits the
