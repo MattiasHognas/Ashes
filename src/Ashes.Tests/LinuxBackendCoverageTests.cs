@@ -2211,7 +2211,12 @@ public sealed class LinuxBackendCoverageTests
             BuildAsyncFrameCapturedStringMemoryProgram,
             outputPerIteration: 7).ConfigureAwait(false);
 
+        List<MemoryExecutionResult> noSuspendResult = await MeasureLowFloorMemoryGrowthAsync(
+            BuildAsyncNoSuspendResultMemoryProgram,
+            outputPerIteration: 6).ConfigureAwait(false);
+
         AssertMemoryPlateaus("async coroutine-owned string", coroutineOwned, growthBudgetKb: 512);
+        AssertMemoryPlateaus("async no-suspend result", noSuspendResult, growthBudgetKb: 512);
         AssertMemoryPlateaus("async frame-captured string", frameCaptured, growthBudgetKb: 512);
     }
 
@@ -6470,6 +6475,26 @@ public sealed class LinuxBackendCoverageTests
                         match await Ashes.Task.sleep(0) with
                             | Ok(_u) -> "A" + made + "!"
                             | Error(_e) -> "e")
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match Ashes.Task.run(once(7)) with
+                        | Ok(v) -> loop(n - 1)(total + Ashes.Text.byteLength(v))
+                        | Error(_e) -> 0 - 1
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // An async block that completes without suspending. Its body is a coroutine body, so it must be
+    // lowered as one: otherwise a call inside it takes the runtime-RC result path and produces a
+    // counted allocation per task that the enclosing region reset cannot reclaim and no owner
+    // releases.
+    private static string BuildAsyncNoSuspendResultMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let once n = async(build(n))
 
             let recursive loop n total =
                 if n <= 0 then total
