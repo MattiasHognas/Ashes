@@ -3018,18 +3018,23 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        bool runtimeManagedString = IsRuntimeRcStringProducer(body);
-        bool runtimeManagedAdt = ProducesFreshRuntimeManageableAdt(body);
-        bool runtimeManagedList = ProducesFreshRuntimeManageableList(body);
-        bool runtimeManagedBytes = IsRuntimeRcBytesProducer(body)
-            && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
-        bool runtimeManagedBigInt = IsRuntimeRcBigIntProducer(body);
-        bool runtimeManagedTuple = ProducesFreshTuple(body);
-        bool runtimeManagedRecord = IsFreshRuntimeManageableRecordTree(body);
-        bool runtimeManagedClosure = AllowsAsyncIndependentRcPlacement
+        // Every representation decision here answers the same question as the closure one below it,
+        // and must respect the same placement context. Deciding from expression shape alone gave a
+        // coroutine body a reference-counted escaping result while everything around it stayed
+        // region-backed, so the enclosing region reset could not reclaim it and no owner released it.
+        bool placementAllowsRuntimeRc = AllowsAsyncIndependentRcPlacement
             && !_inCoroutineBody
-            && AllowsOrdinaryRcPlacement
-            && IsRuntimeRcCopyClosureProducer(body);
+            && AllowsOrdinaryRcPlacement;
+        bool runtimeManagedString = placementAllowsRuntimeRc && IsRuntimeRcStringProducer(body);
+        bool runtimeManagedAdt = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableAdt(body);
+        bool runtimeManagedList = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableList(body);
+        bool runtimeManagedBytes = placementAllowsRuntimeRc
+            && IsRuntimeRcBytesProducer(body)
+            && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
+        bool runtimeManagedBigInt = placementAllowsRuntimeRc && IsRuntimeRcBigIntProducer(body);
+        bool runtimeManagedTuple = placementAllowsRuntimeRc && ProducesFreshTuple(body);
+        bool runtimeManagedRecord = placementAllowsRuntimeRc && IsFreshRuntimeManageableRecordTree(body);
+        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
             && !runtimeManagedBytes && !runtimeManagedBigInt

@@ -446,12 +446,13 @@ zero — reachable when the parent's structural drop runs first, sees the head s
 movable structural drop is the missing piece; until then this is a known leak in the pattern-binding
 path rather than an accepted trade.
 
-**Partly fixed at the producer.** A non-suspending `async` body is now lowered as the coroutine body
-it is, so its result stays region-backed exactly as the suspending form's does and the enclosing
-region reset reclaims it. That removes the leak for a body whose result is a call or a concatenation.
-A body that binds the value with a `let` before returning it still leaks: the request reaching that
-concatenation still asks for a counted string, and neither the coroutine-body flag nor the placement
-context suppresses it, so the request's origin is the next thing to find.
+**Fixed at the producer.** A non-suspending `async` body is now lowered as the coroutine body it is,
+so its result stays region-backed exactly as the suspending form's does and the enclosing region
+reset reclaims it. The remaining `let`-bound shape came from `LowerEscapingResult`, where only the
+closure case consulted the placement context and every other representation decision — string, ADT,
+list, `Bytes`, `BigInt`, tuple, record — fired on expression shape alone. They now share one gate, so
+an escaping result inside a coroutine body stays region-backed like the body around it. Every
+measured shape is flat.
 
 **Attempting the awaiting-side contract found the ordering is the reverse of that.** Two obstacles,
 both measured:

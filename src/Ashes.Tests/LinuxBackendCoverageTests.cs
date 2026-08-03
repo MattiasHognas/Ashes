@@ -2216,7 +2216,12 @@ public sealed class LinuxBackendCoverageTests
             outputPerIteration: 6).ConfigureAwait(false);
 
         AssertMemoryPlateaus("async coroutine-owned string", coroutineOwned, growthBudgetKb: 512);
+        List<MemoryExecutionResult> noSuspendBound = await MeasureLowFloorMemoryGrowthAsync(
+            BuildAsyncNoSuspendBoundResultMemoryProgram,
+            outputPerIteration: 8).ConfigureAwait(false);
+
         AssertMemoryPlateaus("async no-suspend result", noSuspendResult, growthBudgetKb: 512);
+        AssertMemoryPlateaus("async no-suspend bound result", noSuspendBound, growthBudgetKb: 512);
         AssertMemoryPlateaus("async frame-captured string", frameCaptured, growthBudgetKb: 512);
     }
 
@@ -6475,6 +6480,28 @@ public sealed class LinuxBackendCoverageTests
                         match await Ashes.Task.sleep(0) with
                             | Ok(_u) -> "A" + made + "!"
                             | Error(_e) -> "e")
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match Ashes.Task.run(once(7)) with
+                        | Ok(v) -> loop(n - 1)(total + Ashes.Text.byteLength(v))
+                        | Error(_e) -> 0 - 1
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A non-suspending async body that binds its value before returning it. The escaping-result
+    // representation decision has to respect the coroutine placement context here too, or the bound
+    // value becomes reference counted inside a region-backed body and nothing releases it.
+    private static string BuildAsyncNoSuspendBoundResultMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let once n =
+                async(
+                    let made = build(n)
+                    in "A" + made + "!")
 
             let recursive loop n total =
                 if n <= 0 then total
