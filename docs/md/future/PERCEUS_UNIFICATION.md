@@ -438,6 +438,14 @@ The second is the smaller change and fixes the leak, but leaves 7.3 with nothing
 values on regions by construction. The first is the contract both remaining 7.3 bullets need, because
 any in-coroutine reference-counted value can end up as the result.
 
+**Pattern-owner list drops are shallow.** `EmitOwnedValueDrop` returns early for a
+`PerceusPatternOwner` and emits a bare single-cell `RcDrop`, deliberately bypassing the type-directed
+spine walk so precise placement has one anchor to move rather than a tree of child drops. A list
+pattern owner therefore releases only its head cell, orphaning the tail whenever its count reaches
+zero — reachable when the parent's structural drop runs first, sees the head shared, and stops. A
+movable structural drop is the missing piece; until then this is a known leak in the pattern-binding
+path rather than an accepted trade.
+
 **Partly fixed at the producer.** A non-suspending `async` body is now lowered as the coroutine body
 it is, so its result stays region-backed exactly as the suspending form's does and the enclosing
 region reset reclaims it. That removes the leak for a body whose result is a call or a concatenation.
