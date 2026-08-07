@@ -650,11 +650,13 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 
 ### `Ashes.Task`
 
-Asynchronous tasks: the `Task(E, A)` values consumed with `await` inside `async(...)` blocks
-(or the `let!` sugar). All networking APIs return tasks; this module creates and drives them.
+Asynchronous tasks: the `Task(E, A)` values consumed with `await` inside `async(...)` blocks (or the `let!` sugar). All networking APIs return tasks; this module creates and drives them.
 
-- `run(task)` returning `Result(E, A)` — drive a task to completion on the scheduler (program
-  entry point for async code)
+`async(value)` is an always-available builtin alias for `Ashes.Task.task(value)`. It creates a
+`Task(Str, A)`; when its body contains `await`, the compiler lowers it as a suspending coroutine.
+`async` is not a keyword — only `await` is.
+
+- `run(task)` returning `Result(E, A)` — drive a task to completion on the scheduler (program entry point for async code)
 - `task(value)` returning `Task(E, A)` — wrap a pure value as an immediately-completed task
 - `fromResult(result)` returning `Task(E, A)` — lift a `Result` into a task
 - `sleep(ms)` returning `Task(Str, Int)` — complete after `ms` milliseconds
