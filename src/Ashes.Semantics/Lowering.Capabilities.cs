@@ -92,7 +92,7 @@ public sealed partial class Lowering
         RequireBuiltinCapability(StopCapabilityName, span);
         int target = NewTemp();
         Emit(new IrInst.RequestServerStop(target));
-        return (target, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 
     /// <summary>Requires a built-in marker capability in the ambient row at an intrinsic call site.</summary>
