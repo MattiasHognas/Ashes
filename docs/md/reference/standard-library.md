@@ -457,7 +457,7 @@ Immutable indexed array backed by a persistent balanced tree.
 - `upsertStr(key)(missValue)(onHit)(map)` returning a new map value — single-traversal
   insert-or-update: inserts `missValue` when `key` is absent, else replaces the stored value with
   `onHit(oldValue)`. Halves the tree work of a `getStr`-then-`setStr` pair in accumulation loops.
-- `insert(compare)(key)(value)(map)` returning a new map value
+- `insert` — alias for `set`
 - `size(map)` returning `Int`
 - `foldLeft(folder)(state)(map)` returning the folded state in key order
 - `toList(map)` returning `List((K, V))` in key order
@@ -478,7 +478,7 @@ collision. Same persistent-structure cost model as `Ashes.Collection.Map` (O(log
 - `get(key)(map)` returning `Maybe(V)`
 - `contains(key)(map)` returning `Bool`
 - `set(key)(value)(map)` returning a new map
-- `insert` — alias of `set`
+- `insert` — alias for `set`
 - `size(map)` returning `Int`
 - `foldLeft(folder)(state)(map)` returning the folded state (key order is by hash, not lexical)
 
