@@ -214,6 +214,81 @@ public sealed class PatternBindingOwnershipTests
         value.RequiresProtectiveDup.ShouldBeTrue();
     }
 
+    [Test]
+    public void List_typed_protective_owner_releases_the_whole_structure_from_one_instruction()
+    {
+        // A protective owner's drop is placed by moving exactly one instruction, so a list-typed
+        // owner used to release only the cell its temp pointed at and orphan the rest of the spine.
+        // The release now sits behind a generated helper, which keeps the drop a single instruction
+        // and makes it structural: neither property has to give.
+        (Lowering lowering, IrProgram ir) = LowerProgramToIr("""
+            type Found =
+                | items: List(Str)
+                | number: Int
+
+            let recursive find entries =
+                match entries with
+                    | [] -> None
+                    | (items, number) :: tail ->
+                        if number == 0
+                        then Some(Found(items = items, number = number))
+                        else find(tail)
+
+            find([(["answer"], 0)])
+            """, "list-protective-owner.ash");
+
+        Decision(lowering, "find", "items").PlacementOutcome
+            .ShouldBe(PatternBindingPlacementOutcome.ProtectiveOwnerPlaced);
+
+        IReadOnlyList<IrInst.RcDrop> ownerDrops = [.. ir.Functions
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.RcDrop>()
+            .Where(drop => drop is { RuntimeManaged: true, TypeName: "List", OwnerSlot: >= 0 })];
+
+        ownerDrops.ShouldNotBeEmpty();
+        ownerDrops.ShouldAllBe(drop => drop.StructuralDropperLabel != null);
+
+        string dropperLabel = ownerDrops[0].StructuralDropperLabel!;
+        IrFunction dropper = ir.Functions.Single(function =>
+            string.Equals(function.Label, dropperLabel, StringComparison.Ordinal));
+
+        // The helper walks the spine rather than releasing one cell: it reads each cell's tail and
+        // branches back, which is exactly the program that cannot be moved as a placement anchor.
+        dropper.Instructions.OfType<IrInst.Jump>().ShouldNotBeEmpty();
+        dropper.Instructions.OfType<IrInst.LoadMemOffset>().ShouldNotBeEmpty();
+        dropper.Instructions.OfType<IrInst.RcDrop>().ShouldNotBeEmpty();
+    }
+
+    [Test]
+    public void A_single_allocation_protective_owner_needs_no_structural_helper()
+    {
+        // The counterpart: a string owns one allocation, so its drop stays the ordinary release and
+        // no helper is generated for it.
+        (Lowering lowering, IrProgram ir) = LowerProgramToIr("""
+            type Found =
+                | text: Str
+                | number: Int
+
+            let recursive find entries =
+                match entries with
+                    | [] -> None
+                    | (text, number) :: tail ->
+                        if number == 0
+                        then Some(Found(text = text, number = number))
+                        else find(tail)
+
+            find([("answer", 0)])
+            """, "string-protective-owner.ash");
+
+        Decision(lowering, "find", "text").PlacementOutcome
+            .ShouldBe(PatternBindingPlacementOutcome.ProtectiveOwnerPlaced);
+        ir.Functions
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.RcDrop>()
+            .Where(drop => drop.OwnerSlot >= 0)
+            .ShouldAllBe(drop => drop.StructuralDropperLabel == null);
+    }
+
     private static IReadOnlyList<PatternBindingOwnershipFact> OwnershipFacts(
         Lowering lowering,
         string function)
@@ -235,14 +310,17 @@ public sealed class PatternBindingOwnershipTests
     }
 
     private static Lowering LowerProgram(string source, string filePath)
+        => LowerProgramToIr(source, filePath).Lowering;
+
+    private static (Lowering Lowering, IrProgram Ir) LowerProgramToIr(string source, string filePath)
     {
         Diagnostics diagnostics = new();
         Program program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
         Lowering lowering = new(diagnostics);
         lowering.SetSourceContext(filePath, source);
-        _ = lowering.Lower(program);
+        IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
-        return lowering;
+        return (lowering, ir);
     }
 }

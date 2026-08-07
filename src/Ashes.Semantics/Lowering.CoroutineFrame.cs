@@ -74,14 +74,52 @@ public sealed partial class Lowering
 
         foreach ((int slot, int offset) in transformResult.SavedLocalOffsets.OrderBy(pair => pair.Value))
         {
-            slots.Add(DescribeCoroutineFrameSlot(
+            CoroutineFrameSlot described = DescribeCoroutineFrameSlot(
                 offset,
                 CoroutineFrameSlotKind.SavedLocal,
                 slot,
-                ResolveSavedLocalOwnershipFact(slot, bodyInstructions)));
+                ResolveSavedLocalOwnershipFact(slot, bodyInstructions));
+            slots.Add(SavedLocalAliasesSavedTemp(slot, bodyInstructions, transformResult)
+                ? described with
+                {
+                    Ownership = CoroutineFrameSlotOwnership.NotOwned,
+                    DropKind = OrdinaryHeapChildDropKind.None,
+                    Reason = CoroutineFrameSlotReason.AliasesOwnedFrameWord,
+                }
+                : described);
         }
 
         return slots;
+    }
+
+    /// <summary>
+    /// True when a saved local word holds the same reference as a saved temp word. A body that binds
+    /// a value (<c>let x = ...</c>) leaves it in both a temp and a local, and the transform saves
+    /// both, but the body took one reference: releasing both words would release it twice. The temp
+    /// word keeps the obligation because it is the definition; this demotes the local to an alias.
+    /// </summary>
+    /// <remarks>
+    /// One aliasing store is enough to demote. A local fed by a saved temp on one path and something
+    /// else on another would otherwise carry a double release on the aliasing path, and an unreleased
+    /// word leaks where a double release corrupts. Captures are never demoted: each is a reference the
+    /// frame took for itself in <see cref="RetainCoroutineCapture"/>.
+    /// </remarks>
+    private static bool SavedLocalAliasesSavedTemp(
+        int localSlot,
+        List<IrInst> bodyInstructions,
+        StateMachineResult transformResult)
+    {
+        foreach (IrInst instruction in bodyInstructions)
+        {
+            if (instruction is IrInst.StoreLocal store
+                && store.Slot == localSlot
+                && transformResult.SavedTempOffsets.ContainsKey(store.Source))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

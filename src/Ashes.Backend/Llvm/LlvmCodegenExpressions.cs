@@ -2297,7 +2297,14 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle EnqueueCompositeBlock,
         LlvmBasicBlockHandle RaceWaiterBlock,
         LlvmBasicBlockHandle RaceFirstBlock,
-        LlvmBasicBlockHandle NormalWaiterBlock);
+        LlvmBasicBlockHandle NormalWaiterBlock,
+        LlvmValueHandle RaceCancelCursorSlot,
+        LlvmBasicBlockHandle RaceCancelCheckBlock,
+        LlvmBasicBlockHandle RaceCancelBodyBlock,
+        LlvmBasicBlockHandle RaceCancelOneBlock,
+        LlvmBasicBlockHandle RaceCancelDoneBlock,
+        LlvmBasicBlockHandle DrainBlock,
+        LlvmBasicBlockHandle AfterDrainBlock);
 
     private static SchedulerRunLayout EmitSchedulerRunPrologue(LlvmCodegenState state)
     {
@@ -2326,8 +2333,24 @@ internal static partial class LlvmCodegen
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_enqueue_composite"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_waiter"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_first"),
-            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_normal_waiter"));
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_normal_waiter"),
+            // The builder is still in the entry block here, so this cursor is allocated once rather
+            // than on every trip through the scheduler loop that resolves a race.
+            LlvmApi.BuildAlloca(state.Target.Builder, state.I64, "sched_race_cancel_cursor"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_cancel_check"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_cancel_body"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_cancel_one"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_cancel_done"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_drain"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_after_drain"));
     }
+
+    /// <summary>
+    /// Nesting depth of <c>ashes_scheduler_run</c>. Only the outermost run may drop the tasks left
+    /// over when it returns; an inner run shares the queues with the run around it.
+    /// </summary>
+    private static LlvmValueHandle SchedulerRunDepthGlobal(LlvmCodegenState state) =>
+        ReadLineScratchGlobal(state, "__ashes_scheduler_depth", state.I64);
 
     private static LlvmValueHandle EmitSchedulerRunBody(LlvmCodegenState state, LlvmValueHandle mainTask)
     {
@@ -2338,6 +2361,15 @@ internal static partial class LlvmCodegen
         // ArenaOwner. Sub-tasks get these set by the scheduler when they are enqueued.
         StoreMemory(state, mainTask, TaskStructLayout.Waiter, LlvmApi.ConstInt(state.I64, 0, 0), "sched_main_no_waiter");
         StoreMemory(state, mainTask, TaskStructLayout.ArenaOwner, LlvmApi.ConstInt(state.I64, 0, 0), "sched_main_no_owner");
+        LlvmValueHandle depthGlobal = SchedulerRunDepthGlobal(state);
+        LlvmApi.BuildStore(
+            builder,
+            LlvmApi.BuildAdd(
+                builder,
+                LlvmApi.BuildLoad2(builder, state.I64, depthGlobal, "sched_depth_in"),
+                LlvmApi.ConstInt(state.I64, 1, 0),
+                "sched_depth_inc"),
+            depthGlobal);
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [mainTask], "sched_seed");
 
         SchedulerRunLayout layout = EmitSchedulerRunPrologue(state);
@@ -2362,8 +2394,49 @@ internal static partial class LlvmCodegen
             liveGlobal);
         LlvmApi.BuildBr(builder, layout.LoopBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, layout.ReturnBlock);
+        EmitSchedulerRunExitDrain(state, depthGlobal, layout);
         return LoadMemory(state, mainTask, TaskStructLayout.ResultSlot, "sched_result");
+    }
+
+    /// <summary>
+    /// Drops whatever is still queued or parked when the outermost scheduler run returns.
+    /// </summary>
+    /// <remarks>
+    /// A run returns as soon as its main task completes, so anything still linked is abandoned: a
+    /// cancelled race loser, a fire-and-forget spawn, a task that never completes. Their storage goes
+    /// away with this run's arena, so leaving them linked lets the next run step a task whose memory
+    /// has been reused — the scheduler reads a stale coroutine function pointer and calls it. Dropping
+    /// the lists here is what makes abandonment safe. A nested run leaves them alone: the queues
+    /// belong to the run around it.
+    /// </remarks>
+    private static void EmitSchedulerRunExitDrain(
+        LlvmCodegenState state,
+        LlvmValueHandle depthGlobal,
+        in SchedulerRunLayout layout)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.ReturnBlock);
+        LlvmValueHandle remainingDepth = LlvmApi.BuildSub(
+            builder,
+            LlvmApi.BuildLoad2(builder, state.I64, depthGlobal, "sched_depth_out"),
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            "sched_depth_dec");
+        LlvmApi.BuildStore(builder, remainingDepth, depthGlobal);
+        LlvmApi.BuildCondBr(
+            builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, remainingDepth, zero, "sched_is_outermost"),
+            layout.DrainBlock,
+            layout.AfterDrainBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.DrainBlock);
+        LlvmApi.BuildStore(builder, zero, ReadyQueueHeadGlobal(state));
+        LlvmApi.BuildStore(builder, zero, ReadyQueueTailGlobal(state));
+        LlvmApi.BuildStore(builder, zero, ParkedLeavesHeadGlobal(state));
+        LlvmApi.BuildBr(builder, layout.AfterDrainBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.AfterDrainBlock);
     }
 
     private static (LlvmValueHandle Task, LlvmValueHandle IsRaceComposite) EmitSchedulerLoopDispatch(LlvmCodegenState state, LlvmValueHandle mainTask, LlvmValueHandle taskSlot, in SchedulerRunLayout layout)
@@ -2552,6 +2625,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, layout.RaceFirstBlock);
         StoreMemory(state, waiter, TaskStructLayout.ResultSlot, LoadMemory(state, completedTask, TaskStructLayout.ResultSlot, "sched_race_result"), "sched_race_deliver");
         StoreMemory(state, waiter, TaskStructLayout.WaitData0, LlvmApi.ConstInt(state.I64, 1, 0), "sched_race_mark_resolved");
+        EmitCancelRaceLosers(state, waiter, completedTask, layout);
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_race_enqueue");
         LlvmApi.BuildBr(builder, layout.LoopBlock);
 
@@ -2564,6 +2638,60 @@ internal static partial class LlvmCodegen
         StoreMemory(state, waiter, TaskStructLayout.AwaitedTask, zero, "sched_clear_awaited");
         _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [waiter], "sched_enqueue_waiter");
         LlvmApi.BuildBr(builder, layout.LoopBlock);
+    }
+
+    /// <summary>
+    /// Cancels every child of a race composite except the one that just won. A race resolves on its
+    /// first completing child, so without this the losers stay parked for the rest of the program and
+    /// whatever their frames own is never released. <c>ashes_cancel_task</c> closes any socket a loser
+    /// is parked on, recursively cancels its awaited sub-task, and runs its frame teardown, so this is
+    /// the cancellation half of the race contract the inline driver already implemented.
+    /// </summary>
+    /// <remarks>
+    /// The composite holds its children in <c>IoArg0</c> as a Cons list (head at 0, tail at 8). This
+    /// runs exactly once per race: it is reached only from the first-resolution path, which the
+    /// resolved flag then closes off. A cancelled loser still sitting in the ready or parked set is
+    /// later stepped, found complete, and delivered to this same composite, which ignores it because
+    /// the race is already resolved; its frame teardown is idempotent, so the second call finds every
+    /// word cleared.
+    /// </remarks>
+    private static void EmitCancelRaceLosers(
+        LlvmCodegenState state,
+        LlvmValueHandle compositeTask,
+        LlvmValueHandle winnerTask,
+        in SchedulerRunLayout layout)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmApi.BuildStore(
+            builder,
+            LoadMemory(state, compositeTask, TaskStructLayout.IoArg0, "sched_race_cancel_children"),
+            layout.RaceCancelCursorSlot);
+        LlvmApi.BuildBr(builder, layout.RaceCancelCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.RaceCancelCheckBlock);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, layout.RaceCancelCursorSlot, "sched_race_cancel_cursor_value");
+        LlvmApi.BuildCondBr(
+            builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cursor, zero, "sched_race_cancel_at_end"),
+            layout.RaceCancelDoneBlock,
+            layout.RaceCancelBodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.RaceCancelBodyBlock);
+        LlvmValueHandle node = LlvmApi.BuildLoad2(builder, state.I64, layout.RaceCancelCursorSlot, "sched_race_cancel_node");
+        LlvmValueHandle candidate = LoadMemory(state, node, 0, "sched_race_cancel_candidate");
+        LlvmApi.BuildStore(builder, LoadMemory(state, node, 8, "sched_race_cancel_tail"), layout.RaceCancelCursorSlot);
+        LlvmApi.BuildCondBr(
+            builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, candidate, winnerTask, "sched_race_cancel_is_winner"),
+            layout.RaceCancelCheckBlock,
+            layout.RaceCancelOneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.RaceCancelOneBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [candidate], "sched_race_cancel_call");
+        LlvmApi.BuildBr(builder, layout.RaceCancelCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.RaceCancelDoneBlock);
     }
 
     /// <summary>
