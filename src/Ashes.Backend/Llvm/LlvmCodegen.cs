@@ -1870,9 +1870,20 @@ internal static partial class LlvmCodegen
     }
 
     private static bool EmitDropCountedValue(LlvmCodegenState state, IrInst.RcDrop instruction, LlvmValueHandle value)
-        => string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
+    {
+        // A structural release reaches past this allocation — a list spine and its elements, an
+        // aggregate and its managed children — so it lives behind a label and the drop is its call.
+        if (instruction.StructuralDropperLabel is { } structuralDropper)
+        {
+            LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+            _ = EmitCallKnown(state, structuralDropper, zero, value, zero);
+            return false;
+        }
+
+        return string.Equals(instruction.TypeName, "Function", StringComparison.Ordinal)
             ? EmitRuntimeRcClosureDrop(state, value)
             : EmitRuntimeRcDrop(state, value);
+    }
 
     /// <summary>
     /// Increments a runtime-managed value's reference count, skipping a value that is the empty

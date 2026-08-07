@@ -156,6 +156,8 @@ public enum IrFunctionOriginKind
     AdtDeepCopier,
     /// <summary>A recursive list deep-copy helper.</summary>
     ListDeepCopier,
+    /// <summary>A structural release helper naming an owner's whole-value drop as one instruction.</summary>
+    StructuralOwnerDropper,
 }
 
 /// <summary>The non-source namespace that owns a shared generated function.</summary>
@@ -1132,12 +1134,21 @@ public abstract record IrInst
     /// the erased-marker migration stage this is a backend no-op and is removed by the optimizer;
     /// arena restoration remains responsible for actual memory reclamation.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="StructuralDropperLabel"/> names a generated helper that releases the whole
+    /// structure — a list spine and its elements, an aggregate and its managed children — rather than
+    /// the single allocation the source temp points at. It exists so a structural release can still be
+    /// one instruction: <see cref="PerceusLifetimePlacement"/> relocates a drop by moving exactly one
+    /// <c>RcDrop</c>, so a value whose release needs a loop or a walk cannot be placed precisely if
+    /// that program is emitted inline. Null means the ordinary single-allocation release.
+    /// </remarks>
     public sealed record RcDrop(
         int SourceTemp,
         string TypeName,
         int OwnerSlot = -1, // Lowering provenance used by precise placement; -1 for already-placed markers.
         bool RuntimeManaged = false,
-        bool MayBeEmpty = false // The empty-list representation; see the remarks on RcDup.
+        bool MayBeEmpty = false, // The empty-list representation; see the remarks on RcDup.
+        string? StructuralDropperLabel = null
     ) : IrInst;
 
     /// <summary>

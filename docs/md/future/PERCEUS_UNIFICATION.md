@@ -441,13 +441,30 @@ The second is the smaller change and fixes the leak, but leaves 7.3 with nothing
 values on regions by construction. The first is the contract both remaining 7.3 bullets need, because
 any in-coroutine reference-counted value can end up as the result.
 
-**Pattern-owner list drops are shallow.** `EmitOwnedValueDrop` returns early for a
-`PerceusPatternOwner` and emits a bare single-cell `RcDrop`, deliberately bypassing the type-directed
-spine walk so precise placement has one anchor to move rather than a tree of child drops. A list
-pattern owner therefore releases only its head cell, orphaning the tail whenever its count reaches
-zero — reachable when the parent's structural drop runs first, sees the head shared, and stops. A
-movable structural drop is the missing piece; until then this is a known leak in the pattern-binding
-path rather than an accepted trade.
+**Pattern-owner drops are structural without giving up placement.** `EmitOwnedValueDrop` returns
+early for a `PerceusPatternOwner` and emits a bare single-cell `RcDrop`, deliberately bypassing the
+type-directed spine walk so precise placement has one anchor to move rather than a tree of child
+drops. A list pattern owner therefore released only its head cell and orphaned the tail.
+
+The two requirements only conflict while the release is emitted inline. `RcDrop` now carries an
+optional `StructuralDropperLabel` naming a generated helper that performs the whole-value release —
+a list spine and its elements, an aggregate and its managed children — so the drop stays exactly one
+instruction and `PerceusLifetimePlacement` keeps moving it unchanged. The label is attached where the
+marker is promoted, which is the first point at which the binding's type and reference-counted
+representation have both settled. A type whose release is a single allocation — a string, a `Bytes`,
+a big integer — gets no helper and no call.
+
+The shape is confirmed at the IR level: a `List(Str)` field extracted from a tuple inside a recursive
+function's list parameter and embedded in a constructor reaches `ProtectiveOwnerPlaced`, and its
+promoted drop names a helper that walks the spine. Both directions are gated by
+`PatternBindingOwnershipTests`.
+
+No program has been exhibited where this changes measured memory. Reaching the shallow drop needs a
+protective-dup pattern binding, off a reference-counted root parameter, at a type whose release is
+structural, and every runnable program written against it either classified the list-typed binding as
+borrowed or transferred — both of which bypass the protective owner — or was dominated by unrelated
+per-iteration growth. The correction stands on the emitted IR rather than on a resident-set
+measurement, and the leak is better described as reachable in principle than as observed.
 
 **Fixed at the producer.** A non-suspending `async` body is now lowered as the coroutine body it is,
 so its result stays region-backed exactly as the suspending form's does and the enclosing region

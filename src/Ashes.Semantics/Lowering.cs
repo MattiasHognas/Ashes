@@ -5592,6 +5592,10 @@ public sealed partial class Lowering
     {
         string typeName = GetOwnedTypeName(Prune(site.Type)) ?? "PatternBinding";
         bool mayBeEmpty = MayUseEmptyListRepresentation(site.Type);
+        // The marker drop is placed as one instruction, so a value whose release reaches past its own
+        // allocation names a helper here rather than expanding the walk inline. Synthesized before the
+        // rewrite below, which is scanning the instruction list this would otherwise mutate.
+        string? structuralDropperLabel = SynthesizeStructuralOwnerDropper(site.Type);
         HashSet<int> aliases = [];
         bool changed;
         do
@@ -5620,6 +5624,7 @@ public sealed partial class Lowering
                             TypeName = typeName,
                             RuntimeManaged = true,
                             MayBeEmpty = mayBeEmpty,
+                            StructuralDropperLabel = structuralDropperLabel,
                         };
                         break;
                 }

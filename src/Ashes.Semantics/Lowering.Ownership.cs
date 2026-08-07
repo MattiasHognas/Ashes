@@ -847,6 +847,76 @@ public sealed partial class Lowering
         Emit(new IrInst.CallKnown(resultTemp, label, envTemp, valueTemp));
     }
 
+    private readonly Dictionary<string, string> _structuralOwnerDropperLabels = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Names a whole-value release for <paramref name="type"/> as a callable helper, or returns null
+    /// when the type's release is already a single allocation and needs no helper.
+    /// </summary>
+    /// <remarks>
+    /// Precise placement moves one <see cref="IrInst.RcDrop"/>. A list, or an aggregate with managed
+    /// children, needs a loop or a walk to release, which cannot be moved as a unit — so emitting that
+    /// program inline forces the choice between a placeable drop that releases only the root
+    /// allocation and a complete release pinned to lexical scope. Behind a label the release is
+    /// complete *and* the drop stays one instruction, so neither has to give.
+    /// </remarks>
+    private string? SynthesizeStructuralOwnerDropper(TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        if (!StructuralReleaseNeedsHelper(pruned))
+        {
+            return null;
+        }
+
+        string key = Pretty(pruned);
+        if (_structuralOwnerDropperLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        string label = $"__rcdrop_structural_{_nextLambdaId++}";
+        _structuralOwnerDropperLabels[key] = label;
+
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: value (implicit)
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, argSlot));
+        EmitRuntimeManagedChildDrop(valueTemp, pruned);
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.StructuralOwnerDropper,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    key),
+                StableDiscriminator: key));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    /// <summary>
+    /// True when releasing a value of this type reaches past its own allocation. A string, a
+    /// <c>Bytes</c>, or a big integer owns one allocation and needs no helper; a list owns its spine
+    /// and its elements, and an aggregate owns its managed children.
+    /// </summary>
+    private bool StructuralReleaseNeedsHelper(TypeRef pruned) => pruned switch
+    {
+        TypeRef.TList => true,
+        TypeRef.TTuple tuple => tuple.Elements.Any(element => !CanArenaReset(Prune(element))),
+        TypeRef.TNamedType named => HasRuntimeManagedChildFields(named),
+        _ => false,
+    };
+
     private string SynthesizeRuntimeManagedAdtDropper(TypeRef.TNamedType named)
     {
         string key = Pretty(named);
