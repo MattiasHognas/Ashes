@@ -180,6 +180,7 @@ public sealed partial class Lowering
             _primaryFunctionLabelBySource.TryAdd(source, function.Label);
         }
 
+        CaptureValuePlacements(origin);
         _funcs.Add(function with { Origin = origin });
     }
 

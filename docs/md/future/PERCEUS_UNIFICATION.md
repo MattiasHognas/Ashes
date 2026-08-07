@@ -667,6 +667,30 @@ filtering, stderr behavior, and removal/deprecation of the environment variable.
 - No semantic pass added by this migration formats user-facing report prose or writes it directly to
   stdout/stderr.
 
+`CompilationDecisionSnapshot` satisfies this, retrieved with `Lowering.GetDecisionSnapshot()`. It
+carries function ownership, value placements, reuse decisions, coroutine representations, and pattern
+bindings; `CompilationDecisionSnapshotTests` covers each acceptance point.
+
+**Placement is a wider union than any single analysis enum.** `LoweredTempRepresentation` answers the
+ordinary question — region, reference counted, or borrowed — while the async and parallel paths
+answer separately for a value that outlives the frame that produced it. `ValuePlacementCategory` is
+the reportable union of all of them, and it keeps `ConservativeUnknown` as a category rather than a
+hole: a value the migration has not narrowed is reported as unnarrowed, which is the fact a report
+needs.
+
+**Two projections exist to keep compiler state out of the snapshot.** `FunctionOwnershipSummary`
+holds an expression-keyed freshness map and `PatternBindingOwnershipFact` holds its binder node;
+both are AST references that the snapshot must not retain, so ownership and pattern records are
+projected to names, ordinals, and locations. Types are likewise reduced to reportable names rather
+than `TypeRef`, so holding a snapshot cannot pin inference state alive.
+
+**Capture is at `AddFunction`.** Temp facts are per-body state that the next function clears and that
+later refinement rewrites, so the point a function is added is both the last moment its placements
+are complete and the first at which they are final. Capture appends and reads nothing back, which is
+what makes the contract's observational requirement checkable rather than asserted: the ten
+compute-bound challenges and a stdlib-free program all compile byte-identically with collection in
+place.
+
 ## 5. Final consolidation and deletion gate
 
 The migration is complete only when all of the following are true:
