@@ -2220,9 +2220,14 @@ public sealed class LinuxBackendCoverageTests
             BuildAsyncNoSuspendBoundResultMemoryProgram,
             outputPerIteration: 8).ConfigureAwait(false);
 
+        List<MemoryExecutionResult> raceLoser = await MeasureLowFloorMemoryGrowthAsync(
+            BuildAsyncRaceLoserOwnedStringMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
         AssertMemoryPlateaus("async no-suspend result", noSuspendResult, growthBudgetKb: 512);
         AssertMemoryPlateaus("async no-suspend bound result", noSuspendBound, growthBudgetKb: 512);
         AssertMemoryPlateaus("async frame-captured string", frameCaptured, growthBudgetKb: 512);
+        AssertMemoryPlateaus("async cancelled race loser", raceLoser, growthBudgetKb: 512);
     }
 
     [Test]
@@ -6528,6 +6533,31 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match Ashes.Task.run(once(7)) with
                         | Ok(v) -> loop(n - 1)(total + Ashes.Text.byteLength(v))
+                        | Error(_e) -> 0 - 1
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A race loser holding an owned value, cancelled while parked. Nothing but the cancellation path
+    // can release it: the loser never resumes, so its body's own drops never run and its frame words
+    // are still set when the race resolves.
+    private static string BuildAsyncRaceLoserOwnedStringMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let owner delayMs =
+                async(
+                    let text = build(7)
+                    in
+                        match await Ashes.Task.sleep(delayMs) with
+                            | Ok(_u) -> Ashes.Text.byteLength(text) - 5
+                            | Error(_e) -> 0 - 1)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    match Ashes.Task.run(Ashes.Task.race([owner(0), owner(60)])) with
+                        | Ok(v) -> loop(n - 1)(total + v)
                         | Error(_e) -> 0 - 1
 
             Ashes.IO.print(loop({{iterations}})(0))

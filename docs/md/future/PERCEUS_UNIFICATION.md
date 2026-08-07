@@ -331,8 +331,11 @@ representation paths. Their existence must not be mistaken for a completed migra
 ## 4. Remaining implementation order
 
 The order below is dependency-driven. Do not start async narrowing until the ownership and frame
-teardown prerequisites are in place. Milestones 1–6, 7.1 and 7.2 are complete, and 7.3's first
-bullet has landed. Two implementation tasks remain; the rest of Milestone 7.3 is next.
+teardown prerequisites are in place. Milestones 1–6 and 7 are complete: the narrowing has landed, the
+acceptance matrix is written and passing, and the defects it found are fixed. One deferred
+optimization is recorded under 7.3 below — a capture arriving as a parameter stays region-backed —
+which costs an optimization rather than correctness and does not gate the milestone. Milestone 8 is
+next.
 
 ### Milestone 7 — async/task-frame ownership (last semantic cutover)
 
@@ -463,14 +466,21 @@ representation of a value on its way out of a coroutine: `LowerEscapingResult`, 
 normalization in `LowerCallRestoreArena`, the applied-closure call result, and the match-arm result
 in `LowerMatchArmExpression`. Each gate closed one and revealed the next.
 
-**A race and a spawn in one program crash, and it predates this work.** A program that resolves an
-`Ashes.Task.race` and then drives a task which spawns another segfaults when the racing coroutines
-hold any owned heap value — a string, a list or an ADT is enough; the same program with scalar-only
-bodies is fine, and either construct alone is fine. The scheduler calls a task's `CoroutineFn`
-through offset 8 of a task pointer and finds it null, so a task whose function pointer is zero
-reaches the coroutine-call path. It reproduces at `a955eea`, before the task-frame work, so it is an
-older defect in the race/spawn scheduler interaction rather than an ownership one. The acceptance
-coverage keeps race and spawn in separate programs until it is fixed.
+**A run left its abandoned tasks linked, and the next run stepped them.** The crash previously
+recorded here as a race/spawn interaction was neither: spawn was incidental. `ashes_scheduler_run`
+returns as soon as its main task completes, and whatever is still in the ready queue or the parked
+list at that moment is abandoned — a cancelled race loser, a fire-and-forget spawn, a task that never
+completes. Those tasks were left linked in the scheduler's globals, but their storage belongs to the
+run's arena. The next `Ashes.Task.run` therefore stepped a task whose memory had been reused, read a
+stale word where the coroutine function pointer belongs, and called it.
+
+The narrowing is what named it: any second run that *waits* crashes, and one that completes without
+reaching the scheduler's wait (`Ashes.Task.task(1)`) does not; `Ashes.Task.all` is unaffected because
+it does not abandon children. Whether a racer held an owned value only decided the allocation layout
+that made the reused memory fatal, which is why it looked like an ownership bug. The outermost run
+now drops the ready queue and parked list before returning, guarded by a nesting depth so an inner
+run leaves the queues of the run around it alone. Abandonment is the semantics; dropping the lists is
+what makes it safe. `tests/async_owned_values_race_and_spawn.ash` holds the shape.
 
 **Two findings from starting the acceptance matrix, both blocking it.** Normalizing the result in one
 place and then lifting the in-coroutine gates makes every leak shape flat, both suites green, nine
@@ -517,6 +527,31 @@ The task-frame teardown that narrowing needs is already in place.
 This reverses the order suggested above. It would be falsified by a way to place a representation-
 guarded release at a value's last use, which would let the two coexist during a transition.
 
+**Race never cancelled its losers under the run-queue scheduler.** Completing the acceptance matrix
+found the cancellation path was not a path at all. `race` has two implementations: an inline driver
+that walks its input list and calls `ashes_cancel_task` on every non-winner, and a parking composite
+the scheduler drives. `UseRunQueueScheduler` is on for every supported target, so the composite is
+always the one built and the inline cancel walk is unreachable. The composite's resolve path stored
+the winner's result, marked itself resolved, and enqueued its waiter — and never touched the losers.
+A loser therefore stayed parked with its frame intact for the rest of the program, and everything the
+frame owned leaked: measured at about 30 bytes per race and proportional to the payload, flat when
+only the winner owns a value and flat with scalar-only racers. The composite now cancels every child
+but the winner when it resolves, which reaches the frame teardown that was already correct and
+already wired for exactly this. `Linux_backend_llvm_async_coroutine_value_memory_should_plateau`
+gained the workload, and it is a real gate: 256/256/1536 KB with the cancellation removed.
+
+**One value, two frame words, two releases.** Cancelling losers immediately exposed a latent double
+release. A body that binds a value leaves it in both a temp and a local, the transform saves both,
+and the frame dropper released each — but the body took one reference, so the frame owns one. This
+never fired before because the dropper was only ever reached after completion, where resume has
+already cleared both words; the cancellation path is the first to run it on a live frame. A saved
+local fed by a saved temp is now demoted to an alias and only the temp word carries the obligation.
+One aliasing store is enough to demote: a local fed by a saved temp on one path and something else on
+another would otherwise double-release on the aliasing path, and an unreleased word leaks where a
+double release corrupts. Captures are never demoted — each is a reference the frame took for itself.
+The symptom was a free-list corruption that needed two racers *both* owning to show, which is why no
+existing fixture saw it.
+
 **Measuring this class of leak.** The shared plateau harness runs its program through a Python
 wrapper whose `subprocess.run` forks before exec, so the child's `ru_maxrss` inherits the
 interpreter's image: the floor is about 13.5 MB with several hundred KB of run-to-run noise, which
@@ -540,16 +575,29 @@ soak tests for strings, lists, ADTs, tuples, owned `Bytes`, and closures:
 
 Release blockers are any invalid read/write, double free, stale arena pointer, or unbounded RC leak.
 Use Valgrind or an equivalent native memory checker plus growing-workload RSS measurements.
-Covered so far by `tests/async_owned_values_across_awaits.ash`,
-`tests/async_owned_values_task_lifecycle.ash` and `tests/async_owned_values_spawn_reap.ash`: every
-supported value shape read on both sides of one suspension point and across two, returned as the
-task result, cancelled as a race loser, abandoned unrun, and held by a spawned task until it is
-reaped. All three run clean under Memcheck, whose leak accounting is blind here because the runtime
-allocates through `mmap` rather than `malloc` — growing-workload resident-set measurement remains the
-leak signal, and `Linux_backend_llvm_async_coroutine_value_memory_should_plateau` is its gate.
 
-Still to add: a value abandoned in a task that never completes, and the same matrix over owned
-`Bytes` and closures on the cancellation and reap paths rather than only across suspension.
+Every row is covered. `tests/async_owned_values_across_awaits.ash` holds each supported value shape
+across one suspension point and across two and returns it as the task result;
+`tests/async_owned_values_task_lifecycle.ash` cancels one as a race loser and abandons one unrun;
+`tests/async_owned_values_spawn_reap.ash` holds one in a spawned task until it is reaped;
+`tests/async_owned_values_never_completes.ash` abandons one in a task that starts, parks and never
+resumes; and `tests/async_owned_values_race_and_spawn.ash` puts a race, a spawn and a following run
+in one program. The cancellation and reap fixtures carry owned `Bytes` and a closure over the frame's
+string rather than only the string, list and ADT they started with.
+
+Memcheck reports no errors on any of them, but its leak accounting is blind here because the runtime
+allocates through `mmap` rather than `malloc` — growing-workload resident-set measurement remains the
+leak signal, and `Linux_backend_llvm_async_coroutine_value_memory_should_plateau` is its gate. Writing
+the matrix is what found the two defects above: the fixtures assert output, and both bugs produced
+correct output.
+
+The fixtures run correctly on linux-x64, on linux-arm64 under `qemu-aarch64-static`, and on win-x64
+under Wine; the win-arm64 build is checked structurally (PE machine `0xAA64`). The ten compute-bound
+challenges produce identical output with no wall-clock or peak-RSS change, and `http_echo` serves
+3000/3000 with peak RSS unchanged within noise (6036 KB against a 6080 KB baseline). Challenge
+binaries are not byte-identical to the baseline: the async runtime is stitched into any program
+importing a stdlib module, so changing the scheduler body changes their code even though none of them
+uses async. Programs that link no stdlib module (`Ashes.IO` only) stay byte-identical.
 
 ### Milestone 8 — establish the structured compiler-decision handoff
 

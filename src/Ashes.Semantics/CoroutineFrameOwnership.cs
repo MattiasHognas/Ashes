@@ -55,6 +55,12 @@ internal enum CoroutineFrameSlotReason
     /// <summary>A local slot receives values whose representations disagree.</summary>
     ConflictingSlotStores,
 
+    /// <summary>
+    /// The word holds a value another frame word already owns, so releasing it here would release
+    /// one reference twice.
+    /// </summary>
+    AliasesOwnedFrameWord,
+
     /// <summary>No ownership fact was established for the value.</summary>
     NoOwnershipFact,
 }

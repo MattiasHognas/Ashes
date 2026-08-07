@@ -1,7 +1,10 @@
-// Milestone 7 acceptance: a spawned task holding owned heap values is reaped after the driver stops
-// waiting on it. The frame owns a string, a list, an ADT, owned Bytes and a closure over the string,
-// so a reap that fails to release them leaks and one that releases them twice corrupts the free list.
-// expect: spawned=ok
+// Milestone 7 acceptance: a race and a spawn in one program, both holding owned heap values, plus a
+// third scheduler run after them. A run returns as soon as its main task completes, so the race
+// loser and the spawned task are still linked in the scheduler's queues when it does; a later run
+// that steps one of them reads a task whose storage the previous run already reclaimed. Each holder
+// owns a string, a list, an ADT, owned Bytes and a closure, so the abandoned frames also have
+// something to release.
+// expect: race=fast|spawn=ok|after=done
 import Ashes.IO
 import Ashes.Task
 import Ashes.Text
@@ -33,6 +36,11 @@ let holder label delayMs =
                                         else "short"
                             | Error(_e) -> "err")
 
+let raced =
+    match Ashes.Task.run(Ashes.Task.race([holder("fast")(0), holder("slow")(60)])) with
+        | Ok(v) -> v
+        | Error(_e) -> "err"
+
 let spawned =
     match Ashes.Task.run(async(let _handle = Ashes.Task.spawn(holder("detached")(0))
     in
@@ -42,4 +50,11 @@ let spawned =
         | Ok(v) -> v
         | Error(_e) -> "err"
 
-Ashes.IO.print("spawned=" + spawned)
+let after =
+    match Ashes.Task.run(async(match await Ashes.Task.sleep(80) with
+        | Ok(_u) -> "done"
+        | Error(_e) -> "err")) with
+        | Ok(v) -> v
+        | Error(_e) -> "err"
+
+Ashes.IO.print("race=" + raced + "|spawn=" + spawned + "|after=" + after)
