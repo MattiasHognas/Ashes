@@ -136,6 +136,22 @@ public sealed partial class Lowering
         return LowerNullaryConstructor(unitConstructor);
     }
 
+    /// <summary>
+    /// The <c>Unit</c> result of a side-effecting intrinsic. The instruction's own target is a raw
+    /// status word, not a value of the type the intrinsic claims to return, so the result the program
+    /// sees has to be a real <c>Unit</c> built the same way every other one is.
+    /// </summary>
+    /// <remarks>
+    /// <c>Unit</c> is a nullary constructor and therefore an ordinary heap cell carrying a reference
+    /// count, so a caller may legitimately own and release it. Handing back the raw target instead
+    /// yields a value the ownership machinery treats as that cell while the word actually holds zero;
+    /// releasing it reads a reference-count header sixteen bytes below a null pointer. Nothing caught
+    /// this while placement inside a coroutine body was forced to a region, because the region never
+    /// released the value individually.
+    /// </remarks>
+    private (int, TypeRef) LowerSideEffectUnitResult()
+        => LowerUnitValue();
+
     private (int, TypeRef) LowerFileReadText(Expr pathArg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(pathArg);
@@ -1411,7 +1427,7 @@ public sealed partial class Lowering
 
         var unitTemp = NewTemp();
         Emit(new IrInst.SetDrainTimeout(unitTemp, msTemp));
-        return (unitTemp, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 
     private (int, TypeRef) LowerNetTcpAccept(Expr socketArg)
@@ -3336,7 +3352,7 @@ public sealed partial class Lowering
 
         int unitTemp = NewTemp();
         Emit(new IrInst.SpawnTask(unitTemp, taskTemp));
-        return (unitTemp, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 
     // Ashes.Task.all : List(Task(E, A)) -> Task(E, List(A))
@@ -4666,7 +4682,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.ConsoleRestore(target));
-        return (target, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 
     // Ashes.IO.Console.pollInput : Int -> Maybe(Str)
@@ -4867,7 +4883,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.ProcessWriteStdin(target, procTemp, textTemp));
-        return (target, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 
     // Ashes.IO.Process.readStdoutLine : Process -> Maybe(Str)
@@ -4991,6 +5007,6 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.ProcessKill(target, procTemp));
-        return (target, _resolvedTypes["Unit"]);
+        return LowerSideEffectUnitResult();
     }
 }
