@@ -11,7 +11,7 @@ internal sealed class LetGenerationRule : IExpressionGenerationRule
     {
         AshesType boundType = ChooseType(requiredType, random);
         string name = "v" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        GenerationResult<Expr> value = expressions.Generate(boundType, context, budget.Descend(2), random);
+        GenerationResult<Expr> value = expressions.Generate(boundType, context.WithoutFlag(GenerationFlags.TailPosition), budget.Descend(2), random);
         GenerationResult<Expr> body = expressions.Generate(requiredType, context.WithBinding(new GeneratedBinding(name, boundType)), budget.Descend(2), random);
         GeneratedFeatureSet features = new([GeneratedFeature.Let]); features.UnionWith(value.Features); features.UnionWith(body.Features);
         return new GenerationResult<Expr>(new Expr.Let(name, value.Value, body.Value), requiredType, features, GenerationTrace.Merge($"let:{name}:{boundType}", value.Trace, body.Trace), 1 + value.NodeCount + body.NodeCount);
@@ -41,7 +41,7 @@ internal sealed class IfGenerationRule : IExpressionGenerationRule
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 4;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
-        GenerationResult<Expr> condition = expressions.Generate(AshesType.Bool, context, budget.Descend(3), random);
+        GenerationResult<Expr> condition = expressions.Generate(AshesType.Bool, context.WithoutFlag(GenerationFlags.TailPosition), budget.Descend(3), random);
         GenerationResult<Expr> thenValue = expressions.Generate(requiredType, context, budget.Descend(3), random);
         GenerationResult<Expr> elseValue = expressions.Generate(requiredType, context, budget.Descend(3), random);
         GeneratedFeatureSet features = new([GeneratedFeature.If]); features.UnionWith(condition.Features); features.UnionWith(thenValue.Features); features.UnionWith(elseValue.Features);
@@ -60,7 +60,7 @@ internal sealed class TupleGenerationRule : IExpressionGenerationRule
         List<(string Name, Expr Value)> bindings = []; GeneratedFeatureSet features = new([GeneratedFeature.Tuple, GeneratedFeature.Let, GeneratedFeature.Variable]); List<string> trace = ["tuple"]; int nodes = 1;
         foreach (AshesType elementType in tuple.Elements)
         {
-            GenerationResult<Expr> element = expressions.Generate(elementType, context, budget.Descend(tuple.Elements.Count), random);
+            GenerationResult<Expr> element = expressions.Generate(elementType, context.WithoutFlag(GenerationFlags.TailPosition), budget.Descend(tuple.Elements.Count), random);
             string name = "tupleElement" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
             bindings.Add((name, element.Value)); features.UnionWith(element.Features); trace.AddRange(element.Trace.Entries); nodes += element.NodeCount + 2;
         }
@@ -82,7 +82,7 @@ internal sealed class ListGenerationRule : IExpressionGenerationRule
         List<(string Name, Expr Value)> bindings = []; GeneratedFeatureSet features = new([GeneratedFeature.List]); List<string> trace = ["list"]; int nodes = 1;
         for (int i = 0; i < count; i++)
         {
-            GenerationResult<Expr> element = expressions.Generate(list.Element, context, budget.Descend(Math.Max(1, count)), random);
+            GenerationResult<Expr> element = expressions.Generate(list.Element, context.WithoutFlag(GenerationFlags.TailPosition), budget.Descend(Math.Max(1, count)), random);
             string name = "listElement" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
             bindings.Add((name, element.Value)); features.UnionWith(element.Features); trace.AddRange(element.Trace.Entries); nodes += element.NodeCount + 2;
         }
@@ -106,7 +106,11 @@ internal sealed class LambdaGenerationRule : IExpressionGenerationRule
     {
         AshesType.Function function = (AshesType.Function)requiredType;
         string parameter = "arg" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        GenerationResult<Expr> body = expressions.Generate(function.Return, context.WithBinding(new GeneratedBinding(parameter, function.Parameter)), budget.Descend(), random);
+        GenerationResult<Expr> body = expressions.Generate(
+            function.Return,
+            context.WithBinding(new GeneratedBinding(parameter, function.Parameter)).WithFlag(GenerationFlags.TailPosition),
+            budget.Descend(),
+            random);
         GeneratedFeatureSet features = new([GeneratedFeature.Lambda]); features.UnionWith(body.Features);
         Expr.Lambda lambda = new(parameter, body.Value) { ParamAnnotation = function.Parameter.ToSyntax() };
         return new GenerationResult<Expr>(lambda, requiredType, features, GenerationTrace.Merge($"lambda:{parameter}:{function.Parameter}", body.Trace), body.NodeCount + 1);
@@ -122,8 +126,12 @@ internal sealed class CallGenerationRule : IExpressionGenerationRule
     {
         AshesType parameterType = LetGenerationRule.ChooseType(requiredType, random);
         string parameter = "callArg" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        GenerationResult<Expr> body = expressions.Generate(requiredType, context.WithBinding(new GeneratedBinding(parameter, parameterType)), budget.Descend(2), random);
-        GenerationResult<Expr> argument = expressions.Generate(parameterType, context, budget.Descend(2), random);
+        GenerationResult<Expr> body = expressions.Generate(
+            requiredType,
+            context.WithBinding(new GeneratedBinding(parameter, parameterType)).WithFlag(GenerationFlags.TailPosition),
+            budget.Descend(2),
+            random);
+        GenerationResult<Expr> argument = expressions.Generate(parameterType, context.WithoutFlag(GenerationFlags.TailPosition), budget.Descend(2), random);
         GeneratedFeatureSet features = new([GeneratedFeature.Call, GeneratedFeature.Lambda]);
         features.UnionWith(body.Features);
         features.UnionWith(argument.Features);

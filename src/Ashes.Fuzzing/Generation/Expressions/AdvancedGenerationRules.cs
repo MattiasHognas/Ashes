@@ -223,7 +223,8 @@ internal sealed class ResultPipeGenerationRule : IExpressionGenerationRule
         AshesType.Result inputResultType = new(result.Error, inputType);
         GenerationResult<Expr> input = expressions.Generate(inputResultType, context, budget.Descend(4), random);
         string parameter = "pipeValue" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        GenerationContext bodyContext = context.WithBinding(new GeneratedBinding(parameter, inputType));
+        GenerationContext bodyContext = context.WithBinding(new GeneratedBinding(parameter, inputType))
+            .WithFlag(GenerationFlags.TailPosition);
         GenerationResult<Expr> body = expressions.Generate(requiredType, bodyContext, budget.Descend(4), random);
         Expr function = new Expr.Lambda(parameter, body.Value) { ParamAnnotation = inputType.ToSyntax() };
         Expr value = new Expr.ResultPipe(input.Value, function);

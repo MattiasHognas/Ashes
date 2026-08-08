@@ -7,7 +7,8 @@ internal sealed class BoundedRecursionTemplate : ICombinationTemplate
 {
     public string Id => "recursion.bounded-capture";
     public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.RecursiveFunction, GeneratedFeature.TailCall, GeneratedFeature.ClosureCapture };
-    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingRecursion > 0 && budget.RemainingNodes >= 10;
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.Allows(GenerationFlags.RecursionAllowed) && budget.RemainingRecursion > 0 && budget.RemainingNodes >= 10;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
         string captured = "recursiveResult" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);

@@ -238,7 +238,14 @@ internal sealed class NestedCapabilityHandlersTemplate : ICombinationTemplate
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
-        GenerationResult<Expr> supplied = expressions.Generate(resultType, context, budget.Descend(9), random);
+        GeneratedCapability capability = new(
+            "FuzzCapability",
+            [new GeneratedCapabilityOperation("get", AshesType.Unit, resultType)]);
+        GenerationContext handlerContext = context.WithCapability(capability)
+            .WithActiveHandler(capability.Name)
+            .WithFeature(GeneratedFeature.Capability)
+            .WithFeature(GeneratedFeature.Handler);
+        GenerationResult<Expr> supplied = expressions.Generate(resultType, handlerContext, budget.Descend(9), random);
         Expr operation = new Expr.Perform(new Expr.Call(new Expr.QualifiedVar("FuzzCapability", "get"), new Expr.Var("Unit")));
         HandlerArm innerOperation = new("FuzzCapability", "get", [new Pattern.Wildcard()], new Expr.Call(new Expr.Var("resume"), supplied.Value));
         string innerReturnName = Name("innerHandled", random);
@@ -268,7 +275,8 @@ internal sealed class DeterministicResourceTemplate : ICombinationTemplate
         GeneratedFeature.SharedValue,
     };
 
-    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 14;
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {

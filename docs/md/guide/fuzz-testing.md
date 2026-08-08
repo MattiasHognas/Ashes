@@ -6,7 +6,11 @@ shrinking, and artifacts without turning the ordinary unit-test runner into a ca
 `Ashes.Fuzzing.Tests` contains only fast deterministic tests of the framework itself.
 
 The generator asks a registry of expression rules for an expression of a required immutable
-generation type. Its context tracks lexical bindings and feature state, and its explicit node,
+generation type. Its immutable context tracks typed lexical values and functions, ADTs, records,
+typed capability operations, active handlers, suspension/resource/recursion/tail-position flags,
+ownership-interest tags, active templates, and inherited feature state. Profiles restrict these
+flags and interests before generation, and effect, recursion, resource, and targeted reuse templates
+enforce them as preconditions. Its explicit node,
 depth, collection, recursion, source-size, and combination budgets guarantee termination. A second
 validation pass measures complete-program declarations, functions, ADTs, maximum match-arm count,
 maximum collection length, recursion complexity, and every expression root in addition to those

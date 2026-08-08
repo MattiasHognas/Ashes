@@ -45,7 +45,8 @@ public sealed class CoverageExpansionTests
                 new HashSet<string>(StringComparer.Ordinal) { template.Id },
                 ["parse", "semantic"],
                 [compatibleType],
-                0);
+                0,
+                ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed);
             GeneratedFuzzCase? exercised = null;
             for (int caseIndex = 0; caseIndex < 50 && exercised is null; caseIndex++)
             {

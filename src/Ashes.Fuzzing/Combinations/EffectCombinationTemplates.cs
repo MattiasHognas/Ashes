@@ -11,7 +11,14 @@ internal sealed class CapabilityHandlerTemplate : ICombinationTemplate
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
-        GenerationResult<Expr> supplied = expressions.Generate(resultType, context, budget.Descend(5), random);
+        GeneratedCapability capability = new(
+            "FuzzCapability",
+            [new GeneratedCapabilityOperation("get", AshesType.Unit, resultType)]);
+        GenerationContext handlerContext = context.WithCapability(capability)
+            .WithActiveHandler(capability.Name)
+            .WithFeature(GeneratedFeature.Capability)
+            .WithFeature(GeneratedFeature.Handler);
+        GenerationResult<Expr> supplied = expressions.Generate(resultType, handlerContext, budget.Descend(5), random);
         Expr operation = new Expr.Perform(new Expr.Call(new Expr.QualifiedVar("FuzzCapability", "get"), new Expr.Var("Unit")));
         Expr resume = new Expr.Call(new Expr.Var("resume"), supplied.Value);
         string returned = "handled" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -27,7 +34,8 @@ internal sealed class AsyncCaptureTemplate : ICombinationTemplate
 {
     public string Id => "async.capture-across-await";
     public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Await, GeneratedFeature.Match, GeneratedFeature.SharedValue };
-    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 14;
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.Allows(GenerationFlags.SuspensionAllowed) && budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {

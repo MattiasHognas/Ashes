@@ -95,6 +95,31 @@ public sealed class CombinationTests
         Should.Throw<InvalidOperationException>(() => coverage.RecordRule("unknown"));
     }
 
+    [Test]
+    public void ContextTracksEffectsOwnershipAndActiveHandlersForTemplatePreconditions()
+    {
+        GeneratedCapability capability = new(
+            "GeneratedEffect",
+            [new GeneratedCapabilityOperation("get", AshesType.Unit, AshesType.Str)]);
+        GenerationContext context = GenerationContext.Empty
+            .WithFlags(GenerationFlags.None)
+            .WithOwnershipInterests([])
+            .WithCapability(capability)
+            .WithActiveHandler(capability.Name)
+            .WithFeature(GeneratedFeature.Handler);
+
+        context.Capabilities.ShouldContain(capability);
+        context.ActiveHandlers.ShouldContain(capability.Name);
+        context.CurrentFeatures.ShouldContain(GeneratedFeature.Handler);
+        context.Allows(GenerationFlags.SuspensionAllowed).ShouldBeFalse();
+        context.IsInterestedIn(OwnershipInterest.Reuse).ShouldBeFalse();
+        GenerationBudget budget = GenerationBudget.Create(120);
+        new AsyncCaptureTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
+        new DeterministicResourceTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
+        new BoundedRecursionTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
+        new SharedReconstructionFallbackTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
+    }
+
     private sealed class PrimitiveDuplicate : IExpressionGenerationRule
     {
         public string Id => "duplicate";

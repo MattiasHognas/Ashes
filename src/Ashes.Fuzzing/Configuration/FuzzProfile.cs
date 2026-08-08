@@ -9,7 +9,9 @@ internal sealed record FuzzProfile(
     int MinimumFeatureCount,
     bool MutateSource = false,
     bool Native = false,
-    bool Differential = false);
+    bool Differential = false,
+    Generation.GenerationFlags ContextFlags = Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.SuspensionAllowed,
+    IReadOnlySet<Generation.OwnershipInterest>? OwnershipInterests = null);
 
 internal sealed class FuzzProfileRegistry
 {
@@ -64,20 +66,22 @@ internal sealed class FuzzProfileRegistry
             defaultCombinations,
             combinations,
             observableTypes);
+        IReadOnlySet<Generation.OwnershipInterest> ownershipInterests = Enum.GetValues<Generation.OwnershipInterest>()
+            .ToHashSet();
         FuzzProfileRegistry registry = new();
         registry.Register(new FuzzProfile("syntax", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["parse", "format"], allTypes, 0));
         registry.Register(new FuzzProfile("semantics", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0));
-        registry.Register(new FuzzProfile("perceus", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2));
-        registry.Register(new FuzzProfile("combinations", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2));
-        registry.Register(new FuzzProfile("compile", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "execution"], observableTypes, 1, Native: true));
-        registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true));
+        registry.Register(new FuzzProfile("perceus", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests));
+        registry.Register(new FuzzProfile("combinations", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests));
+        registry.Register(new FuzzProfile("compile", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "execution"], observableTypes, 1, Native: true, OwnershipInterests: ownershipInterests));
+        registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true, OwnershipInterests: ownershipInterests));
         registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true));
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true));
         registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await" }, ["parse", "format", "semantic", "ir"], allTypes, 2));
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers" }, ["parse", "format", "semantic", "ir"], allTypes, 2));
-        registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2));
-        registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0));
-        registry.Register(new FuzzProfile("all", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 1));
+        registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed));
+        registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0, OwnershipInterests: ownershipInterests));
+        registry.Register(new FuzzProfile("all", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 1, OwnershipInterests: ownershipInterests));
         registry.Validate(rules, combinations);
         return registry;
     }
@@ -121,10 +125,15 @@ internal sealed class FuzzProfileRegistry
                 throw new ArgumentException($"Profile '{profile.Id}' references an unknown registry entry '{unknownRule ?? unknownCombination}'.");
             }
 
+            Generation.GenerationContext context = Generation.GenerationContext.Empty
+                .WithFlags(profile.ContextFlags)
+                .WithOwnershipInterests(profile.OwnershipInterests is null
+                    ? Enum.GetValues<Generation.OwnershipInterest>()
+                    : profile.OwnershipInterests);
             string? incompatibleCombination = profile.EnabledCombinations.FirstOrDefault(id =>
                 !profile.Types.Any(type => combinations.Get(id).CanApply(
                     type,
-                    Generation.GenerationContext.Empty,
+                    context,
                     Generation.GenerationBudget.Create(120))));
             if (incompatibleCombination is not null)
             {

@@ -23,6 +23,16 @@ internal enum GeneratedFeature
     SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
 }
 
+internal enum OwnershipInterest
+{
+    Sharing,
+    Aliasing,
+    ClosureCapture,
+    CrossBranch,
+    Reuse,
+    Uniqueness,
+}
+
 internal sealed class GeneratedFeatureSet : IReadOnlyCollection<GeneratedFeature>
 {
     private readonly SortedSet<GeneratedFeature> _features = [];
@@ -49,24 +59,55 @@ internal sealed record GenerationResult<T>(T Value, AshesType Type, GeneratedFea
 internal sealed record GeneratedBinding(string Name, AshesType Type, bool IsFunction = false);
 internal sealed record GeneratedAdt(string Name, IReadOnlyList<(string Name, IReadOnlyList<AshesType> Fields)> Constructors);
 internal sealed record GeneratedRecord(string Name, IReadOnlyList<(string Name, AshesType Type)> Fields);
+internal sealed record GeneratedCapabilityOperation(string Name, AshesType Parameter, AshesType Result);
+internal sealed record GeneratedCapability(string Name, IReadOnlyList<GeneratedCapabilityOperation> Operations);
 
 internal sealed record GenerationContext(
     IReadOnlyList<GeneratedBinding> Bindings,
     IReadOnlyList<GeneratedAdt> Adts,
     IReadOnlyList<GeneratedRecord> Records,
-    IReadOnlySet<string> Capabilities,
+    IReadOnlyList<GeneratedCapability> Capabilities,
+    IReadOnlySet<string> ActiveHandlers,
     GenerationFlags Flags,
-    IReadOnlySet<string> ActiveTemplates)
+    IReadOnlySet<OwnershipInterest> OwnershipInterests,
+    IReadOnlySet<string> ActiveTemplates,
+    IReadOnlySet<GeneratedFeature> CurrentFeatures)
 {
-    internal static GenerationContext Empty { get; } = new([], [], [], new SortedSet<string>(StringComparer.Ordinal), GenerationFlags.RecursionAllowed, new SortedSet<string>(StringComparer.Ordinal));
+    internal static GenerationContext Empty { get; } = new(
+        [],
+        [],
+        [],
+        [],
+        new SortedSet<string>(StringComparer.Ordinal),
+        GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
+        new SortedSet<OwnershipInterest>(Enum.GetValues<OwnershipInterest>()),
+        new SortedSet<string>(StringComparer.Ordinal),
+        new SortedSet<GeneratedFeature>());
     internal GenerationContext WithBinding(GeneratedBinding binding) => this with { Bindings = [.. Bindings, binding] };
     internal GenerationContext WithAdt(GeneratedAdt adt) => this with { Adts = [.. Adts, adt] };
     internal GenerationContext WithRecord(GeneratedRecord record) => this with { Records = [.. Records, record] };
-    internal GenerationContext WithCapability(string capability) => this with
+    internal GenerationContext WithCapability(GeneratedCapability capability) => this with
     {
-        Capabilities = new SortedSet<string>(Capabilities, StringComparer.Ordinal) { capability },
+        Capabilities = [.. Capabilities.Where(candidate => !string.Equals(candidate.Name, capability.Name, StringComparison.Ordinal)), capability],
+    };
+    internal GenerationContext WithActiveHandler(string capability) => this with
+    {
+        ActiveHandlers = new SortedSet<string>(ActiveHandlers, StringComparer.Ordinal) { capability },
+    };
+    internal GenerationContext WithFlags(GenerationFlags flags) => this with { Flags = flags };
+    internal GenerationContext WithFlag(GenerationFlags flag) => this with { Flags = Flags | flag };
+    internal GenerationContext WithoutFlag(GenerationFlags flag) => this with { Flags = Flags & ~flag };
+    internal GenerationContext WithOwnershipInterests(IEnumerable<OwnershipInterest> interests) => this with
+    {
+        OwnershipInterests = new SortedSet<OwnershipInterest>(interests),
     };
     internal GenerationContext WithTemplate(string id) => this with { ActiveTemplates = new SortedSet<string>(ActiveTemplates, StringComparer.Ordinal) { id } };
+    internal GenerationContext WithFeature(GeneratedFeature feature) => this with
+    {
+        CurrentFeatures = new SortedSet<GeneratedFeature>(CurrentFeatures) { feature },
+    };
+    internal bool Allows(GenerationFlags flag) => (Flags & flag) == flag;
+    internal bool IsInterestedIn(OwnershipInterest interest) => OwnershipInterests.Contains(interest);
 }
 
 internal sealed record GenerationBudget(
