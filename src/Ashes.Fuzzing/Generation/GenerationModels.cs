@@ -23,6 +23,7 @@ internal enum GeneratedFeature
     SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
     ClosureInMatch, RecursiveReconstruction, ResultClosure, CapabilityInClosure,
     ResultErrorMapping,
+    ResultAliasesInput, FreshResultInternalSharing, StaticallyUniquePath,
 }
 
 internal enum OwnershipInterest

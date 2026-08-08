@@ -6,7 +6,7 @@ namespace Ashes.Fuzzing.Combinations;
 internal sealed class SharingBranchTemplate : ICombinationTemplate
 {
     public string Id => "sharing.branch-alias";
-    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.If, GeneratedFeature.SharedValue, GeneratedFeature.CrossBranchAlias };
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.If, GeneratedFeature.SharedValue, GeneratedFeature.CrossBranchAlias, GeneratedFeature.ResultAliasesInput };
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 6;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -22,7 +22,7 @@ internal sealed class SharingBranchTemplate : ICombinationTemplate
 internal sealed class SharedTupleTemplate : ICombinationTemplate
 {
     public string Id => "sharing.tuple-fields";
-    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.Tuple, GeneratedFeature.SharedValue };
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.Tuple, GeneratedFeature.SharedValue, GeneratedFeature.FreshResultInternalSharing };
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => resultType is AshesType.Tuple { Elements.Count: 2 } tuple && tuple.Elements[0] == tuple.Elements[1] && budget.RemainingNodes >= 5;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -38,7 +38,7 @@ internal sealed class SharedTupleTemplate : ICombinationTemplate
 internal sealed class NestedAliasTemplate : ICombinationTemplate
 {
     public string Id => "sharing.nested-alias";
-    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.SharedValue };
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.SharedValue, GeneratedFeature.ResultAliasesInput };
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 5;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {

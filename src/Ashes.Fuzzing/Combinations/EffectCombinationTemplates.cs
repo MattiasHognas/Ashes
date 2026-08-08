@@ -70,6 +70,7 @@ internal sealed class AsyncSpawnSharedValueTemplate : ICombinationTemplate
         GeneratedFeature.Variable,
         GeneratedFeature.Spawn,
         GeneratedFeature.SharedValue,
+        GeneratedFeature.ResultAliasesInput,
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>

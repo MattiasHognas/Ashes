@@ -79,6 +79,7 @@ internal sealed class ListHeadSharingTemplate : ICombinationTemplate
         GeneratedFeature.Tuple,
         GeneratedFeature.SharedValue,
         GeneratedFeature.ConstructorReconstruction,
+        GeneratedFeature.FreshResultInternalSharing,
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
