@@ -41,16 +41,21 @@ internal sealed class ProgramGenerator
             forcePreferredCombination);
         FuzzRandom random = new(caseSeed);
         GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
+        GenerationContext context = prelude.Context
+            .WithFlags(profile.ContextFlags | GenerationFlags.TailPosition)
+            .WithOwnershipInterests(profile.OwnershipInterests is null
+                ? Enum.GetValues<OwnershipInterest>()
+                : profile.OwnershipInterests);
         int preludeNodes = AstCoverageMetrics.Measure(new FrontendProgram(prelude.Items, new Expr.IntLit(0))).Nodes - 1;
         int availableExpressionNodes = Math.Max(2, maximumNodes - preludeNodes - 2);
         GenerationBudget expressionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
-        AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, prelude.Context, expressionBudget, random);
-        GenerationResult<Expr> generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
+        AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, context, expressionBudget, random);
+        GenerationResult<Expr> generated = expressions.Generate(type, context, expressionBudget, random);
         for (int attempt = 1; generated.Features.Count < profile.MinimumFeatureCount && attempt < 16; attempt++)
         {
             random = new FuzzRandom(caseSeed + (ulong)attempt);
-            type = SelectType(profile, preferredCombination, forcePreferredCombination, prelude.Context, expressionBudget, random);
-            generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
+            type = SelectType(profile, preferredCombination, forcePreferredCombination, context, expressionBudget, random);
+            generated = expressions.Generate(type, context, expressionBudget, random);
         }
         if (generated.Features.Count < profile.MinimumFeatureCount)
         {
@@ -67,7 +72,7 @@ internal sealed class ProgramGenerator
         IReadOnlyList<string> budgetErrors = GenerationBudgetValidator.Validate(program, generated.Trace, source.Length, budget);
         if (budgetErrors.Count != 0)
         {
-            GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, prelude.Context, budget, random);
+            GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, context, budget, random);
             generated = ConstrainRootType(leaf, type);
             generated.Features.UnionWith(prelude.Features);
             generated = generated with { Trace = GenerationTrace.Merge("program", prelude.Trace, generated.Trace) };

@@ -195,7 +195,10 @@ internal static class ProgramPreludeGenerator
         string resultName = "fuzzProvidedValue" + suffix;
         Expr operation = new Expr.Call(new Expr.QualifiedVar(capabilityName, "transform"), new Expr.IntLit(caseIndex));
         items.Add(new TopLevelItem.LetDecl(resultName, operation, IsRecursive: false) { TypeAnnotation = AshesType.Int.ToSyntax() });
-        context = context.WithCapability(capabilityName).WithBinding(new GeneratedBinding(resultName, AshesType.Int));
+        context = context.WithCapability(new GeneratedCapability(
+            capabilityName,
+            [new GeneratedCapabilityOperation("transform", AshesType.Int, AshesType.Int)]))
+            .WithBinding(new GeneratedBinding(resultName, AshesType.Int));
         features.Add(GeneratedFeature.Capability);
         features.Add(GeneratedFeature.Provider);
         trace.Add("program:provider");

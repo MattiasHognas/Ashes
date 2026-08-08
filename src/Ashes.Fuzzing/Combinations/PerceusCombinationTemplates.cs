@@ -18,6 +18,8 @@ internal sealed class SharedReconstructionFallbackTemplate : ICombinationTemplat
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.IsInterestedIn(OwnershipInterest.Sharing) &&
+        context.IsInterestedIn(OwnershipInterest.Reuse) &&
         budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(
@@ -76,6 +78,8 @@ internal sealed class BranchSelectiveReuseTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.IsInterestedIn(OwnershipInterest.CrossBranch) &&
+        context.IsInterestedIn(OwnershipInterest.Reuse) &&
         budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(
@@ -128,7 +132,10 @@ internal sealed class UniqueRecordUpdateTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
-        resultType is AshesType.Record { Name: "FuzzRecord" } && budget.RemainingNodes >= 10;
+        context.IsInterestedIn(OwnershipInterest.Uniqueness) &&
+        context.IsInterestedIn(OwnershipInterest.Reuse) &&
+        resultType is AshesType.Record { Name: "FuzzRecord" } &&
+        budget.RemainingNodes >= 10;
 
     public GenerationResult<Expr> Generate(
         AshesType resultType,
@@ -174,7 +181,9 @@ internal sealed class BoundedListTraversalTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
-        budget.RemainingRecursion > 0 && budget.RemainingNodes >= 14;
+        context.Allows(GenerationFlags.RecursionAllowed) &&
+        budget.RemainingRecursion > 0 &&
+        budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(
         AshesType resultType,

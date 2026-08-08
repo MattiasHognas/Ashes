@@ -16,7 +16,10 @@ internal sealed class ClosureCaptureTemplate : ICombinationTemplate
         string captured = "captured" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         string parameter = "parameter" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         GenerationResult<Expr> capture = expressions.Generate(captureType, context, budget.Descend(5), random);
-        GenerationContext bodyContext = context.WithBinding(new GeneratedBinding(captured, captureType)).WithBinding(new GeneratedBinding(parameter, parameterType));
+        GenerationContext bodyContext = context.WithBinding(new GeneratedBinding(captured, captureType))
+            .WithBinding(new GeneratedBinding(parameter, parameterType))
+            .WithFlag(GenerationFlags.TailPosition)
+            .WithFeature(GeneratedFeature.ClosureCapture);
         GenerationResult<Expr> body = expressions.Generate(resultType, bodyContext, budget.Descend(5), random);
         GenerationResult<Expr> argument = expressions.Generate(parameterType, context, budget.Descend(5), random);
         Expr lambda = new Expr.Lambda(parameter, body.Value) { ParamAnnotation = parameterType.ToSyntax() };

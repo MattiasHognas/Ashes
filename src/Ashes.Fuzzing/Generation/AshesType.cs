@@ -19,6 +19,7 @@ internal abstract record AshesType
     internal static Primitive Str { get; } = new("Str");
     internal static Primitive Float { get; } = new("Float");
     internal static Primitive BigInt { get; } = new("BigInt");
+    internal static Primitive Unit { get; } = new("Unit");
 
     internal TypeExpr ToSyntax() => this switch
     {
