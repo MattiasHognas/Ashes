@@ -4,6 +4,11 @@ using Ashes.Fuzzing.Execution;
 using Ashes.Fuzzing.Generation;
 using Ashes.Fuzzing.Oracles;
 
+if (args is [InvalidSourceWorker.Command, string sourcePath])
+{
+    return InvalidSourceWorker.Run(sourcePath);
+}
+
 try
 {
     FuzzConfiguration configuration = FuzzConfiguration.Parse(args);

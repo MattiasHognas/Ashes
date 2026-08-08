@@ -47,9 +47,13 @@ dotnet run --project src/Ashes.Fuzzing -- list
 ```
 
 Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `differential`,
-`invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource profile is deliberately
-separate from smoke runs and uses deterministic file-handle shapes. Invalid-source fuzzing deterministically mutates valid generated source
-and asserts bounded, crash-free lexer/parser behavior. Native profiles use child processes with
+`invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource
+profile is deliberately separate from smoke runs and uses deterministic file-handle shapes.
+Invalid-source fuzzing deterministically mutates valid generated source
+with token deletion and duplication, delimiter replacement, keyword insertion, truncation,
+malformed literals, indentation changes, and Unicode insertion. Each mutated parse runs in a
+killable child process and asserts bounded diagnostics and crash-free lexer/parser behavior. Native
+profiles use child processes with
 compiler and program timeouts. Process output is drained without being retained beyond the default
 1 MiB per stream, process trees are terminated on timeout or cancellation, and one failure artifact
 is capped at 4 MiB. Long runs can override these with `--max-output-bytes` and

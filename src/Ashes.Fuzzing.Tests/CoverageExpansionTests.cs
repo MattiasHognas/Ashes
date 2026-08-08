@@ -210,15 +210,15 @@ public sealed class CoverageExpansionTests
     public void InvalidSourceMutationsCoverAllMutationFamiliesDeterministically()
     {
         InvalidSourceMutator mutator = new();
-        HashSet<string> results = new(StringComparer.Ordinal);
         const string source = "let value = [1, 2, 3] in value";
-        for (ulong seed = 0; seed < 128; seed++)
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        foreach (InvalidSourceMutation mutation in Enum.GetValues<InvalidSourceMutation>())
         {
-            string first = mutator.Mutate(source, seed);
-            first.ShouldBe(mutator.Mutate(source, seed));
+            string first = mutator.Mutate(source, 2718, mutation);
+            first.ShouldBe(mutator.Mutate(source, 2718, mutation));
             results.Add(first);
         }
-        results.Count.ShouldBeGreaterThanOrEqualTo(7);
+        results.Count.ShouldBe(InvalidSourceMutator.MutationCount);
     }
 
     private static IrProgram Lower(string source, LoweringConfiguration configuration)
