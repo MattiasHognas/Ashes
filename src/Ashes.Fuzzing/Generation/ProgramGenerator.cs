@@ -43,6 +43,7 @@ internal sealed class ProgramGenerator
         GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
         GenerationContext context = prelude.Context
             .WithFlags(profile.ContextFlags | GenerationFlags.TailPosition)
+            .WithResourceTypes(profile.EffectiveResourceTypes)
             .WithOwnershipInterests(profile.OwnershipInterests is null
                 ? Enum.GetValues<OwnershipInterest>()
                 : profile.OwnershipInterests);

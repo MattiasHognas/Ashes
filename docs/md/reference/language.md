@@ -2059,6 +2059,7 @@ sockets). These are called **resource types**.
 
 Currently classified resource types:
 
+- `FileHandle` — file handles from `Ashes.IO.File.open`
 - `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
 - `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect` or a server-side
   `Ashes.Net.Tls.Server.handshake`

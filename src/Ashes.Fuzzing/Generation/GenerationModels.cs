@@ -70,6 +70,7 @@ internal sealed record GenerationContext(
     IReadOnlyList<GeneratedBinding> Bindings,
     IReadOnlyList<GeneratedAdt> Adts,
     IReadOnlyList<GeneratedRecord> Records,
+    IReadOnlyList<AshesType.Resource> ResourceTypes,
     IReadOnlyList<GeneratedCapability> Capabilities,
     IReadOnlySet<string> ActiveHandlers,
     GenerationFlags Flags,
@@ -81,6 +82,7 @@ internal sealed record GenerationContext(
         [],
         [],
         [],
+        AshesType.SupportedResources,
         [],
         new SortedSet<string>(StringComparer.Ordinal),
         GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
@@ -90,6 +92,10 @@ internal sealed record GenerationContext(
     internal GenerationContext WithBinding(GeneratedBinding binding) => this with { Bindings = [.. Bindings, binding] };
     internal GenerationContext WithAdt(GeneratedAdt adt) => this with { Adts = [.. Adts, adt] };
     internal GenerationContext WithRecord(GeneratedRecord record) => this with { Records = [.. Records, record] };
+    internal GenerationContext WithResourceTypes(IEnumerable<AshesType.Resource> resourceTypes) => this with
+    {
+        ResourceTypes = resourceTypes.OrderBy(type => type.Name, StringComparer.Ordinal).ToArray(),
+    };
     internal GenerationContext WithCapability(GeneratedCapability capability) => this with
     {
         Capabilities = [.. Capabilities.Where(candidate => !string.Equals(candidate.Name, capability.Name, StringComparison.Ordinal)), capability],

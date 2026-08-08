@@ -13,6 +13,7 @@ internal abstract record AshesType
     internal sealed record Record(string Name) : AshesType;
     internal sealed record Result(AshesType Error, AshesType Value) : AshesType;
     internal sealed record Task(AshesType Error, AshesType Value) : AshesType;
+    internal sealed record Resource(string Name) : AshesType;
 
     internal static Primitive Int { get; } = new("Int");
     internal static Primitive Bool { get; } = new("Bool");
@@ -20,6 +21,10 @@ internal abstract record AshesType
     internal static Primitive Float { get; } = new("Float");
     internal static Primitive BigInt { get; } = new("BigInt");
     internal static Primitive Unit { get; } = new("Unit");
+    internal static Resource FileHandle { get; } = new("FileHandle");
+    internal static Resource Socket { get; } = new("Socket");
+    internal static Resource TlsSocket { get; } = new("TlsSocket");
+    internal static IReadOnlyList<Resource> SupportedResources { get; } = [FileHandle, Socket, TlsSocket];
 
     internal TypeExpr ToSyntax() => this switch
     {
@@ -32,6 +37,7 @@ internal abstract record AshesType
         Record record => new TypeExpr.Named(record.Name),
         Result result => new TypeExpr.Applied("Result", [result.Error.ToSyntax(), result.Value.ToSyntax()]),
         Task task => new TypeExpr.Applied("Task", [task.Error.ToSyntax(), task.Value.ToSyntax()]),
+        Resource resource => new TypeExpr.Named(resource.Name),
         _ => throw new InvalidOperationException("Unknown fuzz generation type."),
     };
 
@@ -46,6 +52,7 @@ internal abstract record AshesType
         Record record => record.Name,
         Result result => $"Result({result.Error},{result.Value})",
         Task task => $"Task({task.Error},{task.Value})",
+        Resource resource => resource.Name,
         _ => base.ToString() ?? "unknown",
     };
 }

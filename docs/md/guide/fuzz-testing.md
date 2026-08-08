@@ -63,7 +63,10 @@ dotnet run --project src/Ashes.Fuzzing -- list
 
 Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `differential`,
 `invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource
-profile is deliberately separate from smoke runs and uses deterministic file-handle shapes.
+profile is deliberately separate from smoke runs, explicitly enables the `FileHandle` generation
+type, and uses deterministic file-handle shapes. `Socket` and `TlsSocket` are represented by the
+immutable generation type model but stay disabled until deterministic network-resource templates
+are added.
 Invalid-source fuzzing deterministically mutates valid generated source
 and rotates through checked-in corpus cases, compiler tests, examples, and parser fixtures. It uses
 token deletion and duplication, delimiter replacement, keyword insertion, truncation,
