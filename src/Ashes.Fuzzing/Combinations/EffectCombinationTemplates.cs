@@ -60,3 +60,47 @@ internal sealed class AsyncCaptureTemplate : ICombinationTemplate
         return new GenerationResult<Expr>(new Expr.Let(captured, value.Value, runMatch), resultType, features, GenerationTrace.Merge("async:capture", value.Trace), value.NodeCount + 14);
     }
 }
+
+internal sealed class AsyncSpawnSharedValueTemplate : ICombinationTemplate
+{
+    public string Id => "async.spawn-shared-value";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.Let,
+        GeneratedFeature.Variable,
+        GeneratedFeature.Spawn,
+        GeneratedFeature.SharedValue,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.Allows(GenerationFlags.SuspensionAllowed) && budget.RemainingNodes >= 10;
+
+    public GenerationResult<Expr> Generate(
+        AshesType resultType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        GenerationResult<Expr> shared = expressions.Generate(resultType, context, budget.Descend(6), random);
+        string sharedName = Name("spawnShared", random);
+        string spawnName = Name("spawnHandle", random);
+        Expr completedTask = new Expr.Call(new Expr.Var("async"), new Expr.Var(sharedName));
+        Expr spawn = new Expr.Call(new Expr.QualifiedVar("Ashes.Task", "spawn"), completedTask);
+        Expr value = new Expr.Let(
+            sharedName,
+            shared.Value,
+            new Expr.Let(spawnName, spawn, new Expr.Var(sharedName)));
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(shared.Features);
+        return new GenerationResult<Expr>(
+            value,
+            resultType,
+            features,
+            GenerationTrace.Merge($"async:spawn-shared:{resultType}", shared.Trace),
+            shared.NodeCount + 8);
+    }
+
+    private static string Name(string prefix, FuzzRandom random) =>
+        prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}

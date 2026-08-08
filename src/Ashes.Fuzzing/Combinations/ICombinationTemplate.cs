@@ -41,6 +41,7 @@ internal sealed class CombinationRegistry
         registry.Register(new BoundedRecursionTemplate());
         registry.Register(new CapabilityHandlerTemplate());
         registry.Register(new AsyncCaptureTemplate());
+        registry.Register(new AsyncSpawnSharedValueTemplate());
         registry.Register(new EscapingClosureTemplate());
         registry.Register(new MultipleClosuresTemplate());
         registry.Register(new ListHeadSharingTemplate());

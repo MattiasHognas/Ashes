@@ -18,7 +18,8 @@ recursive generation limits. A case that exceeds any configured dimension falls 
 typed leaf or fails generation when even the minimum complete program cannot fit. A second registry
 contains generic combination templates for sharing, cross-branch aliases, escaping and
 shared-capture closures, guarded and ADT matches, list and constructor reconstruction, bounded
-recursion, nested capability handlers, async capture, Result propagation and error mapping, and Perceus reuse and
+recursion, nested capability handlers, async capture and deterministic task spawning, Result
+propagation and error mapping, and Perceus reuse and
 fallback shapes. Targeted Perceus templates distinguish unique record updates, shared
 reconstruction fallback, branch-selective reconstruction, and list-tail traversal through a
 capturing tail-recursive function. Templates may fill their holes with the ordinary generator, so
