@@ -33,30 +33,35 @@ internal sealed class ProgramGenerator
             : new CombinationGenerator(_combinations, profile.EnabledCombinations, coverage, preferredCombination);
         ExpressionGenerator expressions = new(_rules, profile.EnabledRules, coverage, combinations, preferredRule);
         FuzzRandom random = new(caseSeed);
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
         AshesType type = profile.Types[random.Next(profile.Types.Count)];
         GenerationBudget expressionBudget = budget.Descend(2);
-        GenerationResult<Expr> generated = expressions.Generate(type, GenerationContext.Empty, expressionBudget, random);
+        GenerationResult<Expr> generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
         for (int attempt = 1; generated.Features.Count < profile.MinimumFeatureCount && attempt < 16; attempt++)
         {
             random = new FuzzRandom(caseSeed + (ulong)attempt);
             type = profile.Types[random.Next(profile.Types.Count)];
-            generated = expressions.Generate(type, GenerationContext.Empty, expressionBudget, random);
+            generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
         }
         if (generated.Features.Count < profile.MinimumFeatureCount)
         {
             throw new InvalidOperationException($"Generation did not meet profile '{profile.Id}' minimum feature count {profile.MinimumFeatureCount}.");
         }
         generated = ConstrainRootType(generated, type);
+        generated.Features.UnionWith(prelude.Features);
+        generated = generated with { Trace = GenerationTrace.Merge("program", prelude.Trace, generated.Trace) };
 
-        List<TopLevelItem> items = BuildDeclarations(type, generated.Features);
+        List<TopLevelItem> items = [.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)];
         FrontendProgram program = new(items, generated.Value);
         string source = AshesFormatter.Format(program);
         AstCoverageMetrics metrics = AstCoverageMetrics.Measure(program);
         if (metrics.Nodes > maximumNodes || source.Length > budget.MaximumSourceLength)
         {
-            GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, GenerationContext.Empty, budget, random);
+            GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, prelude.Context, budget, random);
             generated = ConstrainRootType(leaf, type);
-            program = new FrontendProgram(BuildDeclarations(type, generated.Features), generated.Value);
+            generated.Features.UnionWith(prelude.Features);
+            generated = generated with { Trace = GenerationTrace.Merge("program", prelude.Trace, generated.Trace) };
+            program = new FrontendProgram([.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)], generated.Value);
             source = AshesFormatter.Format(program);
             metrics = AstCoverageMetrics.Measure(program);
         }
@@ -77,30 +82,10 @@ internal sealed class ProgramGenerator
         return new GenerationResult<Expr>(typed, type, features, GenerationTrace.Merge($"typed-root:{type}", generated.Trace), generated.NodeCount + 2);
     }
 
-    private static List<TopLevelItem> BuildDeclarations(AshesType type, GeneratedFeatureSet features)
+    private static List<TopLevelItem> BuildFeatureDeclarations(GeneratedFeatureSet features)
     {
         List<TopLevelItem> items = [];
-        if (features.Contains(GeneratedFeature.Adt))
-        {
-            TypeDecl boxDeclaration = new("FuzzBoxType", [new TypeParameter("a")], [new TypeConstructor("FuzzBox", [new TypeExpr.Named("a")])]);
-            items.Add(new TopLevelItem.Type(boxDeclaration));
-
-            TypeExpr treeOfA = new TypeExpr.Applied("FuzzTree", [new TypeExpr.Named("a")]);
-            TypeDecl treeDeclaration = new("FuzzTree", [new TypeParameter("a")],
-            [
-                new TypeConstructor("FuzzEmpty", []),
-                new TypeConstructor("FuzzLeaf", [new TypeExpr.Named("a")]),
-                new TypeConstructor("FuzzBranch", [treeOfA, treeOfA]),
-            ]);
-            items.Add(new TopLevelItem.Type(treeDeclaration));
-        }
-        if (features.Contains(GeneratedFeature.Record) || ContainsType(type, "FuzzRecord"))
-        {
-            TypeConstructor fields = new("FuzzRecord", [AshesType.Int.ToSyntax(), AshesType.Bool.ToSyntax()]) { FieldNames = ["first", "second"] };
-            TypeDecl declaration = new("FuzzRecord", [], [fields]) { IsRecord = true };
-            items.Add(new TopLevelItem.Type(declaration));
-        }
-        if (features.Contains(GeneratedFeature.Capability))
+        if (features.Contains(GeneratedFeature.Handler))
         {
             TypeExpr signature = new TypeExpr.Arrow(new TypeExpr.Named("Unit"), new TypeExpr.Named("a"));
             CapabilityDecl declaration = new("FuzzCapability", [new TypeParameter("a")], [new CapabilityOperation("get", signature)]);
@@ -108,16 +93,4 @@ internal sealed class ProgramGenerator
         }
         return items;
     }
-
-    private static bool ContainsType(AshesType type, string name) => type switch
-    {
-        AshesType.Adt adt => string.Equals(adt.Name, name, StringComparison.Ordinal) || adt.Arguments.Any(argument => ContainsType(argument, name)),
-        AshesType.Tuple tuple => tuple.Elements.Any(element => ContainsType(element, name)),
-        AshesType.List list => ContainsType(list.Element, name),
-        AshesType.Function function => ContainsType(function.Parameter, name) || ContainsType(function.Return, name),
-        AshesType.Result result => ContainsType(result.Error, name) || ContainsType(result.Value, name),
-        AshesType.Task task => ContainsType(task.Error, name) || ContainsType(task.Value, name),
-        AshesType.Record record => string.Equals(record.Name, name, StringComparison.Ordinal),
-        _ => false,
-    };
 }

@@ -54,4 +54,39 @@ public sealed class GeneratorInvariantTests
         zero.CaseSeed.ShouldNotBe(one.CaseSeed);
         fixture.Generator.Generate(4, 1, fixture.Profiles.Get("syntax"), 40).Source.ShouldBe(one.Source);
     }
+
+    [Test]
+    public void CompleteProgramsExerciseVariedTopLevelDeclarations()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedFuzzCase adtCase = fixture.Generator.Generate(84, 0, fixture.Profiles.Get("semantics"), 80);
+        GeneratedFuzzCase recordCase = fixture.Generator.Generate(84, 1, fixture.Profiles.Get("semantics"), 80);
+        GeneratedFuzzCase recursiveCase = fixture.Generator.Generate(84, 2, fixture.Profiles.Get("semantics"), 80);
+
+        adtCase.Program.Items.OfType<TopLevelItem.Type>()
+            .ShouldContain(item => item.Decl.Name == "FuzzChoice0" && item.Decl.TypeParameters.Count == 2);
+        recordCase.Program.Items.OfType<TopLevelItem.Type>()
+            .ShouldContain(item => item.Decl.Name == "FuzzRecordShape1" && item.Decl.IsRecord);
+        recursiveCase.Program.Items.OfType<TopLevelItem.RecursiveGroup>().Single().Bindings.Count.ShouldBe(2);
+
+        adtCase.Features.Contains(GeneratedFeature.TopLevelFunction).ShouldBeTrue();
+        recursiveCase.Features.Contains(GeneratedFeature.MutualRecursion).ShouldBeTrue();
+        new AstInvariantValidator().ValidateScope(adtCase.Program).ShouldBeEmpty();
+        new AstInvariantValidator().ValidateScope(recordCase.Program).ShouldBeEmpty();
+        new AstInvariantValidator().ValidateScope(recursiveCase.Program).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void CompleteProgramsExerciseDeterministicCapabilityProviders()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedFuzzCase generated = fixture.Generator.Generate(84, 7, fixture.Profiles.Get("semantics"), 80);
+
+        generated.Program.Items.OfType<TopLevelItem.Capability>()
+            .ShouldContain(item => item.Decl.Name == "FuzzProvided7");
+        generated.Program.Items.OfType<TopLevelItem.Provide>()
+            .ShouldContain(item => item.Decl.CapabilityName == "FuzzProvided7");
+        generated.Features.Contains(GeneratedFeature.Provider).ShouldBeTrue();
+        new AstInvariantValidator().ValidateScope(generated.Program).ShouldBeEmpty();
+    }
 }

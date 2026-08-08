@@ -7,7 +7,7 @@ internal sealed class AstInvariantValidator
     internal IReadOnlyList<string> ValidateScope(Ashes.Frontend.Program program)
     {
         List<string> errors = [];
-        HashSet<string> topLevel = new(StringComparer.Ordinal) { "FuzzBox", "FuzzRecord", "Ok", "Error", "Unit", "resume", "async" };
+        HashSet<string> topLevel = new(StringComparer.Ordinal) { "Ok", "Error", "Unit", "resume", "async" };
         foreach (TopLevelItem item in program.Items)
         {
             if (item is TopLevelItem.Type type)
@@ -19,8 +19,28 @@ internal sealed class AstInvariantValidator
             }
             if (item is TopLevelItem.LetDecl binding)
             {
-                Validate(binding.Value, topLevel, errors);
+                Validate(binding.Value, binding.IsRecursive ? Add(topLevel, binding.Name) : topLevel, errors);
                 topLevel.Add(binding.Name);
+            }
+            if (item is TopLevelItem.RecursiveGroup group)
+            {
+                HashSet<string> groupScope = new(topLevel, StringComparer.Ordinal);
+                foreach ((string name, Expr _) in group.Bindings)
+                {
+                    groupScope.Add(name);
+                }
+                foreach ((string _, Expr value) in group.Bindings)
+                {
+                    Validate(value, groupScope, errors);
+                }
+                topLevel.UnionWith(groupScope);
+            }
+            if (item is TopLevelItem.Provide provide)
+            {
+                foreach (ProvideBinding provideBinding in provide.Decl.Bindings)
+                {
+                    Validate(provideBinding.Implementation, topLevel, errors);
+                }
             }
         }
         Validate(program.Body, topLevel, errors);

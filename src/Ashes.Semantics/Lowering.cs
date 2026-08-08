@@ -10874,6 +10874,14 @@ public sealed partial class Lowering
                     return UsesNameOnlyAsDirectCallee(letRecursive.Value, targetName, nextShadowed)
                         && UsesNameOnlyAsDirectCallee(letRecursive.Body, targetName, nextShadowed);
                 }
+            case RecursiveGroupExpr group:
+                {
+                    bool nextShadowed = shadowed
+                        || group.Bindings.Any(binding => string.Equals(binding.Name, targetName, StringComparison.Ordinal));
+                    return group.Bindings.All(binding =>
+                            UsesNameOnlyAsDirectCallee(binding.Value, targetName, nextShadowed))
+                        && UsesNameOnlyAsDirectCallee(group.Body, targetName, nextShadowed);
+                }
             case Expr.Lambda lam:
                 return UsesNameOnlyAsDirectCallee(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
             case Expr.Match match:
