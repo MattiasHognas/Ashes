@@ -842,6 +842,26 @@ ashes run app.ash --explain rc > output.txt    # output.txt holds only the progr
 An unknown kind is a usage error listing the valid values, with exit code **2**. Nothing is printed
 when compilation fails before the report data exists; ordinary diagnostics remain primary.
 
+### Which one to reach for
+
+The three facilities overlap deliberately, and it is worth knowing how:
+
+| You want to know | Use |
+|---|---|
+| How much reference counting a function does | `--explain rc` |
+| Which operations, on which values, and where | `--emit-ir final` |
+| What the optimizer changed | `--emit-ir lowered` and `--emit-ir final`, diffed |
+
+`--explain rc` counts exactly the instructions `--emit-ir final` prints — every category is one
+instruction type, so the numbers agree by construction. It is the summary view, not separate
+information, and it earns its place by naming concepts rather than opcodes (you should not need to
+know that reuse tokens are `DropReuse`) and by staying readable across a program with dozens of
+functions.
+
+`--emit-ir lowered` is the only one showing something the others cannot. The optimizer removes a large
+share of the operations lowering emits — often most of them — so the lowered stage answers a different
+question from either of the other two.
+
 ### IR Dumps
 
 `--emit-ir` prints the semantic IR itself, rather than a report about it. It takes `lowered` (as
