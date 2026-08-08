@@ -58,6 +58,7 @@ internal sealed class GeneratorRegistry
         registry.Register(new Expressions.TupleMatchGenerationRule());
         registry.Register(new Expressions.ResultMatchGenerationRule());
         registry.Register(new Expressions.ResultPipeGenerationRule());
+        registry.Register(new Expressions.ResultMapErrorGenerationRule());
         registry.Register(new Expressions.RecordUpdateGenerationRule());
         registry.Register(new Expressions.BitwiseGenerationRule());
         return registry;

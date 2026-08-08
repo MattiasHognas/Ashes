@@ -22,6 +22,7 @@ internal enum GeneratedFeature
     NestedCombination, TopLevelDeclaration, TopLevelFunction, MutualRecursion, Provider,
     SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
     ClosureInMatch, RecursiveReconstruction, ResultClosure, CapabilityInClosure,
+    ResultErrorMapping,
 }
 
 internal enum OwnershipInterest
