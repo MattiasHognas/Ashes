@@ -269,7 +269,49 @@ public sealed partial class Lowering
             leftTemp,
             rightTemp,
             request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
+        ReleaseConsumedConcatOperand(leftTemp);
+        if (rightTemp != leftTemp)
+        {
+            ReleaseConsumedConcatOperand(rightTemp);
+        }
+
         return (target, new TypeRef.TStr());
+    }
+
+    /// <summary>
+    /// Releases a concatenation operand whose ownership ends at the concatenation. The result is a
+    /// fresh allocation the operands' bytes were copied into, so an operand nothing else owns is dead
+    /// the moment the copy is done.
+    /// </summary>
+    /// <remarks>
+    /// Only a newly produced reference-counted operand is released. A borrowed one names a value some
+    /// live binding still owns and will drop itself — releasing it here would free memory still in
+    /// use, which is the opposite and worse failure. The two are already distinguishable without new
+    /// analysis: a call result reaching a concatenation directly records
+    /// <see cref="LoweredTempOwnershipKind.NewlyProduced"/>, while the same value read back out of a
+    /// <c>let</c> records <see cref="LoweredTempOwnershipKind.Borrowed"/>.
+    ///
+    /// The operand's fact becomes <see cref="LoweredTempOwnershipKind.Transferred"/> so a later
+    /// consumer of the same temp cannot release it a second time. The affine
+    /// <see cref="IrInst.ConcatStrTip"/> path above needs none of this: it extends its accumulator in
+    /// place and its own fallback already releases the reference it replaces.
+    /// </remarks>
+    private void ReleaseConsumedConcatOperand(int operandTemp)
+    {
+        if (_tempOwnershipFacts.GetValueOrDefault(operandTemp) is not
+            {
+                Representation: LoweredTempRepresentation.RuntimeRc,
+                Ownership: LoweredTempOwnershipKind.NewlyProduced,
+            } consumed)
+        {
+            return;
+        }
+
+        Emit(new IrInst.RcDrop(operandTemp, "String", RuntimeManaged: true));
+        _tempOwnershipFacts[operandTemp] = consumed with
+        {
+            Ownership = LoweredTempOwnershipKind.Transferred,
+        };
     }
 
     private (int, TypeRef) LowerSubtract(Expr.Subtract sub)

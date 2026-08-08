@@ -1244,6 +1244,53 @@ internal static partial class LlvmCodegen
         return ProgramUsesInstruction<IrInst.CallLibm>(program);
     }
 
+    /// <summary>
+    /// The double-precision intrinsics whose selection on a baseline target becomes a call to a libm
+    /// symbol rather than an instruction.
+    /// </summary>
+    /// <remarks>
+    /// The default CPU carries no rounding instructions (baseline x86-64 is SSE2, and the arm64
+    /// default is likewise generic), so even <c>floor</c> and <c>trunc</c> lower to calls. Ashes floats
+    /// are all f64, so only that suffix can appear.
+    /// </remarks>
+    private static readonly string[] LibmLoweredIntrinsics =
+    [
+        "llvm.round.f64",
+        "llvm.roundeven.f64",
+        "llvm.floor.f64",
+        "llvm.ceil.f64",
+        "llvm.trunc.f64",
+        "llvm.rint.f64",
+        "llvm.nearbyint.f64",
+        "llvm.fma.f64",
+        "llvm.fmuladd.f64",
+        "llvm.pow.f64",
+        "llvm.exp.f64",
+        "llvm.exp2.f64",
+        "llvm.log.f64",
+        "llvm.log2.f64",
+        "llvm.log10.f64",
+        "llvm.sin.f64",
+        "llvm.cos.f64",
+    ];
+
+    /// <summary>
+    /// Whether the optimized module holds an intrinsic that instruction selection will turn into a
+    /// libm call, which only the linked openlibm defines.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="IrInst.CallLibm"/> census answers what the *program* asked for; it cannot answer
+    /// what the optimizer synthesized. LLVM forms these intrinsics from ordinary float arithmetic, so a
+    /// program that never names a math builtin can still reach selection needing <c>round</c> — and
+    /// then nothing defines it, because the census said there was no math to link for. Asking the
+    /// module directly is what makes the two agree. Checked after the optimization passes and before
+    /// linking, which is the only window where the intrinsics exist and the payload can still be added.
+    /// </remarks>
+    private static bool ModuleNeedsLibmForIntrinsicLowering(LlvmTargetContext target)
+        => Array.Exists(
+            LibmLoweredIntrinsics,
+            intrinsic => LlvmApi.GetNamedFunction(target.Module, intrinsic).Ptr != 0);
+
     private static bool ProgramUsesRegexRuntimeAbi(IrProgram program)
     {
         return ProgramUsesInstruction<IrInst.RegexCompile>(program)
@@ -1269,7 +1316,7 @@ internal static partial class LlvmCodegen
     /// </summary>
     private static void LinkOpenlibmBitcodeIfNeeded(LlvmTargetContext target, IrProgram program, string targetId)
     {
-        if (!ProgramUsesMathRuntimeAbi(program))
+        if (!ProgramUsesMathRuntimeAbi(program) && !ModuleNeedsLibmForIntrinsicLowering(target))
         {
             return;
         }
