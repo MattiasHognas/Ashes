@@ -128,17 +128,27 @@ tests. The runner never commits generated cases automatically.
 
 The extension points are intentionally local:
 
-1. Add an immutable case to `Generation/AshesType.cs`, its syntax mapping, and leaf construction.
-2. Add a primitive or structural `IExpressionGenerationRule`, then register it in `GeneratorRegistry`.
-3. Add an `ICombinationTemplate` with generic type preconditions and truthful advertised features,
+1. To add a generated type, add an immutable case to `Generation/AshesType.cs`, its syntax mapping,
+   profile catalog entries, and invariant-test type rendering.
+2. To add primitive values for a type, extend `ExpressionGenerator.GenerateLeaf` with bounded,
+   deterministic construction and add the matching type-compatible leaf in `FuzzShrinker`.
+3. To add an expression form, implement `IExpressionGenerationRule`, declare representative
+   `AdvertisedTypes`, register it in `GeneratorRegistry`, and add its feature and trace metadata;
+   startup rejects a rule that cannot generate an advertised type.
+4. To add a combination, implement `ICombinationTemplate` with generic type preconditions and
+   truthful advertised features,
    then register it in `CombinationRegistry`.
-4. Add an `IFuzzOracle` and register it in `FuzzOracleRegistry`; use in-process stable APIs for cheap
-   checks and `CompilerExecution` for isolation or native behavior.
-5. Add compatible reductions to `FuzzShrinker`; every accepted candidate must be smaller and preserve
+5. To add an oracle, implement `IFuzzOracle` and register it in `FuzzOracleRegistry`; use in-process
+   stable APIs for cheap checks and `CompilerExecution` for isolation or native behavior.
+6. To add a shrink rule, add a type-compatible candidate to `FuzzShrinker` and a focused test; every
+   accepted candidate must be smaller and preserve
    the failure.
-6. Add or adjust a `FuzzProfile` using only known registry IDs; startup validation rejects stale IDs.
-7. Extend the native observation wrapper when a new result type needs canonical observable output.
-8. Add high-value minimized `.ash` cases to `tests/fuzz/corpus`.
+7. To add a profile, register a `FuzzProfile` with explicit types, rules, combinations, oracles,
+   context flags, limits, and defaults; startup validation rejects stale IDs and invalid defaults.
+8. To add an observable renderer, extend `ObservableValueRenderer.Render`, recursively render every
+   payload, include the type in `IsObservable`, and add a parse-and-semantic renderer test.
+9. To add a corpus entry, place a canonically formatted minimized `.ash` case in
+   `tests/fuzz/corpus` and run `just fuzz-corpus`.
 
 Rule and template IDs are ordinally sorted, duplicate IDs fail immediately, profiles validate their
 references at startup, and tests require combination templates to record every feature they claim.
