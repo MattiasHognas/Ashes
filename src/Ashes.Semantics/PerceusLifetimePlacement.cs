@@ -127,13 +127,6 @@ internal static class PerceusLifetimePlacement
         {
             instructions.InsertRange(index, added);
         }
-
-        if (ShouldExplain())
-        {
-            int dropCount = insertions.Values.SelectMany(value => value).Count(instruction => instruction is IrInst.RcDrop);
-            int dupCount = insertions.Values.SelectMany(value => value).Count(instruction => instruction is IrInst.RcDup);
-            Console.Error.WriteLine($"[ownership] place {functionLabel} slot={ownerSlot} dup={dupCount} drop={dropCount}");
-        }
     }
 
     private static bool TryRemoveLexicalAnchor(
@@ -524,9 +517,6 @@ internal static class PerceusLifetimePlacement
 
     private static bool IsTerminator(IrInst instruction)
         => instruction is IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag or IrInst.Return;
-
-    private static bool ShouldExplain()
-        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP"));
 
     private sealed class Block(int start, int end)
     {

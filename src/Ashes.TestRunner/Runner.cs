@@ -132,17 +132,23 @@ public static class Runner
     /// <param name="ElapsedMs">Wall-clock time the test took, in milliseconds.</param>
     public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
 
+    // The requested compiler reports for this run. Held here rather than threaded through every
+    // compilation helper because it is constant for a run and read only where a program is compiled.
+    private static ExplainRequest _explain = ExplainRequest.None;
+
     /// <summary>
     /// Discovers and runs every <c>.ash</c> test under <paramref name="paths"/>, compiling for
     /// <paramref name="targetId"/> (defaulting to the project target or the host target), renders the
     /// per-test results to <paramref name="console"/>, and returns a process exit code that is zero
-    /// only when every test passed. <paramref name="project"/> supplies project-mode discovery and
-    /// <paramref name="backendOptions"/> overrides the backend compile settings.
+    /// only when every test passed. <paramref name="project"/> supplies project-mode discovery,
+    /// <paramref name="backendOptions"/> overrides the backend compile settings, and
+    /// <paramref name="explain"/> requests compiler reports on stderr.
     /// </summary>
-    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null)
+    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null, ExplainRequest? explain = null)
     {
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
         backendOptions ??= BackendCompileOptions.Default;
+        _explain = explain ?? ExplainRequest.None;
 
         var files = DiscoverAshFiles(paths, project)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -887,8 +893,20 @@ public static class Runner
         var program = new Parser(StripLeadingCommentLines(source), diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName).Lower(program);
+        var lowering = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName);
+        var ir = lowering.Lower(program);
         diag.ThrowIfAny();
+
+        // The test runner hands the backend the IR exactly as lowered, with no optimization pass, so
+        // this is that path's final IR -- the same invariant the report promises, at a different point.
+        if (!_explain.IsEmpty)
+        {
+            var report = IrExplainReporter.Build(lowering.GetDecisionSnapshot(), ir, _explain);
+            foreach (var line in ExplainReportFormatter.Format(report, _explain))
+            {
+                Console.Error.WriteLine(line);
+            }
+        }
 
         var backend = BackendFactory.Create(targetId);
         return backend.Compile(ir, backendOptions);

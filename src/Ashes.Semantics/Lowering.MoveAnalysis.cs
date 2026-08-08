@@ -263,15 +263,6 @@ public sealed partial class Lowering
         ComputeFunctionResultProvenanceFixpoint();
         _maAnalyzed = true;
         BuildOwnershipSummaries();
-
-        string? explainSelection = Environment.GetEnvironmentVariable("ASHES_EXPLAIN_OWNERSHIP");
-        if (explainSelection is not null)
-        {
-            foreach (var line in FormatOwnershipSummaries(explainSelection))
-            {
-                Console.Error.WriteLine(line);
-            }
-        }
     }
 
     private void BuildOwnershipSummaries()
@@ -2112,7 +2103,6 @@ public sealed partial class Lowering
     /// <summary>
     /// Formats stable, single-line ownership summaries. <paramref name="selection"/> may be a
     /// comma-separated function list; null, empty, <c>1</c>, and <c>all</c> select every function.
-    /// This is also the implementation behind <c>ASHES_EXPLAIN_OWNERSHIP</c>.
     /// </summary>
     internal IReadOnlyList<string> FormatOwnershipSummaries(string? selection = null)
     {

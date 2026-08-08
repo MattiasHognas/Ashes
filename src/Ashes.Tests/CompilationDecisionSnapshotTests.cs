@@ -10,8 +10,6 @@ namespace Ashes.Tests;
 /// </summary>
 public sealed class CompilationDecisionSnapshotTests
 {
-    private const string OwnershipEnvironmentVariable = "ASHES_EXPLAIN_OWNERSHIP";
-
     // Rebuilds a list of single-field records in place, which is the shape the reuse pass takes its
     // specialization, uniqueness, layout, and token decisions on.
     private const string ReuseProgram = """
@@ -66,10 +64,7 @@ public sealed class CompilationDecisionSnapshotTests
     [Test]
     public void Records_are_retrievable_without_console_interception_or_an_environment_variable()
     {
-        // The shadow output this does not replace is environment-driven and writes prose to stderr.
-        // Reading the snapshot is an ordinary call, so a consumer needs neither.
-        Environment.GetEnvironmentVariable(OwnershipEnvironmentVariable).ShouldBeNull();
-
+        // Reading the snapshot is an ordinary call: no console interception, no environment variable.
         Snapshot(ReuseProgram).FunctionOwnership.ShouldNotBeEmpty();
         Snapshot(ReuseProgram).ReuseDecisions.ShouldNotBeEmpty();
         Snapshot(PlacementProgram).ValuePlacements.ShouldNotBeEmpty();

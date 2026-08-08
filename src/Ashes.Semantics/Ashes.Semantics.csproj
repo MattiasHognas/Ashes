@@ -19,6 +19,16 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Ashes.Backend</_Parameter1>
     </AssemblyAttribute>
+    <!-- The CLI orchestrates compilation and so owns the decision to print a compiler report; the
+         report model stays internal because it is a compiler-internal vocabulary, not a public API.
+         Its assembly is named for the executable, not the project. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>ashes</_Parameter1>
+    </AssemblyAttribute>
+    <!-- The test runner compiles programs of its own and so reports on them the same way. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Ashes.TestRunner</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

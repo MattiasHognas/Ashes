@@ -14,6 +14,7 @@ and intentional region/thread boundaries.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| [`--explain` Compiler Reports](EXPLAIN_REPORTS.md) | Planned | Structured CLI reports for ownership, Perceus RC, reuse, and representation decisions, replacing `ASHES_EXPLAIN_OWNERSHIP` |
 | [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |

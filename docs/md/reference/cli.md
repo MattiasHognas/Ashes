@@ -99,6 +99,12 @@ The following option is accepted by **compile** and **run** only:
 | `-O2` | Standard optimizations (default) |
 | `-O3` | Aggressive optimizations |
 
+The following option is accepted by **compile**, **run**, and **test**:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--explain <kind>[:<selector>]` | enum | — | Yes | Report compiler decisions to stderr. See [Compiler Reports](#compiler-reports) below. |
+
 `--project` is accepted by project-scoped commands: **compile**, **run**, **test**, **add**,
 **remove**, **restore**, **tree**, **why**, and **publish**. It is not accepted by `ashes repl`.
 
@@ -128,10 +134,10 @@ Compile an Ashes program to a native executable on disk.
 #### Synopsis
 
 ```sh
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] <input.ash>
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --expr "<source>"
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>] --project <ashes.json>
-ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-o <output>]          # discovers ashes.json upward
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] [-o <output>] <input.ash>
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] [-o <output>] --expr "<source>"
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] [-o <output>] --project <ashes.json>
+ashes compile [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] [-o <output>]          # discovers ashes.json upward
 ```
 
 #### Arguments
@@ -227,9 +233,9 @@ Compile and immediately execute an Ashes program. The compiled binary is written
 #### Synopsis
 
 ```sh
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] <input.ash> [-- <args...>]
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --expr "<source>" [-- <args...>]
-ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] --project <ashes.json> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] <input.ash> [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] --expr "<source>" [-- <args...>]
+ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [--explain <kind>] --project <ashes.json> [-- <args...>]
 ashes run [--target <id>] [--target-cpu <cpu>] [--parallel-stack-size <size>] [--parallel-workers <n>] [-O0|-O1|-O2|-O3] [--debug|-g] [-- <args...>]   # auto-discovers ashes.json
 ```
 
@@ -351,7 +357,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 #### Synopsis
 
 ```sh
-ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [paths...]
+ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [--explain <kind>] [paths...]
 ```
 
 #### Arguments
@@ -793,6 +799,55 @@ The exit code from `ashes run` is the compiled program's own exit code when comp
 | `ashes remove` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
 | `ashes remove` when package not a dependency | `Package '<name>' is not a dependency.` | `1` |
 | `ashes restore` when no `ashes.json` found | `No ashes.json found. Run 'ashes init' first.` | `1` |
+
+---
+
+## Compiler Reports
+
+`--explain` prints what the compiler decided about a program. It is accepted by `compile`, `run`, and
+`test`, may be given more than once, and takes an optional `:selector` restricting the report to
+matching functions.
+
+```sh
+ashes compile app.ash --explain ownership
+ashes run     app.ash --explain rc --explain reuse
+ashes compile app.ash --explain memory:Map.set
+```
+
+| Kind | Reports |
+|------|---------|
+| `ownership` | The inferred contracts: per-parameter borrowed or consumed, move safety, uniqueness, which parameters the result may alias, whether the result is fresh, and captured values. |
+| `rc` | The Perceus operations in the final semantic IR — dups, drops, uniqueness checks, allocations, reused allocations, reuse tokens, and copies. Functions with no such operations are omitted. |
+| `reuse` | In-place-reuse decisions: whether a specialization was generated, the candidate, the outcome, and a stable reason code with the source location of the site. |
+| `memory` | The other three correlated per source function, together with where each value physically lives. |
+
+The selector matches a function's source name, qualified name, generated label, or the source
+function a generated function came from, case-insensitively and by substring — so `--explain rc:loop`
+also covers the reuse specializations, droppers, and coroutines generated for `loop`, and you never
+need a generated symbol name. A selector matching nothing prints `(no functions matched)` and
+succeeds.
+
+**Output goes to stderr**, so a program's own stdout is unaffected:
+
+```sh
+ashes run app.ash --explain rc > output.txt    # output.txt holds only the program's output
+```
+
+An unknown kind is a usage error listing the valid values, with exit code **2**. Nothing is printed
+when compilation fails before the report data exists; ordinary diagnostics remain primary.
+
+### What the reports are not
+
+These are **static** reports of compile-time decisions. They do not show how often anything executed,
+allocate counters, or profile a run — runtime profiling is a separate concern.
+
+`rc` describes the Ashes IR handed to the backend, not optimized LLVM IR, and it observes after the
+Ashes-level optimizer so its counts match the code that ships. Under `ashes test` the runner hands the
+backend the IR exactly as lowered, with no optimizer pass, so the report describes that IR instead —
+the same invariant at a different point.
+
+Requesting a report cannot change generated code: the same source compiles to identical bytes with and
+without `--explain`.
 
 ---
 

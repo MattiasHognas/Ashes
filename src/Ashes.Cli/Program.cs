@@ -13,10 +13,10 @@ static int Usage(int exitCode = 2)
 {
     AnsiConsole.Write(new Rule("[bold]Ashes[/]").RuleStyle("grey").LeftJustified());
     AnsiConsole.MarkupLine("[grey]Commands:[/]");
-    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-o <output>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] <input.ash | --expr \"...\" > [[-- <args...>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <ownership|rc|reuse|memory>]] <input.ash | --expr \"...\" > [[-o <output>]]");
+    AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <ownership|rc|reuse|memory>]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|memory>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--project <project.json>]] [[--path <dir>]] [[--dev]]");
@@ -39,6 +39,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Defaults to -O0; an explicit -O1/-O2/-O3 is honored.");
+    table.AddRow("[yellow]--explain[/]", "Report compiler decisions to stderr: ownership, rc, reuse, or memory. Repeatable; append [grey]:name[/] to filter by function (compile/run/test only).");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
     AnsiConsole.Write(table);
@@ -162,7 +163,8 @@ static byte[] CompileToImage(
     BackendCompileOptions? backendOptions = null,
     IReadOnlySet<string>? importedStdModules = null,
     IReadOnlyDictionary<string, string>? moduleAliases = null,
-    CombinedCompilationLayout? sourceLayout = null)
+    CombinedCompilationLayout? sourceLayout = null,
+    ExplainRequest? explain = null)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
@@ -180,9 +182,30 @@ static byte[] CompileToImage(
     // Run IR-level optimization passes before backend codegen
     ir = IrOptimizer.Optimize(ir);
 
+    // The report observes here: the decisions lowering recorded, paired with the IR the backend is
+    // about to receive. Reporting reads both and writes neither, so the image below is the same
+    // whether or not anyone asked for a report.
+    WriteExplainReport(explain, lowering, ir);
+
     var effectiveOptions = backendOptions ?? BackendCompileOptions.Default;
     var backend = BackendFactory.Create(targetId);
     return backend.Compile(ir, effectiveOptions);
+}
+
+// Prints the requested compiler reports to stderr, so a program's own stdout stays usable when it is
+// compiled and run in one step.
+static void WriteExplainReport(ExplainRequest? explain, Lowering lowering, IrProgram finalIr)
+{
+    if (explain is null || explain.IsEmpty)
+    {
+        return;
+    }
+
+    var report = IrExplainReporter.Build(lowering.GetDecisionSnapshot(), finalIr, explain);
+    foreach (var line in ExplainReportFormatter.Format(report, explain))
+    {
+        Console.Error.WriteLine(line);
+    }
 }
 
 static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModules, IReadOnlyDictionary<string, string>? ModuleAliases) PrepareStandaloneCompilationSource(string source, string displayPath)
@@ -196,11 +219,11 @@ static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModul
     return (layout, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
 }
 
-static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null)
+static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null, ExplainRequest? explain = null)
 {
     var plan = ProjectSupport.BuildCompilationPlan(project);
     var layout = ProjectSupport.BuildCompilationLayout(plan);
-    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout);
+    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout, explain);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
@@ -592,7 +615,7 @@ async Task<int> RunCompileAsync(string[] a)
     var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
 
     var sw = Stopwatch.StartNew();
-    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions).ConfigureAwait(false);
+    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions, arguments.Explain).ConfigureAwait(false);
     if (image is null)
     {
         return 1;
@@ -636,12 +659,14 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
     string? targetCpu = null;
     long? parallelStackBytes = null;
     long? parallelWorkers = null;
+    var explain = new ExplainOptions();
 
     for (int i = 0; i < a.Length; i++)
     {
         var arg = a[i];
 
         if (TryParseTargetOptions(a, ref i, ref target, ref targetCpu, ref parallelStackBytes, ref parallelWorkers)) { continue; }
+        if (TryParseExplainOption(a, ref i, explain)) { continue; }
         if ((string.Equals(arg, "-o", StringComparison.Ordinal) || string.Equals(arg, "--out", StringComparison.Ordinal)) && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
@@ -653,15 +678,48 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
         throw new CliUsageException("Unknown argument.");
     }
 
-    if (debugMode && !explicitOpt)
+    optimizationLevel = ResolveDebugOptimizationLevel(optimizationLevel, debugMode, explicitOpt);
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, explain.ToRequest());
+}
+
+// Accumulates one `--explain <kind>` option. Repeats deduplicate through the set, and a later
+// selector replaces an earlier one so the last one written wins rather than two filters merging.
+static bool TryParseExplainOption(string[] a, ref int i, ExplainOptions explain)
+{
+    if (!string.Equals(a[i], "--explain", StringComparison.Ordinal))
     {
-        // --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
-        // profiled debug build matches the optimized binary's inlining (CO-21).
-        optimizationLevel = BackendOptimizationLevel.O0;
+        return false;
     }
 
-    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers);
+    if (i + 1 >= a.Length)
+    {
+        throw new CliUsageException(
+            $"--explain requires a value.{Environment.NewLine}{Environment.NewLine}Valid values:{Environment.NewLine}  {string.Join(Environment.NewLine + "  ", ExplainRequest.ValidValues)}");
+    }
+
+    string value = a[++i];
+    if (!ExplainRequest.TryParseValue(value, out var kind, out var parsedFilter, out var error))
+    {
+        throw new CliUsageException(
+            $"{error}{Environment.NewLine}{Environment.NewLine}Valid values:{Environment.NewLine}  {string.Join(Environment.NewLine + "  ", ExplainRequest.ValidValues)}");
+    }
+
+    explain.Kinds.Add(kind);
+    if (parsedFilter is not null)
+    {
+        explain.Filter = parsedFilter;
+    }
+
+    return true;
 }
+
+// --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
+// profiled debug build matches the optimized binary's inlining (CO-21).
+static BackendOptimizationLevel ResolveDebugOptimizationLevel(
+    BackendOptimizationLevel requested,
+    bool debugMode,
+    bool explicitOpt)
+    => debugMode && !explicitOpt ? BackendOptimizationLevel.O0 : requested;
 
 static bool TryParseTargetOptions(string[] a, ref int i, ref string? target, ref string? targetCpu, ref long? parallelStackBytes, ref long? parallelWorkers)
 {
@@ -687,7 +745,7 @@ static async Task<(AshesProject? Project, string Target, BackendCompileOptions O
     return (project, target, backendOptions);
 }
 
-static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? inputFile, string? expr, string target, BackendCompileOptions backendOptions)
+static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? inputFile, string? expr, string target, BackendCompileOptions backendOptions, ExplainRequest? explain = null)
 {
     if (project is null)
     {
@@ -698,7 +756,7 @@ static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? i
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
             diagnosticLayout = prepared.Layout;
-            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout);
+            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout, explain);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -742,7 +800,7 @@ async Task<int> RunRunAsync(string[] a)
     var arguments = ParseRunArguments(cliArgs);
     var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
 
-    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions).ConfigureAwait(false);
+    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions, arguments.Explain).ConfigureAwait(false);
     if (image is null)
     {
         return 1;
@@ -763,11 +821,13 @@ static CompileCommandArguments ParseRunArguments(string[] cliArgs)
     string? targetCpu = null;
     long? parallelStackBytes = null;
     long? parallelWorkers = null;
+    var explain = new ExplainOptions();
 
     for (int i = 0; i < cliArgs.Length; i++)
     {
         var arg = cliArgs[i];
         if (TryParseTargetOptions(cliArgs, ref i, ref target, ref targetCpu, ref parallelStackBytes, ref parallelWorkers)) { continue; }
+        if (TryParseExplainOption(cliArgs, ref i, explain)) { continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { expr = cliArgs[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < cliArgs.Length) { projectPath = cliArgs[++i]; continue; }
         if (arg is "--debug" or "-g") { debugMode = true; continue; }
@@ -778,14 +838,8 @@ static CompileCommandArguments ParseRunArguments(string[] cliArgs)
         throw new CliUsageException("Unknown argument.");
     }
 
-    if (debugMode && !explicitOpt)
-    {
-        // --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
-        // profiled debug build matches the optimized binary's inlining (CO-21).
-        optimizationLevel = BackendOptimizationLevel.O0;
-    }
-
-    return new CompileCommandArguments(target, optimizationLevel, debugMode, null, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers);
+    optimizationLevel = ResolveDebugOptimizationLevel(optimizationLevel, debugMode, explicitOpt);
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, null, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, explain.ToRequest());
 }
 
 async Task<int> RunReplAsync(string[] a)
@@ -1000,6 +1054,7 @@ async Task<int> RunTest(string[] a)
     string? targetCpu = null;
     long? parallelStackBytes = null;
     long? parallelWorkers = null;
+    var explain = new ExplainOptions();
     var paths = new List<string>();
 
     for (int i = 0; i < a.Length; i++)
@@ -1010,6 +1065,7 @@ async Task<int> RunTest(string[] a)
         if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
         if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (TryParseExplainOption(a, ref i, explain)) { continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
         {
@@ -1024,7 +1080,7 @@ async Task<int> RunTest(string[] a)
     target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
     var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
 
-    return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions);
+    return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions, explain.ToRequest());
 }
 
 async Task<int> RunFmtAsync(string[] a)
@@ -1981,4 +2037,17 @@ sealed record CompileCommandArguments(
     string? ProjectPath,
     string? TargetCpu,
     long? ParallelStackBytes,
-    long? ParallelWorkers);
+    long? ParallelWorkers,
+    ExplainRequest Explain);
+
+
+// Mutable accumulator for repeated `--explain` options during argument parsing; converted to the
+// immutable request the compiler consumes.
+sealed class ExplainOptions
+{
+    public HashSet<ExplainKind> Kinds { get; } = [];
+
+    public string? Filter { get; set; }
+
+    public ExplainRequest ToRequest() => new(Kinds, Filter);
+}
