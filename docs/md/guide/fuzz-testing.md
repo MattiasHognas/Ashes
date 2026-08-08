@@ -8,7 +8,11 @@ shrinking, and artifacts without turning the ordinary unit-test runner into a ca
 The generator asks a registry of expression rules for an expression of a required immutable
 generation type. Its context tracks lexical bindings and feature state, and its explicit node,
 depth, collection, recursion, source-size, and combination budgets guarantee termination. A second
-registry contains generic combination templates for sharing, cross-branch aliases, escaping and
+validation pass measures complete-program declarations, functions, ADTs, maximum match-arm count,
+maximum collection length, recursion complexity, and every expression root in addition to those
+recursive generation limits. A case that exceeds any configured dimension falls back to a bounded
+typed leaf or fails generation when even the minimum complete program cannot fit. A second registry
+contains generic combination templates for sharing, cross-branch aliases, escaping and
 shared-capture closures, guarded and ADT matches, list and constructor reconstruction, bounded
 recursion, nested capability handlers, async capture, Result propagation, and Perceus reuse and
 fallback shapes. Templates may fill their holes with the ordinary generator, so difficult feature

@@ -55,7 +55,8 @@ internal sealed class ProgramGenerator
         FrontendProgram program = new(items, generated.Value);
         string source = AshesFormatter.Format(program);
         AstCoverageMetrics metrics = AstCoverageMetrics.Measure(program);
-        if (metrics.Nodes > maximumNodes || source.Length > budget.MaximumSourceLength)
+        IReadOnlyList<string> budgetErrors = GenerationBudgetValidator.Validate(program, generated.Trace, source.Length, budget);
+        if (budgetErrors.Count != 0)
         {
             GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, prelude.Context, budget, random);
             generated = ConstrainRootType(leaf, type);
@@ -64,10 +65,12 @@ internal sealed class ProgramGenerator
             program = new FrontendProgram([.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)], generated.Value);
             source = AshesFormatter.Format(program);
             metrics = AstCoverageMetrics.Measure(program);
+            budgetErrors = GenerationBudgetValidator.Validate(program, generated.Trace, source.Length, budget);
         }
-        if (metrics.Nodes > maximumNodes || source.Length > budget.MaximumSourceLength)
+        if (budgetErrors.Count != 0)
         {
-            throw new ArgumentException($"Generation budget {maximumNodes} is too small for the minimum valid '{type}' program in profile '{profile.Id}'.");
+            throw new ArgumentException(
+                $"Generation budget {maximumNodes} is too small for the minimum valid '{type}' program in profile '{profile.Id}': {string.Join(" ", budgetErrors)}");
         }
         return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget);
     }
