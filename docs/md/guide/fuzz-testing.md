@@ -72,8 +72,8 @@ is capped at 4 MiB. Long runs can override these with `--max-output-bytes` and
 public `-O0` and `-O2` builds and
 also compares normal lowering with the internal debug configuration that disables only in-place
 reuse while retaining Perceus ownership. It compares exit status, stdout, and stderr byte-for-byte.
-The non-required `scheduled fuzz` workflow runs larger multi-seed campaigns three times a week and
-uploads `artifacts/fuzz` when a case fails; long fuzzing is not a pull-request gate.
+The non-required `fuzz` GitHub workflow runs larger multi-seed campaigns only when manually
+dispatched and uploads `artifacts/fuzz` when a case fails; long fuzzing is not a pull-request gate.
 
 Each profile owns its default case count, node budget, compiler and program timeouts, and target
 list. CLI values override those defaults, so `run --profile compile` uses the bounded native profile
