@@ -6,6 +6,7 @@ internal sealed class AdtGenerationRule : IExpressionGenerationRule
 {
     public string Id => "adt";
     public int Weight => 4;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Adt;
 
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
         requiredType is AshesType.Adt { Name: "FuzzTree", Arguments.Count: 1 };
@@ -45,6 +46,7 @@ internal sealed class TaskGenerationRule : IExpressionGenerationRule
 {
     public string Id => "task";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Task;
 
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
         requiredType is AshesType.Task { Error: AshesType.Primitive { Name: "Str" } };
@@ -73,6 +75,7 @@ internal sealed class ConsGenerationRule : IExpressionGenerationRule
 {
     public string Id => "cons";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.List;
 
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
         requiredType is AshesType.List && budget.RemainingNodes >= 6;
@@ -107,6 +110,7 @@ internal sealed class ListMatchGenerationRule : IExpressionGenerationRule
 {
     public string Id => "list-match";
     public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 8;
 
     public GenerationResult<Expr> Generate(
@@ -142,6 +146,7 @@ internal sealed class TupleMatchGenerationRule : IExpressionGenerationRule
 {
     public string Id => "tuple-match";
     public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 8;
 
     public GenerationResult<Expr> Generate(
@@ -174,6 +179,7 @@ internal sealed class ResultMatchGenerationRule : IExpressionGenerationRule
 {
     public string Id => "result-match";
     public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 9;
 
     public GenerationResult<Expr> Generate(
@@ -209,6 +215,7 @@ internal sealed class ResultPipeGenerationRule : IExpressionGenerationRule
 {
     public string Id => "result-pipe";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Result;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Result && budget.RemainingNodes >= 9;
 
     public GenerationResult<Expr> Generate(
@@ -239,6 +246,7 @@ internal sealed class RecordUpdateGenerationRule : IExpressionGenerationRule
 {
     public string Id => "record-update";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Record;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Record { Name: "FuzzRecord" } && budget.RemainingNodes >= 7;
 
     public GenerationResult<Expr> Generate(
@@ -266,6 +274,7 @@ internal sealed class BitwiseGenerationRule : IExpressionGenerationRule
 {
     public string Id => "bitwise";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.UInt;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.UInt && budget.RemainingNodes >= 5;
 
     public GenerationResult<Expr> Generate(
