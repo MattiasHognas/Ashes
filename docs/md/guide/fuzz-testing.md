@@ -50,7 +50,11 @@ Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `d
 `invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource profile is deliberately
 separate from smoke runs and uses deterministic file-handle shapes. Invalid-source fuzzing deterministically mutates valid generated source
 and asserts bounded, crash-free lexer/parser behavior. Native profiles use child processes with
-compiler and program timeouts. The differential profile compares public `-O0` and `-O2` builds and
+compiler and program timeouts. Process output is drained without being retained beyond the default
+1 MiB per stream, process trees are terminated on timeout or cancellation, and one failure artifact
+is capped at 4 MiB. Long runs can override these with `--max-output-bytes` and
+`--max-artifact-bytes`; replay commands preserve both limits. The differential profile compares
+public `-O0` and `-O2` builds and
 also compares normal lowering with the internal debug configuration that disables only in-place
 reuse while retaining Perceus ownership. It compares exit status, stdout, and stderr byte-for-byte.
 The non-required `scheduled fuzz` workflow runs larger multi-seed campaigns three times a week and

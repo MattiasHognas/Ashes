@@ -26,12 +26,26 @@ internal sealed record FuzzFailureMetadata(
     IReadOnlyList<string> GenerationTrace,
     int ShrinkAttempts,
     int ShrinkAccepted,
+    double ShrinkDurationMilliseconds,
+    int OutputMaximumBytes,
+    int ArtifactMaximumBytes,
     string ReplayCommand);
 
 internal sealed class FuzzArtifactWriter
 {
-    internal async Task<string> WriteAsync(FuzzFailure failure, string root, CancellationToken cancellationToken)
+    internal const int DefaultMaximumArtifactBytes = 4 * 1024 * 1024;
+
+    internal async Task<string> WriteAsync(
+        FuzzFailure failure,
+        string root,
+        CancellationToken cancellationToken,
+        int maximumArtifactBytes = DefaultMaximumArtifactBytes)
     {
+        if (maximumArtifactBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumArtifactBytes));
+        }
+
         string identity = $"{failure.Original.Profile}:{failure.Original.MasterSeed}:{failure.Original.CaseIndex}:{failure.OracleResult.Oracle}";
         string id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)))[..16].ToLowerInvariant();
         string path = Path.Combine(root, id);
@@ -41,14 +55,26 @@ internal sealed class FuzzArtifactWriter
             failure.Original.MasterSeed, failure.Original.CaseSeed, failure.Original.CaseIndex, failure.Original.Profile,
             failure.OracleResult.Oracle, failure.Configuration.Target, "Release", failure.Original.Budget,
             failure.Original.Features.Select(feature => feature.ToString()).ToArray(), failure.Original.Trace.Entries,
-            failure.Shrink.Attempts, failure.Shrink.Accepted, replay);
+            failure.Shrink.Attempts, failure.Shrink.Accepted, failure.Shrink.Duration.TotalMilliseconds,
+            failure.Configuration.MaximumOutputBytes, maximumArtifactBytes, replay);
         JsonSerializerOptions options = new() { WriteIndented = true };
-        await File.WriteAllTextAsync(Path.Combine(path, "original.ash"), failure.Original.Source, cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(path, "minimized.ash"), failure.Minimized.Source, cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(path, "failure.txt"), failure.OracleResult.Message, cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(path, "metadata.json"), JsonSerializer.Serialize(metadata, options), cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(path, "stdout.txt"), failure.OracleResult.StandardOutput, cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(path, "stderr.txt"), failure.OracleResult.StandardError, cancellationToken).ConfigureAwait(false);
+        var files = new (string Name, string Contents)[]
+        {
+            ("metadata.json", JsonSerializer.Serialize(metadata, options)),
+            ("failure.txt", failure.OracleResult.Message),
+            ("minimized.ash", failure.Minimized.Source),
+            ("original.ash", failure.Original.Source),
+            ("stdout.txt", failure.OracleResult.StandardOutput),
+            ("stderr.txt", failure.OracleResult.StandardError),
+        };
+        int remaining = maximumArtifactBytes;
+        foreach ((string name, string contents) in files)
+        {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(contents);
+            int written = Math.Min(bytes.Length, remaining);
+            await File.WriteAllBytesAsync(Path.Combine(path, name), bytes.AsMemory(0, written), cancellationToken).ConfigureAwait(false);
+            remaining -= written;
+        }
         return path;
     }
 }

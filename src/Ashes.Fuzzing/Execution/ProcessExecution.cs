@@ -9,6 +9,11 @@ internal static class ProcessTimeout
 {
     internal static async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, string workingDirectory, TimeSpan timeout, int maximumOutputBytes, CancellationToken cancellationToken)
     {
+        if (timeout <= TimeSpan.Zero || maximumOutputBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(timeout <= TimeSpan.Zero ? nameof(timeout) : nameof(maximumOutputBytes));
+        }
+
         ProcessStartInfo startInfo = new(fileName)
         {
             WorkingDirectory = workingDirectory,
@@ -24,32 +29,84 @@ internal static class ProcessTimeout
         using Process process = new() { StartInfo = startInfo };
         Stopwatch stopwatch = Stopwatch.StartNew();
         process.Start();
-        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<BoundedOutput> stdoutTask = ReadBoundedAsync(process.StandardOutput.BaseStream, maximumOutputBytes);
+        Task<BoundedOutput> stderrTask = ReadBoundedAsync(process.StandardError.BaseStream, maximumOutputBytes);
         using CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);
         bool timedOut = false;
+        bool cancelled = false;
         try
         {
             await process.WaitForExitAsync(timeoutSource.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            timedOut = true;
-            try { process.Kill(true); } catch (InvalidOperationException) { }
+            cancelled = cancellationToken.IsCancellationRequested;
+            timedOut = !cancelled;
+            TryKill(process);
             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
         }
-        string stdout = await stdoutTask.ConfigureAwait(false);
-        string stderr = await stderrTask.ConfigureAwait(false);
-        bool truncated = Encoding.UTF8.GetByteCount(stdout) > maximumOutputBytes || Encoding.UTF8.GetByteCount(stderr) > maximumOutputBytes;
-        stdout = Truncate(stdout, maximumOutputBytes);
-        stderr = Truncate(stderr, maximumOutputBytes);
-        return new ProcessResult(timedOut ? -1 : process.ExitCode, stdout, stderr, timedOut, truncated, stopwatch.Elapsed);
+        BoundedOutput stdout = await stdoutTask.ConfigureAwait(false);
+        BoundedOutput stderr = await stderrTask.ConfigureAwait(false);
+        if (cancelled)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        return new ProcessResult(
+            timedOut ? -1 : process.ExitCode,
+            stdout.Text,
+            stderr.Text,
+            timedOut,
+            stdout.Truncated || stderr.Truncated,
+            stopwatch.Elapsed);
     }
 
-    private static string Truncate(string value, int maximumBytes)
+    private static async Task<BoundedOutput> ReadBoundedAsync(Stream stream, int maximumBytes)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(value);
-        return bytes.Length <= maximumBytes ? value : Encoding.UTF8.GetString(bytes, 0, maximumBytes);
+        byte[] buffer = new byte[8192];
+        using MemoryStream retained = new(Math.Min(maximumBytes, buffer.Length));
+        bool truncated = false;
+        int read;
+        while ((read = await stream.ReadAsync(buffer, CancellationToken.None).ConfigureAwait(false)) != 0)
+        {
+            int keep = Math.Min(read, maximumBytes - checked((int)retained.Length));
+            if (keep > 0)
+            {
+                retained.Write(buffer, 0, keep);
+            }
+            truncated |= keep != read;
+        }
+
+        int retainedLength = checked((int)retained.Length);
+        string text = Encoding.UTF8.GetString(retained.GetBuffer(), 0, retainedLength);
+        while (retainedLength > 0 && Encoding.UTF8.GetByteCount(text) > maximumBytes)
+        {
+            retainedLength--;
+            text = Encoding.UTF8.GetString(retained.GetBuffer(), 0, retainedLength);
+        }
+        return new BoundedOutput(text, truncated);
     }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (NotSupportedException)
+        {
+            try
+            {
+                process.Kill();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+    }
+
+    private sealed record BoundedOutput(string Text, bool Truncated);
 }

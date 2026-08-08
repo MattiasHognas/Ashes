@@ -27,7 +27,7 @@ internal sealed class FuzzCampaign
     {
         FuzzProfile requestedProfile = _profiles.Get(configuration.Profile);
         FuzzCoverage coverage = new(requestedProfile.EnabledRules, requestedProfile.EnabledCombinations);
-        FuzzExecutionContext context = new(repositoryRoot, configuration.Target, configuration.CompilerTimeout, configuration.ProgramTimeout, 1024 * 1024, new CompilerExecution());
+        FuzzExecutionContext context = new(repositoryRoot, configuration.Target, configuration.CompilerTimeout, configuration.ProgramTimeout, configuration.MaximumOutputBytes, new CompilerExecution());
         int first = configuration.Command == FuzzCommandKind.Replay ? configuration.CaseIndex : 0;
         int count = configuration.Command == FuzzCommandKind.Replay ? 1 : configuration.Cases;
         int seedCount = configuration.Command == FuzzCommandKind.Replay ? 1 : configuration.SeedCount;
@@ -114,7 +114,7 @@ internal sealed class FuzzCampaign
     internal async Task<int> RunCorpusAsync(FuzzConfiguration configuration, string repositoryRoot, CancellationToken cancellationToken)
     {
         IReadOnlyList<string> files = new FuzzCorpus().Load(repositoryRoot);
-        FuzzExecutionContext context = new(repositoryRoot, configuration.Target, configuration.CompilerTimeout, configuration.ProgramTimeout, 1024 * 1024, new CompilerExecution());
+        FuzzExecutionContext context = new(repositoryRoot, configuration.Target, configuration.CompilerTimeout, configuration.ProgramTimeout, configuration.MaximumOutputBytes, new CompilerExecution());
         int index = 0;
         foreach (string file in files)
         {
@@ -150,7 +150,11 @@ internal sealed class FuzzCampaign
             return !candidateResult.Success;
         }, 100, TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
         FuzzFailure failure = new(testCase, shrink.Case, result, shrink, configuration);
-        string artifactPath = await _artifacts.WriteAsync(failure, configuration.ArtifactRoot, cancellationToken).ConfigureAwait(false);
+        string artifactPath = await _artifacts.WriteAsync(
+            failure,
+            configuration.ArtifactRoot,
+            cancellationToken,
+            configuration.MaximumArtifactBytes).ConfigureAwait(false);
         string replay = FuzzReplayCommand.Format(testCase, configuration);
         Console.Error.WriteLine($"fuzz failure: seed={testCase.MasterSeed} case={testCase.CaseIndex} profile={testCase.Profile} oracle={result.Oracle}");
         Console.Error.WriteLine(result.Message);

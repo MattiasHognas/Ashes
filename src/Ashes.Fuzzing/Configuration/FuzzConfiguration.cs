@@ -20,6 +20,8 @@ internal sealed record FuzzConfiguration(
     int MaximumNodes,
     TimeSpan CompilerTimeout,
     TimeSpan ProgramTimeout,
+    int MaximumOutputBytes,
+    int MaximumArtifactBytes,
     string ArtifactRoot)
 {
     internal static FuzzConfiguration Parse(IReadOnlyList<string> args)
@@ -48,6 +50,8 @@ internal sealed record FuzzConfiguration(
         int maximumNodes = command == FuzzCommandKind.Smoke ? 40 : 80;
         int compilerTimeoutSeconds = 20;
         int programTimeoutSeconds = 5;
+        int maximumOutputBytes = 1024 * 1024;
+        int maximumArtifactBytes = 4 * 1024 * 1024;
         string artifactRoot = Path.Combine("artifacts", "fuzz");
 
         for (int i = 1; i < args.Count; i++)
@@ -73,6 +77,8 @@ internal sealed record FuzzConfiguration(
                 case "--max-nodes": maximumNodes = ParsePositiveInt(Value(), option); break;
                 case "--compiler-timeout": compilerTimeoutSeconds = ParsePositiveInt(Value(), option); break;
                 case "--program-timeout": programTimeoutSeconds = ParsePositiveInt(Value(), option); break;
+                case "--max-output-bytes": maximumOutputBytes = ParsePositiveInt(Value(), option); break;
+                case "--max-artifact-bytes": maximumArtifactBytes = ParsePositiveInt(Value(), option); break;
                 case "--artifacts": artifactRoot = Value(); break;
                 default: throw new ArgumentException($"Unknown option '{option}'.");
             }
@@ -84,7 +90,8 @@ internal sealed record FuzzConfiguration(
         }
 
         return new FuzzConfiguration(command, profile, cases, seed, seedCount, caseIndex, target, maximumNodes,
-            TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds), artifactRoot);
+            TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds),
+            maximumOutputBytes, maximumArtifactBytes, artifactRoot);
     }
 
     private static int ParsePositiveInt(string value, string option)
