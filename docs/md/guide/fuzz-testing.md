@@ -98,7 +98,9 @@ On failure, the runner applies bounded, recursive type-aware candidates and acce
 when its stable node/source-size metric decreases, remains valid up to the failing compiler phase,
 and the same oracle still fails. Candidates simplify compatible literals and in-scope variables,
 branches, collections, records, nested lets, recursive function bodies, top-level function values,
-and unused top-level declarations. Complete-program metrics include every declaration expression,
+unused top-level declarations and type declarations, unused ADT constructors, redundant exhaustive
+match arms, cons inputs, and safe arithmetic children. Complete-program metrics include every
+declaration expression,
 so removing or simplifying a prelude item is compared consistently with trailing-expression
 shrinks. It writes `original.ash`,
 `minimized.ash`, `failure.txt`, `metadata.json`, `stdout.txt`, and `stderr.txt` beneath the ignored
