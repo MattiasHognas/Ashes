@@ -110,6 +110,9 @@ shrinks. It writes `original.ash`,
 case seed, complete generation budget, and selected rule/template IDs, so CI logs remain sufficient
 when artifacts are unavailable. Artifact metadata names the exact optimization or reuse comparison
 performed by native differential oracles.
+Native comparisons reject either side before comparison when compilation or execution times out,
+exits non-zero, or exceeds the configured output limit, so two identical crashes cannot pass as an
+equivalent result.
 
 Checked-in minimized cases live in `tests/fuzz/corpus` and run with:
 
