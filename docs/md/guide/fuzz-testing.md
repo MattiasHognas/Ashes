@@ -66,7 +66,11 @@ values are part of exact replay and are also stored in `metadata.json`.
 
 On failure, the runner applies bounded, recursive type-aware candidates and accepts a candidate only
 when its stable node/source-size metric decreases, remains valid up to the failing compiler phase,
-and the same oracle still fails. It writes `original.ash`,
+and the same oracle still fails. Candidates simplify compatible literals and in-scope variables,
+branches, collections, records, nested lets, recursive function bodies, top-level function values,
+and unused top-level declarations. Complete-program metrics include every declaration expression,
+so removing or simplifying a prelude item is compared consistently with trailing-expression
+shrinks. It writes `original.ash`,
 `minimized.ash`, `failure.txt`, `metadata.json`, `stdout.txt`, and `stderr.txt` beneath the ignored
 `artifacts/fuzz/<stable-id>/` directory. The console also prints the full source and replay command,
 so CI logs remain sufficient when artifacts are unavailable.
