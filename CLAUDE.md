@@ -1,6 +1,10 @@
-# CLAUDE.md
+# Repository Guidelines
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents working in this repository.
+
+`AGENTS.md` and `CLAUDE.md` are the same document, byte for byte, so that a tool reading either name
+gets the same instructions. `scripts/verify.sh` fails if they drift; edit one and copy it over the
+other.
 
 ## What this is
 
@@ -99,7 +103,10 @@ dotnet run --project src/Ashes.Cli -- fmt <path> -w
 ```
 
 `scripts/verify.sh` runs the full gate (build, format, all test layers, publish self-contained CLI,
-format+run every example/test, and build the VS Code extension).
+format+run every example/test, and build the VS Code extension). `just ci-quick` is the fast
+pre-commit path and `just ci` the full PR-equivalent pipeline; see
+[local-ci.md](docs/md/guide/local-ci.md). For extension changes,
+`cd vscode-extension && pnpm run compile && pnpm run lint`.
 
 ### Running non-native targets on a Linux host
 
@@ -133,6 +140,13 @@ Backend/runtime validation for the other targets can run on a Linux x64 host via
 `info`). `compile`, `run` and `test` also take `--explain <ownership|rc|reuse|memory>`, and `compile`
 and `run` take `--emit-ir <lowered|final>`, both reporting to stderr without changing generated code.
 [cli.md](docs/md/reference/cli.md) is the authoritative surface.
+
+## Coding style
+
+Four-space indentation for C# and `.ash`; project XML uses two. Nullable analysis and the .NET
+analyzers are on, warnings are errors, and `.editorconfig` is authoritative. Prefer explicit C# types
+over `var`, use braces, compare strings with an ordinal comparison, and avoid allocation-heavy LINQ on
+hot paths.
 
 ## Architecture — projects and the strict dependency DAG
 
@@ -196,6 +210,18 @@ holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as o
 whitespace, otherwise exact). `// fmt-skip:` exempts an intentionally malformed fixture from
 formatting checks. Discovery goes into project mode when an `ashes.json` is found upward. Examples
 live in `examples/` and must **not** use test directives.
+
+## Tests and pull requests
+
+Put unit tests beside the project they cover and `.ash` regression tests under `tests/`, named for the
+scenario rather than the mechanism — `pattern_missing_cases_diagnostic.ash`, not `test3.ash`. Backend
+tests need the LLVM assets from `bash scripts/download-llvm-native.sh`.
+
+Keep commits focused, with concise imperative subjects (`docs: fix stale references`). **No
+agent-attribution trailers**: `ci/hooks/commit-msg` rejects any commit whose message carries a
+`Co-Authored-By:` or `Claude-Session:` line, whichever tool added it. Don't put agent attribution in
+pull request descriptions either. A pull request should say what changed and how it was validated,
+link the issue, and include screenshots only for VS Code UI changes.
 
 ## Feature implementation flow
 
