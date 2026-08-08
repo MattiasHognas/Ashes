@@ -154,6 +154,7 @@ export default defineConfig({
           page("Getting Started", "/guide/getting-started"),
           page("Projects", "/guide/projects"),
           page("Testing", "/guide/testing"),
+          page("Fuzz Testing", "/guide/fuzz-testing"),
           page("Debugging", "/guide/debugging"),
           page("Development", "/guide/development"),
           page("Local CI/CD", "/guide/local-ci"),
