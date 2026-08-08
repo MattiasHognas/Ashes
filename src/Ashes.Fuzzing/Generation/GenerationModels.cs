@@ -83,6 +83,8 @@ internal sealed record GenerationBudget(
     internal static GenerationBudget Create(int maximumNodes) => new(maximumNodes, 10, 10, 6, 3, 4, 5, 3, 4, maximumNodes * 48);
     internal bool IsLeaf => RemainingNodes <= 2 || RemainingDepth <= 1;
     internal GenerationBudget Descend(int nodes = 1) => this with { RemainingNodes = Math.Max(0, RemainingNodes - nodes), RemainingDepth = Math.Max(0, RemainingDepth - 1) };
+    internal GenerationBudget LimitNodes(int maximumNodes) => this with { RemainingNodes = Math.Min(RemainingNodes, maximumNodes) };
+    internal GenerationBudget LimitDepth(int maximumDepth) => this with { RemainingDepth = Math.Min(RemainingDepth, maximumDepth) };
     internal GenerationBudget UseCombination() => Descend() with { RemainingCombinations = Math.Max(0, RemainingCombinations - 1) };
 }
 

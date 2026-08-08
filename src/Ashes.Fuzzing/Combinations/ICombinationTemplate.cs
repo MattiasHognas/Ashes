@@ -17,6 +17,10 @@ internal sealed class CombinationRegistry
     private readonly SortedDictionary<string, ICombinationTemplate> _templates = new(StringComparer.Ordinal);
     internal IReadOnlyCollection<ICombinationTemplate> Templates => _templates.Values;
 
+    internal ICombinationTemplate Get(string id) => _templates.TryGetValue(id, out ICombinationTemplate? template)
+        ? template
+        : throw new ArgumentException($"Unknown combination template '{id}'.");
+
     internal void Register(ICombinationTemplate template)
     {
         if (string.IsNullOrWhiteSpace(template.Id) || template.AdvertisedFeatures.Count == 0 || !_templates.TryAdd(template.Id, template))
@@ -78,21 +82,39 @@ internal sealed class CombinationGenerator
         {
             return null;
         }
-        int totalWeight = candidates.Sum(template => EffectiveWeight(template.Id));
-        int choice = random.Next(totalWeight);
-        ICombinationTemplate selected = candidates[0];
-        foreach (ICombinationTemplate template in candidates)
+        ICombinationTemplate? preferred = candidates.FirstOrDefault(template =>
+            string.Equals(template.Id, _preferredTemplate, StringComparison.Ordinal));
+        ICombinationTemplate selected;
+        if (preferred is not null)
         {
-            int weight = EffectiveWeight(template.Id);
-            if (choice < weight)
+            selected = preferred;
+        }
+        else
+        {
+            int totalWeight = candidates.Sum(template => EffectiveWeight(template.Id));
+            int choice = random.Next(totalWeight);
+            selected = candidates[0];
+            foreach (ICombinationTemplate template in candidates)
             {
-                selected = template;
-                break;
+                int weight = EffectiveWeight(template.Id);
+                if (choice < weight)
+                {
+                    selected = template;
+                    break;
+                }
+                choice -= weight;
             }
-            choice -= weight;
         }
         _coverage.RecordCombination(selected.Id);
-        GenerationResult<Expr> result = selected.Generate(resultType, context.WithTemplate(selected.Id), budget.UseCombination(), expressions, random);
+        GenerationBudget templateBudget = budget.UseCombination()
+            .LimitNodes(Math.Max(2, budget.RemainingNodes / 4))
+            .LimitDepth(3);
+        GenerationResult<Expr> result = selected.Generate(
+            resultType,
+            context.WithTemplate(selected.Id),
+            templateBudget,
+            expressions,
+            random);
         foreach (GeneratedFeature feature in selected.AdvertisedFeatures)
         {
             if (!result.Features.Contains(feature))

@@ -11,24 +11,29 @@ internal sealed class ExpressionGenerator
     private readonly IReadOnlySet<string> _enabledRules;
     private readonly string? _preferredRule;
     private readonly GenerationCoverageGuidance _coverage;
+    private readonly bool _forcePreferredCombination;
 
     internal ExpressionGenerator(
         GeneratorRegistry rules,
         IReadOnlySet<string> enabledRules,
         GenerationCoverageGuidance coverage,
         CombinationGenerator? combinations = null,
-        string? preferredRule = null)
+        string? preferredRule = null,
+        bool forcePreferredCombination = false)
     {
         _rules = rules;
         _enabledRules = enabledRules;
         _combinations = combinations;
         _preferredRule = preferredRule;
         _coverage = coverage;
+        _forcePreferredCombination = forcePreferredCombination;
     }
 
     internal GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, FuzzRandom random)
     {
-        if (!budget.IsLeaf && _combinations is not null && budget.RemainingCombinations > 0 && random.Next(5) == 0)
+        bool shouldTryCombination = _combinations is not null &&
+            ((_forcePreferredCombination && context.ActiveTemplates.Count == 0) || random.Next(5) == 0);
+        if (!budget.IsLeaf && _combinations is not null && budget.RemainingCombinations > 0 && shouldTryCombination)
         {
             GenerationResult<Expr>? combined = _combinations.TryGenerate(requiredType, context, budget, this, random);
             if (combined is not null && combined.NodeCount <= budget.RemainingNodes)
