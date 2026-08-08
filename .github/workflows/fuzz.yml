@@ -1,8 +1,6 @@
 name: scheduled fuzz
 
 on:
-  schedule:
-    - cron: "17 3 * * 2,4,6"
   workflow_dispatch:
     inputs:
       cases:
