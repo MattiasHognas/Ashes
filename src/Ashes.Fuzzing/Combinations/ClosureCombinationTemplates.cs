@@ -8,7 +8,7 @@ internal sealed class ClosureCaptureTemplate : ICombinationTemplate
 {
     public string Id => "closure.capture-immediate-call";
     public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature> { GeneratedFeature.Let, GeneratedFeature.Lambda, GeneratedFeature.Call, GeneratedFeature.ClosureCapture };
-    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 7;
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 11;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
         AshesType captureType = LetGenerationRule.ChooseType(resultType, random);
@@ -22,11 +22,17 @@ internal sealed class ClosureCaptureTemplate : ICombinationTemplate
             .WithFeature(GeneratedFeature.ClosureCapture);
         GenerationResult<Expr> body = expressions.Generate(resultType, bodyContext, budget.Descend(5), random);
         GenerationResult<Expr> argument = expressions.Generate(parameterType, context, budget.Descend(5), random);
-        Expr lambda = new Expr.Lambda(parameter, body.Value) { ParamAnnotation = parameterType.ToSyntax() };
+        string captureUse = "captureUse" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string parameterUse = "parameterUse" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Expr forcedBody = new Expr.Let(
+            captureUse,
+            new Expr.Var(captured),
+            new Expr.Let(parameterUse, new Expr.Var(parameter), body.Value));
+        Expr lambda = new Expr.Lambda(parameter, forcedBody) { ParamAnnotation = parameterType.ToSyntax() };
         string functionName = "capturingFunction" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         Expr invoke = new Expr.Let(functionName, lambda, new Expr.Call(new Expr.Var(functionName), argument.Value));
         Expr result = new Expr.Let(captured, capture.Value, invoke);
         GeneratedFeatureSet features = new(AdvertisedFeatures); features.UnionWith(capture.Features); features.UnionWith(body.Features); features.UnionWith(argument.Features);
-        return new GenerationResult<Expr>(result, resultType, features, GenerationTrace.Merge($"closure:{captureType}:{parameterType}", capture.Trace, body.Trace, argument.Trace), capture.NodeCount + body.NodeCount + argument.NodeCount + 5);
+        return new GenerationResult<Expr>(result, resultType, features, GenerationTrace.Merge($"closure:{captureType}:{parameterType}", capture.Trace, body.Trace, argument.Trace), capture.NodeCount + body.NodeCount + argument.NodeCount + 9);
     }
 }

@@ -173,6 +173,37 @@ public sealed class CombinationTests
             .ShouldContain(GeneratedFeature.StaticallyUniquePath);
     }
 
+    [Test]
+    public void ImmediateClosureTemplateAlwaysReferencesItsCaptureAndParameter()
+    {
+        var fixture = TestFixture.Create();
+        string[] ruleIds = fixture.Rules.Rules.Select(rule => rule.Id).ToArray();
+        GenerationCoverageGuidance coverage = new(ruleIds, []);
+        ExpressionGenerator expressions = new(
+            fixture.Rules,
+            ruleIds.ToHashSet(StringComparer.Ordinal),
+            coverage);
+        ClosureCaptureTemplate template = new();
+
+        for (ulong seed = 0; seed < 20; seed++)
+        {
+            GenerationResult<Ashes.Frontend.Expr> generated = template.Generate(
+                new AshesType.Tuple([AshesType.Str, AshesType.Bool]),
+                GenerationContext.Empty.WithTemplate(template.Id),
+                GenerationBudget.Create(100),
+                expressions,
+                new FuzzRandom(seed));
+
+            Ashes.Frontend.Expr.Let capture = generated.Value.ShouldBeOfType<Ashes.Frontend.Expr.Let>();
+            Ashes.Frontend.Expr.Let function = capture.Body.ShouldBeOfType<Ashes.Frontend.Expr.Let>();
+            Ashes.Frontend.Expr.Lambda lambda = function.Value.ShouldBeOfType<Ashes.Frontend.Expr.Lambda>();
+            Ashes.Frontend.Expr.Let captureUse = lambda.Body.ShouldBeOfType<Ashes.Frontend.Expr.Let>();
+            captureUse.Value.ShouldBe(new Ashes.Frontend.Expr.Var(capture.Name));
+            Ashes.Frontend.Expr.Let parameterUse = captureUse.Body.ShouldBeOfType<Ashes.Frontend.Expr.Let>();
+            parameterUse.Value.ShouldBe(new Ashes.Frontend.Expr.Var(lambda.ParamName));
+        }
+    }
+
     private sealed class PrimitiveDuplicate : IExpressionGenerationRule
     {
         public string Id => "duplicate";
