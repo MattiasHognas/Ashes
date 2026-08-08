@@ -19,7 +19,7 @@ internal enum GeneratedFeature
     Resource, ResultShortCircuit, ReuseCandidate, SharedValue, CrossBranchAlias,
     ConstructorReconstruction, LayoutCompatibleReuse, LayoutIncompatibleFallback,
     ClosureCapture, EscapingClosure, MultipleClosures, GuardedMatch, RuntimeUniquenessCheck,
-    NestedCombination,
+    NestedCombination, TopLevelDeclaration, TopLevelFunction, MutualRecursion, Provider,
 }
 
 internal sealed class GeneratedFeatureSet : IReadOnlyCollection<GeneratedFeature>
@@ -59,6 +59,12 @@ internal sealed record GenerationContext(
 {
     internal static GenerationContext Empty { get; } = new([], [], [], new SortedSet<string>(StringComparer.Ordinal), GenerationFlags.RecursionAllowed, new SortedSet<string>(StringComparer.Ordinal));
     internal GenerationContext WithBinding(GeneratedBinding binding) => this with { Bindings = [.. Bindings, binding] };
+    internal GenerationContext WithAdt(GeneratedAdt adt) => this with { Adts = [.. Adts, adt] };
+    internal GenerationContext WithRecord(GeneratedRecord record) => this with { Records = [.. Records, record] };
+    internal GenerationContext WithCapability(string capability) => this with
+    {
+        Capabilities = new SortedSet<string>(Capabilities, StringComparer.Ordinal) { capability },
+    };
     internal GenerationContext WithTemplate(string id) => this with { ActiveTemplates = new SortedSet<string>(ActiveTemplates, StringComparer.Ordinal) { id } };
 }
 

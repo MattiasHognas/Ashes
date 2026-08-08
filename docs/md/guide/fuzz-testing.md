@@ -13,7 +13,11 @@ shared-capture closures, guarded and ADT matches, list and constructor reconstru
 recursion, nested capability handlers, async capture, Result propagation, and Perceus reuse and
 fallback shapes. Templates may fill their holes with the ordinary generator, so difficult feature
 interactions arise compositionally. Every complete generated program also places the result behind
-an explicit type annotation, forcing inference to prove the requested generation type.
+an explicit type annotation, forcing inference to prove the requested generation type. Complete
+program generation emits deterministic top-level functions and values, generic ADTs, records,
+mutual-recursion groups, and static capability providers in addition to the trailing generated
+expression, so parser, inference, lowering, and ownership checks exercise declaration stitching and
+sequential top-level scope rather than only isolated expressions.
 
 ## Running campaigns
 

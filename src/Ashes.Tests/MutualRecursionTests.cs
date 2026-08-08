@@ -172,6 +172,29 @@ public sealed class MutualRecursionTests
     }
 
     [Test]
+    public void Top_level_function_before_recursive_group_is_analyzed_without_crashing()
+    {
+        var diagnostics = new Diagnostics();
+        var source = """
+            let identity = given (value) -> value
+            let recursive isEven = given (n) -> if n == 0 then true else isOdd(n - 1)
+            and isOdd = given (n) -> if n == 0 then false else isEven(n - 1)
+            let answer = identity(if isEven(4) then 42 else 0) in answer
+            """;
+        Program program = new Parser(source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+
+        var lowering = new Lowering(diagnostics);
+
+        _ = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+
+        lowering.GetOwnershipSummary("identity").ShouldNotBeNull();
+        lowering.GetOwnershipSummary("isEven").ShouldNotBeNull();
+        lowering.GetOwnershipSummary("isOdd").ShouldNotBeNull();
+    }
+
+    [Test]
     public void And_without_let_rec_is_rejected()
     {
         // Parser-level guard: `and` is only valid after `let recursive`.
