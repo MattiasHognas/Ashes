@@ -676,6 +676,7 @@ internal sealed class FuzzShrinker
             AshesType.Record { Name: "FuzzRecord" } => new Expr.RecordLit("FuzzRecord", [("first", new Expr.IntLit(0)), ("second", new Expr.BoolLit(false))]),
             AshesType.Result result when TryLeaf(result.Value, out Expr value) => new Expr.Call(new Expr.Var("Ok"), value),
             AshesType.Adt { Name: "FuzzTree" } => new Expr.Var("FuzzEmpty"),
+            AshesType.Adt { Name: "FuzzMaybe" } => new Expr.Var("FuzzNone"),
             AshesType.Task { Error: AshesType.Primitive { Name: "Str" } } task when TryLeaf(task.Value, out Expr value) =>
                 new Expr.Call(new Expr.Var("async"), value),
             _ => null,
