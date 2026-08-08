@@ -56,29 +56,28 @@ public sealed class CombinationTests
     }
 
     [Test]
+    public void RegistryRejectsRulesThatCannotGenerateAdvertisedTypes()
+    {
+        GeneratorRegistry rules = new();
+        ArgumentException exception = Should.Throw<ArgumentException>(() => rules.Register(new InvalidAdvertisement()));
+        exception.Message.ShouldContain("advertises unsupported type");
+        rules.Rules.ShouldBeEmpty();
+    }
+
+    [Test]
     public void EveryRegisteredRuleCanGenerateInACompatibleContext()
     {
         var fixture = TestFixture.Create();
         GenerationContext context = GenerationContext.Empty.WithBinding(new GeneratedBinding("available", AshesType.Int));
-        AshesType[] types =
-        [
-            AshesType.Int,
-            AshesType.Bool,
-            AshesType.Str,
-            AshesType.BigInt,
-            new AshesType.UInt(8),
-            new AshesType.List(AshesType.Int),
-            new AshesType.Tuple([AshesType.Int, AshesType.Bool]),
-            new AshesType.Function(AshesType.Int, AshesType.Str),
-            new AshesType.Record("FuzzRecord"),
-            new AshesType.Result(AshesType.Str, AshesType.Int),
-            new AshesType.Adt("FuzzTree", [AshesType.Int]),
-            new AshesType.Task(AshesType.Str, AshesType.Int),
-        ];
         foreach (IExpressionGenerationRule rule in fixture.Rules.Rules)
         {
-            bool selectable = types.Any(type => rule.CanGenerate(type, context, GenerationBudget.Create(80)));
-            selectable.ShouldBeTrue($"Rule '{rule.Id}' cannot be selected for any stable test type.");
+            rule.AdvertisedTypes.ShouldNotBeEmpty();
+            foreach (AshesType advertisedType in rule.AdvertisedTypes)
+            {
+                GenerationContext compatibleContext = context.WithBinding(new GeneratedBinding("advertised", advertisedType));
+                rule.CanGenerate(advertisedType, compatibleContext, GenerationBudget.Create(80))
+                    .ShouldBeTrue($"Rule '{rule.Id}' cannot generate advertised type '{advertisedType}'.");
+            }
         }
     }
 
@@ -124,7 +123,17 @@ public sealed class CombinationTests
     {
         public string Id => "duplicate";
         public int Weight => 1;
+        public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
         public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => true;
+        public GenerationResult<Ashes.Frontend.Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random) => ExpressionGenerator.GenerateLeaf(requiredType, context, budget, random);
+    }
+
+    private sealed class InvalidAdvertisement : IExpressionGenerationRule
+    {
+        public string Id => "invalid-advertisement";
+        public int Weight => 1;
+        public IReadOnlyList<AshesType> AdvertisedTypes => [new AshesType.List(AshesType.Int)];
+        public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType == AshesType.Int;
         public GenerationResult<Ashes.Frontend.Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random) => ExpressionGenerator.GenerateLeaf(requiredType, context, budget, random);
     }
 

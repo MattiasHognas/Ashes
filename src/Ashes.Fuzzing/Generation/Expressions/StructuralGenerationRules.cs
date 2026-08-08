@@ -6,6 +6,7 @@ internal sealed class LetGenerationRule : IExpressionGenerationRule
 {
     public string Id => "let";
     public int Weight => 4;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 4;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -38,6 +39,7 @@ internal sealed class IfGenerationRule : IExpressionGenerationRule
 {
     public string Id => "if";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 4;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -53,6 +55,7 @@ internal sealed class TupleGenerationRule : IExpressionGenerationRule
 {
     public string Id => "tuple";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Tuple;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Tuple && budget.RemainingNodes >= 2;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -74,6 +77,7 @@ internal sealed class ListGenerationRule : IExpressionGenerationRule
 {
     public string Id => "list";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.List;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.List && budget.RemainingNodes >= 2;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -101,6 +105,7 @@ internal sealed class LambdaGenerationRule : IExpressionGenerationRule
 {
     public string Id => "lambda";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Function;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Function && budget.RemainingNodes >= 2;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -121,6 +126,7 @@ internal sealed class CallGenerationRule : IExpressionGenerationRule
 {
     public string Id => "call";
     public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 4;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -147,6 +153,7 @@ internal sealed class RecordGenerationRule : IExpressionGenerationRule
 {
     public string Id => "record";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Record;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Record { Name: "FuzzRecord" };
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -164,6 +171,7 @@ internal sealed class ResultGenerationRule : IExpressionGenerationRule
 {
     public string Id => "result";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Result;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Result;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {

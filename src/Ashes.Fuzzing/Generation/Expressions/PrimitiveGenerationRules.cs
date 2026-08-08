@@ -6,6 +6,7 @@ internal sealed class PrimitiveGenerationRule : IExpressionGenerationRule
 {
     public string Id => "primitive";
     public int Weight => 6;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Primitive;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Primitive or AshesType.UInt;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
         => ExpressionGenerator.GenerateLeaf(requiredType, context, budget, random);
@@ -15,6 +16,7 @@ internal sealed class VariableGenerationRule : IExpressionGenerationRule
 {
     public string Id => "variable";
     public int Weight => 4;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Generic;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => context.Bindings.Any(binding => binding.Type == requiredType);
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -28,6 +30,7 @@ internal sealed class ArithmeticGenerationRule : IExpressionGenerationRule
 {
     public string Id => "arithmetic";
     public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Numeric;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => IsNumeric(requiredType) && budget.RemainingNodes >= 3;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -68,6 +71,7 @@ internal sealed class ComparisonGenerationRule : IExpressionGenerationRule
 {
     public string Id => "comparison";
     public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Bool;
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType == AshesType.Bool && budget.RemainingNodes >= 3;
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
