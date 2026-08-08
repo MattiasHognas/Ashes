@@ -16,12 +16,15 @@ try
     CombinationRegistry combinations = CombinationRegistry.CreateDefault();
     FuzzProfileRegistry profiles = FuzzProfileRegistry.CreateDefault(rules, combinations);
     FuzzOracleRegistry oracles = FuzzOracleRegistry.CreateDefault();
+    configuration = configuration.ApplyProfileDefaults(profiles.Get(configuration.Profile));
     if (configuration.Command == FuzzCommandKind.List)
     {
         Console.WriteLine("profiles:");
         foreach (FuzzProfile profile in profiles.Profiles)
         {
-            Console.WriteLine($"  {profile.Id,-16} oracles={string.Join(',', profile.Oracles)}");
+            FuzzProfileDefaults defaults = profile.EffectiveDefaults;
+            Console.WriteLine(
+                $"  {profile.Id,-16} cases={defaults.Cases,-4} nodes={defaults.MaximumNodes,-3} targets={string.Join(',', defaults.Targets)} oracles={string.Join(',', profile.Oracles)}");
         }
         Console.WriteLine("expression rules:");
         foreach (IExpressionGenerationRule rule in rules.Rules) Console.WriteLine($"  {rule.Id}");
