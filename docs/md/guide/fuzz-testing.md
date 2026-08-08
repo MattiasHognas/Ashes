@@ -29,7 +29,9 @@ difficult feature interactions arise compositionally. The initial interaction ca
 guarantees captured-ADT matching inside closures, closures
 inside match branches, recursive list reconstruction, Result pipelines whose continuation is a
 generated closure, and handled capability operations performed from a closure selected by a match.
-These templates remain generic over their payload or result types.
+It also guarantees nested matching over a generic tree and a bounded tail-recursive loop carrying
+and reconstructing a tree accumulator. These templates remain generic over their payload or result
+types.
 
 Every complete generated program also places the result behind
 an explicit type annotation, forcing inference to prove the requested generation type. Complete
