@@ -53,7 +53,8 @@ internal sealed class FuzzArtifactWriter
         string replay = FuzzReplayCommand.Format(failure.Original, failure.Configuration);
         FuzzFailureMetadata metadata = new(
             failure.Original.MasterSeed, failure.Original.CaseSeed, failure.Original.CaseIndex, failure.Original.Profile,
-            failure.OracleResult.Oracle, failure.Configuration.Target, "Release", failure.Original.Budget,
+            failure.OracleResult.Oracle, failure.Configuration.Target,
+            FuzzFailureReport.CompilerConfiguration(failure.OracleResult.Oracle), failure.Original.Budget,
             failure.Original.Features.Select(feature => feature.ToString()).ToArray(), failure.Original.Trace.Entries,
             failure.Shrink.Attempts, failure.Shrink.Accepted, failure.Shrink.Duration.TotalMilliseconds,
             failure.Configuration.MaximumOutputBytes, maximumArtifactBytes, replay);

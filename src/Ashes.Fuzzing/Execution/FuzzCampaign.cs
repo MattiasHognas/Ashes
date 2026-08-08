@@ -137,11 +137,10 @@ internal sealed class FuzzCampaign
             cancellationToken,
             configuration.MaximumArtifactBytes).ConfigureAwait(false);
         string replay = FuzzReplayCommand.Format(testCase, configuration);
-        Console.Error.WriteLine($"fuzz failure: seed={testCase.MasterSeed} case={testCase.CaseIndex} profile={testCase.Profile} oracle={result.Oracle}");
-        Console.Error.WriteLine(result.Message);
-        Console.Error.WriteLine(testCase.Source);
-        Console.Error.WriteLine($"artifact: {artifactPath}");
-        Console.Error.WriteLine($"replay: {replay}");
+        foreach (string line in FuzzFailureReport.Lines(testCase, result, artifactPath, replay))
+        {
+            Console.Error.WriteLine(line);
+        }
         return 1;
     }
 

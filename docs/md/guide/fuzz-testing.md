@@ -107,7 +107,9 @@ so removing or simplifying a prelude item is compared consistently with trailing
 shrinks. It writes `original.ash`,
 `minimized.ash`, `failure.txt`, `metadata.json`, `stdout.txt`, and `stderr.txt` beneath the ignored
 `artifacts/fuzz/<stable-id>/` directory. The console also prints the full source and replay command,
-so CI logs remain sufficient when artifacts are unavailable.
+case seed, complete generation budget, and selected rule/template IDs, so CI logs remain sufficient
+when artifacts are unavailable. Artifact metadata names the exact optimization or reuse comparison
+performed by native differential oracles.
 
 Checked-in minimized cases live in `tests/fuzz/corpus` and run with:
 
