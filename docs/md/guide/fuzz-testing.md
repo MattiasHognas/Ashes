@@ -61,7 +61,8 @@ Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `d
 `invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource
 profile is deliberately separate from smoke runs and uses deterministic file-handle shapes.
 Invalid-source fuzzing deterministically mutates valid generated source
-with token deletion and duplication, delimiter replacement, keyword insertion, truncation,
+and rotates through checked-in corpus cases, compiler tests, examples, and parser fixtures. It uses
+token deletion and duplication, delimiter replacement, keyword insertion, truncation,
 malformed literals, indentation changes, and Unicode insertion. Each mutated parse runs in a
 killable child process and asserts bounded diagnostics and crash-free lexer/parser behavior. Native
 profiles use child processes with

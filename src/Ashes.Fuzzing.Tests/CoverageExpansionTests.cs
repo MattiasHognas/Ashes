@@ -263,6 +263,34 @@ public sealed class CoverageExpansionTests
         results.Count.ShouldBe(InvalidSourceMutator.MutationCount);
     }
 
+    [Test]
+    public async Task InvalidSourceSeedsRotateBetweenGeneratedAndCheckedInFamilies()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedFuzzCase generated = fixture.Generator.Generate(51, 0, fixture.Profiles.Get("invalid-source"), 80);
+        string root = Directory.CreateTempSubdirectory("ashes-fuzz-seeds-").FullName;
+        try
+        {
+            string corpus = Path.Combine(root, "tests", "fuzz", "corpus");
+            Directory.CreateDirectory(corpus);
+            string checkedIn = Path.Combine(corpus, "regression.ash");
+            await File.WriteAllTextAsync(checkedIn, "42");
+
+            GeneratedFuzzCase generatedSeed = InvalidSourceSeedSelector.Select(generated, root, 0);
+            GeneratedFuzzCase corpusSeed = InvalidSourceSeedSelector.Select(generated, root, 1);
+
+            generatedSeed.Source.ShouldBe(generated.Source);
+            generatedSeed.Trace.Entries.ShouldContain("invalid-seed:generated");
+            corpusSeed.Source.ShouldBe("42");
+            corpusSeed.Trace.Entries.ShouldContain(entry => entry.StartsWith("invalid-seed:corpus:", StringComparison.Ordinal));
+            InvalidSourceSeedSelector.Select(generated, root, 1).Source.ShouldBe(corpusSeed.Source);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static IrProgram Lower(string source, LoweringConfiguration configuration)
     {
         Diagnostics diagnostics = new();
