@@ -1,6 +1,17 @@
-# CLAUDE.md
+# Repository Guidelines
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents working in this repository.
+
+`AGENTS.md` and `CLAUDE.md` are the same document, byte for byte, so that a tool reading either name
+gets the same instructions. Edit one and copy it over the other, staging both:
+
+```bash
+cp AGENTS.md CLAUDE.md && git add AGENTS.md CLAUDE.md
+```
+
+Two checks enforce it — `ci/hooks/pre-commit` (after `just install-hooks`) compares the staged copies,
+and `scripts/verify.sh` compares the working tree. The hook reads staged content deliberately: editing
+both files but staging only one leaves the working tree consistent and the commit not.
 
 ## What this is
 
@@ -26,7 +37,7 @@ lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
 - [docs/md/guide/development.md](docs/md/guide/development.md) — building, testing, developing locally
 - [docs/md/guide/debugging.md](docs/md/guide/debugging.md) — debug extension setup and usage
 - [docs/md/guide/local-ci.md](docs/md/guide/local-ci.md) — containerized local CI/CD (`just` + Podman), release flow
-- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work (incl. memory/ownership roadmap)
+- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work only; the shipped memory/ownership model is in [architecture.md](docs/md/internals/architecture.md#memory-model)
 
 If implementation conflicts with the spec, **update the spec first**.
 
@@ -36,7 +47,7 @@ Backend and end-to-end tests need LLVM native runtimes. Download them before run
 backend-related:
 
 ```bash
-bash scripts/download-llvm-native.sh --all   # provisions Linux x64, Linux arm64, Windows x64
+bash scripts/download-llvm-native.sh --all   # provisions all four targets, win-arm64 included
 ```
 
 The Mbed TLS bitcode payloads (used by `Ashes.Net.Tls` / `Ashes.Net.Http`) are vendored under
@@ -99,7 +110,10 @@ dotnet run --project src/Ashes.Cli -- fmt <path> -w
 ```
 
 `scripts/verify.sh` runs the full gate (build, format, all test layers, publish self-contained CLI,
-format+run every example/test, and build the VS Code extension).
+format+run every example/test, and build the VS Code extension). `just ci-quick` is the fast
+pre-commit path and `just ci` the full PR-equivalent pipeline; see
+[local-ci.md](docs/md/guide/local-ci.md). For extension changes,
+`cd vscode-extension && pnpm run compile && pnpm run lint`.
 
 ### Running non-native targets on a Linux host
 
@@ -128,8 +142,18 @@ Backend/runtime validation for the other targets can run on a Linux x64 host via
 ## CLI entry points
 
 `dotnet run --project src/Ashes.Cli -- <cmd>` where `<cmd>` is: `compile` (`--target <rid>`,
-`--debug`, `-o`), `run` (`-- arg1 arg2` to pass args), `repl`, `test`, `fmt`, `init`, `add`,
-`remove`, `install`.
+`--debug`, `-o`), `run` (`-- arg1 arg2` to pass args), `repl`, `test`, `fmt`, `init`, `add`, `remove`,
+`install`, `restore`, `tree`, `why`, or a registry command (`login`, `publish`, `yank`, `search`,
+`info`). `compile`, `run` and `test` also take `--explain <ownership|rc|reuse|memory>`, and `compile`
+and `run` take `--emit-ir <lowered|final>`, both reporting to stderr without changing generated code.
+[cli.md](docs/md/reference/cli.md) is the authoritative surface.
+
+## Coding style
+
+Four-space indentation for C# and `.ash`; project XML uses two. Nullable analysis and the .NET
+analyzers are on, warnings are errors, and `.editorconfig` is authoritative. Prefer explicit C# types
+over `var`, use braces, compare strings with an ordinal comparison, and avoid allocation-heavy LINQ on
+hot paths.
 
 ## Architecture — projects and the strict dependency DAG
 
@@ -144,12 +168,13 @@ The pipeline is split into phases. **Dependencies are enforced and must not be v
 | `Ashes.TestRunner` | End-to-end `.ash` test execution | Backend |
 | `Ashes.Lsp` | Language server (diagnostics, hover, completion, formatting) | Frontend, Semantics, Formatter — **NOT Backend** |
 | `Ashes.Dap` | Debug Adapter Protocol server (gdb/lldb) | (nothing — protocol adapter only) |
-| `Ashes.Cli` | Orchestration/UX only | Backend, Formatter, TestRunner |
+| `Ashes.Cli` | Orchestration/UX only | Frontend, Semantics, Backend, Formatter, TestRunner |
 | `Ashes.Tests`, `Ashes.Lsp.Tests` | may reference any project |
 
-Semantics lowering is the bulk of the work — it is split across `Lowering.*.cs` partial classes
-(Builtins, Patterns, TypeInference, Types, Symbols, Ownership, Diagnostics) plus `Ir.cs`,
-`IrOptimizer.cs`, `BuiltinRegistry.cs`, `StateMachineTransform.cs` (async/await lowering).
+Semantics lowering is the bulk of the work — it is split across roughly two dozen `Lowering.*.cs`
+partial classes (Builtins, Patterns, TypeInference, Types, Symbols, Ownership, Reuse, MoveAnalysis,
+CoroutineFrame, Diagnostics, …) plus `Ir.cs`, `IrOptimizer.cs`, `BuiltinRegistry.cs`,
+`PerceusLifetimePlacement.cs` (lifetime placement), and `StateMachineTransform.cs` (async/await).
 
 **Boundary rules:** Lsp and Dap are *consumers* of compiler logic, never implementers. Do not
 duplicate parsing, type inference, lowering, or codegen in them, and do not implement runtime
@@ -161,7 +186,7 @@ Ashes is pure, immutable, expression-based, strictly evaluated, recursion-based.
 mutation, reassignment, loops, statements, or null. Iteration is recursion + `match`. Lists are
 immutable linked lists, never arrays. Never collapse `match` into if-chains. Type system is
 Hindley-Milner with let-polymorphism. Don't add syntax/evaluation/typing rules without updating
-`LANGUAGE_SPEC.md` first.
+[the language reference](docs/md/reference/language.md) first.
 
 **Top-level declarations:** a file is `import* declaration* expr?` — a flat sequence of top-level
 `let` / `let recursive ... and ...` / `type` / `external` declarations (no trailing `in`) followed by an
@@ -175,8 +200,13 @@ never exported, and there is no implicit re-export. The bare-expression and nest
 pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this surface (see
 [docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md)).
 
-**Memory model:** no GC and no reference counting — memory is managed by deterministic destruction,
-with ownership + borrowing in `Lowering.Ownership.cs`. Don't reach for GC/RC-style designs.
+**Memory model:** no tracing garbage collector, and no ownership syntax in the source language.
+Reference-counted Perceus is the general lifetime substrate for escaping heap graphs; regions remain
+for compiler-proven scoped values, scheduler state, OS-backed payload views, and a few specialized
+data structures. Ownership is inferred (`Lowering.Ownership.cs`, `PerceusLifetimePlacement.cs`), never
+written by the user. Don't reach for a tracing GC. See
+[architecture.md](docs/md/internals/architecture.md#memory-model) for the current contract, and
+`--explain memory` to see what a given program was decided to do.
 
 The standard library is written in Ashes under `lib/Ashes/` (e.g. `Collection.List.ash`, `Text.ash`; file names encode the module path under the implicit `Ashes.` prefix); `dist/`
 holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as ordinary programs with a leading `//` directive block
@@ -188,9 +218,24 @@ whitespace, otherwise exact). `// fmt-skip:` exempts an intentionally malformed 
 formatting checks. Discovery goes into project mode when an `ashes.json` is found upward. Examples
 live in `examples/` and must **not** use test directives.
 
+## Tests and pull requests
+
+Put unit tests beside the project they cover and `.ash` regression tests under `tests/`, named for the
+scenario rather than the mechanism — `pattern_missing_cases_diagnostic.ash`, not `test3.ash`. Backend
+tests need the LLVM assets from `bash scripts/download-llvm-native.sh`.
+
+Keep commits focused, with concise imperative subjects (`docs: fix stale references`). **No
+agent-attribution trailers**: `ci/hooks/commit-msg` rejects any commit whose message carries a
+`Co-Authored-By:` or `Claude-Session:` line, whichever tool added it. Don't put agent attribution in
+pull request descriptions either. A pull request should say what changed and how it was validated,
+link the issue, and include screenshots only for VS Code UI changes.
+
 ## Feature implementation flow
 
-1. Update `LANGUAGE_SPEC.md` if behavior changes. 2. Frontend → 3. Semantics → 4. Backend →
-5. Diagnostics → 6. `.ash` tests + examples → 7. format all changed `.ash` and verify no diffs.
+1. Update [the language reference](docs/md/reference/language.md) if behavior changes. 2. Frontend →
+3. Semantics → 4. Backend → 5. Diagnostics → 6. `.ash` tests + examples → 7. format all changed
+`.ash` and verify no diffs.
 Implement only what the active issue/milestone specifies; if behavior is undefined, stop and leave a
 TODO rather than inventing it. Development is milestone-driven — avoid speculative scope.
+
+A new shared rule.

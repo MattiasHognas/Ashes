@@ -6,15 +6,8 @@ documented in the normative docs under [`docs/md/`](../index.md) — syntax/sema
 runtime/backend behavior in [Architecture](../internals/architecture.md), and the history of the
 compiler's optimization/codegen work in the [Compiler Changelog](../internals/changelog.md) — not here.
 
-The RC Perceus memory model has shipped. Its current contract is documented in
-[Compiler Architecture](../internals/architecture.md#memory-model); the
-[compiler changelog](../internals/changelog.md#rc-perceus-migration-chronology-and-verification)
-preserves the phased implementation, paper comparison, validation evidence,
-and intentional region/thread boundaries.
-
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [`--explain` Compiler Reports](EXPLAIN_REPORTS.md) | Planned | Structured CLI reports for ownership, Perceus RC, reuse, and representation decisions, replacing `ASHES_EXPLAIN_OWNERSHIP` |
 | [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |

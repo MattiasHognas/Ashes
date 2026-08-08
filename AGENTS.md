@@ -1,31 +1,241 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+Guidance for AI coding agents working in this repository.
 
-Ashes is a .NET 10 compiler/toolchain for `.ash`, targeting `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` (all four are both compile targets and host RIDs; win-arm64 binaries and toolchain run only on native ARM64 Windows, not on x64 hosts). Core projects live under `src/`: `Ashes.Frontend` handles lexer/parser/AST, `Ashes.Semantics` binding/type inference/IR, `Ashes.Backend` LLVM codegen, and `Ashes.Cli` user commands. Tooling includes `Ashes.Formatter`, `Ashes.Lsp`, `Ashes.Dap`, and `Ashes.TestRunner`. Unit tests live in `src/Ashes.*.Tests`; end-to-end `.ash` tests live in `tests/`. Use `lib/Ashes` for stdlib, `examples/` for examples, `docs/md` for authoritative docs, `runtimes/` for payloads, and `vscode-extension/` for extension code.
+`AGENTS.md` and `CLAUDE.md` are the same document, byte for byte, so that a tool reading either name
+gets the same instructions. Edit one and copy it over the other, staging both:
 
-## Build, Test, and Development Commands
+```bash
+cp AGENTS.md CLAUDE.md && git add AGENTS.md CLAUDE.md
+```
 
-- `dotnet build Ashes.slnx`: build the solution.
-- `dotnet run --project src/Ashes.Cli -- test tests`: run `.ash` tests.
-- `dotnet run --project src/Ashes.Tests -- --no-progress`: run compiler unit tests.
-- `dotnet format Ashes.slnx --verify-no-changes`: verify C# formatting; omit the flag to fix.
-- `just ci-quick`: fast pre-commit build/test path.
-- `just ci`: full PR-equivalent pipeline.
-- `cd vscode-extension && pnpm run compile && pnpm run lint`: check extension changes.
+Two checks enforce it — `ci/hooks/pre-commit` (after `just install-hooks`) compares the staged copies,
+and `scripts/verify.sh` compares the working tree. The hook reads staged content deliberately: editing
+both files but staging only one leaves the working tree consistent and the commit not.
 
-## Coding Style & Naming Conventions
+## What this is
 
-Use 4-space indentation for C# and `.ash`; project XML uses 2 spaces. Nullable analysis and .NET analyzers are enabled, warnings are errors, and `.editorconfig` is authoritative. Prefer explicit C# types over `var`, braces, ordinal string comparisons, and avoid allocation-heavy LINQ. Format changed `.ash` files with `dotnet run --project src/Ashes.Cli -- fmt path -w`.
+Ashes is a **compiler** (not an application) for a pure functional ML-family language, written in
+C#/.NET 10. It compiles `.ash` source to **standalone native executables** (ELF on Linux, PE on
+Windows) via LLVM, with zero runtime dependencies — no GC, no runtime. Targets: `linux-x64`,
+`linux-arm64`, `win-x64`, `win-arm64`. All four are both compile targets and host RIDs (a released
+compiler runs on each); win-arm64 binaries and the win-arm64 host toolchain run only on native ARM64
+Windows — they are built and structurally validated on x64 hosts but not executed there.
 
-## Testing Guidelines
+`docs/md/` is the source of truth (also published as the documentation site; the VitePress app
+lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
 
-Add unit tests near the affected project and `.ash` regression tests under `tests/`. Keep names scenario-focused, for example `pattern_missing_cases_diagnostic.ash`. Run one end-to-end test with `dotnet run --project src/Ashes.Cli -- test tests/foo.ash`. Test fixtures use leading `//` directives such as `expect:`, `expect-compile-error:`, and `fmt-skip:`; see `docs/md/guide/testing.md`. Examples must not use test directives. Do not add `[NotInParallel]`. Backend tests need LLVM assets from `bash scripts/download-llvm-native.sh`.
+- [docs/md/reference/language.md](docs/md/reference/language.md) — syntax/semantics, **authoritative**
+- [docs/md/internals/architecture.md](docs/md/internals/architecture.md) — pipeline, backend, memory model, linking
+- [docs/md/internals/ir.md](docs/md/internals/ir.md) — IR instruction set
+- [docs/md/reference/cli.md](docs/md/reference/cli.md) — all CLI commands and flags
+- [docs/md/reference/formatter.md](docs/md/reference/formatter.md) — canonical formatting rules
+- [docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md) — error codes and messages
+- [docs/md/guide/testing.md](docs/md/guide/testing.md) — test directives and conventions
+- [docs/md/reference/standard-library.md](docs/md/reference/standard-library.md) — module-by-module API
+- [docs/md/guide/projects.md](docs/md/guide/projects.md) — multi-file project / `ashes.json` format
+- [docs/md/guide/development.md](docs/md/guide/development.md) — building, testing, developing locally
+- [docs/md/guide/debugging.md](docs/md/guide/debugging.md) — debug extension setup and usage
+- [docs/md/guide/local-ci.md](docs/md/guide/local-ci.md) — containerized local CI/CD (`just` + Podman), release flow
+- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work only; the shipped memory/ownership model is in [architecture.md](docs/md/internals/architecture.md#memory-model)
 
-## Commit & Pull Request Guidelines
+If implementation conflicts with the spec, **update the spec first**.
 
-Recent history uses concise imperative or conventional-style subjects such as `docs: fix stale references` and `fix: ...`. Keep commits focused. Do not add `Co-Authored-By:` or `Claude-Session:` trailers; the hook rejects them. PRs should summarize changes, list validation, link issues, and include screenshots only for VS Code UI changes.
+## One-time setup
 
-## Architecture Notes
+Backend and end-to-end tests need LLVM native runtimes. Download them before running anything
+backend-related:
 
-Read relevant `docs/md` pages before changing behavior; if implementation conflicts with the spec, update the spec first. Respect compiler layering: Frontend -> Semantics -> Backend. LSP and DAP consume compiler logic; they must not duplicate parsing, type inference, lowering, or codegen. For language changes, move through docs/spec, Frontend, Semantics, Backend, Diagnostics, tests/examples, then formatting and verification. Avoid speculative behavior; leave a TODO when semantics are undefined.
+```bash
+bash scripts/download-llvm-native.sh --all   # provisions all four targets, win-arm64 included
+```
+
+The Mbed TLS bitcode payloads (used by `Ashes.Net.Tls` / `Ashes.Net.Http`) are vendored under
+`runtimes/` and normally don't need fetching. Refresh them only when `<MbedTlsVersion>` in
+`Directory.Build.props` changes:
+
+```bash
+bash scripts/download-mbedtls.sh --all       # builds libmbedtls.bc for all targets on one host (needs clang, llvm-link, opt)
+```
+
+The openlibm bitcode payloads (used by `Ashes.Number.Math` transcendentals) are likewise vendored under
+`runtimes/` and normally don't need fetching. Refresh them only when `<OpenlibmVersion>` changes:
+
+```bash
+bash scripts/download-openlibm.sh --all       # builds libopenlibm.bc for all targets on one host (needs clang, llvm-link, opt)
+```
+
+The PCRE2 bitcode payloads (used by `Ashes.Text.Regex`) are likewise vendored under `runtimes/` and
+normally don't need fetching. Refresh them only when `<Pcre2Version>` changes:
+
+```bash
+bash scripts/download-pcre2.sh --all          # builds libpcre2.bc (8-bit, Unicode, JIT off) for all targets on one host (needs clang, llvm-link, opt, llvm-nm)
+```
+
+All four scripts accept per-target flags (`--linux-x64`, `--linux-arm64`, `--win-x64`, `--win-arm64`) instead of
+`--all`. Mbed TLS, openlibm, and PCRE2 are compiled to LLVM bitcode by the clang frontend, so every
+target builds on one host with no cross toolchain.
+
+## Build, test, format
+
+After **any** change, all of these must pass (also enforced by CI / `scripts/verify.sh`):
+
+```bash
+dotnet build Ashes.slnx
+
+# C# compiler-internal tests (deterministic)
+dotnet run --project src/Ashes.Tests -- --no-progress
+
+# LSP-internal tests
+dotnet run --project src/Ashes.Lsp.Tests -- --no-progress
+
+# End-to-end .ash tests (needs LLVM runtimes + built CLI)
+dotnet run --project src/Ashes.Cli -- test tests
+
+# C# formatting (CI-enforced; TreatWarningsAsErrors + analyzers are on)
+dotnet format Ashes.slnx --verify-no-changes   # use `dotnet format Ashes.slnx` to fix
+```
+
+Run a **single** end-to-end test by pointing `test` at a file: `dotnet run --project src/Ashes.Cli -- test tests/foo.ash`.
+Filter the **C# unit tests** to one class with `--treenode-filter`:
+`dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/ClassName/**"`.
+
+In C# tests, **`[NotInParallel]` is banned** — fix the root cause of the race instead of serializing.
+
+After creating/modifying any `.ash` file (including stdlib and examples), canonically format it —
+formatting is part of correctness, not style:
+
+```bash
+dotnet run --project src/Ashes.Cli -- fmt <path> -w
+```
+
+`scripts/verify.sh` runs the full gate (build, format, all test layers, publish self-contained CLI,
+format+run every example/test, and build the VS Code extension). `just ci-quick` is the fast
+pre-commit path and `just ci` the full PR-equivalent pipeline; see
+[local-ci.md](docs/md/guide/local-ci.md). For extension changes,
+`cd vscode-extension && pnpm run compile && pnpm run lint`.
+
+### Running non-native targets on a Linux host
+
+Backend/runtime validation for the other targets can run on a Linux x64 host via emulation:
+
+- **win-x64**: executed through `wine64` (or `wine`) when the test helper is wired for PE execution.
+  The Windows TLS runtime uses the platform verifier by default; tests may set `SSL_CERT_FILE` to
+  load PEM roots explicitly, enabling Wine-backed loopback TLS coverage on Linux.
+- **linux-arm64**: executed through `qemu-aarch64` / `qemu-aarch64-static` with an arm64 sysroot
+  (e.g. `/usr/aarch64-linux-gnu`). The linux-arm64 coverage helper looks for qemu on `PATH` and at
+  the rootless Arch-style location `~/.local/share/ashes-tools/qemu-user-static/root/usr/bin`.
+- **win-arm64**: a compile target **and** a host RID (the release ships a win-arm64 compiler/LSP/DAP
+  bundle with an aarch64-windows `libLLVM.dll`), but **neither the emitted PE nor the WoA compiler
+  executes on an x64 host** — Wine on x64 can't load ARM64 PEs, and `qemu-aarch64` runs ELF, not PE.
+  Chaining them (x64 → `qemu-aarch64` → an aarch64 Wine that *does* have `aarch64-windows` PE
+  builtins, e.g. Debian trixie's Wine 10) is *capable* but impractical: under single-core TCG
+  emulation Wine's first-boot (`wineboot`) does not complete in reasonable time (observed: wedged in
+  the `start.exe` phase after 90 min). win-arm64 is therefore validated **structurally** on x64 — the
+  C# suite (`WindowsArm64BackendTests`) parses the emitted PE (machine `0xAA64`, imports, resolved
+  relocations), and `verify.sh`/`ci/jobs.sh` cross-compile a program and check the machine field; the
+  host bundle is likewise built (`dotnet publish --runtime win-arm64`) and checked for an ARM64
+  `ashes.exe` + `libLLVM.dll`. **Execution validation requires a native aarch64 host** (a real
+  Windows-on-ARM machine, or a native ARM64 Linux box / cloud ARM instance running Wine ≥ 10 with
+  `aarch64-windows`, where there is no qemu tax and `wine app.exe` runs the PE at native speed).
+
+## CLI entry points
+
+`dotnet run --project src/Ashes.Cli -- <cmd>` where `<cmd>` is: `compile` (`--target <rid>`,
+`--debug`, `-o`), `run` (`-- arg1 arg2` to pass args), `repl`, `test`, `fmt`, `init`, `add`, `remove`,
+`install`, `restore`, `tree`, `why`, or a registry command (`login`, `publish`, `yank`, `search`,
+`info`). `compile`, `run` and `test` also take `--explain <ownership|rc|reuse|memory>`, and `compile`
+and `run` take `--emit-ir <lowered|final>`, both reporting to stderr without changing generated code.
+[cli.md](docs/md/reference/cli.md) is the authoritative surface.
+
+## Coding style
+
+Four-space indentation for C# and `.ash`; project XML uses two. Nullable analysis and the .NET
+analyzers are on, warnings are errors, and `.editorconfig` is authoritative. Prefer explicit C# types
+over `var`, use braces, compare strings with an ordinal comparison, and avoid allocation-heavy LINQ on
+hot paths.
+
+## Architecture — projects and the strict dependency DAG
+
+The pipeline is split into phases. **Dependencies are enforced and must not be violated:**
+
+| Project | Responsibility | May depend on |
+|---|---|---|
+| `Ashes.Frontend` | Lexer, parser, AST | (nothing) |
+| `Ashes.Semantics` | Binding, scope resolution, HM type inference, IR lowering | Frontend |
+| `Ashes.Backend` | IR → LLVM native codegen, linking | Semantics |
+| `Ashes.Formatter` | Canonical AST → source formatting | Frontend |
+| `Ashes.TestRunner` | End-to-end `.ash` test execution | Backend |
+| `Ashes.Lsp` | Language server (diagnostics, hover, completion, formatting) | Frontend, Semantics, Formatter — **NOT Backend** |
+| `Ashes.Dap` | Debug Adapter Protocol server (gdb/lldb) | (nothing — protocol adapter only) |
+| `Ashes.Cli` | Orchestration/UX only | Frontend, Semantics, Backend, Formatter, TestRunner |
+| `Ashes.Tests`, `Ashes.Lsp.Tests` | may reference any project |
+
+Semantics lowering is the bulk of the work — it is split across roughly two dozen `Lowering.*.cs`
+partial classes (Builtins, Patterns, TypeInference, Types, Symbols, Ownership, Reuse, MoveAnalysis,
+CoroutineFrame, Diagnostics, …) plus `Ir.cs`, `IrOptimizer.cs`, `BuiltinRegistry.cs`,
+`PerceusLifetimePlacement.cs` (lifetime placement), and `StateMachineTransform.cs` (async/await).
+
+**Boundary rules:** Lsp and Dap are *consumers* of compiler logic, never implementers. Do not
+duplicate parsing, type inference, lowering, or codegen in them, and do not implement runtime
+behavior in Frontend. All semantics originate in the compiler phases.
+
+## Language invariants (do not break)
+
+Ashes is pure, immutable, expression-based, strictly evaluated, recursion-based. There is **no**
+mutation, reassignment, loops, statements, or null. Iteration is recursion + `match`. Lists are
+immutable linked lists, never arrays. Never collapse `match` into if-chains. Type system is
+Hindley-Milner with let-polymorphism. Don't add syntax/evaluation/typing rules without updating
+[the language reference](docs/md/reference/language.md) first.
+
+**Top-level declarations:** a file is `import* declaration* expr?` — a flat sequence of top-level
+`let` / `let recursive ... and ...` / `type` / `external` declarations (no trailing `in`) followed by an
+optional trailing expression. Scoping is sequential (Model A): a binding is visible to subsequent
+declarations and the trailing expression, never to earlier ones; self-recursion needs `let recursive`,
+mutual recursion needs `let recursive X = ... and Y = ...`. Imports support whole-module (`import M`,
+`import M as X`) and selector forms (`import M.binding [as x]`, `import M.Type [as T]`) that bring
+the name in unqualified, with built-in `Ashes.*` modules resolving via the same path. A module's
+exports are its top-level `let`/`type` declarations only — `external` and the trailing expression are
+never exported, and there is no implicit re-export. The bare-expression and nested `let ... in`
+pyramid styles both remain valid. Diagnostics `ASH013`–`ASH016` cover this surface (see
+[docs/md/reference/diagnostics.md](docs/md/reference/diagnostics.md)).
+
+**Memory model:** no tracing garbage collector, and no ownership syntax in the source language.
+Reference-counted Perceus is the general lifetime substrate for escaping heap graphs; regions remain
+for compiler-proven scoped values, scheduler state, OS-backed payload views, and a few specialized
+data structures. Ownership is inferred (`Lowering.Ownership.cs`, `PerceusLifetimePlacement.cs`), never
+written by the user. Don't reach for a tracing GC. See
+[architecture.md](docs/md/internals/architecture.md#memory-model) for the current contract, and
+`--explain memory` to see what a given program was decided to do.
+
+The standard library is written in Ashes under `lib/Ashes/` (e.g. `Collection.List.ash`, `Text.ash`; file names encode the module path under the implicit `Ashes.` prefix); `dist/`
+holds the shipped per-target copies. End-to-end tests live in `tests/*.ash` as ordinary programs with a leading `//` directive block
+(see [docs/md/guide/testing.md](docs/md/guide/testing.md) for the full surface): `// expect:` (exact stdout, default exit 0),
+`// expect-compile-error:` (substring match, exit 1), `// exit: N`, `// stdin:`, `// file:`/
+`// file-bytes:`, and `// tcp-server`/`// tcp-expect`/`// tcp-send` loopback fixtures. Gotcha:
+`// expect: empty` expects the literal text `empty`, not empty output (matching trims trailing
+whitespace, otherwise exact). `// fmt-skip:` exempts an intentionally malformed fixture from
+formatting checks. Discovery goes into project mode when an `ashes.json` is found upward. Examples
+live in `examples/` and must **not** use test directives.
+
+## Tests and pull requests
+
+Put unit tests beside the project they cover and `.ash` regression tests under `tests/`, named for the
+scenario rather than the mechanism — `pattern_missing_cases_diagnostic.ash`, not `test3.ash`. Backend
+tests need the LLVM assets from `bash scripts/download-llvm-native.sh`.
+
+Keep commits focused, with concise imperative subjects (`docs: fix stale references`). **No
+agent-attribution trailers**: `ci/hooks/commit-msg` rejects any commit whose message carries a
+`Co-Authored-By:` or `Claude-Session:` line, whichever tool added it. Don't put agent attribution in
+pull request descriptions either. A pull request should say what changed and how it was validated,
+link the issue, and include screenshots only for VS Code UI changes.
+
+## Feature implementation flow
+
+1. Update [the language reference](docs/md/reference/language.md) if behavior changes. 2. Frontend →
+3. Semantics → 4. Backend → 5. Diagnostics → 6. `.ash` tests + examples → 7. format all changed
+`.ash` and verify no diffs.
+Implement only what the active issue/milestone specifies; if behavior is undefined, stop and leave a
+TODO rather than inventing it. Development is milestone-driven — avoid speculative scope.
+
+A new shared rule.

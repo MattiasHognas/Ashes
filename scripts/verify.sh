@@ -49,6 +49,17 @@ fi
 
 echo "--- Verifying Ashes on ${os}-${arch}..."
 
+### Agent guidance is one document under two names, so tools that look for either find the same
+### instructions. They are kept as real files rather than a symlink because a symlink materializes as
+### a text file containing its target on a Windows checkout without developer mode, which would
+### silently replace the guidance with a single line.
+echo "--- Verifying agent guidance is in sync..."
+if ! cmp -s AGENTS.md CLAUDE.md; then
+  echo "AGENTS.md and CLAUDE.md must be identical; copy whichever you edited over the other." >&2
+  diff -u AGENTS.md CLAUDE.md >&2 || true
+  exit 1
+fi
+
 run_pnpm() {
   if [[ "$useCorepackPnpm" == "true" ]]; then
     "$corepackCmd" pnpm "$@"
