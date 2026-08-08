@@ -966,21 +966,7 @@ public static class Formatter
                 WriteExprInline(sb, matchCase.Guard, indent + options.IndentSize, 0, preferPipelines, options);
             }
             sb.Append(" -> ");
-            if (IsSingleLine(matchCase.Body, preferPipelines))
-            {
-                WriteExprInline(sb, matchCase.Body, indent + options.IndentSize, 0, preferPipelines, options);
-                sb.Append('\n');
-            }
-            else
-            {
-                sb.Append('\n');
-                WriteIndent(sb, indent + options.IndentSize * 2, options);
-                WriteExpr(sb, matchCase.Body, indent + options.IndentSize * 2, 0, preferPipelines, options);
-                if (!EndsWithNewLine(sb, "\n"))
-                {
-                    sb.Append('\n');
-                }
-            }
+            WriteArmBody(sb, matchCase.Body, indent, preferPipelines, options);
         }
 
         if (sb.Length > 0 && sb[^1] == '\n')
@@ -994,6 +980,49 @@ public static class Formatter
         }
     }
 
+    private static bool ContainsBitwiseOr(Expr expression) => ContainsExpression(expression, static candidate => candidate is Expr.BitwiseOr);
+
+    private static bool ContainsRecordUpdate(Expr expression) => ContainsExpression(expression, static candidate => candidate is Expr.RecordUpdate);
+
+    private static bool ContainsExpression(Expr expression, Func<Expr, bool> predicate) => predicate(expression) || expression switch
+    {
+        Expr.Add binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Subtract binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Multiply binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Divide binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Modulo binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.BitwiseAnd binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.BitwiseOr binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.BitwiseXor binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.ShiftLeft binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.ShiftRight binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.BitwiseNot unary => ContainsExpression(unary.Operand, predicate),
+        Expr.GreaterThan binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.LessThan binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.GreaterOrEqual binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.LessOrEqual binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Equal binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.NotEqual binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.ResultPipe binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.ResultMapErrorPipe binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.Let let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
+        Expr.LetRecursive let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
+        Expr.LetResult let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
+        Expr.Lambda lambda => ContainsExpression(lambda.Body, predicate),
+        Expr.If conditional => ContainsExpression(conditional.Cond, predicate) || ContainsExpression(conditional.Then, predicate) || ContainsExpression(conditional.Else, predicate),
+        Expr.Call call => ContainsExpression(call.Func, predicate) || ContainsExpression(call.Arg, predicate),
+        Expr.TupleLit tuple => tuple.Elements.Any(element => ContainsExpression(element, predicate)),
+        Expr.ListLit list => list.Elements.Any(element => ContainsExpression(element, predicate)),
+        Expr.Cons cons => ContainsExpression(cons.Head, predicate) || ContainsExpression(cons.Tail, predicate),
+        Expr.Match match => ContainsExpression(match.Value, predicate) || match.Cases.Any(matchCase => ContainsExpression(matchCase.Body, predicate) || (matchCase.Guard is not null && ContainsExpression(matchCase.Guard, predicate))),
+        Expr.Await awaitExpression => ContainsExpression(awaitExpression.Task, predicate),
+        Expr.RecordLit record => record.Fields.Any(field => ContainsExpression(field.Value, predicate)),
+        Expr.RecordUpdate update => ContainsExpression(update.Target, predicate) || update.Updates.Any(field => ContainsExpression(field.Value, predicate)),
+        Expr.Perform perform => ContainsExpression(perform.Operation, predicate),
+        Expr.Handle handle => ContainsExpression(handle.Body, predicate) || handle.Arms.Any(arm => ContainsExpression(arm.Body, predicate)),
+        _ => false,
+    };
+
     private static void WriteHandle(StringBuilder sb, Expr.Handle handle, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
     {
         var needsParens = parentPrec > PrecLetIfLambda;
@@ -1003,7 +1032,7 @@ public static class Formatter
         }
 
         sb.Append("handle ");
-        WriteExprInline(sb, handle.Body, indent, 0, preferPipelines, options);
+        WriteExprInline(sb, handle.Body, indent, handle.Body is Expr.Handle ? PrecLetIfLambda + 1 : 0, preferPipelines, options);
         sb.Append(" with\n");
 
         foreach (var arm in handle.Arms)
@@ -1029,21 +1058,7 @@ public static class Formatter
             }
 
             sb.Append(") -> ");
-            if (IsSingleLine(arm.Body, preferPipelines))
-            {
-                WriteExprInline(sb, arm.Body, indent + options.IndentSize, 0, preferPipelines, options);
-                sb.Append('\n');
-            }
-            else
-            {
-                sb.Append('\n');
-                WriteIndent(sb, indent + options.IndentSize * 2, options);
-                WriteExpr(sb, arm.Body, indent + options.IndentSize * 2, 0, preferPipelines, options);
-                if (!EndsWithNewLine(sb, "\n"))
-                {
-                    sb.Append('\n');
-                }
-            }
+            WriteArmBody(sb, arm.Body, indent, preferPipelines, options);
         }
 
         if (sb.Length > 0 && sb[^1] == '\n')
@@ -1055,6 +1070,26 @@ public static class Formatter
         {
             sb.Append(')');
         }
+    }
+
+    private static void WriteArmBody(StringBuilder sb, Expr body, int indent, bool preferPipelines, FormattingOptions options)
+    {
+        bool wrap = ContainsBitwiseOr(body);
+        if (IsSingleLine(body, preferPipelines))
+        {
+            if (wrap) sb.Append('(');
+            WriteExprInline(sb, body, indent + options.IndentSize, 0, preferPipelines, options);
+            if (wrap) sb.Append(')');
+            sb.Append('\n');
+            return;
+        }
+
+        sb.Append('\n');
+        WriteIndent(sb, indent + options.IndentSize * 2, options);
+        if (wrap) sb.Append('(');
+        WriteExpr(sb, body, indent + options.IndentSize * 2, 0, preferPipelines, options);
+        if (wrap) sb.Append(')');
+        if (!EndsWithNewLine(sb, "\n")) sb.Append('\n');
     }
 
     private static void WritePattern(StringBuilder sb, Pattern pattern)
@@ -1456,7 +1491,8 @@ public static class Formatter
             {
                 sb.Append(", ");
             }
-            WriteExprInline(sb, elements[i], indent, 0, preferPipelines, options);
+            int elementPrecedence = ContainsRecordUpdate(elements[i]) ? PrecWith + 1 : 0;
+            WriteExprInline(sb, elements[i], indent, elementPrecedence, preferPipelines, options);
         }
         sb.Append(close);
     }

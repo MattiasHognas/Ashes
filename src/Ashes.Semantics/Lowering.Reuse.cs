@@ -375,6 +375,11 @@ public sealed partial class Lowering
         string targetConstructor,
         SourceLocation? location)
     {
+        if (!_configuration.EnableReuse)
+        {
+            return new ReuseTokenMatch(Token: null, CandidateCompared: false);
+        }
+
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
             ReuseToken token = _reuseTokens[i];

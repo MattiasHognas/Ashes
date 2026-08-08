@@ -13,6 +13,7 @@ public sealed partial class Lowering
     public readonly record struct HoverTypeInfo(TextSpan Span, string? Name, TypeRef Type);
 
     private readonly Diagnostics _diag;
+    private readonly LoweringConfiguration _configuration;
     private int _nextTempSlot;
     private int _nextLocalSlot;
     private int _nextTypeVar;
@@ -648,9 +649,11 @@ public sealed partial class Lowering
         Diagnostics diag,
         IReadOnlySet<string>? importedStdModules = null,
         IReadOnlyDictionary<string, string>? moduleAliases = null,
-        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null)
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null,
+        LoweringConfiguration? configuration = null)
     {
         _diag = diag;
+        _configuration = configuration ?? LoweringConfiguration.Default;
         _hasAshesIO = importedStdModules?.Contains("Ashes.IO") == true;
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _constructorModulesByName = constructorModulesByName ?? new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);

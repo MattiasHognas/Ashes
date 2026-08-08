@@ -668,7 +668,7 @@ public sealed class Parser
         }
 
         var name = Consume(TokenKind.Ident).Text;
-        if (_current.Kind == TokenKind.LParen)
+        if (_current.Kind == TokenKind.LParen && !StartsSourceLine(_current.Position))
         {
             Consume(TokenKind.LParen);
             var args = new List<TypeExpr>();

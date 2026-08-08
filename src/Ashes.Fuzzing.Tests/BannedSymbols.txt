@@ -1,0 +1,2 @@
+# Banned symbols for test projects.
+T:TUnit.Core.NotInParallelAttribute;[NotInParallel] is banned - fix the root cause instead

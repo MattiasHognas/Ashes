@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Ashes.Fuzzing</AssemblyName>
+    <RootNamespace>Ashes.Fuzzing</RootNamespace>
+    <NoWarn>$(NoWarn);MA0015;MA0051;S2344;S2681;S3060</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ashes.Formatter\Ashes.Formatter.csproj" />
+    <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Ashes.Fuzzing.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

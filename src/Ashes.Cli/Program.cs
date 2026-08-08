@@ -166,13 +166,19 @@ static byte[] CompileToImage(
     IReadOnlyDictionary<string, string>? moduleAliases = null,
     CombinedCompilationLayout? sourceLayout = null,
     ExplainRequest? explain = null,
-    IrDumpRequest? emitIr = null)
+    IrDumpRequest? emitIr = null,
+    bool disableReuse = false)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
     diag.ThrowIfAny();
 
-    var lowering = new Lowering(diag, importedStdModules, moduleAliases, sourceLayout?.ConstructorModules);
+    var lowering = new Lowering(
+        diag,
+        importedStdModules,
+        moduleAliases,
+        sourceLayout?.ConstructorModules,
+        new LoweringConfiguration(EnableReuse: !disableReuse));
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);
@@ -240,11 +246,17 @@ static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModul
     return (layout, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
 }
 
-static byte[] CompileProjectToImage(AshesProject project, string targetId, BackendCompileOptions? backendOptions = null, ExplainRequest? explain = null, IrDumpRequest? emitIr = null)
+static byte[] CompileProjectToImage(
+    AshesProject project,
+    string targetId,
+    BackendCompileOptions? backendOptions = null,
+    ExplainRequest? explain = null,
+    IrDumpRequest? emitIr = null,
+    bool disableReuse = false)
 {
     var plan = ProjectSupport.BuildCompilationPlan(project);
     var layout = ProjectSupport.BuildCompilationLayout(plan);
-    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout, explain, emitIr);
+    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout, explain, emitIr, disableReuse);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
@@ -636,7 +648,7 @@ async Task<int> RunCompileAsync(string[] a)
     var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
 
     var sw = Stopwatch.StartNew();
-    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions, arguments.Explain, arguments.EmitIr).ConfigureAwait(false);
+    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions, arguments.Explain, arguments.EmitIr, arguments.DisableReuse).ConfigureAwait(false);
     if (image is null)
     {
         return 1;
@@ -672,7 +684,7 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     bool explicitOpt = false;
-    bool debugMode = false;
+    bool debugMode = false, disableReuse = false;
     string? outPath = null;
     string? expr = null;
     string? inputFile = null;
@@ -691,7 +703,7 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
         if ((string.Equals(arg, "-o", StringComparison.Ordinal) || string.Equals(arg, "--out", StringComparison.Ordinal)) && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
-        if (arg is "--debug" or "-g") { debugMode = true; continue; }
+        if (TryParseDebugOptions(arg, ref debugMode, ref disableReuse)) { continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
@@ -700,7 +712,7 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
     }
 
     optimizationLevel = ResolveDebugOptimizationLevel(optimizationLevel, debugMode, explicitOpt);
-    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, reports.ToExplainRequest(), reports.ToIrDumpRequest());
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, reports.ToExplainRequest(), reports.ToIrDumpRequest(), disableReuse);
 }
 
 // Either compiler-report option, so a parser pays one line for both.
@@ -735,6 +747,21 @@ static bool TryParseEmitIrOption(string[] a, ref int i, CompilerReportOptions re
     }
 
     return true;
+}
+
+static bool TryParseDebugOptions(string argument, ref bool debugMode, ref bool disableReuse)
+{
+    if (argument is "--debug" or "-g")
+    {
+        debugMode = true;
+        return true;
+    }
+    if (string.Equals(argument, "--debug-disable-reuse", StringComparison.Ordinal))
+    {
+        disableReuse = true;
+        return true;
+    }
+    return false;
 }
 
 // Accumulates one `--explain <kind>` option. Repeats deduplicate through the set, and a later
@@ -800,7 +827,15 @@ static async Task<(AshesProject? Project, string Target, BackendCompileOptions O
     return (project, target, backendOptions);
 }
 
-static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? inputFile, string? expr, string target, BackendCompileOptions backendOptions, ExplainRequest? explain = null, IrDumpRequest? emitIr = null)
+static async Task<byte[]?> CompileCliInputAsync(
+    AshesProject? project,
+    string? inputFile,
+    string? expr,
+    string target,
+    BackendCompileOptions backendOptions,
+    ExplainRequest? explain = null,
+    IrDumpRequest? emitIr = null,
+    bool disableReuse = false)
 {
     if (project is null)
     {
@@ -811,7 +846,7 @@ static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? i
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
             diagnosticLayout = prepared.Layout;
-            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout, explain, emitIr);
+            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout, explain, emitIr, disableReuse);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -827,7 +862,7 @@ static async Task<byte[]?> CompileCliInputAsync(AshesProject? project, string? i
 
     try
     {
-        return CompileProjectToImage(project, target, backendOptions);
+        return CompileProjectToImage(project, target, backendOptions, explain, emitIr, disableReuse);
     }
     catch (CompileDiagnosticException ex)
     {
@@ -2094,7 +2129,8 @@ sealed record CompileCommandArguments(
     long? ParallelStackBytes,
     long? ParallelWorkers,
     ExplainRequest Explain,
-    IrDumpRequest EmitIr);
+    IrDumpRequest EmitIr,
+    bool DisableReuse = false);
 
 
 
