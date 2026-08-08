@@ -240,6 +240,9 @@ what lowering first emitted. `reuse` reports specialization decisions and why a
 candidate was rejected. `memory` correlates all three with the physical
 representation each value received.
 
+`rc` counts exactly the instructions `--emit-ir final` prints, so reach for the report when you want
+the magnitude and the dump when you want to know which operations on which values.
+
 To read the IR itself rather than a report about it, use `--emit-ir lowered` or `--emit-ir final`.
 Requesting both and diffing them shows exactly what the Ashes-level optimizer changed, which is
 usually the fastest way to understand a placement or reuse decision:
