@@ -1,0 +1,75 @@
+name: scheduled fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * 2,4,6"
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases per seed for the Perceus campaign
+        required: false
+        default: "10000"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Provision host LLVM
+        run: bash scripts/download-llvm-native.sh 22 x64
+
+      - name: Build fuzz runner
+        run: dotnet build src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release
+
+      - name: Perceus and combination campaign
+        env:
+          FUZZ_CASES: ${{ inputs.cases || '10000' }}
+        run: |
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile perceus --cases "$FUZZ_CASES" --seed 880000 --seeds 4 --max-nodes 120 \
+            --compiler-timeout 30 --program-timeout 5
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile combinations --cases "$FUZZ_CASES" --seed 890000 --seeds 2 --max-nodes 120
+
+      - name: Invalid-source campaign
+        run: |
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile invalid-source --cases 5000 --seed 900000 --seeds 2 --max-nodes 80
+
+      - name: Async, capability, and resource campaigns
+        run: |
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile async --cases 5000 --seed 905000 --seeds 2 --max-nodes 100
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile capabilities --cases 5000 --seed 906000 --seeds 2 --max-nodes 100
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile resources --cases 1000 --seed 907000 --seeds 2 --max-nodes 100
+
+      - name: Checked-in fuzz corpus
+        run: dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- corpus
+
+      - name: Native differential campaign
+        run: |
+          dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release --no-build -- \
+            run --profile differential --cases 50 --seed 910000 --seeds 2 --max-nodes 60 \
+            --compiler-timeout 30 --program-timeout 5
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ashes-fuzz-failures-${{ github.run_id }}
+          path: artifacts/fuzz/
+          if-no-files-found: warn
+          retention-days: 14

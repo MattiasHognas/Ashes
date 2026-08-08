@@ -250,6 +250,57 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_parenthesize_bitwise_or_in_match_case_body()
+    {
+        Expr body = new Expr.Let(
+            "x",
+            new Expr.IntLit(1),
+            new Expr.BitwiseOr(new Expr.Var("x"), new Expr.IntLit(2)));
+        Expr match = new Expr.Match(
+            new Expr.IntLit(0),
+            [new MatchCase(new Pattern.Wildcard(), body)]);
+
+        string formatted = Ashes.Formatter.Formatter.Format(match);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(formatted, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(parsed).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_parenthesize_record_update_in_tuple_element()
+    {
+        Expr update = new Expr.Let(
+            "record",
+            new Expr.RecordLit("Point", [("x", new Expr.IntLit(1))]),
+            new Expr.RecordUpdate(new Expr.Var("record"), [("x", new Expr.IntLit(2))]));
+        Expr tuple = new Expr.TupleLit([update, new Expr.BoolLit(true)]);
+
+        string formatted = Ashes.Formatter.Formatter.Format(tuple);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(formatted, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(parsed).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_parenthesize_nested_handler_body()
+    {
+        HandlerArm innerReturn = new(null, "return", [new Pattern.Var("inner")], new Expr.Var("inner"));
+        HandlerArm outerReturn = new(null, "return", [new Pattern.Var("outer")], new Expr.Var("outer"));
+        Expr nested = new Expr.Handle(new Expr.Handle(new Expr.IntLit(1), [innerReturn]), [outerReturn]);
+
+        string formatted = Ashes.Formatter.Formatter.Format(nested);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(formatted, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(parsed).ShouldBe(formatted);
+    }
+
+    [Test]
     public void Format_should_write_call_chains_as_pipeline()
     {
         var formatted = Ashes.Formatter.Formatter.Format(

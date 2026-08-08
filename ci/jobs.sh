@@ -39,6 +39,63 @@ test() {
     dotnet run --project src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
     dotnet run --project src/Ashes.Cli.Tests/Ashes.Cli.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
     dotnet run --project src/Ashes.Registry.Tests/Ashes.Registry.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
+    dotnet run --project src/Ashes.Fuzzing.Tests/Ashes.Fuzzing.Tests.csproj --configuration Release -- --results-directory TestResults --report-trx
+  "
+}
+
+# Fast fixed-seed fuzz pass used by the pre-commit pipeline.
+fuzz_smoke() {
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- smoke --seed 677221 --cases 40 --max-nodes 40
+  "
+}
+
+# Standard deterministic suite: cheap phases dominate, with bounded native differential coverage.
+fuzz() {
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile syntax --seed 41001 --cases 500 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile semantics --seed 41002 --cases 500 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile perceus --seed 41003 --cases 500 --max-nodes 100
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile combinations --seed 41004 --cases 500 --max-nodes 100
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile async --seed 41005 --cases 100 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile capabilities --seed 41006 --cases 100 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile resources --seed 41007 --cases 50 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile invalid-source --seed 41008 --cases 250 --max-nodes 80
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile compile --seed 41009 --cases 10 --max-nodes 50
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile differential --seed 41010 --cases 5 --max-nodes 50
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- corpus
+  "
+}
+
+# Long/manual campaigns own their budget; preserve every CLI argument exactly.
+fuzz_long() {
+  local forwarded="" arg quoted
+  for arg in "$@"; do
+    printf -v quoted '%q' "$arg"
+    forwarded+=" $quoted"
+  done
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run$forwarded
+  "
+}
+
+fuzz_replay() {
+  local seed="${1:?usage: fuzz_replay <seed> <case> [profile]}"
+  local case_index="${2:?usage: fuzz_replay <seed> <case> [profile]}"
+  local profile="${3:-all}"
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- replay --seed '$seed' --case '$case_index' --profile '$profile'
+  "
+}
+
+fuzz_corpus() {
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- corpus
   "
 }
 
@@ -346,6 +403,7 @@ matrix_one() {
 ci_quick() {
   build
   test
+  fuzz_smoke
 }
 
 # Full PR-equivalent pipeline (pull-request.yaml).
@@ -353,6 +411,7 @@ ci() {
   build
   fmt_check
   test
+  fuzz
   deps_check
   sast
   ext
@@ -681,7 +740,7 @@ release_github() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | deps_check | sast | ext | docs | publish_cli | matrix | matrix_one | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | docs | publish_cli | matrix | matrix_one | fuzz | fuzz_long | fuzz_replay | fuzz_corpus | fuzz_smoke | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1

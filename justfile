@@ -4,6 +4,8 @@
 #   just images          # build the three runner images (once)
 #   just provision       # fetch LLVM native libs into runtimes/ (once / on bump)
 #   just ci-quick        # fast build + test
+#   just fuzz            # deterministic bounded compiler fuzz suite
+#   just fuzz-long -- --profile perceus --cases 100000 --seed 12345
 #   just ci              # full PR-equivalent pipeline
 #   just release 1.2.3   # build release artifacts into artifacts/release/ (local)
 #   just release-github  # build + tag + publish a GitHub Release
@@ -53,6 +55,22 @@ fmt-check:
 test:
     ci/jobs.sh test
 
+# Deterministic bounded fuzz suite.
+fuzz:
+    ci/jobs.sh fuzz
+
+# Extended configurable fuzz campaign; arguments are forwarded to Ashes.Fuzzing.
+fuzz-long *args:
+    ci/jobs.sh fuzz_long {{args}}
+
+# Replay one reported failure exactly.
+fuzz-replay seed case profile="all":
+    ci/jobs.sh fuzz_replay {{seed}} {{case}} {{profile}}
+
+# Run checked-in minimized fuzz regressions.
+fuzz-corpus:
+    ci/jobs.sh fuzz_corpus
+
 coverage:
     ci/jobs.sh coverage
 
@@ -83,7 +101,7 @@ matrix:
 matrix-one arch:
     ci/jobs.sh matrix_one {{arch}}
 
-# Fast inner loop (build + test); used by the pre-commit hook.
+# Fast inner loop (build + tests + fixed-seed fuzz smoke); used by the pre-commit hook.
 ci-quick:
     ci/jobs.sh ci_quick
 

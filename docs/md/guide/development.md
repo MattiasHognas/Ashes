@@ -1,5 +1,8 @@
 # Development
 
+For deterministic compiler property testing, campaign replay, shrinking, and corpus promotion, see
+[Fuzz testing](fuzz-testing.md).
+
 This guide covers everything needed to build, test, and develop Ashes
 locally.
 

@@ -108,6 +108,26 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void Parse_should_end_capability_signature_before_parenthesized_program_body()
+    {
+        const string source = """
+            capability Value(a) =
+                | get : Unit -> a
+
+            (handle perform Value.get(Unit) with
+                | Value.get(_) -> resume(1)
+                | return(value) -> value)
+            """;
+        Diagnostics diagnostics = new();
+
+        Ashes.Frontend.Program program = new Parser(source, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.Items.Count.ShouldBe(1);
+        program.Body.ShouldBeOfType<Expr.Handle>();
+    }
+
+    [Test]
     public void Parse_should_support_unary_negation_with_higher_precedence_than_multiplication()
     {
         var expr = Parse("-1 * 2").ShouldBeOfType<Expr.Multiply>();

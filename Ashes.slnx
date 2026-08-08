@@ -4,6 +4,8 @@
   <Project Path="src/Ashes.Cli.Tests/Ashes.Cli.Tests.csproj" />
   <Project Path="src/Ashes.Dap/Ashes.Dap.csproj" />
   <Project Path="src/Ashes.Formatter/Ashes.Formatter.csproj" />
+  <Project Path="src/Ashes.Fuzzing/Ashes.Fuzzing.csproj" />
+  <Project Path="src/Ashes.Fuzzing.Tests/Ashes.Fuzzing.Tests.csproj" />
   <Project Path="src/Ashes.Frontend/Ashes.Frontend.csproj" />
   <Project Path="src/Ashes.Lsp/Ashes.Lsp.csproj" />
   <Project Path="src/Ashes.Lsp.Tests/Ashes.Lsp.Tests.csproj" />

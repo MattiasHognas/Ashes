@@ -13,7 +13,11 @@ public static class BuiltinRegistry
     private static readonly HashSet<string> PrimitiveTypeNames = new(StringComparer.Ordinal)
     {
         "Float",
-        "Bytes"
+        "Bytes",
+        "u8",
+        "u16",
+        "u32",
+        "u64"
     };
 
     /// <summary>
@@ -849,6 +853,12 @@ public static class BuiltinRegistry
         if (string.Equals(typeName, "Bytes", StringComparison.Ordinal))
         {
             type = new TypeRef.TBytes();
+            return true;
+        }
+
+        if (typeName is "u8" or "u16" or "u32" or "u64")
+        {
+            type = new TypeRef.TUInt(int.Parse(typeName.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture));
             return true;
         }
 
