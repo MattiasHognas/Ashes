@@ -76,6 +76,32 @@ internal sealed class FuzzShrinker
         for (int index = 0; index < source.Program.Items.Count; index++)
         {
             TopLevelItem item = source.Program.Items[index];
+            if (item is TopLevelItem.Type typeItem)
+            {
+                string[] declaredNames = [typeItem.Decl.Name, .. typeItem.Decl.Constructors.Select(constructor => constructor.Name)];
+                if (!ReferencesAnyIdentifierAfter(source.Program, index, declaredNames))
+                {
+                    TopLevelItem[] withoutType = source.Program.Items.Where((_, itemIndex) => itemIndex != index).ToArray();
+                    yield return CreateCandidate(source, source.Program with { Items = withoutType }, "shrink:type-remove");
+                }
+                else if (!typeItem.Decl.IsRecord && typeItem.Decl.Constructors.Count > 1)
+                {
+                    foreach (TypeConstructor constructor in typeItem.Decl.Constructors)
+                    {
+                        if (ReferencesAnyIdentifierAfter(source.Program, index, [constructor.Name]))
+                        {
+                            continue;
+                        }
+
+                        TypeConstructor[] constructors = typeItem.Decl.Constructors
+                            .Where(candidate => !ReferenceEquals(candidate, constructor))
+                            .ToArray();
+                        TopLevelItem[] items = [.. source.Program.Items];
+                        items[index] = typeItem with { Decl = typeItem.Decl with { Constructors = constructors } };
+                        yield return CreateCandidate(source, source.Program with { Items = items }, "shrink:constructor-remove");
+                    }
+                }
+            }
             if (CanRemove(source.Program, index))
             {
                 TopLevelItem[] withoutItem = source.Program.Items.Where((_, itemIndex) => itemIndex != index).ToArray();
@@ -280,6 +306,30 @@ internal sealed class FuzzShrinker
                 }
                 break;
             case Expr.Match match:
+                int wildcardIndex = -1;
+                for (int index = 0; index < match.Cases.Count; index++)
+                {
+                    if (match.Cases[index].Guard is null && match.Cases[index].Pattern is Pattern.Wildcard)
+                    {
+                        wildcardIndex = index;
+                        break;
+                    }
+                }
+                if (wildcardIndex >= 0)
+                {
+                    for (int index = 0; index < wildcardIndex; index++)
+                    {
+                        if (match.Cases[index].Guard is null && EquivalentExpression(
+                            match.Cases[index].Body,
+                            match.Cases[wildcardIndex].Body))
+                        {
+                            yield return match with
+                            {
+                                Cases = match.Cases.Where((_, caseIndex) => caseIndex != index).ToArray(),
+                            };
+                        }
+                    }
+                }
                 for (int index = 0; index < match.Cases.Count; index++)
                 {
                     MatchCase matchCase = match.Cases[index];
@@ -289,6 +339,47 @@ internal sealed class FuzzShrinker
                         cases[index] = matchCase with { Body = child };
                         yield return match with { Cases = cases };
                     }
+                }
+                break;
+            case Expr.Cons cons when type is AshesType.List listType:
+                yield return cons.Tail;
+                foreach (Expr child in ExpressionCandidates(cons.Head, listType.Element, scope))
+                {
+                    yield return cons with { Head = child };
+                }
+                foreach (Expr child in ExpressionCandidates(cons.Tail, type, scope))
+                {
+                    yield return cons with { Tail = child };
+                }
+                break;
+            case Expr.Add add:
+                foreach (Expr child in ExpressionCandidates(add.Left, type, scope))
+                {
+                    yield return add with { Left = child };
+                }
+                foreach (Expr child in ExpressionCandidates(add.Right, type, scope))
+                {
+                    yield return add with { Right = child };
+                }
+                break;
+            case Expr.Subtract subtract:
+                foreach (Expr child in ExpressionCandidates(subtract.Left, type, scope))
+                {
+                    yield return subtract with { Left = child };
+                }
+                foreach (Expr child in ExpressionCandidates(subtract.Right, type, scope))
+                {
+                    yield return subtract with { Right = child };
+                }
+                break;
+            case Expr.Multiply multiply:
+                foreach (Expr child in ExpressionCandidates(multiply.Left, type, scope))
+                {
+                    yield return multiply with { Left = child };
+                }
+                foreach (Expr child in ExpressionCandidates(multiply.Right, type, scope))
+                {
+                    yield return multiply with { Right = child };
                 }
                 break;
             case Expr.IntLit integer when integer.Value != 0:
@@ -347,6 +438,41 @@ internal sealed class FuzzShrinker
         IEnumerable<Expr> laterExpressions = program.Items.Skip(index + 1).SelectMany(ItemExpressions).Append(program.Body);
         return names.All(name => laterExpressions.All(expression => !ReferencesFreeName(expression, name)));
     }
+
+    private static bool ReferencesAnyIdentifierAfter(
+        FrontendProgram program,
+        int index,
+        IReadOnlyCollection<string> names)
+    {
+        FrontendProgram later = new(program.Items.Skip(index + 1).ToArray(), program.Body);
+        string source = AshesFormatter.Format(later);
+        int position = 0;
+        while (position < source.Length)
+        {
+            if (!char.IsLetter(source[position]) && source[position] != '_')
+            {
+                position++;
+                continue;
+            }
+
+            int end = position + 1;
+            while (end < source.Length && (char.IsLetterOrDigit(source[end]) || source[end] == '_'))
+            {
+                end++;
+            }
+            if (names.Contains(source[position..end], StringComparer.Ordinal))
+            {
+                return true;
+            }
+            position = end;
+        }
+        return false;
+    }
+
+    private static bool EquivalentExpression(Expr left, Expr right) => string.Equals(
+        AshesFormatter.Format(new FrontendProgram(Array.Empty<TopLevelItem>(), left)),
+        AshesFormatter.Format(new FrontendProgram(Array.Empty<TopLevelItem>(), right)),
+        StringComparison.Ordinal);
 
     private static IEnumerable<Expr> ItemExpressions(TopLevelItem item) => item switch
     {
