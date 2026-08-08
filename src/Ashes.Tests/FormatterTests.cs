@@ -301,6 +301,26 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_parenthesize_match_handler_body()
+    {
+        Expr match = new Expr.Match(
+            new Expr.BoolLit(true),
+            [
+                new MatchCase(new Pattern.BoolLit(true), new Expr.IntLit(1)),
+                new MatchCase(new Pattern.BoolLit(false), new Expr.IntLit(0)),
+            ]);
+        HandlerArm returnArm = new(null, "return", [new Pattern.Var("handled")], new Expr.Var("handled"));
+        Expr handled = new Expr.Handle(match, [returnArm]);
+
+        string formatted = Ashes.Formatter.Formatter.Format(handled);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(formatted, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(parsed).ShouldBe(formatted);
+    }
+
+    [Test]
     public void Format_should_write_call_chains_as_pipeline()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
