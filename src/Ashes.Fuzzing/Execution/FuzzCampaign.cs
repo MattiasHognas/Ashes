@@ -26,7 +26,7 @@ internal sealed class FuzzCampaign
     internal async Task<int> RunAsync(FuzzConfiguration configuration, string repositoryRoot, CancellationToken cancellationToken)
     {
         FuzzProfile requestedProfile = _profiles.Get(configuration.Profile);
-        FuzzCoverage coverage = new();
+        FuzzCoverage coverage = new(requestedProfile.EnabledRules, requestedProfile.EnabledCombinations);
         FuzzExecutionContext context = new(repositoryRoot, configuration.Target, configuration.CompilerTimeout, configuration.ProgramTimeout, 1024 * 1024, new CompilerExecution());
         int first = configuration.Command == FuzzCommandKind.Replay ? configuration.CaseIndex : 0;
         int count = configuration.Command == FuzzCommandKind.Replay ? 1 : configuration.Cases;

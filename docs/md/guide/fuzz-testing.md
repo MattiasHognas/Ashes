@@ -108,5 +108,8 @@ The extension points are intentionally local:
 Rule and template IDs are ordinally sorted, duplicate IDs fail immediately, profiles validate their
 references at startup, and tests require combination templates to record every feature they claim.
 Case indexes also rotate a deterministic coverage preference across enabled rules and templates;
-their ordinary weights remain active, but rare entries receive a repeatable boost without making
-replay depend on mutable campaign history.
+their ordinary weights remain active, while combination-heavy profiles select a compatible result
+type and force the preferred template once per rotation. Template hole budgets reserve node and
+depth space for the surrounding shape, so the completed template is not discarded during final
+budget validation. Coverage summaries include zero-hit rule and template counts, making incomplete
+campaign coverage visible without making replay depend on mutable campaign history.

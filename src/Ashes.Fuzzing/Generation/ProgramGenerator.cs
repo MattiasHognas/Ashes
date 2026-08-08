@@ -27,20 +27,29 @@ internal sealed class ProgramGenerator
         string preferredRule = enabledRuleIds[caseIndex % enabledRuleIds.Length];
         string[] enabledCombinationIds = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
         string? preferredCombination = enabledCombinationIds.Length == 0 ? null : enabledCombinationIds[caseIndex % enabledCombinationIds.Length];
+        bool forcePreferredCombination = preferredCombination is not null && profile.MinimumFeatureCount > 0;
         GenerationCoverageGuidance coverage = new(enabledRuleIds, enabledCombinationIds);
         CombinationGenerator? combinations = profile.EnabledCombinations.Count == 0
             ? null
             : new CombinationGenerator(_combinations, profile.EnabledCombinations, coverage, preferredCombination);
-        ExpressionGenerator expressions = new(_rules, profile.EnabledRules, coverage, combinations, preferredRule);
+        ExpressionGenerator expressions = new(
+            _rules,
+            profile.EnabledRules,
+            coverage,
+            combinations,
+            preferredRule,
+            forcePreferredCombination);
         FuzzRandom random = new(caseSeed);
         GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
-        AshesType type = profile.Types[random.Next(profile.Types.Count)];
-        GenerationBudget expressionBudget = budget.Descend(2);
+        int preludeNodes = AstCoverageMetrics.Measure(new FrontendProgram(prelude.Items, new Expr.IntLit(0))).Nodes - 1;
+        int availableExpressionNodes = Math.Max(2, maximumNodes - preludeNodes - 2);
+        GenerationBudget expressionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
+        AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, prelude.Context, expressionBudget, random);
         GenerationResult<Expr> generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
         for (int attempt = 1; generated.Features.Count < profile.MinimumFeatureCount && attempt < 16; attempt++)
         {
             random = new FuzzRandom(caseSeed + (ulong)attempt);
-            type = profile.Types[random.Next(profile.Types.Count)];
+            type = SelectType(profile, preferredCombination, forcePreferredCombination, prelude.Context, expressionBudget, random);
             generated = expressions.Generate(type, prelude.Context, expressionBudget, random);
         }
         if (generated.Features.Count < profile.MinimumFeatureCount)
@@ -73,6 +82,31 @@ internal sealed class ProgramGenerator
                 $"Generation budget {maximumNodes} is too small for the minimum valid '{type}' program in profile '{profile.Id}': {string.Join(" ", budgetErrors)}");
         }
         return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget);
+    }
+
+    private AshesType SelectType(
+        FuzzProfile profile,
+        string? preferredCombination,
+        bool forcePreferredCombination,
+        GenerationContext context,
+        GenerationBudget budget,
+        FuzzRandom random)
+    {
+        if (forcePreferredCombination && preferredCombination is not null)
+        {
+            ICombinationTemplate template = _combinations.Get(preferredCombination);
+            AshesType[] compatible = profile.Types
+                .Where(type => template.CanApply(type, context, budget))
+                .OrderBy(type => type.ToString(), StringComparer.Ordinal)
+                .ToArray();
+            if (compatible.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Profile '{profile.Id}' cannot supply a compatible type for preferred combination '{preferredCombination}'.");
+            }
+            return compatible[random.Next(compatible.Length)];
+        }
+        return profile.Types[random.Next(profile.Types.Count)];
     }
 
     private static GenerationResult<Expr> ConstrainRootType(GenerationResult<Expr> generated, AshesType type)

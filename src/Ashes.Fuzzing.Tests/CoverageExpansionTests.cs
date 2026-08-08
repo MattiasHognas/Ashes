@@ -70,6 +70,23 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void PreferredCombinationRotationExercisesEveryStableTemplateInOneCycle()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("combinations");
+        string[] enabled = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+
+        for (int caseIndex = 0; caseIndex < enabled.Length; caseIndex++)
+        {
+            GeneratedFuzzCase generated = fixture.Generator.Generate(424242, caseIndex, profile, 120);
+
+            generated.Trace.Entries.ShouldContain(
+                "combination:" + enabled[caseIndex],
+                $"case {caseIndex} did not exercise preferred template '{enabled[caseIndex]}'.");
+        }
+    }
+
+    [Test]
     public void ReuseDisabledLoweringRemovesAllocReusingButKeepsProgramValid()
     {
         const string source = """
@@ -129,7 +146,9 @@ public sealed class CoverageExpansionTests
     public void CoverageReportsRulesCombinationsAndFeatureInteractions()
     {
         var fixture = TestFixture.Create();
-        FuzzCoverage coverage = new();
+        FuzzCoverage coverage = new(
+            [.. fixture.Rules.Rules.Select(rule => rule.Id), "missing-rule"],
+            [.. fixture.Combinations.Templates.Select(template => template.Id), "missing-template"]);
         for (int index = 0; index < 80; index++)
         {
             GeneratedFuzzCase generated = fixture.Generator.Generate(314159, index, fixture.Profiles.Get("combinations"), 80);
@@ -146,6 +165,8 @@ public sealed class CoverageExpansionTests
         coverage.MaximumDepth.ShouldBeGreaterThan(0);
         coverage.CoveredRuleCount.ShouldBeLessThanOrEqualTo(fixture.Rules.Rules.Count);
         coverage.CoveredCombinationCount.ShouldBeLessThanOrEqualTo(fixture.Combinations.Templates.Count);
+        coverage.MissingRules.ShouldContain("missing-rule");
+        coverage.MissingCombinations.ShouldContain("missing-template");
     }
 
     [Test]

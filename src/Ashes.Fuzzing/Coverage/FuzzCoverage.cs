@@ -5,11 +5,25 @@ namespace Ashes.Fuzzing.Coverage;
 internal sealed class FuzzCoverage
 {
     private readonly SortedDictionary<string, long> _counts = new(StringComparer.Ordinal);
+    internal FuzzCoverage(IEnumerable<string>? rules = null, IEnumerable<string>? combinations = null)
+    {
+        foreach (string rule in rules ?? [])
+        {
+            _counts.TryAdd("rule:" + rule, 0);
+        }
+        foreach (string combination in combinations ?? [])
+        {
+            _counts.TryAdd("combination:" + combination, 0);
+        }
+    }
+
     internal int MaximumDepth { get; private set; }
     internal int MaximumNodeCount { get; private set; }
     internal int MaximumCombinationCount { get; private set; }
     internal int CoveredRuleCount => CountKeys("rule:");
     internal int CoveredCombinationCount => CountKeys("combination:");
+    internal IReadOnlyList<string> MissingRules => Missing("rule:");
+    internal IReadOnlyList<string> MissingCombinations => Missing("combination:");
 
     internal void Record(GeneratedFuzzCase testCase, IEnumerable<string> oracles)
     {
@@ -56,10 +70,16 @@ internal sealed class FuzzCoverage
         int pairs = CountKeys("pair:");
         int triples = CountKeys("triple:");
         int oracles = CountKeys("oracle:");
-        return $"coverage: types={types}, rules={rules}, combinations={combinations}, pairs={pairs}, triples={triples}, oracles={oracles}, max-nodes={MaximumNodeCount}, max-depth={MaximumDepth}, max-combinations={MaximumCombinationCount}; features: {top}";
+        return $"coverage: types={types}, rules={rules}, combinations={combinations}, missing-rules={MissingRules.Count}, missing-combinations={MissingCombinations.Count}, pairs={pairs}, triples={triples}, oracles={oracles}, max-nodes={MaximumNodeCount}, max-depth={MaximumDepth}, max-combinations={MaximumCombinationCount}; features: {top}";
     }
 
-    private int CountKeys(string prefix) => _counts.Keys.Count(key => key.StartsWith(prefix, StringComparison.Ordinal));
+    private int CountKeys(string prefix) => _counts.Count(pair =>
+        pair.Value > 0 && pair.Key.StartsWith(prefix, StringComparison.Ordinal));
+
+    private IReadOnlyList<string> Missing(string prefix) => _counts
+        .Where(pair => pair.Value == 0 && pair.Key.StartsWith(prefix, StringComparison.Ordinal))
+        .Select(pair => pair.Key[prefix.Length..])
+        .ToArray();
 
     private void Increment(string key) => _counts[key] = _counts.GetValueOrDefault(key) + 1;
 }
