@@ -33,7 +33,8 @@ internal sealed class DifferentialOptimizationOracle : IFuzzOracle
         (Execution.ProcessResult compile2, Execution.ProcessResult? run2) = await context.Compiler.CompileAndRunAsync(observableSource, context.RepositoryRoot, context.Target, "-O2", context.CompilerTimeout, context.ProgramTimeout, context.MaximumOutputBytes, cancellationToken).ConfigureAwait(false);
         if (compile0.ExitCode != 0 || compile2.ExitCode != 0 || compile0.TimedOut || compile2.TimedOut)
         {
-            return FuzzOracleResult.Failed(Id, "One compiler configuration failed.", compile0.StandardOutput + compile2.StandardOutput, compile0.StandardError + compile2.StandardError);
+            string message = $"Compiler configuration failure: -O0 {Describe(compile0)}; -O2 {Describe(compile2)}.";
+            return FuzzOracleResult.Failed(Id, message, compile0.StandardOutput + compile2.StandardOutput, compile0.StandardError + compile2.StandardError);
         }
         if (run0 is null || run2 is null)
         {
@@ -42,6 +43,10 @@ internal sealed class DifferentialOptimizationOracle : IFuzzOracle
         bool equal = run0.ExitCode == run2.ExitCode && string.Equals(run0.StandardOutput, run2.StandardOutput, StringComparison.Ordinal) && string.Equals(run0.StandardError, run2.StandardError, StringComparison.Ordinal);
         return equal ? FuzzOracleResult.Passed(Id) : FuzzOracleResult.Failed(Id, "-O0 and -O2 produced different observable behavior.", run0.StandardOutput + run2.StandardOutput, run0.StandardError + run2.StandardError);
     }
+
+    private static string Describe(Execution.ProcessResult result) => result.TimedOut
+        ? "timed out"
+        : $"exited with {result.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 }
 
 internal sealed class DifferentialReuseOracle : IFuzzOracle

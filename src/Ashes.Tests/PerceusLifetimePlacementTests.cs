@@ -147,6 +147,36 @@ public sealed class PerceusLifetimePlacementTests
         placed.Instructions[deadLabel + 1].ShouldBeOfType<IrInst.RcDrop>();
     }
 
+    [Test]
+    public void Recursive_match_arm_does_not_place_owner_drop_on_sibling_path()
+    {
+        var function = Function([
+            new IrInst.LoadConstBool(0, true),
+            new IrInst.Label("loop"),
+            new IrInst.JumpIfFalse(0, "empty"),
+            new IrInst.LoadConstStr(1, "owned"),
+            new IrInst.StoreLocal(0, 1),
+            new IrInst.LoadLocal(2, 0),
+            new IrInst.PrintStr(2),
+            new IrInst.Jump("loop"),
+            new IrInst.Label("empty"),
+            new IrInst.LoadConstInt(3, 0),
+            new IrInst.LoadLocal(4, 0),
+            new IrInst.RcDrop(4, "String", 0),
+            new IrInst.Return(3),
+        ], tempCount: 5);
+
+        IrFunction placed = PerceusLifetimePlacement.Place(function);
+
+        int dropIndex = placed.Instructions.FindIndex(instruction => instruction is IrInst.RcDrop);
+        int definitionIndex = placed.Instructions.FindIndex(instruction => instruction is IrInst.StoreLocal { Slot: 0 });
+        int backEdgeIndex = placed.Instructions.FindIndex(instruction => instruction is IrInst.Jump { Target: "loop" });
+        int emptyIndex = placed.Instructions.FindIndex(instruction => instruction is IrInst.Label { Name: "empty" });
+        dropIndex.ShouldBeGreaterThan(definitionIndex);
+        dropIndex.ShouldBeLessThan(backEdgeIndex);
+        placed.Instructions.Skip(emptyIndex).ShouldNotContain(instruction => instruction is IrInst.RcDrop);
+    }
+
     private static IrFunction Function(List<IrInst> instructions, int tempCount)
         => new("test", instructions, 1, tempCount, false);
 

@@ -49,6 +49,10 @@ internal sealed class CombinationRegistry
         registry.Register(new GuardedMatchTemplate());
         registry.Register(new NestedCapabilityHandlersTemplate());
         registry.Register(new DeterministicResourceTemplate());
+        registry.Register(new SharedReconstructionFallbackTemplate());
+        registry.Register(new BranchSelectiveReuseTemplate());
+        registry.Register(new UniqueRecordUpdateTemplate());
+        registry.Register(new BoundedListTraversalTemplate());
         return registry;
     }
 }
