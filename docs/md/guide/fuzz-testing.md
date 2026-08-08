@@ -22,7 +22,13 @@ recursion, nested capability handlers, async capture, Result propagation, and Pe
 fallback shapes. Targeted Perceus templates distinguish unique record updates, shared
 reconstruction fallback, branch-selective reconstruction, and list-tail traversal through a
 capturing tail-recursive function. Templates may fill their holes with the ordinary generator, so
-difficult feature interactions arise compositionally. Every complete generated program also places the result behind
+difficult feature interactions arise compositionally. The initial interaction catalog also
+guarantees captured-ADT matching inside closures, closures
+inside match branches, recursive list reconstruction, Result pipelines whose continuation is a
+generated closure, and handled capability operations performed from a closure selected by a match.
+These templates remain generic over their payload or result types.
+
+Every complete generated program also places the result behind
 an explicit type annotation, forcing inference to prove the requested generation type. Complete
 program generation emits deterministic top-level functions and values, generic ADTs, records,
 mutual-recursion groups, and static capability providers in addition to the trailing generated

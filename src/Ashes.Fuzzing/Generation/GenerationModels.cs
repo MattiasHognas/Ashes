@@ -21,6 +21,7 @@ internal enum GeneratedFeature
     ClosureCapture, EscapingClosure, MultipleClosures, GuardedMatch, RuntimeUniquenessCheck,
     NestedCombination, TopLevelDeclaration, TopLevelFunction, MutualRecursion, Provider,
     SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
+    ClosureInMatch, RecursiveReconstruction, ResultClosure, CapabilityInClosure,
 }
 
 internal enum OwnershipInterest

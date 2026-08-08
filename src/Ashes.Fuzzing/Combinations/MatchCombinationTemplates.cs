@@ -27,7 +27,11 @@ internal sealed class ConstructorReconstructionTemplate : ICombinationTemplate
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => budget.RemainingNodes >= 8;
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
-        GenerationResult<Expr> payload = expressions.Generate(resultType, context, budget.Descend(5), random);
+        GenerationResult<Expr> payload = expressions.Generate(
+            resultType,
+            context,
+            budget.Descend(5).LimitDepth(1).LimitNodes(4),
+            random);
         string box = "reuseBox" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         string item = "reuseItem" + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         Expr construct = new Expr.Call(new Expr.Var("FuzzBox"), payload.Value);
