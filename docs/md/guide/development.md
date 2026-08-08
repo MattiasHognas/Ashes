@@ -223,22 +223,28 @@ For allocator/lifetime behavior, add or run the multi-scale native RSS tests in
 [Compiler Memory Regressions](testing.md#compiler-memory-regressions). Correct
 output alone is insufficient for a memory-management change.
 
-To inspect the compiler-inferred ownership contract and lifetime placement for
-a program, set `ASHES_EXPLAIN_OWNERSHIP`. `all` (or `1`) prints every analyzed
-function; a comma-separated list limits output to named functions:
+To inspect what the compiler decided about a program, use `--explain`. It takes
+`ownership`, `rc`, `reuse`, or `memory`, may be repeated, and accepts an optional
+`:selector` restricting the report to matching functions:
 
 ```sh
-ASHES_EXPLAIN_OWNERSHIP=all \
-  dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello
+dotnet run --project src/Ashes.Cli -- compile hello.ash -o hello --explain ownership
 
-ASHES_EXPLAIN_OWNERSHIP=map,fold \
-  dotnet run --project src/Ashes.Cli -- compile program.ash -o program
+dotnet run --project src/Ashes.Cli -- run program.ash --explain rc:fold --explain reuse
 ```
 
-The trace is written to stderr and includes stable per-function
-consumed/borrowed parameters, result reach, capture ownership, and uniqueness,
-followed by the `RcDup`/`RcDrop` placement decisions. It is an internal
-diagnostic and does not change generated code.
+`ownership` reports the inferred contracts — per-parameter borrowed/consumed,
+move safety, uniqueness, result aliasing and freshness. `rc` counts the Perceus
+operations in the final semantic IR, the code actually handed to LLVM rather than
+what lowering first emitted. `reuse` reports specialization decisions and why a
+candidate was rejected. `memory` correlates all three with the physical
+representation each value received.
+
+Reports go to stderr, so `run --explain` leaves the program's own stdout intact,
+and they are static: they describe compile-time decisions, not how often anything
+executed at runtime. Requesting a report cannot change generated code — the same
+source compiles to identical bytes with and without the option. See
+[CLI Reference](../reference/cli.md) for the full surface.
 
 ### LSP Unit Tests
 

@@ -2131,7 +2131,6 @@ public sealed partial class Lowering
     private bool IsFreshConstructorTree(Expr expression, TypeSymbol expectedType)
     {
         bool result = IsFreshConstructorTreeCore(expression, expectedType);
-        ShadowCompareExpressionFreshness("IsFreshConstructorTree", expression, result);
         return result;
     }
 

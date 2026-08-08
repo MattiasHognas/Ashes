@@ -3167,7 +3167,6 @@ public sealed partial class Lowering
     private bool ProducesFreshRuntimeManageableAdt(Expr body)
     {
         bool result = ProducesFreshRuntimeManageableAdtCore(body);
-        ShadowCompareExpressionFreshness("ProducesFreshRuntimeManageableAdt", body, result);
         return result;
     }
 
@@ -4247,7 +4246,6 @@ public sealed partial class Lowering
     private bool IsFreshRuntimeManageableAdtExpression(Expr expression)
     {
         bool result = IsFreshRuntimeManageableAdtExpressionCore(expression);
-        ShadowCompareExpressionFreshness("IsFreshRuntimeManageableAdtExpression", expression, result);
         return result;
     }
 
@@ -4299,7 +4297,6 @@ public sealed partial class Lowering
     private bool IsFreshListConstructionExpression(Expr expression)
     {
         bool result = IsFreshListConstructionExpressionCore(expression);
-        ShadowCompareExpressionFreshness("IsFreshListConstructionExpression", expression, result);
         return result;
     }
 

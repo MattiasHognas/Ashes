@@ -66,6 +66,8 @@ internal sealed record FunctionOwnershipRecord(
     IReadOnlyList<string> UniqueParameters,
     IReadOnlyList<string> CapturedValues,
     FunctionResultProvenance ResultProvenance,
+    IReadOnlyList<string> ResultAliases,
+    bool ResultFresh,
     bool ResultPoisoned,
     bool MayExecuteUnderLiveHandlerPost);
 
@@ -98,7 +100,7 @@ internal sealed record PatternBindingRecord(
 /// impose a total order without depending on collection order;</item>
 /// <item>reason codes stay enums — no record holds formatted prose, and nothing here formats;</item>
 /// <item>retrievable without an environment variable — <see cref="Lowering.GetDecisionSnapshot"/> is
-/// an ordinary call, unlike the <c>ASHES_EXPLAIN_OWNERSHIP</c> shadow output it does not replace;</item>
+/// an ordinary call, and the environment-variable dump it replaced is gone;</item>
 /// <item>observational only — capture appends to a list and reads nothing back, so lowering,
 /// optimization, and generated code are identical whether or not a consumer ever asks for it;</item>
 /// <item>retains no compiler state — types are reduced to names and AST nodes are projected away, so
@@ -202,6 +204,10 @@ public sealed partial class Lowering
                 [.. summary.UniqueParameters.OrderBy(name => name, StringComparer.Ordinal)],
                 summary.CapturedValues,
                 summary.ResultProvenance,
+                // Reported in parameter order rather than the reach map's own, so two compilations of
+                // one program cannot disagree about the order aliases are listed in.
+                [.. summary.Parameters.Where(summary.ResultReaches)],
+                summary.ResultFresh,
                 summary.ResultPoisoned,
                 summary.MayExecuteUnderLiveHandlerPost));
         }
