@@ -42,7 +42,7 @@ internal static class IrExplainReporter
         var reports = new List<OwnershipFunctionReport>();
         foreach (FunctionOwnershipRecord record in snapshot.FunctionOwnership)
         {
-            if (!MatchesSource(record.Origin, record.Function, filter))
+            if (!IrFunctionSelector.MatchesSource(record.Origin, record.Function, filter))
             {
                 continue;
             }
@@ -82,7 +82,7 @@ internal static class IrExplainReporter
         var reports = new List<RcFunctionReport>();
         foreach (IrFunction function in program.Functions.Concat([program.EntryFunction]))
         {
-            if (!MatchesGenerated(function.Origin, function.Label, filter))
+            if (!IrFunctionSelector.Matches(function.Origin, function.Label, filter))
             {
                 continue;
             }
@@ -129,7 +129,7 @@ internal static class IrExplainReporter
         var reports = new List<ReuseFunctionReport>();
         foreach (ReuseDecision decision in snapshot.ReuseDecisions)
         {
-            if (!MatchesGenerated(decision.Function, decision.Function.GeneratedLabel, filter))
+            if (!IrFunctionSelector.Matches(decision.Function, decision.Function.GeneratedLabel, filter))
             {
                 continue;
             }
@@ -158,7 +158,7 @@ internal static class IrExplainReporter
         foreach (ValuePlacementRecord record in snapshot.ValuePlacements)
         {
             string label = record.Function?.GeneratedLabel ?? "<program>";
-            if (!MatchesGenerated(record.Function, label, filter))
+            if (!IrFunctionSelector.Matches(record.Function, label, filter))
             {
                 continue;
             }
@@ -179,43 +179,4 @@ internal static class IrExplainReporter
             byFunction[label].Counts))];
     }
 
-    /// <summary>
-    /// Whether a source-level function is selected. A null filter selects everything; otherwise the
-    /// selector matches the source name or the qualified name, case-insensitively and by substring, so
-    /// <c>Map.set</c> and <c>set</c> both find the same function.
-    /// </summary>
-    private static bool MatchesSource(SourceFunctionOrigin? origin, string function, string? filter)
-    {
-        if (filter is null)
-        {
-            return true;
-        }
-
-        return Contains(function, filter)
-            || Contains(origin?.SourceName, filter)
-            || Contains(origin?.QualifiedName, filter);
-    }
-
-    /// <summary>
-    /// Whether a generated function is selected. A generated function is reachable through the source
-    /// function it came from as well as its own label, so a selector naming the source also selects
-    /// the reuse specializations, droppers, and coroutines generated for it.
-    /// </summary>
-    private static bool MatchesGenerated(IrFunctionOrigin? origin, string label, string? filter)
-    {
-        if (filter is null)
-        {
-            return true;
-        }
-
-        return Contains(label, filter)
-            || Contains(origin?.GeneratedLabel, filter)
-            || Contains(origin?.Source?.SourceName, filter)
-            || Contains(origin?.Source?.QualifiedName, filter)
-            || Contains(origin?.ParentGeneratedLabel, filter);
-    }
-
-    private static bool Contains(string? candidate, string filter)
-        => !string.IsNullOrEmpty(candidate)
-            && candidate.Contains(filter, StringComparison.OrdinalIgnoreCase);
 }

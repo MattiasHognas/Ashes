@@ -105,6 +105,12 @@ The following option is accepted by **compile**, **run**, and **test**:
 |--------|-----------|---------|------------|-------------|
 | `--explain <kind>[:<selector>]` | enum | — | Yes | Report compiler decisions to stderr. See [Compiler Reports](#compiler-reports) below. |
 
+The following option is accepted by **compile** and **run**:
+
+| Option | Value type | Default | Repeatable | Description |
+|--------|-----------|---------|------------|-------------|
+| `--emit-ir <stage>[:<selector>]` | enum | — | Yes | Dump semantic IR to stderr. See [IR Dumps](#ir-dumps) below. |
+
 `--project` is accepted by project-scoped commands: **compile**, **run**, **test**, **add**,
 **remove**, **restore**, **tree**, **why**, and **publish**. It is not accepted by `ashes repl`.
 
@@ -835,6 +841,39 @@ ashes run app.ash --explain rc > output.txt    # output.txt holds only the progr
 
 An unknown kind is a usage error listing the valid values, with exit code **2**. Nothing is printed
 when compilation fails before the report data exists; ordinary diagnostics remain primary.
+
+### IR Dumps
+
+`--emit-ir` prints the semantic IR itself, rather than a report about it. It takes `lowered` (as
+lowering emitted it) or `final` (what code generation receives), may be given more than once, and
+accepts the same `:selector` as `--explain`.
+
+```sh
+ashes compile app.ash --emit-ir final
+ashes compile app.ash --emit-ir lowered:loop --emit-ir final:loop   # diff the two stages
+```
+
+```
+IR (final)
+==========
+
+function lambda_55  [SourceFunction from build]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (app.ash:3:34)
+    TextFromInt           Target=1 ValueTemp=0   (app.ash:3:15)
+    ConcatStr             Target=3 Left=1 Right=2 RuntimeManaged=true   (app.ash:3:15)
+    Return                Source=3   (app.ash:3:1)
+```
+
+Operands left at their unset value — `false`, `null`, or `-1` for an optional slot or temp — are
+omitted, so what is printed is what carries meaning. Instructions carry no ordinal: requesting both
+stages and diffing them is the main reason to read a dump, and an absolute index would make every
+line after an inserted or removed instruction register as changed. Labels anchor position where
+position matters.
+
+Unlike the explain reports, **the dump's shape is not a contract**. Its content is the instruction set,
+so it changes whenever an instruction does; treat it as a debugging artifact rather than something to
+snapshot. Like the reports, it goes to stderr and cannot change generated code.
 
 ### What the reports are not
 

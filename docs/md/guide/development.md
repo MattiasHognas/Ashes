@@ -240,6 +240,15 @@ what lowering first emitted. `reuse` reports specialization decisions and why a
 candidate was rejected. `memory` correlates all three with the physical
 representation each value received.
 
+To read the IR itself rather than a report about it, use `--emit-ir lowered` or `--emit-ir final`.
+Requesting both and diffing them shows exactly what the Ashes-level optimizer changed, which is
+usually the fastest way to understand a placement or reuse decision:
+
+```sh
+dotnet run --project src/Ashes.Cli -- compile program.ash -o program \
+  --emit-ir lowered:loop --emit-ir final:loop
+```
+
 Reports go to stderr, so `run --explain` leaves the program's own stdout intact,
 and they are static: they describe compile-time decisions, not how often anything
 executed at runtime. Requesting a report cannot change generated code — the same
