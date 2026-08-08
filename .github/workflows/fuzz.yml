@@ -1,4 +1,4 @@
-name: scheduled fuzz
+name: fuzz
 
 on:
   workflow_dispatch:
