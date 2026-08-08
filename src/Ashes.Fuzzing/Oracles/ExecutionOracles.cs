@@ -15,7 +15,7 @@ internal sealed class ExecutionOracle : IFuzzOracle
         }
         if (run is null)
         {
-            return FuzzOracleResult.Passed(Id);
+            return FuzzOracleResult.Failed(Id, "Compilation succeeded but the selected target could not be executed.", compile.StandardOutput, compile.StandardError);
         }
         return run.TimedOut || run.ExitCode != 0 || run.OutputTruncated
             ? FuzzOracleResult.Failed(Id, run.TimedOut ? "Generated program timed out." : $"Generated program exited with {run.ExitCode}.", run.StandardOutput, run.StandardError)
@@ -38,7 +38,7 @@ internal sealed class DifferentialOptimizationOracle : IFuzzOracle
         }
         if (run0 is null || run2 is null)
         {
-            return FuzzOracleResult.Passed(Id);
+            return FuzzOracleResult.Failed(Id, "Compilation succeeded but both optimization configurations could not be executed.");
         }
         bool equal = run0.ExitCode == run2.ExitCode && string.Equals(run0.StandardOutput, run2.StandardOutput, StringComparison.Ordinal) && string.Equals(run0.StandardError, run2.StandardError, StringComparison.Ordinal);
         return equal ? FuzzOracleResult.Passed(Id) : FuzzOracleResult.Failed(Id, "-O0 and -O2 produced different observable behavior.", run0.StandardOutput + run2.StandardOutput, run0.StandardError + run2.StandardError);
@@ -80,7 +80,7 @@ internal sealed class DifferentialReuseOracle : IFuzzOracle
         }
         if (normalRun is null || noReuseRun is null)
         {
-            return FuzzOracleResult.Passed(Id);
+            return FuzzOracleResult.Failed(Id, "Compilation succeeded but the reuse configurations could not be executed.");
         }
         bool equal = normalRun.ExitCode == noReuseRun.ExitCode &&
             string.Equals(normalRun.StandardOutput, noReuseRun.StandardOutput, StringComparison.Ordinal) &&

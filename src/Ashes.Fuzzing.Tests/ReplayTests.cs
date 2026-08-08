@@ -32,7 +32,7 @@ public sealed class ReplayTests
         var fixture = TestFixture.Create();
         GeneratedFuzzCase original = fixture.Generator.Generate(12345, 417, fixture.Profiles.Get("perceus"), 37);
         FuzzConfiguration campaign = FuzzConfiguration.Parse(
-            ["run", "--profile", "perceus", "--max-nodes", "37", "--target", "linux-arm64", "--compiler-timeout", "41", "--program-timeout", "7"]);
+            ["run", "--profile", "perceus", "--max-nodes", "37", "--target", "linux-arm64", "--compiler-timeout", "41", "--program-timeout", "7", "--max-output-bytes", "8192", "--max-artifact-bytes", "32768"]);
 
         FuzzConfiguration replayConfiguration = FuzzConfiguration.Parse(FuzzReplayCommand.Arguments(original, campaign));
         GeneratedFuzzCase replay = fixture.Generator.Generate(
@@ -46,5 +46,7 @@ public sealed class ReplayTests
         replayConfiguration.Target.ShouldBe("linux-arm64");
         replayConfiguration.CompilerTimeout.ShouldBe(TimeSpan.FromSeconds(41));
         replayConfiguration.ProgramTimeout.ShouldBe(TimeSpan.FromSeconds(7));
+        replayConfiguration.MaximumOutputBytes.ShouldBe(8192);
+        replayConfiguration.MaximumArtifactBytes.ShouldBe(32768);
     }
 }

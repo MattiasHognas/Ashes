@@ -58,4 +58,21 @@ public sealed class OracleTests
             diagnostics.Errors.ShouldBeEmpty($"type {types[index]}:\n{observable}");
         }
     }
+
+    [Test]
+    public async Task ProcessCaptureDrainsButDoesNotRetainOutputPastItsByteLimit()
+    {
+        ProcessResult result = await ProcessTimeout.RunAsync(
+            "dotnet",
+            ["--info"],
+            Environment.CurrentDirectory,
+            TimeSpan.FromSeconds(10),
+            32,
+            CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0);
+        result.OutputTruncated.ShouldBeTrue();
+        System.Text.Encoding.UTF8.GetByteCount(result.StandardOutput).ShouldBeLessThanOrEqualTo(32);
+        System.Text.Encoding.UTF8.GetByteCount(result.StandardError).ShouldBeLessThanOrEqualTo(32);
+    }
 }

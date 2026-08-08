@@ -16,6 +16,8 @@ internal static class FuzzReplayCommand
         "--target", configuration.Target,
         "--compiler-timeout", ((int)configuration.CompilerTimeout.TotalSeconds).ToString(CultureInfo.InvariantCulture),
         "--program-timeout", ((int)configuration.ProgramTimeout.TotalSeconds).ToString(CultureInfo.InvariantCulture),
+        "--max-output-bytes", configuration.MaximumOutputBytes.ToString(CultureInfo.InvariantCulture),
+        "--max-artifact-bytes", configuration.MaximumArtifactBytes.ToString(CultureInfo.InvariantCulture),
     ];
 
     internal static string Format(GeneratedFuzzCase testCase, FuzzConfiguration configuration)
