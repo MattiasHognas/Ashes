@@ -1,14 +1,45 @@
 #!/usr/bin/env bash
-# pre-commit — fast local gate: build + test in a container.
-# Bypass with: SKIP_CI=1 git commit ...   or   git commit --no-verify
+# pre-commit — agent-guidance sync check, then a fast local gate: build + test in a container.
+# Bypass the container gate with: SKIP_CI=1 git commit ...   Bypass everything: git commit --no-verify
 set -euo pipefail
 
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# AGENTS.md and CLAUDE.md are one document under two names so that whichever an agent looks for, it
+# finds the same instructions. They are separate files rather than a symlink because a Windows
+# checkout without developer mode turns a symlink into a text file holding its target path, which
+# would silently reduce one of them to a single line.
+#
+# The comparison reads the STAGED content (`git show :file`), not the working tree: staging an edit
+# to one file while leaving the other unstaged produces a commit whose two copies disagree, and a
+# working-tree comparison would happily pass it.
+guidance_staged() {
+  local path="$1"
+  if ! git cat-file -e ":$path" 2>/dev/null; then
+    echo "pre-commit: rejected — $path is missing from the commit." >&2
+    echo "  AGENTS.md and CLAUDE.md must both exist and match." >&2
+    exit 1
+  fi
+  git show ":$path"
+}
+
+if ! diff -q <(guidance_staged AGENTS.md) <(guidance_staged CLAUDE.md) >/dev/null; then
+  echo "pre-commit: rejected — AGENTS.md and CLAUDE.md differ as staged." >&2
+  echo "  They are one document under two names. Copy whichever you edited over the other and" >&2
+  echo "  stage both:" >&2
+  echo "      cp AGENTS.md CLAUDE.md && git add AGENTS.md CLAUDE.md" >&2
+  echo >&2
+  diff -u <(guidance_staged AGENTS.md) <(guidance_staged CLAUDE.md) \
+    --label "AGENTS.md (staged)" --label "CLAUDE.md (staged)" >&2 || true
+  exit 1
+fi
+
+# The check above is instant, so it runs even when the container gate is skipped.
 if [[ "${SKIP_CI:-}" == "1" ]]; then
   echo "pre-commit: SKIP_CI=1 set, skipping ci-quick."
   exit 0
 fi
 
-repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root"
 echo "pre-commit: running 'just ci-quick' (set SKIP_CI=1 to skip)..."
 exec just ci-quick

@@ -3,8 +3,15 @@
 Guidance for AI coding agents working in this repository.
 
 `AGENTS.md` and `CLAUDE.md` are the same document, byte for byte, so that a tool reading either name
-gets the same instructions. `scripts/verify.sh` fails if they drift; edit one and copy it over the
-other.
+gets the same instructions. Edit one and copy it over the other, staging both:
+
+```bash
+cp AGENTS.md CLAUDE.md && git add AGENTS.md CLAUDE.md
+```
+
+Two checks enforce it — `ci/hooks/pre-commit` (after `just install-hooks`) compares the staged copies,
+and `scripts/verify.sh` compares the working tree. The hook reads staged content deliberately: editing
+both files but staging only one leaves the working tree consistent and the commit not.
 
 ## What this is
 
@@ -230,3 +237,5 @@ link the issue, and include screenshots only for VS Code UI changes.
 `.ash` and verify no diffs.
 Implement only what the active issue/milestone specifies; if behavior is undefined, stop and leave a
 TODO rather than inventing it. Development is milestone-driven — avoid speculative scope.
+
+A new shared rule.
