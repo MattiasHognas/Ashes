@@ -2231,6 +2231,56 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_concatenation_operand_memory_should_plateau()
+    {
+        // A concatenation copies its operands into a fresh allocation, so a reference-counted operand
+        // nothing else owns is dead once the copy is done. Abandoning it there leaks one allocation
+        // per operand per evaluation. No output-checking test can see this — the program is correct
+        // either way — which is why the signal has to be resident set over a growing workload.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> singleOperand = await MeasureLowFloorMemoryGrowthAsync(
+            BuildConcatCountedOperandMemoryProgram,
+            outputPerIteration: 7).ConfigureAwait(false);
+        List<MemoryExecutionResult> boundResult = await MeasureLowFloorMemoryGrowthAsync(
+            BuildConcatBoundResultMemoryProgram,
+            outputPerIteration: 12).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("concatenation counted operand", singleOperand, growthBudgetKb: 512);
+        AssertMemoryPlateaus("concatenation bound result", boundResult, growthBudgetKb: 512);
+    }
+
+    // One counted operand — the call result — concatenated with a literal that owns nothing.
+    private static string BuildConcatCountedOperandMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + Ashes.Text.byteLength(build(7) + "!"))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // Two counted operands, with the result bound so a scope owns it. The binding's own drop covers
+    // the result, never the operands consumed to build it.
+    private static string BuildConcatBoundResultMemoryProgram(int iterations)
+        => $$"""
+            let build n = Ashes.Text.fromInt(n) + "-tail"
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let text = build(7) + build(7)
+                    in loop(n - 1)(total + Ashes.Text.byteLength(text))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_higher_order_list_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
