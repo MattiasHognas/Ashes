@@ -72,10 +72,14 @@ internal sealed class ProgramGenerator
         IReadOnlyList<string> budgetErrors = GenerationBudgetValidator.Validate(program, generated.Trace, source.Length, budget);
         if (budgetErrors.Count != 0)
         {
+            string fallbackReason = "budget-fallback:" + string.Join("|", budgetErrors);
             GenerationResult<Expr> leaf = ExpressionGenerator.GenerateLeaf(type, context, budget, random);
             generated = ConstrainRootType(leaf, type);
             generated.Features.UnionWith(prelude.Features);
-            generated = generated with { Trace = GenerationTrace.Merge("program", prelude.Trace, generated.Trace) };
+            generated = generated with
+            {
+                Trace = GenerationTrace.Merge("program", prelude.Trace, new GenerationTrace([fallbackReason]), generated.Trace),
+            };
             program = new FrontendProgram([.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)], generated.Value);
             source = AshesFormatter.Format(program);
             metrics = AstCoverageMetrics.Measure(program);

@@ -53,6 +53,11 @@ internal sealed class CombinationRegistry
         registry.Register(new BranchSelectiveReuseTemplate());
         registry.Register(new UniqueRecordUpdateTemplate());
         registry.Register(new BoundedListTraversalTemplate());
+        registry.Register(new CapturedAdtMatchClosureTemplate());
+        registry.Register(new ClosureInMatchBranchTemplate());
+        registry.Register(new RecursiveListReconstructionTemplate());
+        registry.Register(new ResultClosurePipeTemplate());
+        registry.Register(new CapabilityClosureMatchTemplate());
         return registry;
     }
 }
