@@ -60,14 +60,18 @@ internal sealed class FuzzProfileRegistry
         ];
         Generation.AshesType[] allTypes = [.. scalarTypes, .. aggregateTypes];
         Generation.AshesType[] observableTypes = allTypes.Where(IsObservable).ToArray();
+        string[] observableCombinations = CompatibleCombinations(
+            defaultCombinations,
+            combinations,
+            observableTypes);
         FuzzProfileRegistry registry = new();
         registry.Register(new FuzzProfile("syntax", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["parse", "format"], allTypes, 0));
         registry.Register(new FuzzProfile("semantics", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0));
         registry.Register(new FuzzProfile("perceus", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2));
         registry.Register(new FuzzProfile("combinations", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2));
-        registry.Register(new FuzzProfile("compile", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "execution"], observableTypes, 1, Native: true));
-        registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true));
-        registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true));
+        registry.Register(new FuzzProfile("compile", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "execution"], observableTypes, 1, Native: true));
+        registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true));
+        registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true));
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true));
         registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await" }, ["parse", "format", "semantic", "ir"], allTypes, 2));
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers" }, ["parse", "format", "semantic", "ir"], allTypes, 2));
@@ -90,6 +94,20 @@ internal sealed class FuzzProfileRegistry
         _ => false,
     };
 
+    private static string[] CompatibleCombinations(
+        IEnumerable<string> ids,
+        Combinations.CombinationRegistry combinations,
+        IReadOnlyList<Generation.AshesType> types)
+    {
+        Generation.GenerationBudget budget = Generation.GenerationBudget.Create(120);
+        return ids.Where(id => types.Any(type => combinations.Get(id).CanApply(
+                type,
+                Generation.GenerationContext.Empty,
+                budget)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     internal void Validate(Generation.GeneratorRegistry rules, Combinations.CombinationRegistry combinations)
     {
         IReadOnlySet<string> ruleIds = rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal);
@@ -101,6 +119,17 @@ internal sealed class FuzzProfileRegistry
             if (unknownRule is not null || unknownCombination is not null)
             {
                 throw new ArgumentException($"Profile '{profile.Id}' references an unknown registry entry '{unknownRule ?? unknownCombination}'.");
+            }
+
+            string? incompatibleCombination = profile.EnabledCombinations.FirstOrDefault(id =>
+                !profile.Types.Any(type => combinations.Get(id).CanApply(
+                    type,
+                    Generation.GenerationContext.Empty,
+                    Generation.GenerationBudget.Create(120))));
+            if (incompatibleCombination is not null)
+            {
+                throw new ArgumentException(
+                    $"Profile '{profile.Id}' cannot supply a compatible type for combination '{incompatibleCombination}'.");
             }
         }
     }

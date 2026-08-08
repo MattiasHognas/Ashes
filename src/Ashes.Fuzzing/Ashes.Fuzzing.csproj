@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Ashes.Cli\Ashes.Cli.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Ashes.Formatter\Ashes.Formatter.csproj" />
     <ProjectReference Include="..\Ashes.Semantics\Ashes.Semantics.csproj" />
   </ItemGroup>

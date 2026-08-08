@@ -424,13 +424,22 @@ internal static class PerceusLifetimePlacement
 
     private static HashSet<int> ReachableBeforeBoundary(List<Block> blocks, int start, int boundary)
     {
+        IReadOnlyList<HashSet<int>> dominators = ComputeDominators(blocks);
         var reachable = new HashSet<int>();
         var pending = new Stack<int>();
         pending.Push(start);
         while (pending.Count > 0)
         {
             int current = pending.Pop();
-            if (current > boundary || !reachable.Add(current) || current == boundary)
+            // Pattern-bound owners can be defined inside a recursive match arm. A back edge from
+            // that arm reaches the loop header and sibling arms, but the owner does not exist on
+            // paths entering those blocks from the function entry. Restrict placement to blocks
+            // dominated by the definition so a drop never references the arm-local definition
+            // temp on an unrelated path.
+            if (current > boundary
+                || !dominators[current].Contains(start)
+                || !reachable.Add(current)
+                || current == boundary)
             {
                 continue;
             }
@@ -442,6 +451,64 @@ internal static class PerceusLifetimePlacement
         }
 
         return reachable;
+    }
+
+    private static IReadOnlyList<HashSet<int>> ComputeDominators(List<Block> blocks)
+    {
+        var reachable = new HashSet<int>();
+        var pending = new Stack<int>();
+        pending.Push(0);
+        while (pending.Count > 0)
+        {
+            int current = pending.Pop();
+            if (!reachable.Add(current))
+            {
+                continue;
+            }
+
+            foreach (int successor in blocks[current].Successors)
+            {
+                pending.Push(successor);
+            }
+        }
+
+        var dominators = new List<HashSet<int>>(blocks.Count);
+        for (int index = 0; index < blocks.Count; index++)
+        {
+            dominators.Add(index == 0
+                ? [0]
+                : reachable.Contains(index)
+                    ? new HashSet<int>(reachable)
+                    : [index]);
+        }
+
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (int blockIndex in reachable.Where(index => index != 0).OrderBy(index => index))
+            {
+                int[] predecessors = blocks[blockIndex].Predecessors
+                    .Where(reachable.Contains)
+                    .ToArray();
+                var next = predecessors.Length == 0
+                    ? new HashSet<int>()
+                    : new HashSet<int>(dominators[predecessors[0]]);
+                foreach (int predecessor in predecessors.Skip(1))
+                {
+                    next.IntersectWith(dominators[predecessor]);
+                }
+                next.Add(blockIndex);
+                if (!dominators[blockIndex].SetEquals(next))
+                {
+                    dominators[blockIndex] = next;
+                    changed = true;
+                }
+            }
+        }
+        while (changed);
+
+        return dominators;
     }
 
     private static List<Block> BuildBlocks(List<IrInst> instructions)

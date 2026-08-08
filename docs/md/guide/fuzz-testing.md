@@ -15,8 +15,10 @@ typed leaf or fails generation when even the minimum complete program cannot fit
 contains generic combination templates for sharing, cross-branch aliases, escaping and
 shared-capture closures, guarded and ADT matches, list and constructor reconstruction, bounded
 recursion, nested capability handlers, async capture, Result propagation, and Perceus reuse and
-fallback shapes. Templates may fill their holes with the ordinary generator, so difficult feature
-interactions arise compositionally. Every complete generated program also places the result behind
+fallback shapes. Targeted Perceus templates distinguish unique record updates, shared
+reconstruction fallback, branch-selective reconstruction, and list-tail traversal through a
+capturing tail-recursive function. Templates may fill their holes with the ordinary generator, so
+difficult feature interactions arise compositionally. Every complete generated program also places the result behind
 an explicit type annotation, forcing inference to prove the requested generation type. Complete
 program generation emits deterministic top-level functions and values, generic ADTs, records,
 mutual-recursion groups, and static capability providers in addition to the trailing generated

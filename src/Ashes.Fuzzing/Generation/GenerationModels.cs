@@ -20,6 +20,7 @@ internal enum GeneratedFeature
     ConstructorReconstruction, LayoutCompatibleReuse, LayoutIncompatibleFallback,
     ClosureCapture, EscapingClosure, MultipleClosures, GuardedMatch, RuntimeUniquenessCheck,
     NestedCombination, TopLevelDeclaration, TopLevelFunction, MutualRecursion, Provider,
+    SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
 }
 
 internal sealed class GeneratedFeatureSet : IReadOnlyCollection<GeneratedFeature>

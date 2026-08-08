@@ -87,6 +87,28 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void NativeProfilesOnlyScheduleCombinationsWithObservableResultTypes()
+    {
+        var fixture = TestFixture.Create();
+        foreach (string profileId in new[] { "compile", "differential", "cross-target" })
+        {
+            FuzzProfile profile = fixture.Profiles.Get(profileId);
+            string[] enabled = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+            for (int caseIndex = 0; caseIndex < enabled.Length; caseIndex++)
+            {
+                ICombinationTemplate template = fixture.Combinations.Get(enabled[caseIndex]);
+                profile.Types.Any(type => template.CanApply(
+                    type,
+                    GenerationContext.Empty,
+                    GenerationBudget.Create(120))).ShouldBeTrue();
+
+                GeneratedFuzzCase generated = fixture.Generator.Generate(910000, caseIndex, profile, 120);
+                generated.Trace.Entries.ShouldContain("combination:" + enabled[caseIndex]);
+            }
+        }
+    }
+
+    [Test]
     public void ReuseDisabledLoweringRemovesAllocReusingButKeepsProgramValid()
     {
         const string source = """
