@@ -26,7 +26,7 @@ lives in `docs/builder/`). Read the relevant doc **before** changing behavior:
 - [docs/md/guide/development.md](docs/md/guide/development.md) — building, testing, developing locally
 - [docs/md/guide/debugging.md](docs/md/guide/debugging.md) — debug extension setup and usage
 - [docs/md/guide/local-ci.md](docs/md/guide/local-ci.md) — containerized local CI/CD (`just` + Podman), release flow
-- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work (incl. memory/ownership roadmap)
+- [docs/md/future/FUTURE_FEATURES.md](docs/md/future/FUTURE_FEATURES.md) — planned work only; the shipped memory/ownership model is in [architecture.md](docs/md/internals/architecture.md#memory-model)
 
 If implementation conflicts with the spec, **update the spec first**.
 

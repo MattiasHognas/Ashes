@@ -898,7 +898,9 @@ snapshot. Like the reports, it goes to stderr and cannot change generated code.
 ### What the reports are not
 
 These are **static** reports of compile-time decisions. They do not show how often anything executed,
-allocate counters, or profile a run — runtime profiling is a separate concern.
+allocate counters, or profile a run — runtime profiling is a separate concern, and so are heap
+visualization and report viewers. Nor do they explain LLVM's own optimizations: everything reported
+here is an Ashes-level decision made before code generation.
 
 `rc` describes the Ashes IR handed to the backend, not optimized LLVM IR, and it observes after the
 Ashes-level optimizer so its counts match the code that ships. Under `ashes test` the runner hands the
