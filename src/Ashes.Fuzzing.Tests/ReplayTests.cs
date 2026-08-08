@@ -49,4 +49,25 @@ public sealed class ReplayTests
         replayConfiguration.MaximumOutputBytes.ShouldBe(8192);
         replayConfiguration.MaximumArtifactBytes.ShouldBe(32768);
     }
+
+    [Test]
+    public void ProfilesSupplyDefaultsWithoutOverridingExplicitCliValues()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile compile = fixture.Profiles.Get("compile");
+        FuzzConfiguration defaults = FuzzConfiguration.Parse(["run", "--profile", "compile"])
+            .ApplyProfileDefaults(compile);
+        defaults.Cases.ShouldBe(10);
+        defaults.MaximumNodes.ShouldBe(50);
+        defaults.CompilerTimeout.ShouldBe(TimeSpan.FromSeconds(30));
+        defaults.Target.ShouldBe("host");
+
+        FuzzConfiguration overridden = FuzzConfiguration.Parse(
+                ["run", "--profile", "compile", "--cases", "17", "--max-nodes", "91", "--compiler-timeout", "44", "--target", "linux-arm64"])
+            .ApplyProfileDefaults(compile);
+        overridden.Cases.ShouldBe(17);
+        overridden.MaximumNodes.ShouldBe(91);
+        overridden.CompilerTimeout.ShouldBe(TimeSpan.FromSeconds(44));
+        overridden.Target.ShouldBe("linux-arm64");
+    }
 }

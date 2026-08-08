@@ -22,7 +22,8 @@ internal sealed record FuzzConfiguration(
     TimeSpan ProgramTimeout,
     int MaximumOutputBytes,
     int MaximumArtifactBytes,
-    string ArtifactRoot)
+    string ArtifactRoot,
+    IReadOnlySet<string> ExplicitOptions)
 {
     internal static FuzzConfiguration Parse(IReadOnlyList<string> args)
     {
@@ -53,10 +54,12 @@ internal sealed record FuzzConfiguration(
         int maximumOutputBytes = 1024 * 1024;
         int maximumArtifactBytes = 4 * 1024 * 1024;
         string artifactRoot = Path.Combine("artifacts", "fuzz");
+        var explicitOptions = new HashSet<string>(StringComparer.Ordinal);
 
         for (int i = 1; i < args.Count; i++)
         {
             string option = args[i];
+            explicitOptions.Add(option);
             string Value()
             {
                 if (++i >= args.Count)
@@ -91,7 +94,24 @@ internal sealed record FuzzConfiguration(
 
         return new FuzzConfiguration(command, profile, cases, seed, seedCount, caseIndex, target, maximumNodes,
             TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds),
-            maximumOutputBytes, maximumArtifactBytes, artifactRoot);
+            maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions);
+    }
+
+    internal FuzzConfiguration ApplyProfileDefaults(FuzzProfile profile)
+    {
+        FuzzProfileDefaults defaults = profile.EffectiveDefaults;
+        return this with
+        {
+            Cases = ExplicitOptions.Contains("--cases") ? Cases : defaults.Cases,
+            MaximumNodes = ExplicitOptions.Contains("--max-nodes") ? MaximumNodes : defaults.MaximumNodes,
+            CompilerTimeout = ExplicitOptions.Contains("--compiler-timeout")
+                ? CompilerTimeout
+                : TimeSpan.FromSeconds(defaults.CompilerTimeoutSeconds),
+            ProgramTimeout = ExplicitOptions.Contains("--program-timeout")
+                ? ProgramTimeout
+                : TimeSpan.FromSeconds(defaults.ProgramTimeoutSeconds),
+            Target = ExplicitOptions.Contains("--target") ? Target : defaults.Targets[0],
+        };
     }
 
     private static int ParsePositiveInt(string value, string option)

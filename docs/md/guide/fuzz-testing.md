@@ -74,6 +74,12 @@ reuse while retaining Perceus ownership. It compares exit status, stdout, and st
 The non-required `scheduled fuzz` workflow runs larger multi-seed campaigns three times a week and
 uploads `artifacts/fuzz` when a case fails; long fuzzing is not a pull-request gate.
 
+Each profile owns its default case count, node budget, compiler and program timeouts, and target
+list. CLI values override those defaults, so `run --profile compile` uses the bounded native profile
+settings while a long campaign can still set `--cases`, `--max-nodes`, `--target`, and timeout
+options explicitly. The `list` command prints each profile's cases, node budget, targets, and
+oracles.
+
 ## Seeds, replay, shrinking, and artifacts
 
 Each case seed is derived solely from the master seed and case index. Generation never uses shared
