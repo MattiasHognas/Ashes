@@ -31,6 +31,47 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void ResultErrorMappingRuleProducesTypedSemanticProgramsAcrossTypes()
+    {
+        var fixture = TestFixture.Create();
+        AshesType.Result[] resultTypes =
+        [
+            new(AshesType.Str, AshesType.Int),
+            new(AshesType.Bool, AshesType.Str),
+            new(AshesType.Int, new AshesType.Tuple([AshesType.Bool, AshesType.Str])),
+        ];
+
+        for (int caseIndex = 0; caseIndex < resultTypes.Length; caseIndex++)
+        {
+            AshesType.Result resultType = resultTypes[caseIndex];
+            FuzzProfile profile = new(
+                "test-result-map-error",
+                new HashSet<string>(StringComparer.Ordinal) { "result-map-error" },
+                new HashSet<string>(StringComparer.Ordinal),
+                ["parse", "format", "semantic"],
+                [resultType],
+                0);
+            GeneratedFuzzCase? generated = null;
+            for (int attempt = 0; attempt < 50 && generated is null; attempt++)
+            {
+                GeneratedFuzzCase candidate = fixture.Generator.Generate(6060 + (ulong)caseIndex, attempt, profile, 80);
+                if (candidate.Trace.Entries.Contains("rule:result-map-error", StringComparer.Ordinal))
+                {
+                    generated = candidate;
+                }
+            }
+
+            generated.ShouldNotBeNull($"Result error mapping was not selected for '{resultType}'.");
+            generated.Type.ShouldBe(resultType);
+            generated.Features.Contains(GeneratedFeature.ResultErrorMapping).ShouldBeTrue();
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+            _ = new Lowering(diagnostics).Lower(parsed);
+            diagnostics.Errors.ShouldBeEmpty(generated.Source);
+        }
+    }
+
+    [Test]
     public void EveryCombinationTemplateIsGeneratedAndSemanticallyValid()
     {
         var fixture = TestFixture.Create();

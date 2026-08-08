@@ -242,6 +242,48 @@ internal sealed class ResultPipeGenerationRule : IExpressionGenerationRule
     }
 }
 
+internal sealed class ResultMapErrorGenerationRule : IExpressionGenerationRule
+{
+    public string Id => "result-map-error";
+    public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Result;
+    public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
+        requiredType is AshesType.Result && budget.RemainingNodes >= 9;
+
+    public GenerationResult<Expr> Generate(
+        AshesType requiredType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        AshesType.Result output = (AshesType.Result)requiredType;
+        AshesType inputError = output.Error == AshesType.Str ? AshesType.Int : AshesType.Str;
+        AshesType.Result inputType = new(inputError, output.Value);
+        GenerationResult<Expr> input = expressions.Generate(inputType, context, budget.Descend(4), random);
+        string parameter = "mappedError" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        GenerationContext mapperContext = context.WithBinding(new GeneratedBinding(parameter, inputError))
+            .WithFlag(GenerationFlags.TailPosition);
+        GenerationResult<Expr> mapped = expressions.Generate(output.Error, mapperContext, budget.Descend(4), random);
+        Expr mapper = new Expr.Lambda(parameter, mapped.Value) { ParamAnnotation = inputError.ToSyntax() };
+        Expr value = new Expr.ResultMapErrorPipe(input.Value, mapper);
+        GeneratedFeatureSet features = new([
+            GeneratedFeature.ResultShortCircuit,
+            GeneratedFeature.ResultErrorMapping,
+            GeneratedFeature.Lambda,
+            GeneratedFeature.Call,
+        ]);
+        features.UnionWith(input.Features);
+        features.UnionWith(mapped.Features);
+        return new GenerationResult<Expr>(
+            value,
+            requiredType,
+            features,
+            GenerationTrace.Merge($"result:map-error:{inputError}->{output.Error}", input.Trace, mapped.Trace),
+            input.NodeCount + mapped.NodeCount + 3);
+    }
+}
+
 internal sealed class RecordUpdateGenerationRule : IExpressionGenerationRule
 {
     public string Id => "record-update";
