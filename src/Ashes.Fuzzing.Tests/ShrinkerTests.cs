@@ -101,6 +101,28 @@ public sealed class ShrinkerTests
         new FuzzShrinker().Candidates(arithmetic).ShouldContain(candidate => candidate.Source.Contains("50 + 20", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void MaybeLikeAdtsShrinkToTheirCompatibleEmptyConstructor()
+    {
+        GeneratedFuzzCase original = Case(
+            """
+            type FuzzMaybe(a) =
+                | FuzzNone
+                | FuzzSome(a)
+
+            FuzzSome("payload")
+            """,
+            new AshesType.Adt("FuzzMaybe", [AshesType.Str]));
+
+        GeneratedFuzzCase candidate = new FuzzShrinker().Candidates(original)
+            .First(candidate => candidate.Program.Body is Expr.Var { Name: "FuzzNone" });
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(candidate.Source, diagnostics).ParseProgram();
+        _ = new Lowering(diagnostics).Lower(parsed);
+
+        diagnostics.Errors.ShouldBeEmpty(candidate.Source);
+    }
+
     private static GeneratedFuzzCase Case(string source, AshesType? type = null)
     {
         Diagnostics diagnostics = new();
