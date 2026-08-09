@@ -85,6 +85,9 @@ public abstract record Expr
     /// <summary>Bitwise complement, <c>~Operand</c>.</summary>
     /// <param name="Operand">The value to complement.</param>
     public sealed record BitwiseNot(Expr Operand) : Expr;
+    /// <summary>Boolean logical negation, <c>!Operand</c>.</summary>
+    /// <param name="Operand">The boolean value to negate.</param>
+    public sealed record LogicalNot(Expr Operand) : Expr;
     /// <summary>Greater-than comparison, <c>Left &gt; Right</c>.</summary>
     /// <param name="Left">The left operand.</param>
     /// <param name="Right">The right operand.</param>

@@ -178,7 +178,7 @@ public sealed partial class Lowering
                 return;
             case Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
                 or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft
-                or Expr.ShiftRight or Expr.BitwiseNot or Expr.GreaterThan or Expr.LessThan
+                or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot or Expr.GreaterThan or Expr.LessThan
                 or Expr.GreaterOrEqual or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual:
                 WalkPatternBindingOwnershipAll(
                     EnumerateChildren(expression),

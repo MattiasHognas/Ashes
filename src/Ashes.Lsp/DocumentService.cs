@@ -843,6 +843,9 @@ public static partial class DocumentService
             case Expr.BitwiseNot bitwiseNot:
                 return CollectVisibleBindingsInExpr(bitwiseNot.Operand, position, scope);
 
+            case Expr.LogicalNot logicalNot:
+                return CollectVisibleBindingsInExpr(logicalNot.Operand, position, scope);
+
             default:
                 return CollectVisibleBindingsInNestedExpr(expr, position, scope);
         }
@@ -1406,6 +1409,9 @@ public static partial class DocumentService
 
             case Expr.BitwiseNot bitwiseNot:
                 return ResolveDefinitionInExpr(bitwiseNot.Operand, position, currentFilePath, imports, scope);
+
+            case Expr.LogicalNot logicalNot:
+                return ResolveDefinitionInExpr(logicalNot.Operand, position, currentFilePath, imports, scope);
 
             default:
                 return ResolveDefinitionInNestedExpr(expr, position, currentFilePath, imports, scope);

@@ -83,6 +83,8 @@ public enum TokenKind
     LessEquals,
     /// <summary>The <c>==</c> equality operator.</summary>
     EqualsEquals,
+    /// <summary>The <c>!</c> logical-negation operator.</summary>
+    Bang,
     /// <summary>The <c>!=</c> inequality operator.</summary>
     BangEquals,
     /// <summary>The <c>=</c> binding/assignment token.</summary>

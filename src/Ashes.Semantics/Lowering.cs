@@ -750,6 +750,7 @@ public sealed partial class Lowering
         Expr.ShiftLeft x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.ShiftRight x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.BitwiseNot x => ExprHasCallOrAggregate(x.Operand),
+        Expr.LogicalNot x => ExprHasCallOrAggregate(x.Operand),
         Expr.GreaterThan x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.LessThan x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.GreaterOrEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
@@ -2516,6 +2517,7 @@ public sealed partial class Lowering
             Expr.ShiftLeft shiftLeft => LowerShiftLeft(shiftLeft),
             Expr.ShiftRight shiftRight => LowerShiftRight(shiftRight),
             Expr.BitwiseNot bitwiseNot => LowerBitwiseNot(bitwiseNot),
+            Expr.LogicalNot logicalNot => LowerLogicalNot(logicalNot),
             Expr.GreaterThan gt => LowerGreaterThan(gt),
             Expr.GreaterOrEqual ge => LowerGreaterOrEqual(ge),
             Expr.LessThan lt => LowerLessThan(lt),
@@ -4717,6 +4719,7 @@ public sealed partial class Lowering
             Expr.ShiftLeft value => Both(value.Left, value.Right),
             Expr.ShiftRight value => Both(value.Left, value.Right),
             Expr.BitwiseNot value => IsImmediateCopyUseOfRecord(value.Operand, recordName),
+            Expr.LogicalNot value => IsImmediateCopyUseOfRecord(value.Operand, recordName),
             Expr.GreaterThan value => Both(value.Left, value.Right),
             Expr.GreaterOrEqual value => Both(value.Left, value.Right),
             Expr.LessThan value => Both(value.Left, value.Right),
@@ -10355,6 +10358,9 @@ public sealed partial class Lowering
             case Expr.BitwiseNot bitwiseNot:
                 FreeVarsVisit(bitwiseNot.Operand, bnd, res);
                 return true;
+            case Expr.LogicalNot logicalNot:
+                FreeVarsVisit(logicalNot.Operand, bnd, res);
+                return true;
             case Expr.GreaterThan gt:
                 FreeVarsVisit(gt.Left, bnd, res);
                 FreeVarsVisit(gt.Right, bnd, res);
@@ -10567,6 +10573,7 @@ public sealed partial class Lowering
             case Expr.ShiftLeft b: return new Expr.ShiftLeft(S(b.Left), S(b.Right));
             case Expr.ShiftRight b: return new Expr.ShiftRight(S(b.Left), S(b.Right));
             case Expr.BitwiseNot b: return new Expr.BitwiseNot(S(b.Operand));
+            case Expr.LogicalNot b: return new Expr.LogicalNot(S(b.Operand));
             case Expr.GreaterThan b: return new Expr.GreaterThan(S(b.Left), S(b.Right));
             case Expr.GreaterOrEqual b: return new Expr.GreaterOrEqual(S(b.Left), S(b.Right));
             case Expr.LessThan b: return new Expr.LessThan(S(b.Left), S(b.Right));
@@ -10806,6 +10813,8 @@ public sealed partial class Lowering
                     && UsesNameOnlyAsDirectCallee(shiftRight.Right, targetName, shadowed);
             case Expr.BitwiseNot bitwiseNot:
                 return UsesNameOnlyAsDirectCallee(bitwiseNot.Operand, targetName, shadowed);
+            case Expr.LogicalNot logicalNot:
+                return UsesNameOnlyAsDirectCallee(logicalNot.Operand, targetName, shadowed);
             case Expr.GreaterThan gt:
                 return UsesNameOnlyAsDirectCallee(gt.Left, targetName, shadowed)
                     && UsesNameOnlyAsDirectCallee(gt.Right, targetName, shadowed);

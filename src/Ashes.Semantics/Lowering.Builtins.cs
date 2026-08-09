@@ -2097,6 +2097,7 @@ public sealed partial class Lowering
         {
             case Expr.Cons x: return ContainsAsyncSpawn(x.Head) || ContainsAsyncSpawn(x.Tail);
             case Expr.BitwiseNot x: return ContainsAsyncSpawn(x.Operand);
+            case Expr.LogicalNot x: return ContainsAsyncSpawn(x.Operand);
             case Expr.Await x: return ContainsAsyncSpawn(x.Task);
             case Expr.Call x: return ContainsAsyncSpawn(x.Func) || ContainsAsyncSpawn(x.Arg);
             case Expr.If x: return ContainsAsyncSpawn(x.Cond) || ContainsAsyncSpawn(x.Then) || ContainsAsyncSpawn(x.Else);
@@ -2320,6 +2321,7 @@ public sealed partial class Lowering
             case Expr.ResultMapErrorPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.Cons x: return ExprContainsAwait(x.Head) || ExprContainsAwait(x.Tail);
             case Expr.BitwiseNot x: return ExprContainsAwait(x.Operand);
+            case Expr.LogicalNot x: return ExprContainsAwait(x.Operand);
             case Expr.Call x: return ExprContainsAwait(x.Func) || ExprContainsAwait(x.Arg);
             case Expr.If x: return ExprContainsAwait(x.Cond) || ExprContainsAwait(x.Then) || ExprContainsAwait(x.Else);
             case Expr.Lambda x: return ExprContainsAwait(x.Body);
@@ -2381,6 +2383,7 @@ public sealed partial class Lowering
             case Expr.ResultMapErrorPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
             case Expr.Cons x: return ContainsAwaitOutsideNestedLambda(x.Head) || ContainsAwaitOutsideNestedLambda(x.Tail);
             case Expr.BitwiseNot x: return ContainsAwaitOutsideNestedLambda(x.Operand);
+            case Expr.LogicalNot x: return ContainsAwaitOutsideNestedLambda(x.Operand);
             case Expr.Call x: return ContainsAwaitOutsideNestedLambda(x.Func) || ContainsAwaitOutsideNestedLambda(x.Arg);
             case Expr.If x: return ContainsAwaitOutsideNestedLambda(x.Cond) || ContainsAwaitOutsideNestedLambda(x.Then) || ContainsAwaitOutsideNestedLambda(x.Else);
             // A nested lambda is its own function; its awaits lower to blocking runs regardless and

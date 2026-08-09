@@ -148,6 +148,7 @@ public sealed class Lexer
             '~' => new Token(TokenKind.Tilde, "~", 0, start, 1),
             '&' => new Token(TokenKind.Ampersand, "&", 0, start, 1),
             '^' => new Token(TokenKind.Caret, "^", 0, start, 1),
+            '!' => new Token(TokenKind.Bang, "!", 0, start, 1),
             '=' => new Token(TokenKind.Equals, "=", 0, start, 1),
             ',' => new Token(TokenKind.Comma, ",", 0, start, 1),
             '|' => new Token(TokenKind.Pipe, "|", 0, start, 1),
