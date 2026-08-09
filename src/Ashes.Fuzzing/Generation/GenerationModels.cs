@@ -34,6 +34,7 @@ internal enum GeneratedFeature
     AliasedResultPreventsReuse,
     FreshResultAllowsReuse,
     RecursionWithSharing,
+    LogicalNot,
 }
 
 internal enum OwnershipInterest

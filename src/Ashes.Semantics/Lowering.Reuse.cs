@@ -1769,6 +1769,8 @@ public sealed partial class Lowering
                 return ExprReferencesName(shiftRight.Left, targetName, shadowed) || ExprReferencesName(shiftRight.Right, targetName, shadowed);
             case Expr.BitwiseNot bitwiseNot:
                 return ExprReferencesName(bitwiseNot.Operand, targetName, shadowed);
+            case Expr.LogicalNot logicalNot:
+                return ExprReferencesName(logicalNot.Operand, targetName, shadowed);
             case Expr.GreaterThan gt:
                 return ExprReferencesName(gt.Left, targetName, shadowed) || ExprReferencesName(gt.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:

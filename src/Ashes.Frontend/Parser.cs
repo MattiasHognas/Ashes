@@ -1436,6 +1436,11 @@ public sealed class Parser
 
     private Expr ParseUnary()
     {
+        if (_current.Kind == TokenKind.Bang)
+        {
+            return ParseLogicalNot();
+        }
+
         if (_current.Kind == TokenKind.Minus)
         {
             var start = _current.Position;
@@ -1490,6 +1495,14 @@ public sealed class Parser
         }
 
         return ParseCall();
+    }
+
+    private Expr ParseLogicalNot()
+    {
+        int start = _current.Position;
+        Consume(TokenKind.Bang);
+        Expr operand = ParseUnary();
+        return RegisterExpr(new Expr.LogicalNot(operand), start, AstSpans.GetOrDefault(operand).End);
     }
 
     private Expr ParseCall()

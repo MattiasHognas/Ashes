@@ -436,7 +436,22 @@ true == false   // => false
 
 Both operands of `==` and `!=` must have the same type. Mixing `Int` and `Str` is a type error.
 
-### 3.3 Overloaded operators across types
+### 3.3 Logical negation
+
+Unary `!` performs strict logical negation:
+
+```ash
+!true        // => false
+!false       // => true
+!!true       // => true
+```
+
+The operand must have type `Bool`, and the result has type `Bool`. Ashes has no implicit truthy or
+falsey conversion for other values. Unary `!` is right-associative and has the same precedence as
+unary `-` and bitwise `~`. The lexer treats `!=` as one inequality operator, not as unary `!`
+followed by `=`.
+
+### 3.4 Overloaded operators across types
 
 `+`, `==`, and `!=` are overloaded (they pick a concrete operation from the operand type). A
 function that applies one of them directly to two of its own parameters is **overload-generic**: it
@@ -454,7 +469,7 @@ This is what lets `Ashes.Test.assertEqual` be used at several basic types in the
 function must be applied to arguments (called), not used as an unapplied first-class value at more
 than one type.
 
-### 3.4 Bitwise
+### 3.5 Bitwise
 
 Bitwise operators operate on integer values (`Int`, `u8`, `u16`, `u32`,
 `u64`) and return the same type as the left operand.
@@ -472,7 +487,7 @@ Where `T` is `Int` or one unsigned integer type (`u8`, `u16`, `u32`, `u64`).
 Shift counts are masked to the low 6 bits for the 64-bit `Int`
 representation.
 
-### 3.5 Cons
+### 3.6 Cons
 
 `::` constructs a new list by prepending a head value to a tail list.
 
@@ -482,7 +497,7 @@ Example:
 1 :: [2,3]  // => [1,2,3]
 ```
 
-### 3.6 Pipes
+### 3.7 Pipes
 
 Ashes supports three left-to-right pipeline operators.
 
@@ -545,7 +560,7 @@ let bumpIfOk2 result =
     in
     Ok(n + 1)
 
-### 3.7 Precedence and Associativity
+### 3.8 Precedence and Associativity
 
 From lowest precedence to highest:
 
@@ -560,7 +575,7 @@ From lowest precedence to highest:
 | 7     | `<<`, `>>`                     | left          |
 | 8     | `+`, `-`                       | left          |
 | 9     | `*`, `/`                       | left          |
-| 10    | unary `-`                      | right         |
+| 10    | unary `-`, `!`, `~`            | right         |
 | 11    | function application           | left          |
 
 `>=`, `<=`, `==`, and `!=` share the same precedence level in the current grammar.

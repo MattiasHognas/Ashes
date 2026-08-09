@@ -108,3 +108,34 @@ internal sealed class ComparisonGenerationRule : IExpressionGenerationRule
         return new GenerationResult<Expr>(value, requiredType, features, GenerationTrace.Merge("comparison", left.Trace, right.Trace), 5 + left.NodeCount + right.NodeCount);
     }
 }
+
+internal sealed class LogicalNotGenerationRule : IExpressionGenerationRule
+{
+    public string Id => "logical-not";
+    public int Weight => 2;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Bool;
+    public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
+        requiredType == AshesType.Bool && budget.RemainingNodes >= 2;
+
+    public GenerationResult<Expr> Generate(
+        AshesType requiredType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        GenerationResult<Expr> operand = expressions.Generate(
+            AshesType.Bool,
+            context,
+            budget.Descend(),
+            random);
+        GeneratedFeatureSet features = new([GeneratedFeature.LogicalNot]);
+        features.UnionWith(operand.Features);
+        return new GenerationResult<Expr>(
+            new Expr.LogicalNot(operand.Value),
+            requiredType,
+            features,
+            GenerationTrace.Merge("logical-not", operand.Trace),
+            operand.NodeCount + 1);
+    }
+}

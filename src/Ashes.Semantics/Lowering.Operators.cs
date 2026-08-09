@@ -508,6 +508,33 @@ public sealed partial class Lowering
         return (target, new TypeRef.TInt());
     }
 
+    private (int, TypeRef) LowerLogicalNot(Expr.LogicalNot logicalNot)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(logicalNot);
+        (int operandTemp, TypeRef operandType) = LowerExpr(logicalNot.Operand);
+        TypeRef prunedOperandType = Prune(operandType);
+        if (prunedOperandType is TypeRef.TVar)
+        {
+            Unify(prunedOperandType, new TypeRef.TBool());
+        }
+        else if (prunedOperandType is not TypeRef.TBool)
+        {
+            ReportDiagnostic(
+                GetSpan(logicalNot),
+                $"'!' requires Bool, got {Pretty(prunedOperandType)}.",
+                DiagnosticCodes.TypeMismatch);
+            int fallback = NewTemp();
+            Emit(new IrInst.LoadConstBool(fallback, false));
+            return (fallback, new TypeRef.TBool());
+        }
+
+        int falseTemp = NewTemp();
+        Emit(new IrInst.LoadConstBool(falseTemp, false));
+        int target = NewTemp();
+        Emit(new IrInst.CmpIntEq(target, operandTemp, falseTemp));
+        return (target, new TypeRef.TBool());
+    }
+
     private (int, TypeRef) LowerGreaterThan(Expr.GreaterThan gt)
     {
         using var diagnosticSpan = PushDiagnosticSpan(gt);

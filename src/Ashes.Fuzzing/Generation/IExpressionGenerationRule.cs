@@ -43,6 +43,7 @@ internal sealed class GeneratorRegistry
         registry.Register(new Expressions.VariableGenerationRule());
         registry.Register(new Expressions.ArithmeticGenerationRule());
         registry.Register(new Expressions.ComparisonGenerationRule());
+        registry.Register(new Expressions.LogicalNotGenerationRule());
         registry.Register(new Expressions.LetGenerationRule());
         registry.Register(new Expressions.IfGenerationRule());
         registry.Register(new Expressions.TupleGenerationRule());

@@ -144,6 +144,22 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void Parse_should_support_right_associative_logical_not()
+    {
+        Parse("!!true").ShouldBe(
+            new Expr.LogicalNot(
+                new Expr.LogicalNot(new Expr.BoolLit(true))));
+    }
+
+    [Test]
+    public void Parse_should_keep_not_equal_distinct_from_logical_not()
+    {
+        var expr = Parse("!true != false").ShouldBeOfType<Expr.NotEqual>();
+        expr.Left.ShouldBe(new Expr.LogicalNot(new Expr.BoolLit(true)));
+        expr.Right.ShouldBe(new Expr.BoolLit(false));
+    }
+
+    [Test]
     public void Parse_should_support_float_literals()
     {
         Parse("3.14").ShouldBe(new Expr.FloatLit(3.14, "3.14"));

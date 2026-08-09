@@ -10,6 +10,36 @@ namespace Ashes.Fuzzing.Tests;
 public sealed class GeneratorInvariantTests
 {
     [Test]
+    public void LogicalNotRuleProducesTypedSemanticPrograms()
+    {
+        var fixture = TestFixture.Create();
+        GenerationCoverageGuidance coverage = new(["logical-not"], []);
+        ExpressionGenerator expressions = new(
+            fixture.Rules,
+            new HashSet<string>(StringComparer.Ordinal) { "logical-not" },
+            coverage);
+
+        GenerationResult<Expr> generated = expressions.Generate(
+            AshesType.Bool,
+            GenerationContext.Empty,
+            GenerationBudget.Create(20),
+            new FuzzRandom(20260809));
+        Ashes.Frontend.Program program = new(Array.Empty<TopLevelItem>(), generated.Value);
+        string source = Ashes.Formatter.Formatter.Format(program);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        _ = lowering.Lower(parsed);
+
+        generated.Type.ShouldBe(AshesType.Bool);
+        generated.Value.ShouldBeOfType<Expr.LogicalNot>();
+        generated.Features.Contains(GeneratedFeature.LogicalNot).ShouldBeTrue();
+        diagnostics.Errors.ShouldBeEmpty(source);
+        lowering.LastLoweredType.ShouldNotBeNull();
+        lowering.FormatType(lowering.LastLoweredType).ShouldBe("Bool");
+    }
+
+    [Test]
     public void IdenticalSeedsGenerateIdenticalProgramsAndTraces()
     {
         var fixture = TestFixture.Create();

@@ -111,6 +111,9 @@ public sealed partial class Lowering
             case Expr.BitwiseNot bn:
                 return ParamUsedOnlyAsBorrowRead(bn.Operand, p);
 
+            case Expr.LogicalNot logicalNot:
+                return ParamUsedOnlyAsBorrowRead(logicalNot.Operand, p);
+
             default:
                 return BinaryUsesParamOnlyAsBorrowRead(e, p);
         }

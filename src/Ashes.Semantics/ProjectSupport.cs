@@ -3505,6 +3505,9 @@ public static class ProjectSupport
             case Expr.BitwiseNot bitwiseNot:
                 VisitReferencedNames(bitwiseNot.Operand, names, qualifiedReferences);
                 break;
+            case Expr.LogicalNot logicalNot:
+                VisitReferencedNames(logicalNot.Operand, names, qualifiedReferences);
+                break;
             default:
                 VisitReferencedNamesComparisons(expr, names, qualifiedReferences);
                 break;

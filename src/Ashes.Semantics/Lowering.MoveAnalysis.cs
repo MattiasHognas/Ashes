@@ -610,7 +610,7 @@ public sealed partial class Lowering
         {
             case Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
                 or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
-                or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot:
+                or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot:
                 return EnumerateChildrenArithmetic(e);
             case Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
                 or Expr.Equal or Expr.NotEqual or Expr.ResultPipe or Expr.ResultMapErrorPipe
@@ -636,6 +636,7 @@ public sealed partial class Lowering
             case Expr.ShiftLeft x: yield return x.Left; yield return x.Right; break;
             case Expr.ShiftRight x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseNot x: yield return x.Operand; break;
+            case Expr.LogicalNot x: yield return x.Operand; break;
             default:
                 break;
         }
@@ -3255,7 +3256,7 @@ public sealed partial class Lowering
             or Expr.BoolLit
             or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
             or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
-            or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot
+            or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot
             or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
             or Expr.Equal or Expr.NotEqual;
     }
@@ -4035,6 +4036,7 @@ public sealed partial class Lowering
             case Expr.ShiftLeft x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.ShiftRight x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.BitwiseNot x: return MaxPathOccurrences(name, x.Operand);
+            case Expr.LogicalNot x: return MaxPathOccurrences(name, x.Operand);
             case Expr.GreaterThan x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.LessThan x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.GreaterOrEqual x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
@@ -4483,6 +4485,9 @@ public sealed partial class Lowering
             case Expr.BitwiseNot bn:
                 return AllUsesAreCompletingCalls(bn.Operand, g, neededMore, completing, scope);
 
+            case Expr.LogicalNot logicalNot:
+                return AllUsesAreCompletingCalls(logicalNot.Operand, g, neededMore, completing, scope);
+
             default:
                 return CompletingBinary(e, g, neededMore, completing, scope);
         }
@@ -4655,6 +4660,7 @@ public sealed partial class Lowering
             case Expr.ShiftLeft x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
             case Expr.ShiftRight x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
             case Expr.BitwiseNot x: CollectCallsAndEscapes(x.Operand, enclosing, scope); return;
+            case Expr.LogicalNot x: CollectCallsAndEscapes(x.Operand, enclosing, scope); return;
             case Expr.GreaterThan x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
             case Expr.LessThan x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
             case Expr.GreaterOrEqual x: CollectBinary(x.Left, x.Right, enclosing, scope); return;

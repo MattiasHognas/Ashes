@@ -83,6 +83,7 @@ internal sealed class AstInvariantValidator
             case Expr.ShiftLeft binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.ShiftRight binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.BitwiseNot unary: Validate(unary.Operand, scope, errors); break;
+            case Expr.LogicalNot unary: Validate(unary.Operand, scope, errors); break;
             case Expr.Equal binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.NotEqual binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.GreaterThan binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;

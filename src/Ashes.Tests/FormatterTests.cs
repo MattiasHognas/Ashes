@@ -357,6 +357,16 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_write_logical_not_and_parenthesize_its_operand()
+    {
+        var formatted = Ashes.Formatter.Formatter.Format(
+            new Expr.LogicalNot(
+                new Expr.Equal(new Expr.BoolLit(true), new Expr.BoolLit(false))));
+
+        formatted.ShouldBe("!(true == false)\n");
+    }
+
+    [Test]
     public void Format_should_preserve_division_rhs_grouping()
     {
         var formatted = Ashes.Formatter.Formatter.Format(

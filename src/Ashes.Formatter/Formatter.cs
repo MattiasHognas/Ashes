@@ -640,6 +640,7 @@ public static class Formatter
             Expr.ShiftLeft shiftLeft => IsSingleLine(shiftLeft.Left, preferPipelines) && IsSingleLine(shiftLeft.Right, preferPipelines),
             Expr.ShiftRight shiftRight => IsSingleLine(shiftRight.Left, preferPipelines) && IsSingleLine(shiftRight.Right, preferPipelines),
             Expr.BitwiseNot bitwiseNot => IsSingleLine(bitwiseNot.Operand, preferPipelines),
+            Expr.LogicalNot logicalNot => IsSingleLine(logicalNot.Operand, preferPipelines),
             Expr.GreaterThan gt => IsSingleLine(gt.Left, preferPipelines) && IsSingleLine(gt.Right, preferPipelines),
             Expr.GreaterOrEqual ge => IsSingleLine(ge.Left, preferPipelines) && IsSingleLine(ge.Right, preferPipelines),
             Expr.LessThan lt => IsSingleLine(lt.Left, preferPipelines) && IsSingleLine(lt.Right, preferPipelines),
@@ -998,6 +999,7 @@ public static class Formatter
         Expr.ShiftLeft binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.ShiftRight binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.BitwiseNot unary => ContainsExpression(unary.Operand, predicate),
+        Expr.LogicalNot unary => ContainsExpression(unary.Operand, predicate),
         Expr.GreaterThan binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.LessThan binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.GreaterOrEqual binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
@@ -1324,6 +1326,10 @@ public static class Formatter
 
             case Expr.BitwiseNot bitwiseNot:
                 WriteUnaryPrefixInline(sb, '~', bitwiseNot.Operand, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.LogicalNot logicalNot:
+                WriteUnaryPrefixInline(sb, '!', logicalNot.Operand, indent, parentPrec, preferPipelines, options);
                 return true;
 
             default:

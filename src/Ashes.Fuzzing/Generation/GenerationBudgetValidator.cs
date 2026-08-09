@@ -153,6 +153,7 @@ internal static class GenerationBudgetValidator
         Expr.ShiftLeft binary => [binary.Left, binary.Right],
         Expr.ShiftRight binary => [binary.Left, binary.Right],
         Expr.BitwiseNot unary => [unary.Operand],
+        Expr.LogicalNot unary => [unary.Operand],
         Expr.GreaterThan binary => [binary.Left, binary.Right],
         Expr.LessThan binary => [binary.Left, binary.Right],
         Expr.GreaterOrEqual binary => [binary.Left, binary.Right],
