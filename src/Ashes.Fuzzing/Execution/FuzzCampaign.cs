@@ -41,14 +41,14 @@ internal sealed class FuzzCampaign
                 GeneratedFuzzCase testCase = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
                 if (profile.MutateSource)
                 {
-                    testCase = UseInvalidSourceSeed(testCase, repositoryRoot, caseIndex);
+                    testCase = InvalidSourceSeedSelector.Select(testCase, repositoryRoot, caseIndex);
                 }
                 if (configuration.Command == FuzzCommandKind.Replay)
                 {
                     GeneratedFuzzCase replay = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
                     if (profile.MutateSource)
                     {
-                        replay = UseInvalidSourceSeed(replay, repositoryRoot, caseIndex);
+                        replay = InvalidSourceSeedSelector.Select(replay, repositoryRoot, caseIndex);
                     }
                     if (!string.Equals(testCase.Source, replay.Source, StringComparison.Ordinal))
                     {
@@ -72,25 +72,6 @@ internal sealed class FuzzCampaign
         Console.WriteLine($"passed {count * seedCount} case(s); profile={requestedProfile.Id}; seeds={configuration.Seed}..{configuration.Seed + (ulong)seedCount - 1}");
         Console.WriteLine(coverage.Summary());
         return 0;
-    }
-
-    private static GeneratedFuzzCase UseInvalidSourceSeed(GeneratedFuzzCase generated, string repositoryRoot, int caseIndex)
-    {
-        string[] roots = [Path.Combine(repositoryRoot, "tests"), Path.Combine(repositoryRoot, "examples")];
-        string[] seeds = roots.Where(Directory.Exists)
-            .SelectMany(root => Directory.EnumerateFiles(root, "*.ash", SearchOption.AllDirectories))
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        if (seeds.Length == 0)
-        {
-            return generated;
-        }
-        string source = File.ReadAllText(seeds[caseIndex % seeds.Length]);
-        if (source.Length > generated.Budget.MaximumSourceLength)
-        {
-            source = source[..generated.Budget.MaximumSourceLength];
-        }
-        return generated with { Source = source, Trace = generated.Trace.Append("invalid-seed:" + Path.GetRelativePath(repositoryRoot, seeds[caseIndex % seeds.Length])) };
     }
 
     private FuzzProfile ResolveProfile(FuzzProfile requested, int caseIndex)
