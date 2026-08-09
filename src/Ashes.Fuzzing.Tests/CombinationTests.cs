@@ -119,6 +119,19 @@ public sealed class CombinationTests
         new SharedReconstructionFallbackTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
     }
 
+    [Test]
+    public void OwnershipTemplatesAdvertiseAliasFreshnessAndStaticUniquenessOutcomes()
+    {
+        var fixture = TestFixture.Create();
+
+        fixture.Combinations.Get("sharing.branch-alias").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.ResultAliasesInput);
+        fixture.Combinations.Get("sharing.tuple-fields").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.FreshResultInternalSharing);
+        fixture.Combinations.Get("perceus.unique-record-update").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.StaticallyUniquePath);
+    }
+
     private sealed class PrimitiveDuplicate : IExpressionGenerationRule
     {
         public string Id => "duplicate";

@@ -22,7 +22,9 @@ recursion, nested capability handlers, async capture and deterministic task spaw
 propagation and error mapping, and Perceus reuse and
 fallback shapes. Targeted Perceus templates distinguish unique record updates, shared
 reconstruction fallback, branch-selective reconstruction, and list-tail traversal through a
-capturing tail-recursive function. Templates may fill their holes with the ordinary generator, so
+capturing tail-recursive function. Coverage metadata separately records results that alias inputs,
+fresh aggregate results with internal sharing, runtime uniqueness checks, and statically unique
+constructor-update paths. Templates may fill their holes with the ordinary generator, so
 difficult feature interactions arise compositionally. The initial interaction catalog also
 guarantees captured-ADT matching inside closures, closures
 inside match branches, recursive list reconstruction, Result pipelines whose continuation is a

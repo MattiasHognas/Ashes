@@ -129,6 +129,7 @@ internal sealed class UniqueRecordUpdateTemplate : ICombinationTemplate
         GeneratedFeature.ReuseCandidate,
         GeneratedFeature.RuntimeUniquenessCheck,
         GeneratedFeature.UniqueConstructorUpdate,
+        GeneratedFeature.StaticallyUniquePath,
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
