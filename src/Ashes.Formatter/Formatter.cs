@@ -1032,7 +1032,7 @@ public static class Formatter
         }
 
         sb.Append("handle ");
-        WriteExprInline(sb, handle.Body, indent, handle.Body is Expr.Handle ? PrecLetIfLambda + 1 : 0, preferPipelines, options);
+        WriteExprInline(sb, handle.Body, indent, handle.Body is Expr.Handle or Expr.Match ? PrecLetIfLambda + 1 : 0, preferPipelines, options);
         sb.Append(" with\n");
 
         foreach (var arm in handle.Arms)
