@@ -75,4 +75,19 @@ public sealed class OracleTests
         System.Text.Encoding.UTF8.GetByteCount(result.StandardOutput).ShouldBeLessThanOrEqualTo(32);
         System.Text.Encoding.UTF8.GetByteCount(result.StandardError).ShouldBeLessThanOrEqualTo(32);
     }
+
+    [Test]
+    public void NativeOutcomeValidationRejectsTimeoutsCrashesAndTruncationBeforeComparison()
+    {
+        TimeSpan duration = TimeSpan.FromMilliseconds(1);
+
+        NativeOutcomeValidator.Failure("program", new ProcessResult(-1, "", "", true, false, duration))
+            .ShouldBe("program timed out");
+        NativeOutcomeValidator.Failure("program", new ProcessResult(0, "same", "", false, true, duration))
+            .ShouldBe("program exceeded its output limit");
+        NativeOutcomeValidator.Failure("program", new ProcessResult(139, "", "signal", false, false, duration))
+            .ShouldBe("program exited with 139");
+        NativeOutcomeValidator.Failure("program", new ProcessResult(0, "ok", "", false, false, duration))
+            .ShouldBeNull();
+    }
 }
