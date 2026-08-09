@@ -65,6 +65,39 @@ public sealed class BraceFreeRecordFormatterTests
         formatted.ShouldBe("let q = p with x = 5\nin q\n");
     }
 
+    [Test]
+    public void Format_should_parenthesize_a_record_update_nested_in_a_call_argument()
+    {
+        var expression = new Expr.Call(
+            new Expr.Var("async"),
+            new Expr.Let(
+                "updated",
+                new Expr.RecordLit("Point", [("x", new Expr.IntLit(1)), ("y", new Expr.IntLit(2))]),
+                new Expr.RecordUpdate(new Expr.Var("updated"), [("x", new Expr.IntLit(3))])));
+
+        string formatted = Ashes.Formatter.Formatter.Format(expression);
+
+        formatted.ShouldBe("async((let updated = Point(x = 1, y = 2)\nin updated with x = 3))\n");
+        Format(formatted).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_parenthesize_a_record_update_nested_in_a_match_scrutinee()
+    {
+        var expression = new Expr.Match(
+            new Expr.Let(
+                "updated",
+                new Expr.RecordLit("Point", [("x", new Expr.IntLit(1)), ("y", new Expr.IntLit(2))]),
+                new Expr.RecordUpdate(new Expr.Var("updated"), [("x", new Expr.IntLit(3))])),
+            [new MatchCase(new Pattern.Constructor("Point", [new Pattern.Var("x"), new Pattern.Wildcard()]), new Expr.Var("x"))]);
+
+        string formatted = Ashes.Formatter.Formatter.Format(expression);
+
+        formatted.ShouldBe(
+            "match (let updated = Point(x = 1, y = 2)\nin updated with x = 3) with\n    | Point(x, _) -> x\n");
+        Format(formatted).ShouldBe(formatted);
+    }
+
     private static string Format(string source)
     {
         var diagnostics = new Diagnostics();

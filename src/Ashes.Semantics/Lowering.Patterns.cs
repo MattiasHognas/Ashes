@@ -1274,6 +1274,22 @@ public sealed partial class Lowering
         if (result is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { IsDropped: false } owner)
         {
+            // A captured binding is owned by the current closure environment, not by the outer
+            // function's local slot retained in ownership provenance. Returning it from a match arm
+            // must retain the captured value; attempting the ordinary local-parent transfer would
+            // emit the enclosing frame's slot number into this lifted function.
+            if (Lookup(variable.Name) is Binding.Env or Binding.EnvScheme)
+            {
+                if (!owner.RuntimeManaged)
+                {
+                    return bodyTemp;
+                }
+
+                int duplicatedTemp = NewTemp();
+                Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp, RuntimeManaged: true));
+                return duplicatedTemp;
+            }
+
             if (owner.PerceusPatternOwner)
             {
                 int duplicatedTemp = NewTemp();

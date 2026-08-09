@@ -29,6 +29,7 @@ internal static class ObservableValueRenderer
         AshesType.Record { Name: "FuzzRecord" } record => RenderRecord(value, record, names),
         AshesType.Result result => RenderResult(value, result, names),
         AshesType.Adt { Name: "FuzzTree" } tree => RenderTree(value, tree, names),
+        AshesType.Adt { Name: "FuzzMaybe" } maybe => RenderMaybe(value, maybe, names),
         _ => throw new InvalidOperationException($"No canonical native observation renderer is registered for '{type}'."),
     };
 
@@ -132,6 +133,18 @@ internal static class ObservableValueRenderer
         {
             TypeAnnotation = new AshesType.Function(tree, AshesType.Str).ToSyntax(),
         };
+    }
+
+    private static Expr RenderMaybe(Expr value, AshesType.Adt maybe, ObservationNames names)
+    {
+        string payload = names.Next();
+        return new Expr.Match(value,
+        [
+            new MatchCase(new Pattern.Constructor("FuzzNone", []), Text("FuzzNone")),
+            new MatchCase(
+                new Pattern.Constructor("FuzzSome", [new Pattern.Var(payload)]),
+                Concat(Text("FuzzSome("), Render(new Expr.Var(payload), maybe.Arguments[0], names), Text(")"))),
+        ]);
     }
 
     private static Expr Call(string module, string name, Expr argument) =>

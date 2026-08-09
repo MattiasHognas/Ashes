@@ -243,6 +243,22 @@ internal sealed class FuzzShrinker
                     }
                 }
                 break;
+            case Expr.LetResult let when type is AshesType.Result output &&
+                TryResultSuccessType(let.Value, out AshesType resultBoundType):
+                AshesType.Result inputType = new(output.Error, resultBoundType);
+                foreach (Expr child in ExpressionCandidates(let.Value, inputType, scope))
+                {
+                    yield return let with { Value = child };
+                }
+                Dictionary<string, AshesType> resultBodyScope = new(scope, StringComparer.Ordinal)
+                {
+                    [let.Name] = resultBoundType,
+                };
+                foreach (Expr child in ExpressionCandidates(let.Body, output, resultBodyScope))
+                {
+                    yield return let with { Body = child };
+                }
+                break;
             case Expr.LetRecursive recursive when TryExpressionType(recursive.Value, recursive.TypeAnnotation, out AshesType recursiveType):
                 Dictionary<string, AshesType> recursiveScope = new(scope, StringComparer.Ordinal)
                 {
@@ -303,6 +319,34 @@ internal sealed class FuzzShrinker
                         fields[index] = (fields[index].Name, child);
                         yield return new Expr.RecordLit(record.TypeName, fields);
                     }
+                }
+                break;
+            case Expr.ResultPipe pipe when type is AshesType.Result output &&
+                pipe.Right is Expr.Lambda { ParamAnnotation: not null } function:
+                AshesType inputValueType = FromSyntax(function.ParamAnnotation)!;
+                AshesType.Result pipeInputType = new(output.Error, inputValueType);
+                foreach (Expr child in ExpressionCandidates(pipe.Left, pipeInputType, scope))
+                {
+                    yield return pipe with { Left = child };
+                }
+                AshesType.Function pipeFunctionType = new(inputValueType, output);
+                foreach (Expr child in ExpressionCandidates(pipe.Right, pipeFunctionType, scope))
+                {
+                    yield return pipe with { Right = child };
+                }
+                break;
+            case Expr.ResultMapErrorPipe pipe when type is AshesType.Result output &&
+                pipe.Right is Expr.Lambda { ParamAnnotation: not null } mapper:
+                AshesType inputErrorType = FromSyntax(mapper.ParamAnnotation)!;
+                AshesType.Result mapInputType = new(inputErrorType, output.Value);
+                foreach (Expr child in ExpressionCandidates(pipe.Left, mapInputType, scope))
+                {
+                    yield return pipe with { Left = child };
+                }
+                AshesType.Function mapperType = new(inputErrorType, output.Error);
+                foreach (Expr child in ExpressionCandidates(pipe.Right, mapperType, scope))
+                {
+                    yield return pipe with { Right = child };
                 }
                 break;
             case Expr.Match match:
@@ -507,6 +551,22 @@ internal sealed class FuzzShrinker
         return true;
     }
 
+    private static bool TryResultSuccessType(Expr expression, out AshesType successType)
+    {
+        if (expression is Expr.Call { Func: Expr.Var { Name: "Ok" }, Arg: Expr payload } &&
+            TryExpressionType(payload, null, out successType))
+        {
+            return true;
+        }
+        if (TryExpressionType(expression, null, out AshesType type) && type is AshesType.Result result)
+        {
+            successType = result.Value;
+            return true;
+        }
+        successType = null!;
+        return false;
+    }
+
     private static AshesType? FromSyntax(TypeExpr syntax) => syntax switch
     {
         TypeExpr.Named { Name: "Int" } => AshesType.Int,
@@ -548,6 +608,10 @@ internal sealed class FuzzShrinker
                 VisitFreeVariables(let.Value, bound, result);
                 VisitFreeVariables(let.Body, Add(bound, let.Name), result);
                 return;
+            case Expr.LetResult let:
+                VisitFreeVariables(let.Value, bound, result);
+                VisitFreeVariables(let.Body, Add(bound, let.Name), result);
+                return;
             case Expr.LetRecursive recursive:
                 HashSet<string> recursiveBound = Add(bound, recursive.Name);
                 VisitFreeVariables(recursive.Value, recursiveBound, result);
@@ -569,6 +633,18 @@ internal sealed class FuzzShrinker
                     VisitFreeVariables(matchCase.Body, caseBound, result);
                 }
                 return;
+            case Expr.Handle handle:
+                VisitFreeVariables(handle.Body, bound, result);
+                foreach (HandlerArm arm in handle.Arms)
+                {
+                    HashSet<string> armBound = new(bound, StringComparer.Ordinal);
+                    foreach (Pattern pattern in arm.Parameters)
+                    {
+                        AddPatternNames(pattern, armBound);
+                    }
+                    VisitFreeVariables(arm.Body, armBound, result);
+                }
+                return;
         }
         foreach (Expr child in Children(expression))
         {
@@ -584,12 +660,19 @@ internal sealed class FuzzShrinker
             Value = Substitute(let.Value, name, replacement),
             Body = string.Equals(let.Name, name, StringComparison.Ordinal) ? let.Body : Substitute(let.Body, name, replacement),
         },
+        Expr.LetResult let => let with
+        {
+            Value = Substitute(let.Value, name, replacement),
+            Body = string.Equals(let.Name, name, StringComparison.Ordinal) ? let.Body : Substitute(let.Body, name, replacement),
+        },
         Expr.LetRecursive recursive when string.Equals(recursive.Name, name, StringComparison.Ordinal) => recursive,
         Expr.LetRecursive recursive => recursive with { Value = Substitute(recursive.Value, name, replacement), Body = Substitute(recursive.Body, name, replacement) },
         Expr.Lambda lambda when string.Equals(lambda.ParamName, name, StringComparison.Ordinal) => lambda,
         Expr.Lambda lambda => lambda with { Body = Substitute(lambda.Body, name, replacement) },
         Expr.If conditional => conditional with { Cond = Substitute(conditional.Cond, name, replacement), Then = Substitute(conditional.Then, name, replacement), Else = Substitute(conditional.Else, name, replacement) },
         Expr.Call call => call with { Func = Substitute(call.Func, name, replacement), Arg = Substitute(call.Arg, name, replacement) },
+        Expr.ResultPipe pipe => pipe with { Left = Substitute(pipe.Left, name, replacement), Right = Substitute(pipe.Right, name, replacement) },
+        Expr.ResultMapErrorPipe pipe => pipe with { Left = Substitute(pipe.Left, name, replacement), Right = Substitute(pipe.Right, name, replacement) },
         Expr.TupleLit tuple => tuple with { Elements = tuple.Elements.Select(element => Substitute(element, name, replacement)).ToArray() },
         Expr.ListLit list => list with { Elements = list.Elements.Select(element => Substitute(element, name, replacement)).ToArray() },
         Expr.Cons cons => cons with { Head = Substitute(cons.Head, name, replacement), Tail = Substitute(cons.Tail, name, replacement) },
@@ -624,10 +707,15 @@ internal sealed class FuzzShrinker
         Expr.NotEqual binary => [binary.Left, binary.Right],
         Expr.ResultPipe pipe => [pipe.Left, pipe.Right],
         Expr.ResultMapErrorPipe pipe => [pipe.Left, pipe.Right],
-        Expr.LetResult let => [let.Value, let.Body],
+        Expr.If conditional => [conditional.Cond, conditional.Then, conditional.Else],
+        Expr.Call call => [call.Func, call.Arg],
+        Expr.TupleLit tuple => tuple.Elements,
+        Expr.ListLit list => list.Elements,
+        Expr.Cons cons => [cons.Head, cons.Tail],
+        Expr.RecordLit record => record.Fields.Select(field => field.Value),
+        Expr.RecordUpdate update => [update.Target, .. update.Updates.Select(field => field.Value)],
         Expr.Await awaitExpression => [awaitExpression.Task],
         Expr.Perform perform => [perform.Operation],
-        Expr.Handle handle => [handle.Body, .. handle.Arms.Select(arm => arm.Body)],
         _ => [],
     };
 

@@ -123,6 +123,67 @@ public sealed class ShrinkerTests
         diagnostics.Errors.ShouldBeEmpty(candidate.Source);
     }
 
+    [Test]
+    public void LetRemovalTracksReferencesInsideAggregateChildren()
+    {
+        GeneratedFuzzCase original = Case(
+            """
+            type FuzzRecord =
+                | first: Int
+                | second: Bool
+
+            let captured = 7
+            in FuzzRecord(first = captured, second = true)
+            """,
+            new AshesType.Record("FuzzRecord"));
+
+        foreach (GeneratedFuzzCase candidate in new FuzzShrinker().Candidates(original))
+        {
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(candidate.Source, diagnostics).ParseProgram();
+            _ = new Lowering(diagnostics).Lower(parsed);
+            diagnostics.Errors.ShouldBeEmpty(candidate.Source);
+        }
+    }
+
+    [Test]
+    public void ResultBindingsAndPipelinesShrinkTheirTypedChildren()
+    {
+        AshesType.Result resultType = new(AshesType.Str, AshesType.Int);
+        GeneratedFuzzCase binding = Case("let? value = Ok(128) in Ok(value + 64)", resultType);
+        GeneratedFuzzCase pipe = Case(
+            "Ok(128) |?> (given (value: Int) -> Ok(value + 64))",
+            resultType);
+        GeneratedFuzzCase mapError = Case(
+            "Error(128) |!> (given (error: Int) -> \"failure\")",
+            resultType);
+
+        GeneratedFuzzCase[] bindingCandidates = new FuzzShrinker().Candidates(binding).ToArray();
+        GeneratedFuzzCase[] pipeCandidates = new FuzzShrinker().Candidates(pipe).ToArray();
+        GeneratedFuzzCase[] mapCandidates = new FuzzShrinker().Candidates(mapError).ToArray();
+
+        bindingCandidates.Any(candidate => candidate.Program.Body is Expr.LetResult
+        {
+            Value: Expr.Call { Func: Expr.Var { Name: "Ok" }, Arg: Expr.IntLit { Value: 0 } },
+        }).ShouldBeTrue();
+        pipeCandidates.Any(candidate => candidate.Program.Body is Expr.ResultPipe
+        {
+            Left: Expr.Call { Func: Expr.Var { Name: "Ok" }, Arg: Expr.IntLit { Value: 0 } },
+        }).ShouldBeTrue();
+        mapCandidates.Any(candidate => candidate.Program.Body is Expr.ResultMapErrorPipe
+        {
+            Right: Expr.Lambda { Body: Expr.StrLit { Value.Length: 3 } },
+        }).ShouldBeTrue();
+
+        foreach (GeneratedFuzzCase candidate in bindingCandidates.Concat(pipeCandidates).Concat(mapCandidates))
+        {
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(candidate.Source, diagnostics).ParseProgram();
+            _ = new Lowering(diagnostics).Lower(parsed);
+            diagnostics.Errors.ShouldBeEmpty(candidate.Source);
+        }
+    }
+
     private static GeneratedFuzzCase Case(string source, AshesType? type = null)
     {
         Diagnostics diagnostics = new();

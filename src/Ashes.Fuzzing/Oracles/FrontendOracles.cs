@@ -32,6 +32,13 @@ internal sealed class FormatOracle : IFuzzOracle
     {
         try
         {
+            string astFormatted = AshesFormatter.Format(testCase.Program);
+            if (!string.Equals(testCase.Source, astFormatted, StringComparison.Ordinal))
+            {
+                return ValueTask.FromResult(FuzzOracleResult.Failed(
+                    Id,
+                    "Generated source differs from formatting its original AST."));
+            }
             Diagnostics firstDiagnostics = new();
             FrontendProgram first = new Parser(testCase.Source, firstDiagnostics).ParseProgram();
             string firstFormatted = AshesFormatter.Format(first);
@@ -41,6 +48,12 @@ internal sealed class FormatOracle : IFuzzOracle
             if (firstDiagnostics.Errors.Count != 0 || secondDiagnostics.Errors.Count != 0)
             {
                 return ValueTask.FromResult(FuzzOracleResult.Failed(Id, "A formatter round-trip parse produced diagnostics."));
+            }
+            if (!string.Equals(astFormatted, firstFormatted, StringComparison.Ordinal))
+            {
+                return ValueTask.FromResult(FuzzOracleResult.Failed(
+                    Id,
+                    "AST formatting changed after parsing and formatting again."));
             }
             return ValueTask.FromResult(string.Equals(firstFormatted, secondFormatted, StringComparison.Ordinal)
                 ? FuzzOracleResult.Passed(Id)

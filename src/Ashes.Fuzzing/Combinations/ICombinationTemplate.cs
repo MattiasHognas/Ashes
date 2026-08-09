@@ -41,7 +41,9 @@ internal sealed class CombinationRegistry
         registry.Register(new BoundedRecursionTemplate());
         registry.Register(new CapabilityHandlerTemplate());
         registry.Register(new AsyncCaptureTemplate());
+        registry.Register(new AsyncClosureMatchAcrossAwaitTemplate());
         registry.Register(new AsyncSpawnSharedValueTemplate());
+        registry.Register(new AsyncTaskResultReuseTemplate());
         registry.Register(new EscapingClosureTemplate());
         registry.Register(new MultipleClosuresTemplate());
         registry.Register(new ListHeadSharingTemplate());
@@ -53,12 +55,16 @@ internal sealed class CombinationRegistry
         registry.Register(new SharedReconstructionFallbackTemplate());
         registry.Register(new BranchSelectiveReuseTemplate());
         registry.Register(new UniqueRecordUpdateTemplate());
+        registry.Register(new NestedReusableConstructorsTemplate());
+        registry.Register(new CapturedReuseCandidateTemplate());
         registry.Register(new BoundedListTraversalTemplate());
         registry.Register(new CapturedAdtMatchClosureTemplate());
         registry.Register(new ClosureInMatchBranchTemplate());
         registry.Register(new RecursiveListReconstructionTemplate());
         registry.Register(new ResultClosurePipeTemplate());
         registry.Register(new CapabilityClosureMatchTemplate());
+        registry.Register(new CapabilityResultTemplate());
+        registry.Register(new CapabilityRecursiveListTemplate());
         registry.Register(new NestedAdtMatchTemplate());
         registry.Register(new LoopCarriedAdtTemplate());
         return registry;

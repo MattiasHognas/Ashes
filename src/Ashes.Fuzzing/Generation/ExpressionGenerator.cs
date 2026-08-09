@@ -97,9 +97,9 @@ internal sealed class ExpressionGenerator
             AshesType.Tuple tuple => AggregateTuple(tuple, context, budget, random),
             AshesType.List => Result(new Expr.ListLit([]), type, GeneratedFeature.List, "leaf:list", 1),
             AshesType.Function function => LeafFunction(function, context, budget, random),
-            AshesType.Record { Name: "FuzzRecord" } => LeafRecord(type, context, budget, random),
+            AshesType.Record record => LeafRecord(record, context, budget, random),
             AshesType.Result result => LeafResult(result, context, budget, random),
-            AshesType.Adt { Name: "FuzzTree" } adt => LeafAdt(adt, context, budget, random),
+            AshesType.Adt adt => LeafAdt(adt, context, budget, random),
             AshesType.Task { Error: AshesType.Primitive { Name: "Str" } } task => LeafTask(task, context, budget, random),
             _ => throw new InvalidOperationException($"No leaf generator is available for '{type}'."),
         };
@@ -131,14 +131,30 @@ internal sealed class ExpressionGenerator
         return new GenerationResult<Expr>(new Expr.Lambda(name, body.Value), function, features, GenerationTrace.Merge("leaf:lambda", body.Trace), body.NodeCount + 1);
     }
 
-    private static GenerationResult<Expr> LeafRecord(AshesType type, GenerationContext context, GenerationBudget budget, FuzzRandom random)
+    private static GenerationResult<Expr> LeafRecord(AshesType.Record type, GenerationContext context, GenerationBudget budget, FuzzRandom random)
     {
-        GenerationResult<Expr> first = GenerateLeaf(AshesType.Int, context, budget.Descend(), random);
-        GenerationResult<Expr> second = GenerateLeaf(AshesType.Bool, context, budget.Descend(), random);
+        if (!Expressions.RecordGenerationRule.TryFindRecord(type, context, out GeneratedRecord declaration))
+        {
+            throw new InvalidOperationException($"Record generation type '{type.Name}' is not declared in the current context.");
+        }
         GeneratedFeatureSet features = new([GeneratedFeature.Record]);
-        features.UnionWith(first.Features);
-        features.UnionWith(second.Features);
-        return new GenerationResult<Expr>(new Expr.RecordLit("FuzzRecord", [("first", first.Value), ("second", second.Value)]), type, features, GenerationTrace.Merge("leaf:record", first.Trace, second.Trace), first.NodeCount + second.NodeCount + 1);
+        List<(string Name, Expr Value)> fields = [];
+        List<GenerationTrace> traces = [];
+        int nodes = 1;
+        foreach ((string fieldName, AshesType fieldType) in declaration.Fields)
+        {
+            GenerationResult<Expr> field = GenerateLeaf(fieldType, context, budget.Descend(), random);
+            fields.Add((fieldName, field.Value));
+            features.UnionWith(field.Features);
+            traces.Add(field.Trace);
+            nodes += field.NodeCount;
+        }
+        return new GenerationResult<Expr>(
+            new Expr.RecordLit(type.Name, fields),
+            type,
+            features,
+            GenerationTrace.Merge($"leaf:record:{type.Name}", traces.ToArray()),
+            nodes);
     }
 
     private static GenerationResult<Expr> LeafResult(AshesType.Result result, GenerationContext context, GenerationBudget budget, FuzzRandom random)
@@ -154,12 +170,38 @@ internal sealed class ExpressionGenerator
 
     private static GenerationResult<Expr> LeafAdt(AshesType.Adt adt, GenerationContext context, GenerationBudget budget, FuzzRandom random)
     {
-        AshesType payloadType = adt.Arguments[0];
-        GenerationResult<Expr> payload = GenerateLeaf(payloadType, context, budget.Descend(), random);
-        GeneratedFeatureSet features = payload.Features.Copy();
-        features.Add(GeneratedFeature.Adt);
-        Expr value = new Expr.Call(new Expr.Var("FuzzLeaf"), payload.Value);
-        return new GenerationResult<Expr>(value, adt, features, GenerationTrace.Merge("leaf:adt", payload.Trace), payload.NodeCount + 2);
+        if (!Expressions.AdtGenerationRule.TryFindAdt(adt, context, out GeneratedAdt declaration))
+        {
+            throw new InvalidOperationException($"ADT generation type '{adt.Name}' is not declared in the current context.");
+        }
+        (string Name, IReadOnlyList<AshesType> Fields)[] constructors = declaration.Constructors
+            .Where(constructor => !constructor.Fields.Any(field => Expressions.AdtGenerationRule.ContainsAdt(field, adt.Name)))
+            .OrderBy(constructor => constructor.Name, StringComparer.Ordinal)
+            .ToArray();
+        if (constructors.Length == 0)
+        {
+            throw new InvalidOperationException($"ADT generation type '{adt.Name}' has no finite leaf constructor.");
+        }
+        (string Name, IReadOnlyList<AshesType> Fields) selected = constructors[random.Next(constructors.Length)];
+        Expr value = new Expr.Var(selected.Name);
+        GeneratedFeatureSet features = new([GeneratedFeature.Adt]);
+        List<GenerationTrace> traces = [];
+        int nodes = 1;
+        foreach (AshesType fieldTemplate in selected.Fields)
+        {
+            AshesType fieldType = Expressions.AdtGenerationRule.Substitute(fieldTemplate, adt.Arguments);
+            GenerationResult<Expr> field = GenerateLeaf(fieldType, context, budget.Descend(), random);
+            value = new Expr.Call(value, field.Value);
+            features.UnionWith(field.Features);
+            traces.Add(field.Trace);
+            nodes += field.NodeCount + 1;
+        }
+        return new GenerationResult<Expr>(
+            value,
+            adt,
+            features,
+            GenerationTrace.Merge($"leaf:adt:{selected.Name}", traces.ToArray()),
+            nodes);
     }
 
     private static GenerationResult<Expr> LeafTask(AshesType.Task task, GenerationContext context, GenerationBudget budget, FuzzRandom random)

@@ -154,16 +154,61 @@ internal sealed class RecordGenerationRule : IExpressionGenerationRule
     public string Id => "record";
     public int Weight => 3;
     public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Record;
-    public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) => requiredType is AshesType.Record { Name: "FuzzRecord" };
+    public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
+        requiredType is AshesType.Record record &&
+        TryFindRecord(record, context, out GeneratedRecord declaration) &&
+        budget.RemainingNodes >= declaration.Fields.Count + 1;
+
     public GenerationResult<Expr> Generate(AshesType requiredType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
-        GenerationResult<Expr> first = expressions.Generate(AshesType.Int, context, budget.Descend(2), random);
-        GenerationResult<Expr> second = expressions.Generate(AshesType.Bool, context, budget.Descend(2), random);
+        AshesType.Record recordType = (AshesType.Record)requiredType;
+        if (!TryFindRecord(recordType, context, out GeneratedRecord declaration))
+        {
+            throw new InvalidOperationException($"Record generation type '{recordType.Name}' is not declared in the current context.");
+        }
+        List<(string Name, Expr Value)> fields = [];
         GeneratedFeatureSet features = new([GeneratedFeature.Record]);
-        features.UnionWith(first.Features);
-        features.UnionWith(second.Features);
-        Expr value = new Expr.RecordLit("FuzzRecord", [("first", first.Value), ("second", second.Value)]);
-        return new GenerationResult<Expr>(value, requiredType, features, GenerationTrace.Merge("record", first.Trace, second.Trace), first.NodeCount + second.NodeCount + 1);
+        List<GenerationTrace> traces = [];
+        int nodes = 1;
+        foreach ((string fieldName, AshesType fieldType) in declaration.Fields)
+        {
+            GenerationResult<Expr> field = expressions.Generate(
+                fieldType,
+                context.WithoutFlag(GenerationFlags.TailPosition),
+                budget.Descend(Math.Max(1, declaration.Fields.Count)),
+                random);
+            fields.Add((fieldName, field.Value));
+            features.UnionWith(field.Features);
+            traces.Add(field.Trace);
+            nodes += field.NodeCount;
+        }
+        return new GenerationResult<Expr>(
+            new Expr.RecordLit(recordType.Name, fields),
+            requiredType,
+            features,
+            GenerationTrace.Merge($"record:{recordType.Name}", traces.ToArray()),
+            nodes);
+    }
+
+    internal static bool TryFindRecord(
+        AshesType.Record type,
+        GenerationContext context,
+        out GeneratedRecord declaration)
+    {
+        GeneratedRecord? candidate = context.Records.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, type.Name, StringComparison.Ordinal));
+        if (candidate is not null)
+        {
+            declaration = candidate;
+            return true;
+        }
+        if (string.Equals(type.Name, "FuzzRecord", StringComparison.Ordinal))
+        {
+            declaration = new GeneratedRecord("FuzzRecord", [("first", AshesType.Int), ("second", AshesType.Bool)]);
+            return true;
+        }
+        declaration = null!;
+        return false;
     }
 }
 

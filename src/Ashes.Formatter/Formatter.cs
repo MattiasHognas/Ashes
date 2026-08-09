@@ -952,7 +952,8 @@ public static class Formatter
         }
 
         sb.Append("match ");
-        WriteExprInline(sb, match.Value, indent, 0, preferPipelines, options);
+        int valuePrecedence = ContainsRecordUpdate(match.Value) ? PrecWith + 1 : 0;
+        WriteExprInline(sb, match.Value, indent, valuePrecedence, preferPipelines, options);
         sb.Append(" with\n");
 
         foreach (var matchCase in match.Cases)
@@ -1472,7 +1473,8 @@ public static class Formatter
         else
         {
             sb.Append('(');
-            WriteExprInline(sb, c.Arg, indent, 0, preferPipelines, options);
+            int argumentPrecedence = ContainsRecordUpdate(c.Arg) ? PrecWith + 1 : 0;
+            WriteExprInline(sb, c.Arg, indent, argumentPrecedence, preferPipelines, options);
             sb.Append(')');
         }
 

@@ -22,9 +22,18 @@ internal enum GeneratedFeature
     NestedCombination, TopLevelDeclaration, TopLevelFunction, MutualRecursion, Provider,
     SharedReuseFallback, BranchSelectiveReuse, UniqueConstructorUpdate,
     ClosureInMatch, RecursiveReconstruction, ResultClosure, CapabilityInClosure,
-    ResultErrorMapping,
+    ResultErrorMapping, ResultBinding,
     ResultAliasesInput, FreshResultInternalSharing, StaticallyUniquePath,
     NestedMatch, LoopCarriedAdt,
+    CapturedReuseCandidate,
+    TaskResultReuse,
+    ClosureAcrossAwait,
+    MatchAcrossAwait,
+    RecursiveResult,
+    NestedReusableConstructors,
+    AliasedResultPreventsReuse,
+    FreshResultAllowsReuse,
+    RecursionWithSharing,
 }
 
 internal enum OwnershipInterest
@@ -61,7 +70,10 @@ internal sealed record GenerationTrace(IReadOnlyList<string> Entries)
 
 internal sealed record GenerationResult<T>(T Value, AshesType Type, GeneratedFeatureSet Features, GenerationTrace Trace, int NodeCount);
 internal sealed record GeneratedBinding(string Name, AshesType Type, bool IsFunction = false);
-internal sealed record GeneratedAdt(string Name, IReadOnlyList<(string Name, IReadOnlyList<AshesType> Fields)> Constructors);
+internal sealed record GeneratedAdt(
+    string Name,
+    int Arity,
+    IReadOnlyList<(string Name, IReadOnlyList<AshesType> Fields)> Constructors);
 internal sealed record GeneratedRecord(string Name, IReadOnlyList<(string Name, AshesType Type)> Fields);
 internal sealed record GeneratedCapabilityOperation(string Name, AshesType Parameter, AshesType Result);
 internal sealed record GeneratedCapability(string Name, IReadOnlyList<GeneratedCapabilityOperation> Operations);
@@ -132,7 +144,7 @@ internal sealed record GenerationBudget(
     int RemainingCombinations,
     int MaximumSourceLength)
 {
-    internal static GenerationBudget Create(int maximumNodes) => new(maximumNodes, 12, 10, 8, 3, 4, 5, 3, 4, maximumNodes * 48);
+    internal static GenerationBudget Create(int maximumNodes) => new(maximumNodes, 12, 12, 8, 4, 4, 5, 3, 4, maximumNodes * 48);
     internal bool IsLeaf => RemainingNodes <= 2 || RemainingDepth <= 1;
     internal GenerationBudget Descend(int nodes = 1) => this with { RemainingNodes = Math.Max(0, RemainingNodes - nodes), RemainingDepth = Math.Max(0, RemainingDepth - 1) };
     internal GenerationBudget LimitNodes(int maximumNodes) => this with { RemainingNodes = Math.Min(RemainingNodes, maximumNodes) };
