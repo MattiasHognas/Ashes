@@ -87,7 +87,8 @@ public sealed class CoverageExpansionTests
                 ["parse", "semantic"],
                 [compatibleType],
                 0,
-                ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed);
+                ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
+                ResourceTypes: GenerationContext.Empty.ResourceTypes);
             GeneratedFuzzCase? exercised = null;
             for (int caseIndex = 0; caseIndex < 50 && exercised is null; caseIndex++)
             {

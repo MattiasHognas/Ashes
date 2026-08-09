@@ -22,9 +22,11 @@ internal sealed record FuzzProfile(
     bool Differential = false,
     Generation.GenerationFlags ContextFlags = Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.SuspensionAllowed,
     IReadOnlySet<Generation.OwnershipInterest>? OwnershipInterests = null,
-    FuzzProfileDefaults? Defaults = null)
+    FuzzProfileDefaults? Defaults = null,
+    IReadOnlyList<Generation.AshesType.Resource>? ResourceTypes = null)
 {
     internal FuzzProfileDefaults EffectiveDefaults => Defaults ?? FuzzProfileDefaults.Standard;
+    internal IReadOnlyList<Generation.AshesType.Resource> EffectiveResourceTypes => ResourceTypes ?? [];
 }
 
 internal sealed class FuzzProfileRegistry
@@ -93,7 +95,7 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true, Defaults: Defaults(250, 80)));
         registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await", "async.spawn-shared-value" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
-        registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80)));
+        registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80), ResourceTypes: [Generation.AshesType.FileHandle]));
         registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0, OwnershipInterests: ownershipInterests, Defaults: Defaults(40, 40)));
         registry.Register(new FuzzProfile("all", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 1, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 80)));
         registry.Validate(rules, combinations);
@@ -153,9 +155,25 @@ internal sealed class FuzzProfileRegistry
 
             Generation.GenerationContext context = Generation.GenerationContext.Empty
                 .WithFlags(profile.ContextFlags)
+                .WithResourceTypes(profile.EffectiveResourceTypes)
                 .WithOwnershipInterests(profile.OwnershipInterests is null
                     ? Enum.GetValues<Generation.OwnershipInterest>()
                     : profile.OwnershipInterests);
+            if (profile.EffectiveResourceTypes.Any(type => string.IsNullOrWhiteSpace(type.Name)) ||
+                profile.EffectiveResourceTypes.Distinct().Count() != profile.EffectiveResourceTypes.Count)
+            {
+                throw new ArgumentException($"Profile '{profile.Id}' contains duplicate or invalid resource types.");
+            }
+            Generation.AshesType.Resource? unknownResource = profile.EffectiveResourceTypes
+                .FirstOrDefault(type => !Generation.AshesType.SupportedResources.Contains(type));
+            if (unknownResource is not null)
+            {
+                throw new ArgumentException($"Profile '{profile.Id}' references unknown resource type '{unknownResource.Name}'.");
+            }
+            if (profile.EffectiveResourceTypes.Count > 0 && !context.Allows(Generation.GenerationFlags.ResourcesAllowed))
+            {
+                throw new ArgumentException($"Profile '{profile.Id}' enables resource types without resource generation.");
+            }
             string? incompatibleCombination = profile.EnabledCombinations.FirstOrDefault(id =>
                 !profile.Types.Any(type => combinations.Get(id).CanApply(
                     type,

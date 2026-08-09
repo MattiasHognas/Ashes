@@ -277,7 +277,9 @@ internal sealed class DeterministicResourceTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
-        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 14;
+        context.Allows(GenerationFlags.ResourcesAllowed) &&
+        context.ResourceTypes.Contains(AshesType.FileHandle) &&
+        budget.RemainingNodes >= 14;
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {

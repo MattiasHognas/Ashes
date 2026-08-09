@@ -1,4 +1,5 @@
 using Ashes.Fuzzing.Combinations;
+using Ashes.Fuzzing.Configuration;
 using Ashes.Fuzzing.Coverage;
 using Ashes.Fuzzing.Generation;
 using Shouldly;
@@ -117,6 +118,46 @@ public sealed class CombinationTests
         new DeterministicResourceTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
         new BoundedRecursionTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
         new SharedReconstructionFallbackTemplate().CanApply(AshesType.Str, context, budget).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ResourceTypesAreExplicitAndRestrictedToTheResourceProfile()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile resources = fixture.Profiles.Get("resources");
+
+        resources.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
+        AshesType.FileHandle.ToSyntax().ShouldBe(new Ashes.Frontend.TypeExpr.Named("FileHandle"));
+        fixture.Profiles.Profiles
+            .Where(profile => !string.Equals(profile.Id, "resources", StringComparison.Ordinal))
+            .ShouldAllBe(profile => profile.EffectiveResourceTypes.Count == 0);
+
+        FuzzProfileRegistry invalid = new();
+        invalid.Register(new FuzzProfile(
+            "invalid-resource",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse"],
+            [AshesType.Int],
+            0,
+            ResourceTypes: [AshesType.FileHandle]));
+
+        Should.Throw<ArgumentException>(() => invalid.Validate(fixture.Rules, fixture.Combinations))
+            .Message.ShouldContain("without resource generation");
+
+        FuzzProfileRegistry unknown = new();
+        unknown.Register(new FuzzProfile(
+            "unknown-resource",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse"],
+            [AshesType.Int],
+            0,
+            ContextFlags: GenerationFlags.ResourcesAllowed,
+            ResourceTypes: [new AshesType.Resource("UnknownResource")]));
+
+        Should.Throw<ArgumentException>(() => unknown.Validate(fixture.Rules, fixture.Combinations))
+            .Message.ShouldContain("unknown resource type");
     }
 
     [Test]
