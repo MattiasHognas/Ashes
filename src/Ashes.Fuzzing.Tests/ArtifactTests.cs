@@ -32,8 +32,27 @@ public sealed class ArtifactTests
         metadata.RootElement.GetProperty("ShrinkDurationMilliseconds").GetDouble().ShouldBe(0);
         metadata.RootElement.GetProperty("OutputMaximumBytes").GetInt32().ShouldBe(1024 * 1024);
         metadata.RootElement.GetProperty("ArtifactMaximumBytes").GetInt32().ShouldBe(FuzzArtifactWriter.DefaultMaximumArtifactBytes);
+        metadata.RootElement.GetProperty("CaseSeed").GetUInt64().ShouldBe(generated.CaseSeed);
+        metadata.RootElement.GetProperty("CompilerConfiguration").GetString().ShouldBe("in-process compiler defaults");
         (await File.ReadAllTextAsync(Path.Combine(path, "stdout.txt"))).ShouldBe("out");
         (await File.ReadAllTextAsync(Path.Combine(path, "stderr.txt"))).ShouldBe("err");
+    }
+
+    [Test]
+    public void FailureReportIncludesReplayCoordinatesBudgetAndGenerationSelections()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedFuzzCase generated = fixture.Generator.Generate(99, 7, fixture.Profiles.Get("combinations"), 80);
+        FuzzOracleResult result = FuzzOracleResult.Failed("differential-reuse", "simulated");
+
+        IReadOnlyList<string> lines = FuzzFailureReport.Lines(generated, result, "artifacts/fuzz/id", "replay command");
+
+        lines[0].ShouldContain($"seed=99 case-seed={generated.CaseSeed} case=7");
+        lines.ShouldContain(line => line.StartsWith("budget: nodes=", StringComparison.Ordinal));
+        lines.ShouldContain(line => line.StartsWith("selected rules: ", StringComparison.Ordinal));
+        lines.ShouldContain(line => line.StartsWith("selected combinations: ", StringComparison.Ordinal));
+        lines.ShouldContain("replay: replay command");
+        FuzzFailureReport.CompilerConfiguration(result.Oracle).ShouldBe("Release; -O2 reuse enabled vs disabled");
     }
 
     [Test]
