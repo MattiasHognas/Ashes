@@ -59,6 +59,8 @@ internal sealed class CombinationRegistry
         registry.Register(new RecursiveListReconstructionTemplate());
         registry.Register(new ResultClosurePipeTemplate());
         registry.Register(new CapabilityClosureMatchTemplate());
+        registry.Register(new NestedAdtMatchTemplate());
+        registry.Register(new LoopCarriedAdtTemplate());
         return registry;
     }
 }

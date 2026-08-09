@@ -24,6 +24,7 @@ internal enum GeneratedFeature
     ClosureInMatch, RecursiveReconstruction, ResultClosure, CapabilityInClosure,
     ResultErrorMapping,
     ResultAliasesInput, FreshResultInternalSharing, StaticallyUniquePath,
+    NestedMatch, LoopCarriedAdt,
 }
 
 internal enum OwnershipInterest
@@ -125,7 +126,7 @@ internal sealed record GenerationBudget(
     int RemainingCombinations,
     int MaximumSourceLength)
 {
-    internal static GenerationBudget Create(int maximumNodes) => new(maximumNodes, 10, 10, 6, 3, 4, 5, 3, 4, maximumNodes * 48);
+    internal static GenerationBudget Create(int maximumNodes) => new(maximumNodes, 12, 10, 8, 3, 4, 5, 3, 4, maximumNodes * 48);
     internal bool IsLeaf => RemainingNodes <= 2 || RemainingDepth <= 1;
     internal GenerationBudget Descend(int nodes = 1) => this with { RemainingNodes = Math.Max(0, RemainingNodes - nodes), RemainingDepth = Math.Max(0, RemainingDepth - 1) };
     internal GenerationBudget LimitNodes(int maximumNodes) => this with { RemainingNodes = Math.Min(RemainingNodes, maximumNodes) };
