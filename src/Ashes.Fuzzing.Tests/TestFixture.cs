@@ -10,7 +10,9 @@ internal static class TestFixture
     {
         GeneratorRegistry rules = GeneratorRegistry.CreateDefault();
         CombinationRegistry combinations = CombinationRegistry.CreateDefault();
+        Oracles.FuzzOracleRegistry oracles = Oracles.FuzzOracleRegistry.CreateDefault();
         FuzzProfileRegistry profiles = FuzzProfileRegistry.CreateDefault(rules, combinations);
+        profiles.ValidateOracles(oracles);
         return (rules, combinations, profiles, new ProgramGenerator(rules, combinations));
     }
 }

@@ -14,8 +14,9 @@ try
     FuzzConfiguration configuration = FuzzConfiguration.Parse(args);
     GeneratorRegistry rules = GeneratorRegistry.CreateDefault();
     CombinationRegistry combinations = CombinationRegistry.CreateDefault();
-    FuzzProfileRegistry profiles = FuzzProfileRegistry.CreateDefault(rules, combinations);
     FuzzOracleRegistry oracles = FuzzOracleRegistry.CreateDefault();
+    FuzzProfileRegistry profiles = FuzzProfileRegistry.CreateDefault(rules, combinations);
+    profiles.ValidateOracles(oracles);
     configuration = configuration.ApplyProfileDefaults(profiles.Get(configuration.Profile));
     if (configuration.Command == FuzzCommandKind.List)
     {

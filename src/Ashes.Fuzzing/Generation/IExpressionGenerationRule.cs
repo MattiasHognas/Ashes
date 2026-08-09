@@ -59,6 +59,7 @@ internal sealed class GeneratorRegistry
         registry.Register(new Expressions.ResultMatchGenerationRule());
         registry.Register(new Expressions.ResultPipeGenerationRule());
         registry.Register(new Expressions.ResultMapErrorGenerationRule());
+        registry.Register(new Expressions.ResultBindGenerationRule());
         registry.Register(new Expressions.RecordUpdateGenerationRule());
         registry.Register(new Expressions.BitwiseGenerationRule());
         return registry;
@@ -76,7 +77,11 @@ internal static class AdvertisedGenerationTypes
     internal static IReadOnlyList<AshesType> Function { get; } = [new AshesType.Function(AshesType.Int, AshesType.Str)];
     internal static IReadOnlyList<AshesType> Record { get; } = [new AshesType.Record("FuzzRecord")];
     internal static IReadOnlyList<AshesType> Result { get; } = [new AshesType.Result(AshesType.Str, AshesType.Int)];
-    internal static IReadOnlyList<AshesType> Adt { get; } = [new AshesType.Adt("FuzzTree", [AshesType.Int])];
+    internal static IReadOnlyList<AshesType> Adt { get; } =
+    [
+        new AshesType.Adt("FuzzTree", [AshesType.Int]),
+        new AshesType.Adt("FuzzMaybe", [AshesType.Str]),
+    ];
     internal static IReadOnlyList<AshesType> Task { get; } = [new AshesType.Task(AshesType.Str, AshesType.Int)];
     internal static IReadOnlyList<AshesType> UInt { get; } = [new AshesType.UInt(8), new AshesType.UInt(64)];
 }

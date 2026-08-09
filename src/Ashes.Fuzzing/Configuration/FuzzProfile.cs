@@ -72,6 +72,8 @@ internal sealed class FuzzProfileRegistry
             new Generation.AshesType.Result(Generation.AshesType.Str, new Generation.AshesType.List(Generation.AshesType.Int)),
             new Generation.AshesType.Adt("FuzzTree", [Generation.AshesType.Int]),
             new Generation.AshesType.Adt("FuzzTree", [Generation.AshesType.Str]),
+            new Generation.AshesType.Adt("FuzzMaybe", [Generation.AshesType.Int]),
+            new Generation.AshesType.Adt("FuzzMaybe", [Generation.AshesType.Str]),
             new Generation.AshesType.Function(Generation.AshesType.Int, Generation.AshesType.Str),
             new Generation.AshesType.Task(Generation.AshesType.Str, Generation.AshesType.Int),
             new Generation.AshesType.Task(Generation.AshesType.Str, new Generation.AshesType.Record("FuzzRecord")),
@@ -93,11 +95,23 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true, OwnershipInterests: ownershipInterests, Defaults: Defaults(5, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true, Defaults: Defaults(10, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true, Defaults: Defaults(250, 80)));
-        registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await", "async.spawn-shared-value" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
-        registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
+        registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await", "async.closure-match-across-await", "async.spawn-shared-value", "async.task-result-reuse" }, ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 80)));
+        registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match", "capability.result-operation", "capability.recursive-list" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80), ResourceTypes: [Generation.AshesType.FileHandle]));
         registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0, OwnershipInterests: ownershipInterests, Defaults: Defaults(40, 40)));
-        registry.Register(new FuzzProfile("all", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 1, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 80)));
+        registry.Register(new FuzzProfile(
+            "all",
+            allRules.ToHashSet(StringComparer.Ordinal),
+            allCombinations.ToHashSet(StringComparer.Ordinal),
+            ["parse", "format", "semantic", "ir"],
+            allTypes,
+            1,
+            ContextFlags: Generation.GenerationFlags.RecursionAllowed |
+                Generation.GenerationFlags.SuspensionAllowed |
+                Generation.GenerationFlags.ResourcesAllowed,
+            OwnershipInterests: ownershipInterests,
+            Defaults: Defaults(100, 80),
+            ResourceTypes: [Generation.AshesType.FileHandle]));
         registry.Validate(rules, combinations);
         return registry;
     }
@@ -117,6 +131,7 @@ internal sealed class FuzzProfileRegistry
         Generation.AshesType.Record { Name: "FuzzRecord" } => true,
         Generation.AshesType.Result result => IsObservable(result.Error) && IsObservable(result.Value),
         Generation.AshesType.Adt { Name: "FuzzTree" } tree => tree.Arguments.All(IsObservable),
+        Generation.AshesType.Adt { Name: "FuzzMaybe" } maybe => maybe.Arguments.All(IsObservable),
         _ => false,
     };
 
@@ -142,7 +157,9 @@ internal sealed class FuzzProfileRegistry
         {
             FuzzProfileDefaults defaults = profile.EffectiveDefaults;
             if (defaults.Cases <= 0 || defaults.MaximumNodes <= 0 || defaults.CompilerTimeoutSeconds <= 0 ||
-                defaults.ProgramTimeoutSeconds <= 0 || defaults.Targets.Count == 0 || defaults.Targets.Any(string.IsNullOrWhiteSpace))
+                defaults.ProgramTimeoutSeconds <= 0 || defaults.Targets.Count == 0 ||
+                defaults.Targets.Any(target => !FuzzConfiguration.SupportedTargets.Contains(target)) ||
+                profile.EnabledRules.Count == 0 || profile.Types.Count == 0 || profile.MinimumFeatureCount < 0)
             {
                 throw new ArgumentException($"Profile '{profile.Id}' has invalid campaign defaults.");
             }
@@ -183,6 +200,23 @@ internal sealed class FuzzProfileRegistry
             {
                 throw new ArgumentException(
                     $"Profile '{profile.Id}' cannot supply a compatible type for combination '{incompatibleCombination}'.");
+            }
+        }
+    }
+
+    internal void ValidateOracles(Oracles.FuzzOracleRegistry oracles)
+    {
+        IReadOnlySet<string> oracleIds = oracles.Oracles.Select(oracle => oracle.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (FuzzProfile profile in _profiles.Values)
+        {
+            string? unknown = profile.Oracles.FirstOrDefault(id => !oracleIds.Contains(id));
+            if (profile.Oracles.Count == 0 ||
+                profile.Oracles.Any(string.IsNullOrWhiteSpace) ||
+                profile.Oracles.Distinct(StringComparer.Ordinal).Count() != profile.Oracles.Count ||
+                unknown is not null)
+            {
+                throw new ArgumentException(
+                    $"Profile '{profile.Id}' contains duplicate, invalid, or unknown oracle '{unknown ?? "<none>"}'.");
             }
         }
     }

@@ -1,6 +1,8 @@
 using Ashes.Frontend;
+using Ashes.Fuzzing.Configuration;
 using Ashes.Fuzzing.Coverage;
 using Ashes.Fuzzing.Generation;
+using Ashes.Semantics;
 using Shouldly;
 
 namespace Ashes.Fuzzing.Tests;
@@ -78,6 +80,37 @@ public sealed class GeneratorInvariantTests
     }
 
     [Test]
+    public void ScopeValidationTraversesResultBindingsAndPipelines()
+    {
+        Expr body = new Expr.TupleLit(
+        [
+            new Expr.ResultPipe(new Expr.Var("missingPipeInput"), new Expr.Var("missingPipeFunction")),
+            new Expr.ResultMapErrorPipe(new Expr.Var("missingMapInput"), new Expr.Var("missingMapFunction")),
+            new Expr.LetResult(
+                "boundResult",
+                new Expr.Var("missingBoundInput"),
+                new Expr.TupleLit([new Expr.Var("boundResult"), new Expr.Var("missingBoundBody")])),
+        ]);
+
+        IReadOnlyList<string> errors = new AstInvariantValidator().ValidateScope(
+            new Ashes.Frontend.Program(Array.Empty<TopLevelItem>(), body));
+
+        foreach (string missing in new[]
+        {
+            "missingPipeInput",
+            "missingPipeFunction",
+            "missingMapInput",
+            "missingMapFunction",
+            "missingBoundInput",
+            "missingBoundBody",
+        })
+        {
+            errors.ShouldContain($"'{missing}' is not in scope.");
+        }
+        errors.ShouldNotContain("'boundResult' is not in scope.");
+    }
+
+    [Test]
     public void DifferentCaseIndexesAreIndependentAndDeterministic()
     {
         var fixture = TestFixture.Create();
@@ -120,5 +153,94 @@ public sealed class GeneratorInvariantTests
             .ShouldContain(item => item.Decl.CapabilityName == "FuzzProvided7");
         generated.Features.Contains(GeneratedFeature.Provider).ShouldBeTrue();
         new AstInvariantValidator().ValidateScope(generated.Program).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void ProviderAndCapabilityDeclarationsFitTheGenerationBudget()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = new(
+            "provider-capability-budget",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal) { "capability.result-operation" },
+            ["parse", "format", "semantic", "ir"],
+            [AshesType.Int],
+            2);
+
+        GeneratedFuzzCase generated = fixture.Generator.Generate(20260809, 7, profile, 120);
+
+        generated.Trace.Entries.ShouldContain(entry =>
+            entry.Contains("capability:result", StringComparison.Ordinal));
+        generated.Features.Contains(GeneratedFeature.Provider).ShouldBeTrue();
+        generated.Features.Contains(GeneratedFeature.Capability).ShouldBeTrue();
+        GenerationBudgetValidator.Validate(
+            generated.Program,
+            generated.Trace,
+            generated.Source.Length,
+            generated.Budget).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void RecordGenerationUsesTheDeclaredContextSchema()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(1);
+        AshesType.Record requiredType = new("FuzzRecordShape1");
+        GenerationCoverageGuidance coverage = new(["record"], []);
+        ExpressionGenerator expressions = new(
+            fixture.Rules,
+            new HashSet<string>(StringComparer.Ordinal) { "record" },
+            coverage,
+            preferredRule: "record");
+
+        GenerationResult<Expr> generated = expressions.Generate(
+            requiredType,
+            prelude.Context,
+            GenerationBudget.Create(40),
+            new FuzzRandom(1201));
+        Ashes.Frontend.Program program = new(prelude.Items, generated.Value);
+        string source = Ashes.Formatter.Formatter.Format(program);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        _ = lowering.Lower(parsed);
+
+        generated.Type.ShouldBe(requiredType);
+        generated.Value.ShouldBeOfType<Expr.RecordLit>().TypeName.ShouldBe("FuzzRecordShape1");
+        diagnostics.Errors.ShouldBeEmpty(source);
+        lowering.LastLoweredType.ShouldNotBeNull();
+        lowering.FormatType(lowering.LastLoweredType).ShouldBe("FuzzRecordShape1");
+    }
+
+    [Test]
+    public void AdtGenerationUsesTheDeclaredGenericContextSchema()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(0);
+        AshesType.Adt requiredType = new("FuzzChoice0", [AshesType.Bool, AshesType.Str]);
+        GenerationCoverageGuidance coverage = new(["adt"], []);
+        ExpressionGenerator expressions = new(
+            fixture.Rules,
+            new HashSet<string>(StringComparer.Ordinal) { "adt" },
+            coverage,
+            preferredRule: "adt");
+
+        GenerationResult<Expr> generated = expressions.Generate(
+            requiredType,
+            prelude.Context,
+            GenerationBudget.Create(40),
+            new FuzzRandom(1202));
+        Ashes.Frontend.Program program = new(prelude.Items, generated.Value);
+        string source = Ashes.Formatter.Formatter.Format(program);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        _ = lowering.Lower(parsed);
+
+        generated.Type.ShouldBe(requiredType);
+        generated.Trace.Entries.ShouldContain(entry => entry.StartsWith("adt:Fuzz", StringComparison.Ordinal));
+        diagnostics.Errors.ShouldBeEmpty(source);
+        lowering.LastLoweredType.ShouldNotBeNull();
+        lowering.FormatType(lowering.LastLoweredType).ShouldBe("FuzzChoice0<Bool, Str>");
     }
 }

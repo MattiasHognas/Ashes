@@ -58,6 +58,10 @@ internal sealed class AstInvariantValidator
                 Validate(let.Value, scope, errors);
                 Validate(let.Body, Add(scope, let.Name), errors);
                 break;
+            case Expr.LetResult let:
+                Validate(let.Value, scope, errors);
+                Validate(let.Body, Add(scope, let.Name), errors);
+                break;
             case Expr.LetRecursive recursive:
                 IReadOnlySet<string> recursiveScope = Add(scope, recursive.Name);
                 Validate(recursive.Value, recursiveScope, errors); Validate(recursive.Body, recursiveScope, errors);
@@ -85,6 +89,8 @@ internal sealed class AstInvariantValidator
             case Expr.LessThan binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.GreaterOrEqual binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
             case Expr.LessOrEqual binary: Validate(binary.Left, scope, errors); Validate(binary.Right, scope, errors); break;
+            case Expr.ResultPipe pipe: Validate(pipe.Left, scope, errors); Validate(pipe.Right, scope, errors); break;
+            case Expr.ResultMapErrorPipe pipe: Validate(pipe.Left, scope, errors); Validate(pipe.Right, scope, errors); break;
             case Expr.Match match:
                 Validate(match.Value, scope, errors);
                 foreach (MatchCase matchCase in match.Cases)

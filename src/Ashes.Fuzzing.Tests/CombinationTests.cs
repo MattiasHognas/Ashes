@@ -1,7 +1,10 @@
+using Ashes.Frontend;
 using Ashes.Fuzzing.Combinations;
 using Ashes.Fuzzing.Configuration;
 using Ashes.Fuzzing.Coverage;
 using Ashes.Fuzzing.Generation;
+using Ashes.Fuzzing.Oracles;
+using Ashes.Semantics;
 using Shouldly;
 
 namespace Ashes.Fuzzing.Tests;
@@ -54,6 +57,117 @@ public sealed class CombinationTests
         CombinationDuplicate combination = new();
         combinations.Register(combination);
         Should.Throw<ArgumentException>(() => combinations.Register(combination));
+
+        FuzzProfileRegistry profiles = new();
+        FuzzProfile profile = new(
+            "duplicate",
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse"],
+            [AshesType.Int],
+            0);
+        profiles.Register(profile);
+        Should.Throw<ArgumentException>(() => profiles.Register(profile));
+    }
+
+    [Test]
+    public void RegistryIterationIsOrdinalAndRepeatable()
+    {
+        var first = TestFixture.Create();
+        var second = TestFixture.Create();
+        string[] firstRules = first.Rules.Rules.Select(rule => rule.Id).ToArray();
+        string[] firstCombinations = first.Combinations.Templates.Select(template => template.Id).ToArray();
+
+        firstRules.ShouldBe(firstRules.Order(StringComparer.Ordinal));
+        firstCombinations.ShouldBe(firstCombinations.Order(StringComparer.Ordinal));
+        second.Rules.Rules.Select(rule => rule.Id).ShouldBe(firstRules);
+        second.Combinations.Templates.Select(template => template.Id).ShouldBe(firstCombinations);
+    }
+
+    [Test]
+    public void ProfilesRejectUnknownRulesAndCombinations()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfileRegistry unknownRule = new();
+        unknownRule.Register(new FuzzProfile(
+            "unknown-rule",
+            new HashSet<string>(StringComparer.Ordinal) { "missing-rule" },
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse"],
+            [AshesType.Int],
+            0));
+        Should.Throw<ArgumentException>(() => unknownRule.Validate(fixture.Rules, fixture.Combinations))
+            .Message.ShouldContain("missing-rule");
+
+        FuzzProfileRegistry unknownCombination = new();
+        unknownCombination.Register(new FuzzProfile(
+            "unknown-combination",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal) { "missing-combination" },
+            ["parse"],
+            [AshesType.Int],
+            0));
+        Should.Throw<ArgumentException>(() => unknownCombination.Validate(fixture.Rules, fixture.Combinations))
+            .Message.ShouldContain("missing-combination");
+    }
+
+    [Test]
+    public void ProfilesRejectUnknownOraclesAndInvalidCampaignInputs()
+    {
+        var fixture = TestFixture.Create();
+        FuzzOracleRegistry oracles = FuzzOracleRegistry.CreateDefault();
+        FuzzProfileRegistry unknownOracle = new();
+        unknownOracle.Register(new FuzzProfile(
+            "unknown-oracle",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["missing-oracle"],
+            [AshesType.Int],
+            0));
+
+        Should.Throw<ArgumentException>(() => unknownOracle.ValidateOracles(oracles))
+            .Message.ShouldContain("missing-oracle");
+
+        FuzzProfileRegistry invalidTarget = new();
+        invalidTarget.Register(new FuzzProfile(
+            "invalid-target",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse"],
+            [AshesType.Int],
+            0,
+            Defaults: new FuzzProfileDefaults(1, 10, 1, 1, ["unknown-target"])));
+
+        Should.Throw<ArgumentException>(() => invalidTarget.Validate(fixture.Rules, fixture.Combinations))
+            .Message.ShouldContain("invalid campaign defaults");
+    }
+
+    [Test]
+    public void CombinationGenerationRejectsMissingAdvertisedFeatures()
+    {
+        var fixture = TestFixture.Create();
+        MissingAdvertisedFeature invalid = new();
+        CombinationRegistry combinations = new();
+        combinations.Register(invalid);
+        string[] ruleIds = fixture.Rules.Rules.Select(rule => rule.Id).ToArray();
+        GenerationCoverageGuidance coverage = new(ruleIds, [invalid.Id]);
+        CombinationGenerator combinationGenerator = new(
+            combinations,
+            new HashSet<string>(StringComparer.Ordinal) { invalid.Id },
+            coverage,
+            invalid.Id);
+        ExpressionGenerator expressions = new(
+            fixture.Rules,
+            ruleIds.ToHashSet(StringComparer.Ordinal),
+            coverage,
+            combinationGenerator,
+            forcePreferredCombination: true);
+
+        Should.Throw<InvalidOperationException>(() => expressions.Generate(
+            AshesType.Int,
+            GenerationContext.Empty,
+            GenerationBudget.Create(80),
+            new FuzzRandom(1))).Message.ShouldContain("advertised but did not record");
     }
 
     [Test]
@@ -121,7 +235,7 @@ public sealed class CombinationTests
     }
 
     [Test]
-    public void ResourceTypesAreExplicitAndRestrictedToTheResourceProfile()
+    public void ResourceTypesAreExplicitAndRestrictedToResourceCapableProfiles()
     {
         var fixture = TestFixture.Create();
         FuzzProfile resources = fixture.Profiles.Get("resources");
@@ -129,7 +243,7 @@ public sealed class CombinationTests
         resources.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
         AshesType.FileHandle.ToSyntax().ShouldBe(new Ashes.Frontend.TypeExpr.Named("FileHandle"));
         fixture.Profiles.Profiles
-            .Where(profile => !string.Equals(profile.Id, "resources", StringComparison.Ordinal))
+            .Where(profile => profile.Id is not ("resources" or "all"))
             .ShouldAllBe(profile => profile.EffectiveResourceTypes.Count == 0);
 
         FuzzProfileRegistry invalid = new();
@@ -171,6 +285,134 @@ public sealed class CombinationTests
             .ShouldContain(GeneratedFeature.FreshResultInternalSharing);
         fixture.Combinations.Get("perceus.unique-record-update").AdvertisedFeatures
             .ShouldContain(GeneratedFeature.StaticallyUniquePath);
+        fixture.Combinations.Get("perceus.captured-reuse-candidate").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.CapturedReuseCandidate);
+        fixture.Combinations.Get("async.task-result-reuse").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.TaskResultReuse);
+        fixture.Combinations.Get("perceus.shared-reconstruction-fallback").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.AliasedResultPreventsReuse);
+        fixture.Combinations.Get("perceus.unique-record-update").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.FreshResultAllowsReuse);
+    }
+
+    [Test]
+    public void CompletedTaskResultsFlowThroughReuseSensitiveRecordUpdates()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = new(
+            "task-result-reuse",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal) { "async.task-result-reuse" },
+            ["parse", "format", "semantic", "ir"],
+            [new AshesType.Record("FuzzRecord")],
+            2,
+            OwnershipInterests: Enum.GetValues<OwnershipInterest>().ToHashSet());
+
+        GeneratedFuzzCase generated = fixture.Generator.Generate(20260809, 1, profile, 120);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+        _ = new Lowering(diagnostics).Lower(parsed);
+
+        generated.Features.Contains(GeneratedFeature.TaskResultReuse).ShouldBeTrue();
+        generated.Source.ShouldContain("Ashes.Task.run(async(");
+        generated.Source.ShouldContain(" with first = ");
+        diagnostics.Errors.ShouldBeEmpty(generated.Source);
+    }
+
+    [Test]
+    public void ClosuresAndMatchesCrossAwaitForMultipleResultTypes()
+    {
+        var fixture = TestFixture.Create();
+        AshesType[] resultTypes =
+        [
+            AshesType.Int,
+            AshesType.Str,
+            new AshesType.Adt("FuzzTree", [AshesType.Bool]),
+        ];
+
+        for (int index = 0; index < resultTypes.Length; index++)
+        {
+            FuzzProfile profile = new(
+                "closure-match-across-await",
+                fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+                new HashSet<string>(StringComparer.Ordinal) { "async.closure-match-across-await" },
+                ["parse", "format", "semantic", "ir"],
+                [resultTypes[index]],
+                2);
+            GeneratedFuzzCase generated = fixture.Generator.Generate(20260810, index, profile, 140);
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+            _ = new Lowering(diagnostics).Lower(parsed);
+
+            generated.Features.Contains(GeneratedFeature.ClosureAcrossAwait).ShouldBeTrue();
+            generated.Features.Contains(GeneratedFeature.MatchAcrossAwait).ShouldBeTrue();
+            generated.Trace.Entries.ShouldContain(entry =>
+                entry.StartsWith("async:closure-match-across-await", StringComparison.Ordinal));
+            new AstInvariantValidator().ValidateScope(generated.Program).ShouldBeEmpty();
+            diagnostics.Errors.ShouldBeEmpty(generated.Source);
+        }
+    }
+
+    [Test]
+    public void BoundedRecursionCanReturnResultValues()
+    {
+        var fixture = TestFixture.Create();
+        AshesType.Result resultType = new(AshesType.Str, new AshesType.List(AshesType.Bool));
+        FuzzProfile profile = new(
+            "recursive-result",
+            fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal) { "recursion.bounded-capture" },
+            ["parse", "format", "semantic", "ir"],
+            [resultType],
+            2);
+
+        GeneratedFuzzCase generated = fixture.Generator.Generate(20260811, 0, profile, 140);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        _ = lowering.Lower(parsed);
+
+        generated.Features.Contains(GeneratedFeature.RecursiveFunction).ShouldBeTrue();
+        generated.Features.Contains(GeneratedFeature.RecursiveResult).ShouldBeTrue();
+        generated.Features.Contains(GeneratedFeature.RecursionWithSharing).ShouldBeTrue();
+        generated.Features.Contains(GeneratedFeature.SharedValue).ShouldBeTrue();
+        generated.Source.ShouldContain("Result(Str, List(Bool))");
+        diagnostics.Errors.ShouldBeEmpty(generated.Source);
+        lowering.LastLoweredType.ShouldNotBeNull();
+        lowering.FormatType(lowering.LastLoweredType).ShouldBe("Result<Str, List<Bool>>");
+    }
+
+    [Test]
+    public void NestedReusableConstructorsSupportMultiplePayloadTypes()
+    {
+        var fixture = TestFixture.Create();
+        AshesType[] payloadTypes = [AshesType.Int, AshesType.Str];
+        for (int index = 0; index < payloadTypes.Length; index++)
+        {
+            AshesType.Adt resultType = new("FuzzTree", [payloadTypes[index]]);
+            FuzzProfile profile = new(
+                "nested-reusable-constructors",
+                fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
+                new HashSet<string>(StringComparer.Ordinal) { "perceus.nested-reusable-constructors" },
+                ["parse", "format", "semantic", "ir"],
+                [resultType],
+                2,
+                OwnershipInterests: Enum.GetValues<OwnershipInterest>().ToHashSet());
+
+            GeneratedFuzzCase generated = fixture.Generator.Generate(20260813, index, profile, 160);
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+            Lowering lowering = new(diagnostics);
+            _ = lowering.Lower(parsed);
+
+            generated.Features.Contains(GeneratedFeature.NestedReusableConstructors).ShouldBeTrue();
+            generated.Features.Contains(GeneratedFeature.NestedMatch).ShouldBeTrue();
+            generated.Features.Contains(GeneratedFeature.LayoutCompatibleReuse).ShouldBeTrue();
+            diagnostics.Errors.ShouldBeEmpty(generated.Source);
+            lowering.LastLoweredType.ShouldNotBeNull();
+            lowering.FormatType(lowering.LastLoweredType)
+                .ShouldBe($"FuzzTree<{payloadTypes[index]}>");
+        }
     }
 
     [Test]
@@ -228,5 +470,17 @@ public sealed class CombinationTests
         public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new HashSet<GeneratedFeature> { GeneratedFeature.Literal };
         public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => true;
         public GenerationResult<Ashes.Frontend.Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random) => ExpressionGenerator.GenerateLeaf(resultType, context, budget, random);
+    }
+
+    private sealed class MissingAdvertisedFeature : ICombinationTemplate
+    {
+        public string Id => "missing-advertised-feature";
+        public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new HashSet<GeneratedFeature>
+        {
+            GeneratedFeature.Match,
+        };
+        public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) => true;
+        public GenerationResult<Ashes.Frontend.Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random) =>
+            ExpressionGenerator.GenerateLeaf(resultType, context, budget, random);
     }
 }

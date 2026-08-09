@@ -6,7 +6,11 @@ shrinking, and artifacts without turning the ordinary unit-test runner into a ca
 `Ashes.Fuzzing.Tests` contains only fast deterministic tests of the framework itself.
 
 The generator asks a registry of expression rules for an expression of a required immutable
-generation type. Its immutable context tracks typed lexical values and functions, ADTs, records,
+generation type. The initial catalog includes generic tree and Maybe-like ADTs in addition to
+scalars, tuples, lists, functions, records, Results, and Tasks. Record construction resolves field
+names and types from the current declaration context instead of a fixed record shape. ADT generation
+likewise resolves constructors and substitutes generic field types from the declared schema. Its
+immutable context tracks typed lexical values and functions, ADTs, records,
 typed capability operations, active handlers, suspension/resource/recursion/tail-position flags,
 ownership-interest tags, active templates, and inherited feature state. Profiles restrict these
 flags and interests before generation, and effect, recursion, resource, and targeted reuse templates
@@ -18,14 +22,21 @@ recursive generation limits. A case that exceeds any configured dimension falls 
 typed leaf or fails generation when even the minimum complete program cannot fit. A second registry
 contains generic combination templates for sharing, cross-branch aliases, escaping and
 shared-capture closures, guarded and ADT matches, list and constructor reconstruction, bounded
-recursion, nested capability handlers, async capture and deterministic task spawning, Result
-propagation and error mapping, and Perceus reuse and
-fallback shapes. Targeted Perceus templates distinguish unique record updates, shared
-reconstruction fallback, branch-selective reconstruction, and list-tail traversal through a
-capturing tail-recursive function. Coverage metadata separately records results that alias inputs,
+recursion, nested capability handlers, values and closures captured across `await`, matches before
+and after suspension, deterministic task spawning, reuse of completed task results, Result
+constructors, `let?` binding, success propagation, error mapping, bounded recursive functions
+returning `Result`, and Perceus reuse and fallback shapes. Targeted Perceus templates distinguish
+unique record updates, shared
+reconstruction fallback, reconstruction while the candidate remains captured by a live closure,
+branch-selective reconstruction, nested reusable constructors, aliased results that prevent reuse,
+fresh results that permit reuse, shared aliases kept live across tail recursion, and list-tail
+traversal through a capturing tail-recursive function. Coverage metadata separately records results
+that alias inputs,
 fresh aggregate results with internal sharing, runtime uniqueness checks, and statically unique
 constructor-update paths. Templates may fill their holes with the ordinary generator, so
-difficult feature interactions arise compositionally. The initial interaction catalog also
+difficult feature interactions arise compositionally. Capability templates also exercise
+Result-returning operations and capability-provided values at the base case of bounded recursive
+list traversal. The initial interaction catalog also
 guarantees captured-ADT matching inside closures, closures
 inside match branches, recursive list reconstruction, Result pipelines whose continuation is a
 generated closure, and handled capability operations performed from a closure selected by a match.
@@ -33,12 +44,19 @@ It also guarantees nested matching over a generic tree and a bounded tail-recurs
 and reconstructing a tree accumulator. These templates remain generic over their payload or result
 types.
 
+The in-process IR oracle verifies function, block, local-slot, string-literal, and external-call
+references; external signature arity; ADT and reuse layout operands; definite temp definitions;
+reuse-token production and consumption; and path-aware ownership consumption so a temp used after
+`RcDrop`, resource cleanup, or `DropReuse` fails the case before backend execution.
+
 Every complete generated program also places the result behind
 an explicit type annotation, forcing inference to prove the requested generation type. Complete
 program generation emits deterministic top-level functions and values, generic ADTs, records,
 mutual-recursion groups, and static capability providers in addition to the trailing generated
 expression, so parser, inference, lowering, and ownership checks exercise declaration stitching and
-sequential top-level scope rather than only isolated expressions.
+sequential top-level scope rather than only isolated expressions. The formatter oracle compares the
+original `AST -> format` source with `parse -> format`, then reparses and formats again to require
+byte-identical idempotence across both round trips.
 
 ## Running campaigns
 
@@ -52,7 +70,7 @@ The pre-commit-sized fixed-seed pass is part of `just ci-quick`. A configurable 
 for a large Perceus run is:
 
 ```sh
-just fuzz-long -- --profile perceus --cases 100000 --seed 12345 --seeds 4 --max-nodes 120
+just fuzz-long -- --profile perceus --cases 100000 --seed 12345 --seeds 4 --max-nodes 120 --campaign-timeout 3600
 ```
 
 List profiles, rules, combinations, and oracles with:
@@ -67,6 +85,8 @@ profile is deliberately separate from smoke runs, explicitly enables the `FileHa
 type, and uses deterministic file-handle shapes. `Socket` and `TlsSocket` are represented by the
 immutable generation type model but stay disabled until deterministic network-resource templates
 are added.
+The `all` profile deterministically covers every stable profile in each 50-case cycle while limiting
+native compile, differential, and cross-target work to one case each per cycle.
 Invalid-source fuzzing deterministically mutates valid generated source
 and rotates through checked-in corpus cases, compiler tests, examples, and parser fixtures. It uses
 token deletion and duplication, delimiter replacement, keyword insertion, truncation,
@@ -75,8 +95,9 @@ killable child process and asserts bounded diagnostics and crash-free lexer/pars
 profiles use child processes with
 compiler and program timeouts. Process output is drained without being retained beyond the default
 1 MiB per stream, process trees are terminated on timeout or cancellation, and one failure artifact
-is capped at 4 MiB. Long runs can override these with `--max-output-bytes` and
-`--max-artifact-bytes`; replay commands preserve both limits. The differential profile compares
+is capped at 4 MiB. Long runs can stop successfully after a whole-campaign time budget with
+`--campaign-timeout` (seconds), and can override the size limits with `--max-output-bytes` and
+`--max-artifact-bytes`; replay commands preserve both size limits. The differential profile compares
 public `-O0` and `-O2` builds and
 also compares normal lowering with the internal debug configuration that disables only in-place
 reuse while retaining Perceus ownership. It compares exit status, stdout, and stderr byte-for-byte.
@@ -85,9 +106,11 @@ dispatched and uploads `artifacts/fuzz` when a case fails; long fuzzing is not a
 
 Each profile owns its default case count, node budget, compiler and program timeouts, and target
 list. CLI values override those defaults, so `run --profile compile` uses the bounded native profile
-settings while a long campaign can still set `--cases`, `--max-nodes`, `--target`, and timeout
-options explicitly. The `list` command prints each profile's cases, node budget, targets, and
-oracles.
+settings while a long campaign can still set `--cases`, `--max-nodes`, `--target`, per-process
+timeouts, and a whole-campaign timeout explicitly. Accepted targets are `host`, `linux-x64`,
+`linux-arm64`, `win-x64`, and
+`win-arm64`; invalid targets fail during command-line validation even for profiles that do not run
+the backend. The `list` command prints each profile's cases, node budget, targets, and oracles.
 
 ## Seeds, replay, shrinking, and artifacts
 
@@ -158,10 +181,14 @@ The extension points are intentionally local:
    `tests/fuzz/corpus` and run `just fuzz-corpus`.
 
 Rule and template IDs are ordinally sorted, duplicate IDs fail immediately, profiles validate their
-references at startup, and tests require combination templates to record every feature they claim.
+rule, template, and oracle references at startup, and tests require combination templates to record
+every feature they claim.
 Case indexes also rotate a deterministic coverage preference across enabled rules and templates;
 their ordinary weights remain active, while combination-heavy profiles select a compatible result
 type and force the preferred template once per rotation. Template hole budgets reserve node and
 depth space for the surrounding shape, so the completed template is not discarded during final
 budget validation. Coverage summaries include zero-hit rule and template counts, making incomplete
-campaign coverage visible without making replay depend on mutable campaign history.
+campaign coverage visible without making replay depend on mutable campaign history. Generated-case
+coverage is recorded before its oracles run, and oracle runs are counted when each oracle starts,
+including the oracle that reports a failure. Failure output prints that partial coverage summary
+before shrinking and artifact persistence.

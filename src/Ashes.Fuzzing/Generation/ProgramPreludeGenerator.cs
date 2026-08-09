@@ -48,7 +48,7 @@ internal static class ProgramPreludeGenerator
             [new TypeParameter("a")],
             [new TypeConstructor("FuzzBox", [new TypeExpr.Named("a")])]);
         items.Add(new TopLevelItem.Type(box));
-        context = context.WithAdt(new GeneratedAdt("FuzzBoxType", [("FuzzBox", [AshesType.Int])]));
+        context = context.WithAdt(new GeneratedAdt("FuzzBoxType", 1, [("FuzzBox", [new AshesType.GenericParameter(0)])]));
 
         TypeExpr treeOfA = new TypeExpr.Applied("FuzzTree", [new TypeExpr.Named("a")]);
         TypeDecl tree = new(
@@ -62,7 +62,21 @@ internal static class ProgramPreludeGenerator
         items.Add(new TopLevelItem.Type(tree));
         context = context.WithAdt(new GeneratedAdt(
             "FuzzTree",
-            [("FuzzEmpty", []), ("FuzzLeaf", [AshesType.Int]), ("FuzzBranch", [new AshesType.Adt("FuzzTree", [AshesType.Int]), new AshesType.Adt("FuzzTree", [AshesType.Int])])]));
+            1,
+            [("FuzzEmpty", []), ("FuzzLeaf", [new AshesType.GenericParameter(0)]), ("FuzzBranch", [new AshesType.Adt("FuzzTree", [new AshesType.GenericParameter(0)]), new AshesType.Adt("FuzzTree", [new AshesType.GenericParameter(0)])])]));
+
+        TypeDecl maybe = new(
+            "FuzzMaybe",
+            [new TypeParameter("a")],
+            [
+                new TypeConstructor("FuzzNone", []),
+                new TypeConstructor("FuzzSome", [new TypeExpr.Named("a")]),
+            ]);
+        items.Add(new TopLevelItem.Type(maybe));
+        context = context.WithAdt(new GeneratedAdt(
+            "FuzzMaybe",
+            1,
+            [("FuzzNone", []), ("FuzzSome", [new AshesType.GenericParameter(0)])]));
 
         TypeConstructor recordFields = new("FuzzRecord", [AshesType.Int.ToSyntax(), AshesType.Bool.ToSyntax()])
         {
@@ -110,7 +124,7 @@ internal static class ProgramPreludeGenerator
             ]);
         items.Add(new TopLevelItem.Type(declaration));
         AshesType.Adt generatedType = new(typeName, [AshesType.Int, AshesType.Str]);
-        context = context.WithAdt(new GeneratedAdt(typeName, [(left, [AshesType.Int]), (right, [AshesType.Str]), (both, [AshesType.Int, AshesType.Str])]));
+        context = context.WithAdt(new GeneratedAdt(typeName, 2, [(left, [new AshesType.GenericParameter(0)]), (right, [new AshesType.GenericParameter(1)]), (both, [new AshesType.GenericParameter(0), new AshesType.GenericParameter(1)])]));
 
         string valueName = "fuzzChoiceValue" + suffix;
         items.Add(new TopLevelItem.LetDecl(valueName, new Expr.Call(new Expr.Var(left), new Expr.IntLit(caseIndex)), IsRecursive: false)

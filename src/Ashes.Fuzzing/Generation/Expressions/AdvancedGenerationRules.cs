@@ -9,7 +9,10 @@ internal sealed class AdtGenerationRule : IExpressionGenerationRule
     public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Adt;
 
     public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
-        requiredType is AshesType.Adt { Name: "FuzzTree", Arguments.Count: 1 };
+        requiredType is AshesType.Adt adt &&
+        TryFindAdt(adt, context, out GeneratedAdt declaration) &&
+        declaration.Constructors.Count > 0 &&
+        budget.RemainingNodes >= 1;
 
     public GenerationResult<Expr> Generate(
         AshesType requiredType,
@@ -18,28 +21,96 @@ internal sealed class AdtGenerationRule : IExpressionGenerationRule
         ExpressionGenerator expressions,
         FuzzRandom random)
     {
-        AshesType.Adt tree = (AshesType.Adt)requiredType;
-        if (budget.IsLeaf || random.Next(3) != 0)
+        AshesType.Adt adt = (AshesType.Adt)requiredType;
+        if (!TryFindAdt(adt, context, out GeneratedAdt declaration))
         {
-            GenerationResult<Expr> payload = expressions.Generate(tree.Arguments[0], context, budget.Descend(2), random);
-            GeneratedFeatureSet leafFeatures = payload.Features.Copy();
-            leafFeatures.Add(GeneratedFeature.Adt);
-            return new GenerationResult<Expr>(
-                new Expr.Call(new Expr.Var("FuzzLeaf"), payload.Value),
-                requiredType,
-                leafFeatures,
-                GenerationTrace.Merge("adt:FuzzLeaf", payload.Trace),
-                payload.NodeCount + 2);
+            throw new InvalidOperationException($"ADT generation type '{adt.Name}' is not declared in the current context.");
         }
-
-        GenerationResult<Expr> left = expressions.Generate(requiredType, context, budget.Descend(3), random);
-        GenerationResult<Expr> right = expressions.Generate(requiredType, context, budget.Descend(3), random);
-        GeneratedFeatureSet features = new([GeneratedFeature.Adt, GeneratedFeature.ConstructorReconstruction]);
-        features.UnionWith(left.Features);
-        features.UnionWith(right.Features);
-        Expr branch = new Expr.Call(new Expr.Call(new Expr.Var("FuzzBranch"), left.Value), right.Value);
-        return new GenerationResult<Expr>(branch, requiredType, features, GenerationTrace.Merge("adt:FuzzBranch", left.Trace, right.Trace), left.NodeCount + right.NodeCount + 3);
+        (string Name, IReadOnlyList<AshesType> Fields)[] constructors = declaration.Constructors
+            .Where(constructor => !budget.IsLeaf || !constructor.Fields.Any(field => ContainsAdt(field, adt.Name)))
+            .OrderBy(constructor => constructor.Name, StringComparer.Ordinal)
+            .ToArray();
+        if (constructors.Length == 0)
+        {
+            constructors = declaration.Constructors.OrderBy(constructor => constructor.Name, StringComparer.Ordinal).ToArray();
+        }
+        (string Name, IReadOnlyList<AshesType> Fields) selected = constructors[random.Next(constructors.Length)];
+        Expr value = new Expr.Var(selected.Name);
+        GeneratedFeatureSet features = new([GeneratedFeature.Adt]);
+        List<GenerationTrace> traces = [];
+        int nodes = 1;
+        foreach (AshesType fieldTemplate in selected.Fields)
+        {
+            AshesType fieldType = Substitute(fieldTemplate, adt.Arguments);
+            GenerationResult<Expr> field = expressions.Generate(
+                fieldType,
+                context.WithoutFlag(GenerationFlags.TailPosition),
+                budget.Descend(Math.Max(2, selected.Fields.Count + 1)),
+                random);
+            value = new Expr.Call(value, field.Value);
+            features.UnionWith(field.Features);
+            traces.Add(field.Trace);
+            nodes += field.NodeCount + 1;
+        }
+        if (selected.Fields.Any(field => ContainsAdt(field, adt.Name)))
+        {
+            features.Add(GeneratedFeature.ConstructorReconstruction);
+        }
+        return new GenerationResult<Expr>(
+            value,
+            requiredType,
+            features,
+            GenerationTrace.Merge($"adt:{selected.Name}", traces.ToArray()),
+            nodes);
     }
+
+    internal static bool TryFindAdt(AshesType.Adt type, GenerationContext context, out GeneratedAdt declaration)
+    {
+        GeneratedAdt? candidate = context.Adts.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, type.Name, StringComparison.Ordinal) && candidate.Arity == type.Arguments.Count);
+        if (candidate is not null)
+        {
+            declaration = candidate;
+            return true;
+        }
+        if (string.Equals(type.Name, "FuzzTree", StringComparison.Ordinal) && type.Arguments.Count == 1)
+        {
+            AshesType.GenericParameter parameter = new(0);
+            declaration = new GeneratedAdt("FuzzTree", 1, [("FuzzEmpty", []), ("FuzzLeaf", [parameter]), ("FuzzBranch", [new AshesType.Adt("FuzzTree", [parameter]), new AshesType.Adt("FuzzTree", [parameter])])]);
+            return true;
+        }
+        if (string.Equals(type.Name, "FuzzMaybe", StringComparison.Ordinal) && type.Arguments.Count == 1)
+        {
+            declaration = new GeneratedAdt("FuzzMaybe", 1, [("FuzzNone", []), ("FuzzSome", [new AshesType.GenericParameter(0)])]);
+            return true;
+        }
+        declaration = null!;
+        return false;
+    }
+
+    internal static AshesType Substitute(AshesType type, IReadOnlyList<AshesType> arguments) => type switch
+    {
+        AshesType.GenericParameter parameter when parameter.Index >= 0 && parameter.Index < arguments.Count => arguments[parameter.Index],
+        AshesType.GenericParameter parameter => throw new InvalidOperationException($"ADT schema references missing type parameter {parameter.Index}."),
+        AshesType.Tuple tuple => new AshesType.Tuple(tuple.Elements.Select(element => Substitute(element, arguments)).ToArray()),
+        AshesType.List list => new AshesType.List(Substitute(list.Element, arguments)),
+        AshesType.Function function => new AshesType.Function(Substitute(function.Parameter, arguments), Substitute(function.Return, arguments)),
+        AshesType.Adt adt => new AshesType.Adt(adt.Name, adt.Arguments.Select(argument => Substitute(argument, arguments)).ToArray()),
+        AshesType.Result result => new AshesType.Result(Substitute(result.Error, arguments), Substitute(result.Value, arguments)),
+        AshesType.Task task => new AshesType.Task(Substitute(task.Error, arguments), Substitute(task.Value, arguments)),
+        _ => type,
+    };
+
+    internal static bool ContainsAdt(AshesType type, string name) => type switch
+    {
+        AshesType.Adt adt => string.Equals(adt.Name, name, StringComparison.Ordinal) || adt.Arguments.Any(argument => ContainsAdt(argument, name)),
+        AshesType.Tuple tuple => tuple.Elements.Any(element => ContainsAdt(element, name)),
+        AshesType.List list => ContainsAdt(list.Element, name),
+        AshesType.Function function => ContainsAdt(function.Parameter, name) || ContainsAdt(function.Return, name),
+        AshesType.Result result => ContainsAdt(result.Error, name) || ContainsAdt(result.Value, name),
+        AshesType.Task task => ContainsAdt(task.Error, name) || ContainsAdt(task.Value, name),
+        _ => false,
+    };
 }
 
 internal sealed class TaskGenerationRule : IExpressionGenerationRule
@@ -281,6 +352,48 @@ internal sealed class ResultMapErrorGenerationRule : IExpressionGenerationRule
             features,
             GenerationTrace.Merge($"result:map-error:{inputError}->{output.Error}", input.Trace, mapped.Trace),
             input.NodeCount + mapped.NodeCount + 3);
+    }
+}
+
+internal sealed class ResultBindGenerationRule : IExpressionGenerationRule
+{
+    public string Id => "result-bind";
+    public int Weight => 3;
+    public IReadOnlyList<AshesType> AdvertisedTypes => AdvertisedGenerationTypes.Result;
+    public bool CanGenerate(AshesType requiredType, GenerationContext context, GenerationBudget budget) =>
+        requiredType is AshesType.Result && budget.RemainingNodes >= 8;
+
+    public GenerationResult<Expr> Generate(
+        AshesType requiredType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        AshesType.Result output = (AshesType.Result)requiredType;
+        AshesType boundType = output.Value == AshesType.Int ? AshesType.Str : AshesType.Int;
+        AshesType.Result inputType = new(output.Error, boundType);
+        GenerationResult<Expr> input = expressions.Generate(
+            inputType,
+            context.WithoutFlag(GenerationFlags.TailPosition),
+            budget.Descend(3),
+            random);
+        string name = "boundResult" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        GenerationContext bodyContext = context.WithBinding(new GeneratedBinding(name, boundType));
+        GenerationResult<Expr> body = expressions.Generate(requiredType, bodyContext, budget.Descend(3), random);
+        GeneratedFeatureSet features = new([
+            GeneratedFeature.ResultShortCircuit,
+            GeneratedFeature.ResultBinding,
+            GeneratedFeature.Let,
+        ]);
+        features.UnionWith(input.Features);
+        features.UnionWith(body.Features);
+        return new GenerationResult<Expr>(
+            new Expr.LetResult(name, input.Value, body.Value),
+            requiredType,
+            features,
+            GenerationTrace.Merge($"result:bind:{name}:{boundType}", input.Trace, body.Trace),
+            input.NodeCount + body.NodeCount + 1);
     }
 }
 

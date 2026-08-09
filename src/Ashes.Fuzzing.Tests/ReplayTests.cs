@@ -24,6 +24,17 @@ public sealed class ReplayTests
         configuration.CaseIndex.ShouldBe(417);
         configuration.Seed.ShouldBe(12345UL);
         Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--cases", "0"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["replay", "--seed", "1"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["replay", "--case", "-1"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--compiler-timeout", "0"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--campaign-timeout", "0"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--target", "unknown"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--artifacts", " "]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--unknown"]));
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["run", "--seed"]));
+
+        FuzzConfiguration bounded = FuzzConfiguration.Parse(["run", "--campaign-timeout", "90"]);
+        bounded.CampaignTimeout.ShouldBe(TimeSpan.FromSeconds(90));
     }
 
     [Test]

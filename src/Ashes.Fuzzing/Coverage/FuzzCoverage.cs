@@ -25,7 +25,7 @@ internal sealed class FuzzCoverage
     internal IReadOnlyList<string> MissingRules => Missing("rule:");
     internal IReadOnlyList<string> MissingCombinations => Missing("combination:");
 
-    internal void Record(GeneratedFuzzCase testCase, IEnumerable<string> oracles)
+    internal void Record(GeneratedFuzzCase testCase)
     {
         Increment("type:" + testCase.Type);
         foreach (GeneratedFeature feature in testCase.Features) Increment("feature:" + feature);
@@ -54,12 +54,22 @@ internal sealed class FuzzCoverage
                 Increment(entry);
             }
         }
-        foreach (string oracle in oracles) Increment("oracle:" + oracle);
         AstCoverageMetrics ast = AstCoverageMetrics.Measure(testCase.Program);
         MaximumNodeCount = Math.Max(MaximumNodeCount, ast.Nodes);
         MaximumDepth = Math.Max(MaximumDepth, ast.Depth);
         MaximumCombinationCount = Math.Max(MaximumCombinationCount, combinationCount);
     }
+
+    internal void RecordOracleExecution(string oracle)
+    {
+        if (string.IsNullOrWhiteSpace(oracle))
+        {
+            throw new ArgumentException("Oracle ID must not be empty.", nameof(oracle));
+        }
+        Increment("oracle:" + oracle);
+    }
+
+    internal long OracleExecutionCount(string oracle) => _counts.GetValueOrDefault("oracle:" + oracle);
 
     internal string Summary()
     {
@@ -70,7 +80,8 @@ internal sealed class FuzzCoverage
         int pairs = CountKeys("pair:");
         int triples = CountKeys("triple:");
         int oracles = CountKeys("oracle:");
-        return $"coverage: types={types}, rules={rules}, combinations={combinations}, missing-rules={MissingRules.Count}, missing-combinations={MissingCombinations.Count}, pairs={pairs}, triples={triples}, oracles={oracles}, max-nodes={MaximumNodeCount}, max-depth={MaximumDepth}, max-combinations={MaximumCombinationCount}; features: {top}";
+        long oracleRuns = Total("oracle:");
+        return $"coverage: types={types}, rules={rules}, combinations={combinations}, missing-rules={MissingRules.Count}, missing-combinations={MissingCombinations.Count}, pairs={pairs}, triples={triples}, oracles={oracles}, oracle-runs={oracleRuns}, max-nodes={MaximumNodeCount}, max-depth={MaximumDepth}, max-combinations={MaximumCombinationCount}; features: {top}";
     }
 
     private int CountKeys(string prefix) => _counts.Count(pair =>
@@ -80,6 +91,10 @@ internal sealed class FuzzCoverage
         .Where(pair => pair.Value == 0 && pair.Key.StartsWith(prefix, StringComparison.Ordinal))
         .Select(pair => pair.Key[prefix.Length..])
         .ToArray();
+
+    private long Total(string prefix) => _counts
+        .Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal))
+        .Sum(pair => pair.Value);
 
     private void Increment(string key) => _counts[key] = _counts.GetValueOrDefault(key) + 1;
 }

@@ -24,6 +24,29 @@ public sealed class OracleTests
     }
 
     [Test]
+    public async Task FormatOracleRejectsDriftFromTheOriginalFormattedAst()
+    {
+        var fixture = TestFixture.Create();
+        GeneratedFuzzCase generated = fixture.Generator.Generate(321, 4, fixture.Profiles.Get("syntax"), 50);
+        GeneratedFuzzCase drifted = generated with { Source = "\n" + generated.Source };
+        FuzzExecutionContext context = new(
+            Environment.CurrentDirectory,
+            "host",
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(2),
+            4096,
+            new CompilerExecution());
+
+        FuzzOracleResult result = await new FormatOracle().EvaluateAsync(
+            drifted,
+            context,
+            CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.Message.ShouldContain("original AST");
+    }
+
+    [Test]
     public async Task InvalidSourceMutationIsDeterministicAndDoesNotCrashParser()
     {
         var fixture = TestFixture.Create();
@@ -35,16 +58,26 @@ public sealed class OracleTests
     }
 
     [Test]
-    public void AggregateObservationRenderersProduceValidSemanticPrograms()
+    public void ObservationRenderersProduceValidSemanticProgramsForEverySupportedTypeFamily()
     {
         var fixture = TestFixture.Create();
         AshesType[] types =
         [
+            AshesType.Int,
+            AshesType.Bool,
+            AshesType.Str,
+            AshesType.Float,
+            AshesType.BigInt,
+            new AshesType.UInt(8),
+            new AshesType.UInt(16),
+            new AshesType.UInt(32),
+            new AshesType.UInt(64),
             new AshesType.Tuple([AshesType.Int, AshesType.Str]),
             new AshesType.List(AshesType.Int),
             new AshesType.Record("FuzzRecord"),
             new AshesType.Result(AshesType.Str, new AshesType.List(AshesType.Int)),
             new AshesType.Adt("FuzzTree", [AshesType.Str]),
+            new AshesType.Adt("FuzzMaybe", [AshesType.Str]),
         ];
         for (int index = 0; index < types.Length; index++)
         {

@@ -20,11 +20,21 @@ internal sealed record FuzzConfiguration(
     int MaximumNodes,
     TimeSpan CompilerTimeout,
     TimeSpan ProgramTimeout,
+    TimeSpan CampaignTimeout,
     int MaximumOutputBytes,
     int MaximumArtifactBytes,
     string ArtifactRoot,
     IReadOnlySet<string> ExplicitOptions)
 {
+    internal static IReadOnlySet<string> SupportedTargets { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "host",
+        "linux-arm64",
+        "linux-x64",
+        "win-arm64",
+        "win-x64",
+    };
+
     internal static FuzzConfiguration Parse(IReadOnlyList<string> args)
     {
         if (args.Count == 0)
@@ -51,6 +61,7 @@ internal sealed record FuzzConfiguration(
         int maximumNodes = command == FuzzCommandKind.Smoke ? 40 : 80;
         int compilerTimeoutSeconds = 20;
         int programTimeoutSeconds = 5;
+        int campaignTimeoutSeconds = 0;
         int maximumOutputBytes = 1024 * 1024;
         int maximumArtifactBytes = 4 * 1024 * 1024;
         string artifactRoot = Path.Combine("artifacts", "fuzz");
@@ -80,6 +91,7 @@ internal sealed record FuzzConfiguration(
                 case "--max-nodes": maximumNodes = ParsePositiveInt(Value(), option); break;
                 case "--compiler-timeout": compilerTimeoutSeconds = ParsePositiveInt(Value(), option); break;
                 case "--program-timeout": programTimeoutSeconds = ParsePositiveInt(Value(), option); break;
+                case "--campaign-timeout": campaignTimeoutSeconds = ParsePositiveInt(Value(), option); break;
                 case "--max-output-bytes": maximumOutputBytes = ParsePositiveInt(Value(), option); break;
                 case "--max-artifact-bytes": maximumArtifactBytes = ParsePositiveInt(Value(), option); break;
                 case "--artifacts": artifactRoot = Value(); break;
@@ -91,9 +103,18 @@ internal sealed record FuzzConfiguration(
         {
             throw new ArgumentException("Replay requires --case <index>.");
         }
+        if (!SupportedTargets.Contains(target))
+        {
+            throw new ArgumentException($"Unsupported fuzz target '{target}'. Expected one of: {string.Join(", ", SupportedTargets.Order(StringComparer.Ordinal))}.");
+        }
+        if (string.IsNullOrWhiteSpace(artifactRoot))
+        {
+            throw new ArgumentException("--artifacts must name a directory.");
+        }
 
         return new FuzzConfiguration(command, profile, cases, seed, seedCount, caseIndex, target, maximumNodes,
             TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds),
+            TimeSpan.FromSeconds(campaignTimeoutSeconds),
             maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions);
     }
 

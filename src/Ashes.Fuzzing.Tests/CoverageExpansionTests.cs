@@ -2,6 +2,7 @@ using Ashes.Frontend;
 using Ashes.Fuzzing.Combinations;
 using Ashes.Fuzzing.Configuration;
 using Ashes.Fuzzing.Coverage;
+using Ashes.Fuzzing.Execution;
 using Ashes.Fuzzing.Generation;
 using Ashes.Fuzzing.Oracles;
 using Ashes.Semantics;
@@ -69,6 +70,28 @@ public sealed class CoverageExpansionTests
             _ = new Lowering(diagnostics).Lower(parsed);
             diagnostics.Errors.ShouldBeEmpty(generated.Source);
         }
+    }
+
+    [Test]
+    public void ResultBindingRuleProducesTypedSemanticPrograms()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = new(
+            "test-result-bind",
+            new HashSet<string>(StringComparer.Ordinal) { "result-bind" },
+            new HashSet<string>(StringComparer.Ordinal),
+            ["parse", "format", "semantic"],
+            [new AshesType.Result(AshesType.Str, AshesType.Int)],
+            0);
+
+        GeneratedFuzzCase generated = fixture.Generator.Generate(7070, 0, profile, 80);
+
+        generated.Trace.Entries.ShouldContain("rule:result-bind");
+        generated.Features.Contains(GeneratedFeature.ResultBinding).ShouldBeTrue();
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(generated.Source, diagnostics).ParseProgram();
+        _ = new Lowering(diagnostics).Lower(parsed);
+        diagnostics.Errors.ShouldBeEmpty(generated.Source);
     }
 
     [Test]
@@ -152,6 +175,38 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void AllProfileCoversEveryStableProfileWithBoundedNativeWork()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile all = fixture.Profiles.Get("all");
+        FuzzCampaign campaign = new(fixture.Generator, fixture.Profiles, FuzzOracleRegistry.CreateDefault());
+        FuzzProfile[] cycle = Enumerable.Range(0, 50)
+            .Select(caseIndex => campaign.ResolveProfile(all, caseIndex))
+            .ToArray();
+        string[] expected =
+        [
+            "async",
+            "capabilities",
+            "combinations",
+            "compile",
+            "cross-target",
+            "differential",
+            "invalid-source",
+            "perceus",
+            "resources",
+            "semantics",
+            "syntax",
+        ];
+
+        cycle.Select(profile => profile.Id).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+            .ShouldBe(expected);
+        cycle.Count(profile => profile.Native).ShouldBe(3);
+        all.EnabledCombinations.ShouldContain("resource.deterministic-file-handle");
+        all.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
+        campaign.ResolveProfile(all, 50).Id.ShouldBe(campaign.ResolveProfile(all, 0).Id);
+    }
+
+    [Test]
     public void ReuseDisabledLoweringRemovesAllocReusingButKeepsProgramValid()
     {
         const string source = """
@@ -208,6 +263,72 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void IrVerifierRejectsUseAfterOwnershipConsumption()
+    {
+        IrFunction entry = new(
+            "_start_main",
+            [
+                new IrInst.LoadConstStr(0, "owned"),
+                new IrInst.RcDrop(0, "Str", RuntimeManaged: true),
+                new IrInst.LoadConstStr(1, "suffix"),
+                new IrInst.ConcatStr(2, 0, 1),
+                new IrInst.Return(2),
+            ],
+            LocalCount: 0,
+            TempCount: 3,
+            HasEnvAndArgParams: false);
+        IrProgram program = new(entry, [], [], false, false, false, false, false, false);
+
+        IReadOnlyList<string> errors = new IrInvariantVerifier().Verify(program);
+
+        errors.ShouldContain(error => error.Contains("uses consumed temp %0", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void IrVerifierRejectsInvalidInstructionContracts()
+    {
+        IrFunction entry = new(
+            "_start_main",
+            [
+                new IrInst.LoadConstStr(0, "missing-string"),
+                new IrInst.LoadLocal(1, 2),
+                new IrInst.CallExternal(
+                    2,
+                    "missing_external",
+                    null,
+                    [0],
+                    [new FfiType.Str(), new FfiType.Int()],
+                    new FfiType.Int()),
+                new IrInst.AllocAdt(3, 0, -1),
+                new IrInst.SetAdtField(3, -1, 0),
+                new IrInst.Return(2),
+            ],
+            LocalCount: 1,
+            TempCount: 4,
+            HasEnvAndArgParams: false);
+        IrProgram program = new(
+            entry,
+            [],
+            [new IrStringLiteral("duplicate", "one"), new IrStringLiteral("duplicate", "two")],
+            false,
+            false,
+            false,
+            false,
+            false,
+            false);
+
+        IReadOnlyList<string> errors = new IrInvariantVerifier().Verify(program);
+
+        errors.ShouldContain(error => error.Contains("string literal label", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("missing string literal", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("invalid Slot local slot", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("arguments but 2 parameter types", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("undeclared external symbol", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("negative field count", StringComparison.Ordinal));
+        errors.ShouldContain(error => error.Contains("negative ADT field index", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void CoverageReportsRulesCombinationsAndFeatureInteractions()
     {
         var fixture = TestFixture.Create();
@@ -217,7 +338,10 @@ public sealed class CoverageExpansionTests
         for (int index = 0; index < 80; index++)
         {
             GeneratedFuzzCase generated = fixture.Generator.Generate(314159, index, fixture.Profiles.Get("combinations"), 80);
-            coverage.Record(generated, ["parse", "semantic", "ir"]);
+            coverage.Record(generated);
+            coverage.RecordOracleExecution("parse");
+            coverage.RecordOracleExecution("semantic");
+            coverage.RecordOracleExecution("ir");
         }
 
         string summary = coverage.Summary();
@@ -232,6 +356,21 @@ public sealed class CoverageExpansionTests
         coverage.CoveredCombinationCount.ShouldBeLessThanOrEqualTo(fixture.Combinations.Templates.Count);
         coverage.MissingRules.ShouldContain("missing-rule");
         coverage.MissingCombinations.ShouldContain("missing-template");
+    }
+
+    [Test]
+    public void CoverageCountsEveryOracleExecutionIndependentlyOfCaseCompletion()
+    {
+        FuzzCoverage coverage = new();
+
+        coverage.RecordOracleExecution("parse");
+        coverage.RecordOracleExecution("parse");
+        coverage.RecordOracleExecution("semantic");
+
+        coverage.OracleExecutionCount("parse").ShouldBe(2);
+        coverage.OracleExecutionCount("semantic").ShouldBe(1);
+        coverage.Summary().ShouldContain("oracles=2, oracle-runs=3");
+        Should.Throw<ArgumentException>(() => coverage.RecordOracleExecution(""));
     }
 
     [Test]
@@ -340,6 +479,7 @@ public sealed class CoverageExpansionTests
         new AshesType.Record("FuzzRecord"),
         new AshesType.Result(AshesType.Str, AshesType.Int),
         new AshesType.Adt("FuzzTree", [AshesType.Int]),
+        new AshesType.Adt("FuzzMaybe", [AshesType.Str]),
         new AshesType.Task(AshesType.Str, AshesType.Int),
     ];
 }

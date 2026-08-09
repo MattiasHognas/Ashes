@@ -15,6 +15,8 @@ internal sealed class SharedReconstructionFallbackTemplate : ICombinationTemplat
         GeneratedFeature.ConstructorReconstruction,
         GeneratedFeature.ReuseCandidate,
         GeneratedFeature.SharedReuseFallback,
+        GeneratedFeature.ResultAliasesInput,
+        GeneratedFeature.AliasedResultPreventsReuse,
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
@@ -130,6 +132,7 @@ internal sealed class UniqueRecordUpdateTemplate : ICombinationTemplate
         GeneratedFeature.RuntimeUniquenessCheck,
         GeneratedFeature.UniqueConstructorUpdate,
         GeneratedFeature.StaticallyUniquePath,
+        GeneratedFeature.FreshResultAllowsReuse,
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
@@ -162,6 +165,155 @@ internal sealed class UniqueRecordUpdateTemplate : ICombinationTemplate
             features,
             GenerationTrace.Merge("perceus:unique-record-update", first.Trace, second.Trace, replacement.Trace),
             first.NodeCount + second.NodeCount + replacement.NodeCount + 5);
+    }
+
+    private static string Name(string prefix, FuzzRandom random) =>
+        prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
+internal sealed class NestedReusableConstructorsTemplate : ICombinationTemplate
+{
+    public string Id => "perceus.nested-reusable-constructors";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.Adt,
+        GeneratedFeature.ConstructorReconstruction,
+        GeneratedFeature.LayoutCompatibleReuse,
+        GeneratedFeature.Let,
+        GeneratedFeature.Match,
+        GeneratedFeature.NestedMatch,
+        GeneratedFeature.NestedReusableConstructors,
+        GeneratedFeature.ReuseCandidate,
+        GeneratedFeature.RuntimeUniquenessCheck,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.IsInterestedIn(OwnershipInterest.Reuse) &&
+        resultType is AshesType.Adt { Name: "FuzzTree", Arguments.Count: 1 } &&
+        budget.RemainingNodes >= 20;
+
+    public GenerationResult<Expr> Generate(
+        AshesType resultType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        AshesType.Adt treeType = (AshesType.Adt)resultType;
+        GenerationBudget childBudget = budget.Descend(16).LimitDepth(1);
+        GenerationResult<Expr> first = expressions.Generate(treeType.Arguments[0], context, childBudget, random);
+        GenerationResult<Expr> second = expressions.Generate(treeType.Arguments[0], context, childBudget, random);
+        string tree = Name("nestedReuseTree", random);
+        string left = Name("nestedReuseLeft", random);
+        string right = Name("nestedReuseRight", random);
+        string payload = Name("nestedReusePayload", random);
+
+        Expr original = Branch(Leaf(first.Value), Leaf(second.Value));
+        Expr reconstructNested = Branch(Leaf(new Expr.Var(payload)), new Expr.Var(right));
+        Expr reconstructOuter = Branch(new Expr.Var(left), new Expr.Var(right));
+        Expr nested = new Expr.Match(new Expr.Var(left),
+        [
+            new MatchCase(new Pattern.Constructor("FuzzLeaf", [new Pattern.Var(payload)]), reconstructNested),
+            new MatchCase(new Pattern.Wildcard(), reconstructOuter),
+        ]);
+        Expr rebuild = new Expr.Match(new Expr.Var(tree),
+        [
+            new MatchCase(
+                new Pattern.Constructor("FuzzBranch", [new Pattern.Var(left), new Pattern.Var(right)]),
+                nested),
+            new MatchCase(new Pattern.Wildcard(), new Expr.Var(tree)),
+        ]);
+        Expr value = new Expr.Let(tree, original, rebuild);
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(first.Features);
+        features.UnionWith(second.Features);
+        return new GenerationResult<Expr>(
+            value,
+            resultType,
+            features,
+            GenerationTrace.Merge($"perceus:nested-reusable:{treeType.Arguments[0]}", first.Trace, second.Trace),
+            first.NodeCount + second.NodeCount + 18);
+    }
+
+    private static Expr Leaf(Expr value) => new Expr.Call(new Expr.Var("FuzzLeaf"), value);
+
+    private static Expr Branch(Expr left, Expr right) =>
+        new Expr.Call(new Expr.Call(new Expr.Var("FuzzBranch"), left), right);
+
+    private static string Name(string prefix, FuzzRandom random) =>
+        prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
+internal sealed class CapturedReuseCandidateTemplate : ICombinationTemplate
+{
+    public string Id => "perceus.captured-reuse-candidate";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.Adt,
+        GeneratedFeature.Let,
+        GeneratedFeature.Match,
+        GeneratedFeature.Lambda,
+        GeneratedFeature.Call,
+        GeneratedFeature.ClosureCapture,
+        GeneratedFeature.ConstructorReconstruction,
+        GeneratedFeature.ReuseCandidate,
+        GeneratedFeature.SharedReuseFallback,
+        GeneratedFeature.CapturedReuseCandidate,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.IsInterestedIn(OwnershipInterest.ClosureCapture) &&
+        context.IsInterestedIn(OwnershipInterest.Reuse) &&
+        budget.RemainingNodes >= 24;
+
+    public GenerationResult<Expr> Generate(
+        AshesType resultType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        GenerationResult<Expr> payload = expressions.Generate(resultType, context, budget.Descend(12), random);
+        string box = Name("capturedReuseBox", random);
+        string observer = Name("capturedReuseObserver", random);
+        string observedItem = Name("capturedReuseObservedItem", random);
+        string item = Name("capturedReuseItem", random);
+        string rebuilt = Name("capturedReuseRebuilt", random);
+        string observation = Name("capturedReuseObservation", random);
+        string result = Name("capturedReuseResult", random);
+
+        Expr observerBody = new Expr.Match(
+            new Expr.Var(box),
+            [new MatchCase(new Pattern.Constructor("FuzzBox", [new Pattern.Var(observedItem)]), new Expr.Var(observedItem))]);
+        Expr observerLambda = new Expr.Lambda(Name("capturedReuseUnit", random), observerBody)
+        {
+            ParamAnnotation = AshesType.Unit.ToSyntax(),
+        };
+        Expr reconstructed = new Expr.Call(new Expr.Var("FuzzBox"), new Expr.Var(item));
+        Expr extract = new Expr.Match(
+            new Expr.Var(rebuilt),
+            [new MatchCase(new Pattern.Constructor("FuzzBox", [new Pattern.Var(result)]), new Expr.Var(result))]);
+        Expr observeAfterReconstruction = new Expr.Let(
+            observation,
+            new Expr.Call(new Expr.Var(observer), new Expr.Var("Unit")),
+            extract);
+        Expr reconstructAfterMatch = new Expr.Let(rebuilt, reconstructed, observeAfterReconstruction);
+        Expr match = new Expr.Match(
+            new Expr.Var(box),
+            [new MatchCase(new Pattern.Constructor("FuzzBox", [new Pattern.Var(item)]), reconstructAfterMatch)]);
+        Expr value = new Expr.Let(
+            box,
+            new Expr.Call(new Expr.Var("FuzzBox"), payload.Value),
+            new Expr.Let(observer, observerLambda, match));
+
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(payload.Features);
+        return new GenerationResult<Expr>(
+            value,
+            resultType,
+            features,
+            GenerationTrace.Merge($"perceus:captured-reuse-candidate:{resultType}", payload.Trace),
+            payload.NodeCount + 22);
     }
 
     private static string Name(string prefix, FuzzRandom random) =>

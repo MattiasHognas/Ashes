@@ -31,65 +31,90 @@ internal sealed class FuzzCampaign
         int first = configuration.Command == FuzzCommandKind.Replay ? configuration.CaseIndex : 0;
         int count = configuration.Command == FuzzCommandKind.Replay ? 1 : configuration.Cases;
         int seedCount = configuration.Command == FuzzCommandKind.Replay ? 1 : configuration.SeedCount;
-        for (int seedOffset = 0; seedOffset < seedCount; seedOffset++)
+        int completed = 0;
+        using CancellationTokenSource? timeoutSource = CreateCampaignTimeout(configuration, cancellationToken);
+        CancellationToken campaignToken = timeoutSource?.Token ?? cancellationToken;
+        try
         {
-            ulong masterSeed = configuration.Seed + (ulong)seedOffset;
-            for (int offset = 0; offset < count; offset++)
+            for (int seedOffset = 0; seedOffset < seedCount; seedOffset++)
             {
-                int caseIndex = first + offset;
-                FuzzProfile profile = ResolveProfile(requestedProfile, caseIndex);
-                GeneratedFuzzCase testCase = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
-                if (profile.MutateSource)
+                ulong masterSeed = configuration.Seed + (ulong)seedOffset;
+                for (int offset = 0; offset < count; offset++)
                 {
-                    testCase = InvalidSourceSeedSelector.Select(testCase, repositoryRoot, caseIndex);
-                }
-                if (configuration.Command == FuzzCommandKind.Replay)
-                {
-                    GeneratedFuzzCase replay = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
+                    campaignToken.ThrowIfCancellationRequested();
+                    int caseIndex = first + offset;
+                    FuzzProfile profile = ResolveProfile(requestedProfile, caseIndex);
+                    GeneratedFuzzCase testCase = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
                     if (profile.MutateSource)
                     {
-                        replay = InvalidSourceSeedSelector.Select(replay, repositoryRoot, caseIndex);
+                        testCase = InvalidSourceSeedSelector.Select(testCase, repositoryRoot, caseIndex);
                     }
-                    if (!string.Equals(testCase.Source, replay.Source, StringComparison.Ordinal))
+                    if (configuration.Command == FuzzCommandKind.Replay)
                     {
-                        Console.Error.WriteLine("Replay did not regenerate byte-identical source.");
-                        return 2;
+                        GeneratedFuzzCase replay = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
+                        if (profile.MutateSource)
+                        {
+                            replay = InvalidSourceSeedSelector.Select(replay, repositoryRoot, caseIndex);
+                        }
+                        if (!string.Equals(testCase.Source, replay.Source, StringComparison.Ordinal))
+                        {
+                            Console.Error.WriteLine("Replay did not regenerate byte-identical source.");
+                            return 2;
+                        }
+                        Console.WriteLine(testCase.Source);
                     }
-                    Console.WriteLine(testCase.Source);
-                }
-                foreach (string oracleId in profile.Oracles)
-                {
-                    IFuzzOracle oracle = _oracles.Get(oracleId);
-                    FuzzOracleResult result = await oracle.EvaluateAsync(testCase, context, cancellationToken).ConfigureAwait(false);
-                    if (!result.Success)
+                    coverage.Record(testCase);
+                    foreach (string oracleId in profile.Oracles)
                     {
-                        return await ReportFailureAsync(testCase, result, configuration, context, cancellationToken).ConfigureAwait(false);
+                        IFuzzOracle oracle = _oracles.Get(oracleId);
+                        coverage.RecordOracleExecution(oracleId);
+                        FuzzOracleResult result = await oracle.EvaluateAsync(testCase, context, campaignToken).ConfigureAwait(false);
+                        if (!result.Success)
+                        {
+                            Console.Error.WriteLine(coverage.Summary());
+                            return await ReportFailureAsync(testCase, result, configuration, context, cancellationToken).ConfigureAwait(false);
+                        }
                     }
+                    completed++;
                 }
-                coverage.Record(testCase, profile.Oracles);
             }
         }
-        Console.WriteLine($"passed {count * seedCount} case(s); profile={requestedProfile.Id}; seeds={configuration.Seed}..{configuration.Seed + (ulong)seedCount - 1}");
+        catch (OperationCanceledException) when (
+            timeoutSource?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
+        {
+            Console.WriteLine($"campaign time budget reached after {completed} completed case(s); profile={requestedProfile.Id}");
+            Console.WriteLine(coverage.Summary());
+            return 0;
+        }
+        Console.WriteLine($"passed {completed} case(s); profile={requestedProfile.Id}; seeds={configuration.Seed}..{configuration.Seed + (ulong)seedCount - 1}");
         Console.WriteLine(coverage.Summary());
         return 0;
     }
 
-    private FuzzProfile ResolveProfile(FuzzProfile requested, int caseIndex)
+    internal FuzzProfile ResolveProfile(FuzzProfile requested, int caseIndex)
     {
         if (!string.Equals(requested.Id, "all", StringComparison.Ordinal))
         {
             return requested;
         }
-        if (caseIndex % 50 == 0)
+        int slot = caseIndex % 50;
+        string? focused = slot switch
         {
-            return _profiles.Get("differential");
-        }
-        if (caseIndex % 25 == 0)
+            0 => "differential",
+            1 => "compile",
+            2 => "cross-target",
+            3 => "invalid-source",
+            4 => "async",
+            5 => "capabilities",
+            6 => "resources",
+            _ => null,
+        };
+        if (focused is not null)
         {
-            return _profiles.Get("invalid-source");
+            return _profiles.Get(focused);
         }
         string[] stable = ["syntax", "semantics", "perceus", "combinations"];
-        return _profiles.Get(stable[caseIndex % stable.Length]);
+        return _profiles.Get(stable[(slot - 7) % stable.Length]);
     }
 
     internal async Task<int> RunCorpusAsync(FuzzConfiguration configuration, string repositoryRoot, CancellationToken cancellationToken)
@@ -162,5 +187,18 @@ internal sealed class FuzzCampaign
         }
         _ = new Ashes.Semantics.Lowering(diagnostics).Lower(program);
         return diagnostics.Errors.Count == 0;
+    }
+
+    private static CancellationTokenSource? CreateCampaignTimeout(
+        FuzzConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (configuration.CampaignTimeout <= TimeSpan.Zero)
+        {
+            return null;
+        }
+        CancellationTokenSource timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(configuration.CampaignTimeout);
+        return timeoutSource;
     }
 }

@@ -5,7 +5,7 @@
 #   just provision       # fetch LLVM native libs into runtimes/ (once / on bump)
 #   just ci-quick        # fast build + test
 #   just fuzz            # deterministic bounded compiler fuzz suite
-#   just fuzz-long -- --profile perceus --cases 100000 --seed 12345
+#   just fuzz-long -- --profile perceus --cases 100000 --seed 12345 --campaign-timeout 3600
 #   just ci              # full PR-equivalent pipeline
 #   just release 1.2.3   # build release artifacts into artifacts/release/ (local)
 #   just release-github  # build + tag + publish a GitHub Release
