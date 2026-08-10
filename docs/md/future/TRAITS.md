@@ -2,7 +2,14 @@
 
 ## Status
 
-Implementation in progress. The normative source-visible design is now in
+Tasks 1-15 implemented on `feature/traits`. A pre-PR verification pass (build, full test gates, a
+three-way code audit against this checklist, and a `challenges/` regression run) found real gaps behind
+several `[x]` marks: two confirmed miscompiles (one a crash) in evidence lowering, a severe memory
+regression in a previously-fixed benchmark, and a set of smaller coherence/tooling/documentation defects.
+Tasks 16-21 below capture that work; the branch is not ready for a PR until at least Task 16 and Task 17
+are closed.
+
+The normative source-visible design is now in
 [`docs/md/reference/language.md`](../reference/language.md#21-traits-and-implementations). This document is
 the ordered implementation checklist; if its prose differs from the language reference, the language
 reference wins.
@@ -512,6 +519,197 @@ mechanism, and all public tooling understands the new declarations and types.
 
 Acceptance: the implementation is deterministic, cross-module, optimization-independent, fuzzed in
 combination with ownership/effects/async, and passes the complete repository gate.
+
+### Task 16: Fix silent-placeholder miscompiles in evidence lowering
+
+Two independent, empirically confirmed bugs share one root cause: when trait evidence cannot be threaded
+or resolved at a use site, `Lowering.Traits.cs` falls back to emitting `IrInst.LoadConstInt(placeholder, 0)`
+and continuing as if nothing were wrong, instead of either constructing real evidence or reporting a
+diagnostic. Both are reachable from ordinary, idiomatic source and were reproduced against the built
+compiler, not just read from source.
+
+- [ ] Fix `LowerBareTraitMethodReference` (`Lowering.Traits.cs:468-479`, reached via
+      `LowerQualifiedVar` in `Lowering.ModuleResolution.cs:14-21`) so a trait method used as a first-class
+      value (not immediately applied, not itself the direct right-hand side of a `requires`-annotated
+      binding) either constructs a real dictionary-backed closure or is rejected with a focused
+      diagnostic. Confirmed repro (segfaults, exit 139, on the built CLI):
+      ```ash
+      import Ashes.Trait
+      import Ashes.Collection.List
+      import Ashes.IO
+
+      let results = List.map(Show.show)([1, 2, 3])
+      match results with
+          | first :: _ -> print(first)
+          | [] -> print("empty")
+      ```
+- [ ] Fix the matching fallback in `Lowering.Traits.cs:635-642` and `:681-688` (the operator-desugaring
+      path) so a constraint that remains a `TraitEvidencePlan.Parameter` with no enclosing
+      `_activeTraitDictionaryParameters` entry raises a diagnostic (ambiguous constraint, `ASH010`, or
+      no-implementation, `ASH036`, as appropriate) instead of emitting the same placeholder constant.
+      Confirmed repro (compiles clean, prints the wrong answer, no diagnostic):
+      ```
+      ashes run --expr 'let f x = x in Ashes.IO.print(if f == f then "y" else "n")'
+      ```
+      prints `n` (should be a compile error: functions have no `Eq` implementation). Verify the
+      previously-correct cases stay correct: concrete nominal/function-type constraints still resolve via
+      `ASH036`, and legitimately-deferred higher-order constraints (a constraint resolvable once a caller
+      supplies a concrete type, e.g. through a generic `apply` wrapper) still work.
+- [ ] Fix the same-trait, multiple-type-variable dictionary collision: `BuildResolvedTraitDictionaryValues`
+      (`Lowering.TraitEvidence.cs:1755-1767`), `TryMapTraitDictionaries` (`:1030-1047`),
+      `CollectTraitMethodParameterNames` (`:947-961`), and `TryLowerActiveTraitMethod` (`:1137-1146`) all
+      key dictionary lookup/threading by trait qualified name alone. A function such as
+      `let f : a -> b -> Bool requires {Eq(a), Eq(b)}` therefore has its two `Eq` constraints alias onto
+      one dictionary. Re-key by `(trait qualified name, canonical type-argument position)` so distinct
+      constraints on the same trait never collide, or reject the shape at the `requires` boundary with a
+      diagnostic if disambiguation is out of scope for this pass.
+- [ ] Add regression tests for all three fixes: an unapplied trait method passed as a higher-order-function
+      argument (the `List.map(Show.show)` shape above), an operator on a type with no possible
+      implementation used both in an unannotated `let` and inside a constrained function body, and a
+      function with two same-trait constraints over different type variables exercised at two different
+      concrete types in the same program.
+
+Acceptance: no source program causes a trait constraint to silently resolve to a placeholder constant;
+every unresolvable-at-lowering-time constraint is either constructed correctly or reported as a diagnostic.
+
+### Task 17: Restore constant-memory recognition through trait-dispatched operators
+
+`challenges/fannkuch-redux` regressed from a documented flat ~8.2 MB peak RSS (any N) to memory scaling
+with N! (N=8 -> 9.7 MB, N=9 -> 101 MB, N=10 -> 1.13 GB, N=11 -> 13.4 GB) after this branch's operator
+migration. Output remains correct at every N tested — this is a memory-model regression, not a
+correctness bug — but a >1000x RSS blowup at the documented workload is not shippable. This benchmark's
+constant-memory behavior was previously fixed and is tracked as CO-29/CO-38 in
+[the changelog](../internals/changelog.md); the working theory is that the accumulator-reset heuristics in
+`Lowering.cs` (`IsStableAccumulatorExpr` / `GetTcoCopyOutKind`) recognized the loop's `==`/`<` comparisons
+by their old direct-primitive IR shape, and no longer see through the indirect trait-method dispatch those
+operators now desugar to, so the per-iteration arena reset silently stops qualifying.
+
+- [ ] Confirm the root cause: instrument or trace `IsStableAccumulatorExpr`/`GetTcoCopyOutKind` against
+      `challenges/fannkuch-redux/fannkuch-redux.ash` at a small N and verify whether reset-safety
+      classification changes depending on `LoweringConfiguration.EnableTraitOperatorSpecialization`.
+- [ ] Fix the classifier to see through primitive-specialized trait operator calls (the common case, where
+      `ShouldUsePrimitiveOperatorSpecialization` already proved the operation reduces to a primitive), so
+      reset-safety detection is unaffected by operator desugaring shape.
+- [ ] Re-run `challenges/fannkuch-redux` at N=9, 10, 11 and confirm peak RSS returns to the flat baseline
+      (~8.2 MB, independent of N).
+- [ ] Investigate `challenges/k-nucleotide`, which is currently ~1.9x slower and ~1.7x higher peak RSS than
+      its baseline while every other challenge on the same host ran faster than baseline — check whether
+      trait-dispatched `compare` in `Ashes.Collection.Map`'s hot path shares this root cause. Fix together
+      if so; file a separate follow-up if the cause is unrelated.
+- [ ] Add a regression test (or a `challenges/` note plus a lightweight `.ash` test under `tests/`) that
+      catches a future reset-safety classifier regression through trait dispatch, since `challenges/` is
+      explicitly excluded from CI and would not otherwise catch this again.
+
+Acceptance: `challenges/fannkuch-redux` is constant-memory again at every N, and the full
+`challenges/README.md` baseline table is re-verified with no entry regressing time or peak RSS by more
+than normal run-to-run noise.
+
+### Task 18: Close trait fuzz coverage gaps in CI
+
+Trait-aware fuzz generation (`TraitPreludeGenerator`, `TraitCombinationTemplates`,
+`TraitInvalidCaseGenerator`, `DifferentialTraitEvidenceOracle`) is real and exercised by
+`Ashes.Fuzzing.Tests`, but no profile that generates traits (`traits`, `traits-differential`,
+`invalid-semantics`, or the `all` profile) is reachable from any automated gate: `ci/jobs.sh`'s `fuzz()`
+runs `syntax, semantics, perceus, combinations, async, capabilities, resources, invalid-source, compile,
+differential, corpus` and was not touched by this branch, and the pre-commit `smoke` profile has
+`GenerateTraits: false` with `trait.*` combination templates explicitly filtered out.
+
+- [ ] Add the `traits`, `traits-differential`, and `invalid-semantics` profiles to `ci/jobs.sh`'s `fuzz()`
+      job (or an equivalent scheduled/manual gate if running them on every CI invocation is too slow;
+      state the decision explicitly rather than leaving it implicit).
+- [ ] If `smoke`'s exclusion of trait generation is intentional (fast pre-commit budget), document that
+      reasoning next to the profile definition in `FuzzProfile.cs` so it doesn't read as an oversight.
+
+Acceptance: at least one CI-reachable job exercises trait generation, coherent/incoherent implementation
+combinations, and the specialized-vs-dictionary differential oracle; the exclusion of any trait profile
+from a faster gate is a documented decision, not a gap.
+
+### Task 19: Documentation and diagnostic-quality corrections
+
+Smaller defects found by the audit that don't affect correctness but leave the spec, docs, or diagnostics
+inconsistent with the shipped behavior.
+
+- [ ] Add `deriving` to the reserved-keyword list in `docs/md/reference/language.md` (currently only
+      `trait`, `implement`, `requires` are listed there, even though `deriving` is lexed as a keyword and
+      is separately documented as reserved at `language.md:3333` and `:3427`).
+- [ ] Add a worked accepted example for a default method and a rejected example for a default-method
+      dependency cycle to the accepted/rejected examples list in `language.md` section 21.14; both rules
+      currently exist only as prose.
+- [ ] Correct the "tuples" wording in this document's Task 10 and in `docs/md/reference/standard-library.md`
+      to state that structural tuple implementations cover 2-tuples only (`Trait.ash` has no 3+ arity
+      implementations); either extend coverage or make the limitation explicit everywhere it's implied to
+      be general.
+- [ ] Document that `implement Ord(Str)` (enabling `<`/`<=`/`>`/`>=` on strings via byte comparison) is a
+      new behavior, not preserved pre-existing behavior — call it out in the standard-library docs and this
+      file's Task 10 rather than leaving it implied as a straight migration.
+- [ ] Decide and act on the `Remainder(Float)` diagnostic regression: `5.5 % 2.0` now reports the generic
+      `ASH036` no-implementation message instead of the previous primitive-specific `'%' requires
+      Int%Int, unsigned%unsigned, or BigInt%BigInt` message. Either restore a tailored diagnostic for this
+      case or accept `ASH036` and note the change in `docs/md/reference/diagnostics.md`.
+- [ ] Fix the constrained-type pretty-printer (`Lowering.TypeInference.cs:433-447`) to print the actual
+      `needs` keyword for capability rows instead of `uses`, which does not exist in the language. Correct
+      the two tests that currently assert the wrong keyword as expected output
+      (`TraitTypeSchemeTests.cs:103`, `TraitInferenceTests.cs:303`).
+- [ ] Correct Task 12's claim that collection hashing was migrated to standard traits: `Collection.HashMap.ash:20`
+      and `Collection.HashTrie.ash:8` still call `Ashes.Byte.hash` directly rather than taking
+      `requires {Hash(K)}`, and `Hash` currently has no stdlib consumer at all. Either migrate these two
+      modules or correct the checklist wording to describe what actually shipped.
+
+Acceptance: the language reference, standard-library docs, and diagnostics reference accurately describe
+the shipped behavior with no known contradictions; pretty-printed types never reference a nonexistent
+keyword.
+
+### Task 20: Test-coverage and tooling follow-ups
+
+- [ ] Wire `vscode-extension/src/test/fixtures/traits.ash` into a real tokenization test (loading the
+      grammar through `vscode-textmate` or the extension's existing token-inspection helper, not just
+      regex-matching grammar patterns against sample strings as `syntaxHighlighting.test.ts` currently
+      does), or delete the fixture if it's not going to be used.
+- [ ] Review the unrelated change in `vscode-extension/src/extension.ts` that removes
+      `context.subscriptions.push(client)` from the language-client registration — it rode along in this
+      commit but has nothing to do with traits. Confirm it's intentional and safe (deactivate-time
+      `client.stop()` still runs) or revert it as out-of-scope for this branch.
+- [ ] Add a parser/formatter round-trip and idempotence test for a multi-parameter trait (e.g.
+      `trait Convert(source, destination)`, a documented form in `language.md`) — currently untested.
+- [ ] Add a formatter assertion (not just a parse-level test) for a recursive group's per-member `requires`
+      clauses.
+- [ ] Add at least one `tests/projects/` multi-file fixture exercising Task 8's full acceptance scenario
+      (trait declared in one module, constrained function called abstractly from a second module,
+      instantiated concretely in a third) with real computed-value assertions — the existing coverage for
+      this scenario is in-process C# unit tests, several of which assert only that no diagnostics were
+      raised rather than that the computed result is correct.
+- [ ] Replace `TraitTypeSchemeTests.HasHoverMetadata` (`TraitTypeSchemeTests.cs:107-118`), which constructs
+      a `HoverTypeInfo` by hand and asserts the field it just set, with a test that exercises the real
+      `GetTypeAtPosition` hover path for a constrained binding, mirroring `TraitInferenceTests.cs:25-29`.
+- [ ] Strengthen the Task 4 import-order-independence test
+      (`TraitRegistrationTests.cs:184-195`) to assert order-independence of the actual implementation
+      registry, overlap diagnostics, and resolution results — not just the set of registered trait
+      qualified names.
+
+Acceptance: the gaps above no longer read as untested claims; each has either real coverage or an explicit,
+documented reason it's out of scope.
+
+### Task 21: Coherence and resolution hardening
+
+- [ ] Fix `_typeProvenanceByName` (`Lowering.cs:538`), which keys outer-type provenance for the orphan rule
+      by unqualified type name. Two packages declaring a type with the same simple name can collide and
+      silently grant or deny orphan rights to the wrong package. Key by package-qualified identity instead.
+- [ ] Decide whether `ValidateInstanceRequirementTermination` should apply the strict structural-decrease
+      rule to implementations with a fully concrete head, not only generic ones — it currently rejects a
+      shape like `implement Show(Box) requires {Show(Int)}` (head size 2, requirement size 2, both
+      concrete, so termination is not actually at risk). Either relax the rule for concrete heads and add a
+      positive test, or keep it and document the stricter-than-normative-text behavior explicitly in
+      `language.md` section 21.8.
+- [ ] Resolve the dead-data gap in `TraitEvidencePlan.Instance.Requirements`: conditional implementation
+      requirements are computed during resolution but never consumed during dictionary construction
+      (requirements are re-resolved at the concrete goal inside the method body instead of being
+      materialized as dictionary fields). Either wire the computed requirements into
+      `BuildTraitDictionary`, or remove the dead computation and correct Task 7's wording so it describes
+      the re-resolution design that actually shipped.
+
+Acceptance: orphan-rule provenance cannot be confused across packages with colliding simple names;
+the termination rule's actual scope matches its documentation; no computed evidence-resolution data is
+silently discarded without either being used or being an intentional, documented design choice.
 
 ## Definition of done
 
