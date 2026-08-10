@@ -611,26 +611,87 @@ with N! (N=8 -> 9.7 MB, N=9 -> 101 MB, N=10 -> 1.13 GB, N=11 -> 13.4 GB) after t
 migration. Output remains correct at every N tested — this is a memory-model regression, not a
 correctness bug — but a >1000x RSS blowup at the documented workload is not shippable. This benchmark's
 constant-memory behavior was previously fixed and is tracked as CO-29/CO-38 in
-[the changelog](../internals/changelog.md); the working theory is that the accumulator-reset heuristics in
-`Lowering.cs` (`IsStableAccumulatorExpr` / `GetTcoCopyOutKind`) recognized the loop's `==`/`<` comparisons
-by their old direct-primitive IR shape, and no longer see through the indirect trait-method dispatch those
-operators now desugar to, so the per-iteration arena reset silently stops qualifying.
+[the changelog](../internals/changelog.md).
 
-- [ ] Confirm the root cause: instrument or trace `IsStableAccumulatorExpr`/`GetTcoCopyOutKind` against
-      `challenges/fannkuch-redux/fannkuch-redux.ash` at a small N and verify whether reset-safety
-      classification changes depending on `LoweringConfiguration.EnableTraitOperatorSpecialization`.
-- [ ] Fix the classifier to see through primitive-specialized trait operator calls (the common case, where
-      `ShouldUsePrimitiveOperatorSpecialization` already proved the operation reduces to a primitive), so
-      reset-safety detection is unaffected by operator desugaring shape.
+Minimal repro (no trait syntax at all — reproduces the full regression against a `main` comparison
+worktree; peak RSS on `feature/traits` grows with the loop bound where `main` stays flat):
+
+```ash
+type State =
+    | S(List(Int), List(Int))
+
+let recursive loop st n acc =
+    match st with
+        | S(a, b) ->
+            if n == 0
+            then acc
+            else loop(S(n :: a)(n :: b))(n - 1)(acc + n)
+
+Ashes.IO.print(Ashes.Text.fromInt(loop(S([])([]))(5)(0)))
+```
+
+**Investigated in depth; root cause narrowed but not yet found or fixed.** The originally-suspected
+mechanism (`IsStableAccumulatorExpr` failing to see through trait-dispatched `==`/`<`) is **ruled out**:
+that function operates purely on source-level `Expr` shapes (`Expr.Var`/`Expr.Call` self-recursion
+tracing) and never inspects operator/comparison expressions at all, on either branch. The actual
+mechanism, found by empirical `--explain reuse`/`--explain memory` bisection against a `main` worktree
+using a minimal, trait-free-looking repro (a `type State = S(List(Int), List(Int))` TCO loop matching and
+rebuilding `State` every iteration — no explicit trait syntax anywhere in the source, yet the regression
+reproduces identically to the full challenge):
+
+- On `main`, `LowerLambdaCoreScanDirectReuse` (`Lowering.cs`) successfully recognizes `st` as a
+  constructor-matched accumulator and synthesizes a `TrySynthesizeAdtCopier` deep-copy function for
+  `State` (visible in `--emit-ir final` as a standalone `[AdtDeepCopier]` function, and in
+  `--explain reuse` as `entry copy: omitted [st]` / `reason: no structural reuse`). This entry-copy
+  candidacy is the prerequisite that lets the loop body's per-iteration `S(perm2)(count2)` reconstruction
+  reuse `st`'s matched cells in place, keeping the accumulator below the arena watermark every iteration.
+- On `feature/traits`, the same source produces **zero** reuse decisions for `loop` at all — the
+  `AdtDeepCopier` function is completely absent from the emitted IR. Instrumenting
+  `LowerLambdaCoreScanDirectReuse`'s qualifying condition directly (all nine sub-conditions individually
+  traced) showed every condition true, *including* `TrySynthesizeAdtCopier(State) is not null`, on the
+  **first** of three `LowerLambdaCoreScanDirectReuse` invocations for `loop` — but `!tco.IsRuntimeManagedSlot(accLocal.Slot)`
+  (the second condition) flips from true to **false** on the second and third invocations, well before any
+  decision is recorded. `loop`'s own parameters carry no trait dictionaries at all (`--explain traits`
+  shows nothing for `loop`/`nextPerm`/`resetCounts`), and `State`'s structural RC-eligibility
+  (`GetOrdinaryHeapLayoutCapability(State).RuntimeTcoOwnedChildAdtSupported` /
+  `IsRcEligibleScalarTupleOrAdtType` / `CanRuntimeManageTcoAdt`, all in `Lowering.LayoutCapability.cs` /
+  `Lowering.cs`) is identically `true` across all three invocations — so the type-level "can this be
+  RC-managed" answer is constant and is *not* what changed. The remaining, unconfirmed suspect is
+  `Lowering.TcoPromotionCostSignal.cs`'s multi-pass parameter placement/promotion logic
+  (`EvaluateTcoPlacementProfitability` / `ApplyTcoPlacementDecision` / `GetTcoPlacementRestriction` /
+  `FindBlockingSiblingForCandidate`), which re-evaluates whether each TCO parameter should be promoted
+  from arena to runtime-managed (RC) placement across re-lowering passes, and appears to promote `st` on
+  a later pass in a way `main` does not — despite this file itself being byte-identical between branches
+  (confirmed via `git diff main feature/traits`), meaning the divergence is in this logic's *input*, not
+  its code. A live theory worth checking first: `GetTcoPlacementRestriction` only withholds promotion for
+  a parameter already recorded in `_linearReuseNames`/`_resetSafeAccumulators`, but
+  `LowerLambdaCoreScanDirectReuse` calls `_linearReuseNames.Clear()` at the start of *every* invocation
+  (including the later ones where the qualifying condition then fails) — if the placement/promotion
+  evaluation reads `_linearReuseNames` after that clear on a later pass rather than after the first,
+  successful pass populated it, the "don't promote a reuse accumulator" protection would never actually
+  apply, independent of anything trait-related; confirm whether this ordering is itself new on this
+  branch or a latent, pre-existing bug newly exposed by something upstream. All debug instrumentation used
+  for this investigation was reverted; none of it shipped.
+- [ ] Confirm whether `_linearReuseNames`/`_resetSafeAccumulators` population and the TCO
+      placement/promotion evaluation that reads them run in the order the "don't promote a reuse
+      accumulator" protection assumes, across all `LowerLambdaCoreScanDirectReuse` re-invocations for one
+      function — instrument `EvaluateTcoPlacementProfitability`/`ApplyTcoPlacementDecision` alongside
+      `LowerLambdaCoreScanDirectReuse` on the minimal `State` repro above and compare invocation order
+      against `main`.
+- [ ] Once the actual ordering/input divergence is found, fix it there (not by special-casing trait
+      dispatch — the repro that exhibits this has no trait syntax in it at all, so whatever's wrong is a
+      general TCO-placement regression this branch's other changes happened to expose, not something
+      specific to operator desugaring).
 - [ ] Re-run `challenges/fannkuch-redux` at N=9, 10, 11 and confirm peak RSS returns to the flat baseline
       (~8.2 MB, independent of N).
 - [ ] Investigate `challenges/k-nucleotide`, which is currently ~1.9x slower and ~1.7x higher peak RSS than
-      its baseline while every other challenge on the same host ran faster than baseline — check whether
-      trait-dispatched `compare` in `Ashes.Collection.Map`'s hot path shares this root cause. Fix together
-      if so; file a separate follow-up if the cause is unrelated.
+      its baseline while every other challenge on the same host ran faster than baseline — check whether it
+      shares this same TCO-placement root cause (it also threads an accumulator ADT through a recursive
+      loop) before assuming a trait-specific cause. Fix together if so; file a separate follow-up if not.
 - [ ] Add a regression test (or a `challenges/` note plus a lightweight `.ash` test under `tests/`) that
-      catches a future reset-safety classifier regression through trait dispatch, since `challenges/` is
-      explicitly excluded from CI and would not otherwise catch this again.
+      catches a future reset-safety classifier regression, since `challenges/` is explicitly excluded from
+      CI and would not otherwise catch this again. The minimal repro above is a ready-made starting point —
+      turn it into an RSS-bounded test once the fix lands and the correct bound is known.
 
 Acceptance: `challenges/fannkuch-redux` is constant-memory again at every N, and the full
 `challenges/README.md` baseline table is re-verified with no entry regressing time or peak RSS by more
