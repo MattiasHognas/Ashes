@@ -112,6 +112,90 @@ internal sealed class DifferentialReuseOracle : IFuzzOracle
     }
 }
 
+internal sealed class DifferentialTraitEvidenceOracle : IFuzzOracle
+{
+    public string Id => "differential-trait-evidence";
+
+    public async ValueTask<FuzzOracleResult> EvaluateAsync(
+        GeneratedFuzzCase testCase,
+        FuzzExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        string observableSource = Execution.ObservableValueRenderer.RenderProgram(testCase);
+        (Execution.ProcessResult specializedCompile, Execution.ProcessResult? specializedRun) =
+            await context.Compiler.CompileAndRunAsync(
+                observableSource,
+                context.RepositoryRoot,
+                context.Target,
+                "-O2",
+                context.CompilerTimeout,
+                context.ProgramTimeout,
+                context.MaximumOutputBytes,
+                cancellationToken).ConfigureAwait(false);
+        (Execution.ProcessResult dictionaryCompile, Execution.ProcessResult? dictionaryRun) =
+            await context.Compiler.CompileAndRunAsync(
+                observableSource,
+                context.RepositoryRoot,
+                context.Target,
+                "-O2",
+                context.CompilerTimeout,
+                context.ProgramTimeout,
+                context.MaximumOutputBytes,
+                cancellationToken,
+                disableTraitSpecialization: true).ConfigureAwait(false);
+        string? specializedCompileFailure = NativeOutcomeValidator.Failure(
+            "trait-specialized compiler",
+            specializedCompile);
+        string? dictionaryCompileFailure = NativeOutcomeValidator.Failure(
+            "dictionary-only compiler",
+            dictionaryCompile);
+        if (specializedCompileFailure is not null || dictionaryCompileFailure is not null)
+        {
+            return FuzzOracleResult.Failed(
+                Id,
+                $"Compiler configuration failure: {specializedCompileFailure ?? "specialized passed"}; {dictionaryCompileFailure ?? "dictionary-only passed"}.",
+                specializedCompile.StandardOutput + dictionaryCompile.StandardOutput,
+                specializedCompile.StandardError + dictionaryCompile.StandardError);
+        }
+        if (specializedRun is null || dictionaryRun is null)
+        {
+            return FuzzOracleResult.Failed(
+                Id,
+                "Compilation succeeded but both trait evidence configurations could not be executed.");
+        }
+        string? specializedRunFailure = NativeOutcomeValidator.Failure(
+            "trait-specialized program",
+            specializedRun);
+        string? dictionaryRunFailure = NativeOutcomeValidator.Failure(
+            "dictionary-only program",
+            dictionaryRun);
+        if (specializedRunFailure is not null || dictionaryRunFailure is not null)
+        {
+            return FuzzOracleResult.Failed(
+                Id,
+                $"Native configuration failure: {specializedRunFailure ?? "specialized passed"}; {dictionaryRunFailure ?? "dictionary-only passed"}.",
+                specializedRun.StandardOutput + dictionaryRun.StandardOutput,
+                specializedRun.StandardError + dictionaryRun.StandardError);
+        }
+        bool equal = specializedRun.ExitCode == dictionaryRun.ExitCode
+            && string.Equals(
+                specializedRun.StandardOutput,
+                dictionaryRun.StandardOutput,
+                StringComparison.Ordinal)
+            && string.Equals(
+                specializedRun.StandardError,
+                dictionaryRun.StandardError,
+                StringComparison.Ordinal);
+        return equal
+            ? FuzzOracleResult.Passed(Id)
+            : FuzzOracleResult.Failed(
+                Id,
+                "Trait-specialized and dictionary-only lowering produced different observable behavior.",
+                specializedRun.StandardOutput + dictionaryRun.StandardOutput,
+                specializedRun.StandardError + dictionaryRun.StandardError);
+    }
+}
+
 internal sealed class CrossTargetOracle : IFuzzOracle
 {
     public string Id => "cross-target";

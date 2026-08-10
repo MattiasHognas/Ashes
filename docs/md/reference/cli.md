@@ -817,6 +817,7 @@ matching functions.
 ```sh
 ashes compile app.ash --explain ownership
 ashes run     app.ash --explain rc --explain reuse
+ashes compile app.ash --explain traits
 ashes compile app.ash --explain memory:Map.set
 ```
 
@@ -825,7 +826,8 @@ ashes compile app.ash --explain memory:Map.set
 | `ownership` | The inferred contracts: per-parameter borrowed or consumed, move safety, uniqueness, which parameters the result may alias, whether the result is fresh, and captured values. |
 | `rc` | The Perceus operations in the final semantic IR — dups, drops, uniqueness checks, allocations, reused allocations, reuse tokens, and copies. Functions with no such operations are omitted. |
 | `reuse` | In-place-reuse decisions: whether a specialization was generated, the candidate, the outcome, and a stable reason code with the source location of the site. |
-| `memory` | The other three correlated per source function, together with where each value physically lives. |
+| `traits` | Hidden immutable dictionary parameters and the concrete implementation selected for each resolved trait requirement. |
+| `memory` | Ownership, RC, reuse, trait evidence, and physical representation correlated per source function. |
 
 The selector matches a function's source name, qualified name, generated label, or the source
 function a generated function came from, case-insensitively and by substring — so `--explain rc:loop`
@@ -849,6 +851,7 @@ The three facilities overlap deliberately, and it is worth knowing how:
 | You want to know | Use |
 |---|---|
 | How much reference counting a function does | `--explain rc` |
+| Which trait implementation was selected | `--explain traits` |
 | Which operations, on which values, and where | `--emit-ir final` |
 | What the optimizer changed | `--emit-ir lowered` and `--emit-ir final`, diffed |
 
@@ -877,6 +880,10 @@ ashes compile app.ash --emit-ir lowered:loop --emit-ir final:loop   # diff the t
 IR (final)
 ==========
 
+trait evidence
+  dictionary-parameter function=show source=app.ash:42 index=0 trait=Ashes.Trait.Show methods=[show] supertraits=[]
+  resolved requirement=Ashes.Trait.Show(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:5237)
+
 function lambda_55  [SourceFunction from build]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (app.ash:3:34)
@@ -890,6 +897,10 @@ omitted, so what is printed is what carries meaning. Instructions carry no ordin
 stages and diffing them is the main reason to read a dump, and an absolute index would make every
 line after an inserted or removed instruction register as changed. Labels anchor position where
 position matters.
+
+When traits are present, the leading `trait evidence` block identifies every hidden dictionary
+parameter in ABI order and every concrete implementation selected during resolution. Paths and source
+offsets are stable source identities; no runtime pointer or process-specific address is printed.
 
 Unlike the explain reports, **the dump's shape is not a contract**. Its content is the instruction set,
 so it changes whenever an instruction does; treat it as a debugging artifact rather than something to

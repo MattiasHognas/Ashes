@@ -6,115 +6,6 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
 
-    // True when the body compares (`==`/`!=`) or adds (`+`) two of the function's own parameters
-    // directly — the shape whose operand type is a generalizable variable that `==`/`+` cannot pick a
-    // single IR op for. Such functions are inlined per concrete call site (see _overloadGenericInline).
-    private static bool BodyComparesOrAddsParameters(Expr expr, IReadOnlyList<string> paramNames)
-    {
-        var parameters = new HashSet<string>(paramNames, StringComparer.Ordinal);
-        var found = false;
-        BodyComparesOrAddsVisit(expr, parameters, ref found);
-        return found;
-    }
-
-    private static bool BodyComparesOrAddsIsParam(Expr e, HashSet<string> parameters)
-        => e is Expr.Var v && parameters.Contains(v.Name);
-
-    private static void BodyComparesOrAddsVisit(object? node, HashSet<string> parameters, ref bool found)
-    {
-        if (found || node is null or string)
-        {
-            return;
-        }
-
-        if ((node is Expr.Equal eq && BodyComparesOrAddsIsParam(eq.Left, parameters) && BodyComparesOrAddsIsParam(eq.Right, parameters))
-            || (node is Expr.NotEqual ne && BodyComparesOrAddsIsParam(ne.Left, parameters) && BodyComparesOrAddsIsParam(ne.Right, parameters))
-            || (node is Expr.Add add && BodyComparesOrAddsIsParam(add.Left, parameters) && BodyComparesOrAddsIsParam(add.Right, parameters)))
-        {
-            found = true;
-            return;
-        }
-
-        if (node is System.Runtime.CompilerServices.ITuple tuple)
-        {
-            for (int i = 0; i < tuple.Length && !found; i++)
-            {
-                BodyComparesOrAddsVisit(tuple[i], parameters, ref found);
-            }
-
-            return;
-        }
-
-        if (node is System.Collections.IEnumerable seq)
-        {
-            foreach (var item in seq)
-            {
-                BodyComparesOrAddsVisit(item, parameters, ref found);
-                if (found)
-                {
-                    return;
-                }
-            }
-
-            return;
-        }
-
-        if (node is not (Expr or Pattern or MatchCase or HandlerArm))
-        {
-            return;
-        }
-
-        BodyComparesOrAddsVisitProperties(node, parameters, ref found);
-    }
-
-    private static void BodyComparesOrAddsVisitProperties(object node, HashSet<string> parameters, ref bool found)
-    {
-        foreach (var prop in node.GetType().GetProperties())
-        {
-            if (found)
-            {
-                return;
-            }
-
-            if (prop.GetIndexParameters().Length > 0)
-            {
-                continue;
-            }
-
-            var t = prop.PropertyType;
-            if (typeof(Expr).IsAssignableFrom(t)
-                || typeof(Pattern).IsAssignableFrom(t)
-                || typeof(MatchCase).IsAssignableFrom(t)
-                || typeof(HandlerArm).IsAssignableFrom(t)
-                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
-            {
-                BodyComparesOrAddsVisit(prop.GetValue(node), parameters, ref found);
-            }
-        }
-    }
-
-    // Maps the unqualified export name of a stitched overload-generic stdlib function to its canonical
-    // stitched name (Ashes_Test_assertEqual → alias "assertEqual"), so a call by the imported short
-    // name still finds the registration. Collisions are recorded as null (ambiguous → not inlined).
-    private void RegisterOverloadGenericAlias(string canonicalName)
-    {
-        foreach (var moduleName in BuiltinRegistry.StandardModuleNames)
-        {
-            string prefix = ProjectSupport.SanitizeModuleBindingName(moduleName) + "_";
-            if (canonicalName.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                string shortName = canonicalName.Substring(prefix.Length);
-                if (shortName.Length == 0)
-                {
-                    continue;
-                }
-
-                // Ambiguous if another module already claimed this short name.
-                _overloadGenericAlias[shortName] = _overloadGenericAlias.ContainsKey(shortName) ? null : canonicalName;
-            }
-        }
-    }
-
     private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
     {
         foreach (var item in valueItems)
@@ -206,15 +97,6 @@ public sealed partial class Lowering
             _capabilityGenericInline.Add(let.Name);
         }
 
-        // Overload-generic: compares/adds two parameters, so it can be used at Int/Str/Bool/
-        // Float across one program by inlining a type-resolved copy per concrete call site.
-        if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
-        {
-            _inlinableFunctions.TryAdd(let.Name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
-            _inlinableDefiningValues.TryAdd(let.Name, let.Value);
-            _overloadGenericInline.Add(let.Name);
-            RegisterOverloadGenericAlias(let.Name);
-        }
     }
 
     /// <summary>
@@ -350,14 +232,6 @@ public sealed partial class Lowering
                     _capabilityGenericInline.Add(name);
                 }
 
-                // Overload-generic (see RegisterInlinableFunctions): a user helper that compares/adds
-                // two of its parameters is inlined per concrete call site so it works across types.
-                if (BodyComparesOrAddsParameters(GetInnermostBody(lam), CollectLambdaParams(lam)))
-                {
-                    _inlinableFunctions.TryAdd(name, (CollectLambdaParams(lam), GetInnermostBody(lam)));
-                    _inlinableDefiningValues.TryAdd(name, lam);
-                    _overloadGenericInline.Add(name);
-                }
             }
             else
             {
@@ -553,7 +427,8 @@ public sealed partial class Lowering
     {
         var result = new Expr.Let(declaration.Name, declaration.Value, body)
         {
-            TypeAnnotation = declaration.TypeAnnotation
+            TypeAnnotation = declaration.TypeAnnotation,
+            Requires = declaration.Requires,
         };
         AstSpans.SetLetName(result, AstSpans.GetOrDefault(declaration));
         return result;
@@ -565,7 +440,8 @@ public sealed partial class Lowering
     {
         var result = new Expr.LetRecursive(declaration.Name, declaration.Value, body)
         {
-            TypeAnnotation = declaration.TypeAnnotation
+            TypeAnnotation = declaration.TypeAnnotation,
+            Requires = declaration.Requires,
         };
         AstSpans.SetLetRecursiveName(result, AstSpans.GetOrDefault(declaration));
         return result;
@@ -583,7 +459,11 @@ public sealed partial class Lowering
         => new RecursiveGroupExpr(
             group.Bindings,
             AstSpans.GetRecursiveGroupBindingNamesOrDefault(group),
-            body);
+            body)
+        {
+            TypeAnnotations = group.TypeAnnotations,
+            Requires = group.Requires,
+        };
 
     /// <summary>
     /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only
@@ -593,7 +473,11 @@ public sealed partial class Lowering
     private sealed record RecursiveGroupExpr(
         IReadOnlyList<(string Name, Expr Value)> Bindings,
         IReadOnlyList<TextSpan> BindingNameSpans,
-        Expr Body) : Expr;
+        Expr Body) : Expr
+    {
+        public IReadOnlyList<TypeExpr?> TypeAnnotations { get; init; } = [];
+        public IReadOnlyList<IReadOnlyList<TraitConstraintSyntax>> Requires { get; init; } = [];
+    }
 
     /// <summary>
     /// Shared lowering state for the members of a mutual-recursion group. Every member is compiled to
@@ -604,8 +488,21 @@ public sealed partial class Lowering
     {
         public required IReadOnlyList<string> SharedCaptures { get; init; }
         public required int SharedEnvPtrTemp { get; init; }
-        public required IReadOnlyList<(string Name, string Label, TypeRef Type, TextSpan Span)> Members { get; init; }
+        public required IReadOnlyList<RecursiveGroupMember> Members { get; init; }
     }
+
+    private sealed record RecursiveGroupMember(
+        string Name,
+        string Label,
+        TypeRef Type,
+        TextSpan Span,
+        IReadOnlyList<TraitConstraint> Requirements);
+
+    private sealed record RecursiveGroupSetup(
+        string[] Labels,
+        RecursiveGroupMember[] Members,
+        int[] Slots,
+        RecursiveGroupContext Context);
 
     /// <summary>
     /// Lowers a mutually-recursive binding group. All member names are introduced with fresh type
@@ -617,63 +514,209 @@ public sealed partial class Lowering
         RecursiveGroupExpr group,
         LoweredValueRequest request)
     {
-        var bindings = group.Bindings;
+        (IReadOnlyList<(string Name, Expr Value)> Bindings, bool[] UsesDictionary) evidence =
+            PrepareRecursiveGroupTraitEvidence(group);
+        var bindings = evidence.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
 
         var recordTypes = LowerRecursiveGroupFreshTypes(bindings);
+        ResolvedBindingSignature[] signatures = ResolveRecursiveGroupSignatures(
+            group,
+            recordTypes,
+            evidence.UsesDictionary);
         var (sharedCaptures, sharedEnvPtrTemp) = LowerRecursiveGroupSharedEnv(bindings, groupNames);
+        RecursiveGroupSetup setup = CreateRecursiveGroupSetup(
+            group, recordTypes, signatures, sharedCaptures, sharedEnvPtrTemp);
 
-        var labels = new string[bindings.Count];
-        var members = new (string Name, string Label, TypeRef Type, TextSpan Span)[bindings.Count];
-        var slots = new int[bindings.Count];
-        for (int i = 0; i < bindings.Count; i++)
-        {
-            labels[i] = $"recgroup_{_nextLambdaId++}_{bindings[i].Name}";
-            members[i] = (bindings[i].Name, labels[i], recordTypes[i], GetSpan(bindings[i].Value));
-            slots[i] = NewLocal();
-            _knownFunctionLabelsBySlot[slots[i]] = labels[i];
-            _functionNameByLabel[labels[i]] = bindings[i].Name;
-            RegisterOwnershipFunctionLabel(
-                labels[i],
-                GetRecursiveGroupMemberKey(group, i));
-        }
-
-        var groupContext = new RecursiveGroupContext
-        {
-            SharedCaptures = sharedCaptures,
-            SharedEnvPtrTemp = sharedEnvPtrTemp,
-            Members = members
-        };
-
-        LowerRecursiveGroupMembers(
+        IReadOnlyList<TraitConstraint>[] inferredRequirements = LowerRecursiveGroupMembers(
             bindings,
             recordTypes,
-            labels,
-            members,
-            slots,
-            groupContext,
-            request);
+            signatures,
+            setup.Labels,
+            setup.Members,
+            setup.Slots,
+            setup.Context,
+            request.WithoutExpectedType(),
+            evidence.UsesDictionary,
+            out bool[] needsLateTraitTypeHints);
+        ReplaceRecursiveGroupEvidenceRequirements(
+            inferredRequirements,
+            signatures,
+            evidence.UsesDictionary);
 
-        // Mutual-recursion TCO: when the group is eligible, synthesize a single self-recursive
-        // dispatch function and rebind each member to a thin wrapper so the existing single-function
-        // TCO collapses the whole group into one loop instead of growing the stack through closure
-        // calls. Ineligible groups keep the closures lowered above.
-        var tcoSlots = TryLowerMutualRecursionTco(group, bindings, recordTypes, groupNames);
+        PushTraitConstraintScope();
+        var tcoSlots = evidence.UsesDictionary.Any(usesDictionary => usesDictionary)
+            ? null
+            : TryLowerMutualRecursionTco(group, bindings, recordTypes, groupNames);
+        _ = PopTraitConstraintScope();
 
-        // The members stay in scope for the continuation, bound to the slots holding their closures
-        // (or their TCO wrappers) — monomorphic, matching the single let rec form.
+        TypeScheme[] schemes = FinalizeRecursiveGroupSchemes(
+            group,
+            recordTypes,
+            signatures,
+            inferredRequirements,
+            evidence.UsesDictionary,
+            needsLateTraitTypeHints);
+
+        // The members remain monomorphic to one another while their bodies are inferred, then expose
+        // the jointly generalized constrained schemes to the continuation.
         var parent = _scopes.Peek();
         var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
         for (int i = 0; i < bindings.Count; i++)
         {
-            int memberSlot = tcoSlots?[i] ?? slots[i];
-            child[bindings[i].Name] = new Binding.Local(memberSlot, Prune(recordTypes[i]), members[i].Span);
+            int memberSlot = tcoSlots?[i] ?? setup.Slots[i];
+            child[bindings[i].Name] = new Binding.Scheme(memberSlot, schemes[i], setup.Members[i].Span);
         }
 
         _scopes.Push(child);
         var (bodyTemp, bodyType) = LowerExpr(group.Body, request);
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private static void ReplaceRecursiveGroupEvidenceRequirements(
+        IReadOnlyList<TraitConstraint>[] inferred,
+        IReadOnlyList<ResolvedBindingSignature> signatures,
+        IReadOnlyList<bool> usesDictionary)
+    {
+        for (int index = 0; index < inferred.Length; index++)
+        {
+            if (usesDictionary[index])
+            {
+                inferred[index] = signatures[index].Requirements;
+            }
+        }
+    }
+
+    private (IReadOnlyList<(string Name, Expr Value)> Bindings, bool[] UsesDictionary)
+        PrepareRecursiveGroupTraitEvidence(RecursiveGroupExpr group)
+    {
+        List<(string Name, Expr Value)> bindings = [];
+        bool[] usesDictionary = new bool[group.Bindings.Count];
+        for (int index = 0; index < group.Bindings.Count; index++)
+        {
+            (string name, Expr value) = group.Bindings[index];
+            usesDictionary[index] = _traitDictionaryFunctions.TryGetValue(
+                name,
+                out TraitDictionaryFunctionInfo? info);
+            bindings.Add((
+                name,
+                usesDictionary[index]
+                    ? TransformTraitDictionaryValue(
+                        value,
+                        info!,
+                        threadDictionaryFunctions: true)
+                    : value));
+        }
+        return (bindings, usesDictionary);
+    }
+
+    private RecursiveGroupSetup CreateRecursiveGroupSetup(
+        RecursiveGroupExpr group,
+        TypeRef[] recordTypes,
+        ResolvedBindingSignature[] signatures,
+        IReadOnlyList<string> sharedCaptures,
+        int sharedEnvPtrTemp)
+    {
+        var labels = new string[group.Bindings.Count];
+        var members = new RecursiveGroupMember[group.Bindings.Count];
+        var slots = new int[group.Bindings.Count];
+        for (int i = 0; i < group.Bindings.Count; i++)
+        {
+            labels[i] = $"recgroup_{_nextLambdaId++}_{group.Bindings[i].Name}";
+            members[i] = new RecursiveGroupMember(
+                group.Bindings[i].Name,
+                labels[i],
+                recordTypes[i],
+                GetSpan(group.Bindings[i].Value),
+                signatures[i].Requirements);
+            slots[i] = NewLocal();
+            _knownFunctionLabelsBySlot[slots[i]] = labels[i];
+            _functionNameByLabel[labels[i]] = group.Bindings[i].Name;
+            RegisterOwnershipFunctionLabel(labels[i], GetRecursiveGroupMemberKey(group, i));
+        }
+        return new RecursiveGroupSetup(
+            labels,
+            members,
+            slots,
+            new RecursiveGroupContext
+            {
+                SharedCaptures = sharedCaptures,
+                SharedEnvPtrTemp = sharedEnvPtrTemp,
+                Members = members,
+            });
+    }
+
+    private ResolvedBindingSignature[] ResolveRecursiveGroupSignatures(
+        RecursiveGroupExpr group,
+        TypeRef[] recordTypes,
+        IReadOnlyList<bool> usesTraitDictionary)
+    {
+        var signatures = new ResolvedBindingSignature[group.Bindings.Count];
+        for (int i = 0; i < signatures.Length; i++)
+        {
+            TypeExpr? annotation = i < group.TypeAnnotations.Count ? group.TypeAnnotations[i] : null;
+            IReadOnlyList<TraitConstraintSyntax> requirements = i < group.Requires.Count
+                ? group.Requires[i]
+                : [];
+            signatures[i] = ResolveBindingSignature(annotation, requirements, GetSpan(group.Bindings[i].Value));
+            if (signatures[i].Type is not null && !usesTraitDictionary[i])
+            {
+                Unify(recordTypes[i], signatures[i].Type!);
+            }
+        }
+        return signatures;
+    }
+
+    private TypeScheme[] FinalizeRecursiveGroupSchemes(
+        RecursiveGroupExpr group,
+        TypeRef[] recordTypes,
+        ResolvedBindingSignature[] signatures,
+        IReadOnlyList<TraitConstraint>[] inferredRequirements,
+        IReadOnlyList<bool> usesTraitDictionary,
+        IReadOnlyList<bool> needsLateTraitTypeHints)
+    {
+        var schemes = new TypeScheme[group.Bindings.Count];
+        for (int i = 0; i < schemes.Length; i++)
+        {
+            TypeRef schemeType = recordTypes[i];
+            if (usesTraitDictionary[i] && signatures[i].Type is not null)
+            {
+                int dictionaryCount = _traitDictionaryFunctions[group.Bindings[i].Name].Dictionaries.Count;
+                TypeRef cursor = recordTypes[i];
+                for (int dictionary = 0; dictionary < dictionaryCount; dictionary++)
+                {
+                    cursor = Prune(cursor) is TypeRef.TFun function ? function.Ret : cursor;
+                }
+                Unify(signatures[i].Type!, cursor);
+                schemeType = signatures[i].Type!;
+            }
+            IReadOnlyList<TraitConstraint> requirements = SelectBindingConstraints(
+                IsInferredTraitBinding(group.Bindings[i].Name, group.Bindings[i].Value)
+                    ? signatures[i].Requirements
+                    : inferredRequirements[i],
+                signatures[i].Requirements,
+                schemeType,
+                GetSpan(group.Bindings[i].Value),
+                suppressDiagnostics: SuppressSourceConstraintDiagnostics(group.Bindings[i].Name));
+            schemes[i] = GeneralizeBindingType(Prune(schemeType), requirements);
+            RecordInferredTraitBindingElaboration(
+                (group.Bindings[i].Name, AstSpans.GetOrDefault(group.Bindings[i].Value).Start),
+                schemes[i],
+                signatures[i].Requirements,
+                inferredRequirements[i],
+                needsLateTraitTypeHints[i]);
+            ValidateBindingConstraintBoundary(
+                schemes[i],
+                GetSpan(group.Bindings[i].Value));
+            RecordHoverScheme(
+                i < group.BindingNameSpans.Count
+                    ? group.BindingNameSpans[i]
+                    : GetSpan(group.Bindings[i].Value),
+                group.Bindings[i].Name,
+                schemes[i]);
+        }
+        return schemes;
     }
 
     // HM recursive-group rule, part 1: introduce a fresh type for every member up front. Function
@@ -723,7 +766,10 @@ public sealed partial class Lowering
             Emit(new IrInst.Alloc(sharedEnvPtrTemp, sharedCaptures.Count * 8));
             for (int i = 0; i < sharedCaptures.Count; i++)
             {
+                bool wasSuppressingTraitConstraints = _suppressTraitConstraintCollection;
+                _suppressTraitConstraintCollection = true;
                 var (capTemp, _) = LowerVar(new Expr.Var(sharedCaptures[i]));
+                _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
                 Emit(new IrInst.StoreMemOffset(sharedEnvPtrTemp, i * 8, capTemp));
             }
         }
@@ -731,27 +777,44 @@ public sealed partial class Lowering
         return (sharedCaptures, sharedEnvPtrTemp);
     }
 
-    private void LowerRecursiveGroupMembers(
+    private IReadOnlyList<TraitConstraint>[] LowerRecursiveGroupMembers(
         IReadOnlyList<(string Name, Expr Value)> bindings,
         TypeRef[] recordTypes,
+        ResolvedBindingSignature[] signatures,
         string[] labels,
-        (string Name, string Label, TypeRef Type, TextSpan Span)[] members,
+        RecursiveGroupMember[] members,
         int[] slots,
         RecursiveGroupContext groupContext,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        IReadOnlyList<bool> usesTraitDictionary,
+        out bool[] needsLateTraitTypeHints)
     {
         // Mutual recursion is reached through closure calls, not the single-function tail-call loop, so
         // disable TCO while lowering the group bodies.
         var savedTcoCtx = _tcoCtx;
         _tcoCtx = null;
 
+        var inferredRequirements = new IReadOnlyList<TraitConstraint>[bindings.Count];
+        needsLateTraitTypeHints = new bool[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
             var value = bindings[i].Value;
+            var savedAnnotationParamTypes = _annotationParamTypes;
+            var savedAnnotationParamCursor = _annotationParamCursor;
+            _annotationParamTypes = !usesTraitDictionary[i]
+                && signatures[i].Type is not null
+                && value is Expr.Lambda lambdaForAnnotation
+                ? PeelAnnotationParamTypes(signatures[i].Type!, CountLambdaChain(lambdaForAnnotation))
+                : null;
+            _annotationParamCursor = 0;
+            PushTraitConstraintScope();
             if (value is not Expr.Lambda lambda)
             {
                 ReportDiagnostic(GetSpan(value), "let recursive currently requires a function value.");
                 var (fallbackTemp, fallbackType) = LowerExpr(value, request);
+                inferredRequirements[i] = PopTraitConstraintScope(out needsLateTraitTypeHints[i]);
+                _annotationParamTypes = savedAnnotationParamTypes;
+                _annotationParamCursor = savedAnnotationParamCursor;
                 Unify(recordTypes[i], fallbackType);
                 Emit(new IrInst.StoreLocal(slots[i], fallbackTemp));
                 RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);
@@ -766,6 +829,9 @@ public sealed partial class Lowering
                 recursiveGroup: groupContext,
                 forcedLabel: labels[i],
                 request: request);
+            inferredRequirements[i] = PopTraitConstraintScope(out needsLateTraitTypeHints[i]);
+            _annotationParamTypes = savedAnnotationParamTypes;
+            _annotationParamCursor = savedAnnotationParamCursor;
             Unify(recordTypes[i], closureType);
             RecordHoverType(members[i].Span, bindings[i].Name, recordTypes[i]);
             RecordLocalDebugInfo(slots[i], bindings[i].Name, recordTypes[i]);
@@ -773,6 +839,7 @@ public sealed partial class Lowering
         }
 
         _tcoCtx = savedTcoCtx;
+        return inferredRequirements;
     }
 
     private static string DispatchArgName(int index) => $"__recgroup_arg{index}";
@@ -937,6 +1004,7 @@ public sealed partial class Lowering
         _tcoCtx = savedTcoCtx;
         Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
+        _knownFunctionLabelsBySlot[dispatchSlot] = dispatchName;
 
         // Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…).
         int[] wrapperSlots = LowerMutualRecursionWrappers(

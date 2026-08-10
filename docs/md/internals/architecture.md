@@ -608,8 +608,8 @@ instead. Stable discriminators and generation locations distinguish
 specializations and anonymous/generated sites without exposing AST identities,
 object hashes, or traversal order.
 
-The model covers ordinary source functions and closure layers as well as reuse
-and parallel specializations, mutual-recursion dispatchers and wrappers,
+The model covers ordinary source functions and closure layers as well as reuse,
+parallel, and concrete trait-operator specializations, mutual-recursion dispatchers and wrappers,
 coroutines, external thunks, closure-layout normalizers, structural droppers,
 and deep-copy helpers. Optimizer and lifetime-placement rewrites preserve the
 init-only origin metadata through record copies. LLVM code generation does not
@@ -795,7 +795,8 @@ both a predecessor double-drop and a retained old reservation.
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, and
 resource-bearing closures and remains governed by the `ASH006`-`ASH008`
-diagnostics.
+diagnostics. Process cleanup closes all pipes, terminates a child that is still running, and then
+reaps it on Linux or waits for and releases its process handle on Windows.
 
 ### RC allocation and layout
 
@@ -998,6 +999,74 @@ recursion depth is bounded by these sizes:
 - **Parallel workers.** `Ashes.Task.Parallel` workers get 1 MiB by default —
   `mmap`'d on Linux, passed to `CreateThread` on win-x64 — configurable with
   the `--parallel-stack-size` CLI flag.
+
+---
+
+## Trait Lowering
+
+The source surface, coherence rules, and type-system behavior are specified in
+[Language Reference](../reference/language.md) section 21. Trait selection is entirely static; there
+is no runtime registry, name lookup, or open-world dispatch.
+
+### Symbols, constraints, and resolution
+
+Project stitching registers every visible trait and implementation before expression lowering.
+Traits, methods, implementations, supertraits, and source provenance have dedicated immutable
+semantic symbols. Constrained type schemes retain canonical `Trait(type...)` requirements alongside
+their rank-1 HM type. Inferred constraints are elaborated before runtime lowering, so written and
+inferred requirements use the same evidence path.
+
+Resolution freshens each candidate head, tests it by unification without mutating caller inference
+state, and requires exactly one applicable implementation. Conditional requirements and supertraits
+form a `TraitEvidencePlan` proof tree. Cache keys, candidate order, method order, and traversal order
+are ordinal and canonical. Repeated goals, non-decreasing conditional requirements, supertrait cycles,
+missing implementations, ambiguous implementations, overlap, and orphan violations all become
+bounded diagnostics with source provenance; resolution never falls back to source-order selection.
+
+### Dictionary ABI
+
+A constrained function is elaborated to curried hidden dictionary parameters placed before its
+ordinary source parameters. Dictionaries are immutable compiler-generated values. A one-field
+dictionary is represented by that field directly; a larger dictionary is an ordinary tuple-shaped
+allocation with one eight-byte field per entry. Method closures come first in ordinal method-name
+order, followed by direct supertrait dictionaries in ordinal qualified-trait order. Multiple root
+constraints are passed in ordinal qualified-trait order, with written constraint order as the stable
+tie-breaker.
+
+The function body destructures each dictionary once and rewrites `Trait.method` references and
+trait-backed operators to the corresponding method value. Calls at abstract types thread the
+lexically available dictionary. Calls at concrete types construct the unique evidence plan and apply
+it before ordinary arguments. Recursive and mutually recursive edges explicitly forward the hidden
+parameters; nested or escaping closures capture them through the normal closure environment. The
+resulting closures and dictionary tuples therefore participate in ordinary ownership analysis,
+Perceus insertion, async-frame capture, and tail-call lowering without a trait-specific lifetime
+model.
+
+Default methods are filled while constructing the selected dictionary. References between methods
+use the dictionary being constructed, and their dependency order is checked before lowering. Derived
+implementations are expanded into ordinary implementation declarations before registration, so they
+use this exact ABI and resolution path.
+
+### Specialization and observability
+
+Primitive trait-backed operators retain their dedicated semantic IR instructions after resolution,
+preserving the existing integer, unsigned, floating-point, string, and BigInt backend paths. Nominal
+and abstract calls use ordinary closure application. A saturated concrete `Str` call to a recursive
+constrained function whose ownership facts prove an affine self-appending accumulator is cloned once
+per concrete instantiation and reported as a `TraitOperatorSpecialization`; its source `Add(Str)`
+operator lowers directly in the clone. The narrow gate avoids cloning unrelated constrained
+recursion, while retaining the original tail-call ownership facts so affine string growth remains
+available instead of degrading to repeated dictionary calls and copies. Disabling trait-operator
+specialization keeps the dictionary-only path for differential validation without changing trait
+resolution or observable behavior. Concrete evidence construction and other known-closure calls may
+subsequently be folded or devirtualized by the normal IR optimizer, but those optimizer passes are
+not required for correctness.
+
+`--emit-ir lowered|final` carries stable trait-evidence annotations listing dictionary parameters and
+resolved implementations. `--explain traits` renders the same facts, while `--explain memory` includes
+them with ownership, RC, reuse, and representation decisions. These annotations retain source paths
+and offsets only; they do not expose inference objects or runtime addresses and do not affect code
+generation.
 
 ---
 

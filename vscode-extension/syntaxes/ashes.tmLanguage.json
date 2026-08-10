@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#imports" },
+    { "include": "#traits" },
     { "include": "#keywords" },
     { "include": "#constants" },
     { "include": "#strings" },
@@ -43,7 +44,78 @@
         },
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|module|async|await|external|capability|needs|perform|handle)\\b"
+          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|module|await|external|capability|provide|needs|perform|handle)\\b"
+        }
+      ]
+    },
+    "traits": {
+      "patterns": [
+        {
+          "match": "\\b(trait)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "keyword.declaration.trait.ashes" },
+            "2": { "name": "entity.name.type.trait.ashes" }
+          }
+        },
+        {
+          "match": "\\b(implement)\\s+((?:[A-Z][A-Za-z0-9_]*\\.)*[A-Z][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "keyword.declaration.implement.ashes" },
+            "2": { "name": "entity.other.inherited-class.trait.ashes" }
+          }
+        },
+        {
+          "begin": "\\b(requires)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.requires.ashes" },
+            "2": { "name": "punctuation.section.braces.begin.ashes" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.braces.end.ashes" }
+          },
+          "patterns": [
+            {
+              "name": "entity.other.inherited-class.trait.ashes",
+              "match": "(?:[A-Z][A-Za-z0-9_]*\\.)*[A-Z][A-Za-z0-9_]*(?=\\s*\\()"
+            },
+            { "include": "#punctuation" },
+            { "include": "#identifiers" }
+          ]
+        },
+        {
+          "begin": "\\b(deriving)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.deriving.ashes" },
+            "2": { "name": "punctuation.section.braces.begin.ashes" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.braces.end.ashes" }
+          },
+          "patterns": [
+            {
+              "name": "entity.other.inherited-class.trait.ashes",
+              "match": "(?:[A-Z][A-Za-z0-9_]*\\.)*[A-Z][A-Za-z0-9_]*"
+            },
+            { "include": "#punctuation" }
+          ]
+        },
+        {
+          "match": "^\\s*(\\|)\\s*([a-z_][A-Za-z0-9_]*)\\s*(:|=)",
+          "captures": {
+            "1": { "name": "punctuation.definition.trait-method.ashes" },
+            "2": { "name": "entity.name.function.trait-method.ashes" },
+            "3": { "name": "keyword.operator.assignment.ashes" }
+          }
+        },
+        {
+          "match": "\\b((?:Ashes\\.Trait\\.)?(?:Eq|Ord|Show|Hash|Default|Add|Subtract|Multiply|Divide|Remainder|Negate|Not|BitAnd|BitOr|BitXor|ShiftLeft|ShiftRight|BitwiseNot))(\\.)(equal|notEqual|compare|less|lessOrEqual|greater|greaterOrEqual|show|hash|default|add|subtract|multiply|divide|remainder|negate|not|bitAnd|bitOr|bitXor|shiftLeft|shiftRight|bitwiseNot)\\b",
+          "captures": {
+            "1": { "name": "entity.name.type.trait.ashes" },
+            "2": { "name": "punctuation.accessor.ashes" },
+            "3": { "name": "entity.name.function.trait-method.ashes" }
+          }
         }
       ]
     },
@@ -94,7 +166,7 @@
         },
         {
           "name": "keyword.operator.ashes",
-          "match": "->|::|>=|<=|==|!=|\\+|\\-|\\*|\\/|=|\\||,|\\."
+          "match": "->|::|<<|>>|>=|<=|==|!=|\\+|\\-|\\*|\\/|%|&|\\^|~|!|>|<|=|\\||,|\\."
         }
       ]
     },
@@ -115,6 +187,14 @@
         {
           "name": "punctuation.bracket.close.ashes",
           "match": "\\]"
+        },
+        {
+          "name": "punctuation.section.braces.begin.ashes",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.braces.end.ashes",
+          "match": "\\}"
         }
       ]
     },

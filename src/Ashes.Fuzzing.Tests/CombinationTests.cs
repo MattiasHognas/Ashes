@@ -18,14 +18,15 @@ public sealed class CombinationTests
         AshesType[] types = [AshesType.Int, AshesType.Str, new AshesType.List(AshesType.Bool), new AshesType.Tuple([AshesType.Str, AshesType.Bool])];
         foreach (ICombinationTemplate template in fixture.Combinations.Templates)
         {
+            GenerationContext templateContext = TestFixture.ContextFor(template);
             foreach (AshesType type in types)
             {
                 GenerationBudget budget = GenerationBudget.Create(80);
-                if (!template.CanApply(type, GenerationContext.Empty, budget)) continue;
+                if (!template.CanApply(type, templateContext, budget)) continue;
                 string[] ruleIds = fixture.Rules.Rules.Select(rule => rule.Id).ToArray();
                 GenerationCoverageGuidance coverage = new(ruleIds, []);
                 ExpressionGenerator expressions = new(fixture.Rules, ruleIds.ToHashSet(StringComparer.Ordinal), coverage);
-                GenerationResult<Ashes.Frontend.Expr> result = template.Generate(type, GenerationContext.Empty.WithTemplate(template.Id), budget, expressions, new FuzzRandom(42));
+                GenerationResult<Ashes.Frontend.Expr> result = template.Generate(type, templateContext.WithTemplate(template.Id), budget, expressions, new FuzzRandom(42));
                 foreach (GeneratedFeature feature in template.AdvertisedFeatures) result.Features.Contains(feature).ShouldBeTrue($"{template.Id} omitted {feature}");
             }
         }

@@ -7,6 +7,10 @@ minimumReleaseAge: 0
 
 # pnpm reads overrides from here (not package.json) when a workspace file exists.
 overrides:
+  # Keep VSCE's transitive HTTP, URI, and YAML parsers on their patched maintenance releases.
+  undici: 7.29.0
+  fast-uri: 3.1.5
+  js-yaml: 4.3.1
   # Force a patched serialize-javascript; mocha still pins the vulnerable 6.0.2
   # (GHSA-5c6j-r48x-rmvq, RCE via RegExp.flags / Date.toISOString). 7.x stays CommonJS.
   serialize-javascript: 7.0.6

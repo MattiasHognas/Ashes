@@ -13,6 +13,47 @@ namespace Ashes.Tests;
 /// </summary>
 public sealed class OptimizationLevelTests
 {
+    [Test]
+    [Arguments(BackendOptimizationLevel.O0)]
+    [Arguments(BackendOptimizationLevel.O2)]
+    public async Task Trait_dictionary_program_produces_correct_output(BackendOptimizationLevel level)
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
+        const string source = """
+            trait Eq(a) =
+                | equal : a -> a -> Bool
+            implement Eq(Int) =
+                | equal = given (left) -> given (right) -> left == right
+            let same : a -> a -> Bool requires {Eq(a)} =
+                given (left) -> given (right) -> Eq.equal(left)(right)
+            Ashes.IO.print(same(42)(42))
+            """;
+        ExecutionResult result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true");
+    }
+
+    [Test]
+    public async Task Recursive_trait_dictionary_program_runs_without_optimizer_support()
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
+        const string source = """
+            trait Eq(a) = | equal : a -> a -> Bool
+            implement Eq(Int) =
+                | equal = given (left) -> given (right) -> left == right
+            let recursive contains : a -> List(a) -> Bool requires {Eq(a)} =
+                given (needle) -> given (items) ->
+                    match items with
+                        | [] -> false
+                        | item :: rest ->
+                            if Eq.equal(needle)(item) then true else contains(needle)(rest)
+            Ashes.IO.print(contains(42)([1, 2, 42]))
+            """;
+        ExecutionResult result = await CompileAndRunAsync(source, BackendOptimizationLevel.O0).ConfigureAwait(false);
+        result.Stdout.ShouldBe("true");
+    }
+
     // Arithmetic
 
     [Test]
@@ -191,7 +232,7 @@ public sealed class OptimizationLevelTests
     private static IrProgram LowerExpression(string source)
     {
         var diagnostics = new Diagnostics();
-        var ast = new Parser(source, diagnostics).ParseExpression();
+        Ashes.Frontend.Program ast = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
 
         var ir = new Lowering(diagnostics).Lower(ast);

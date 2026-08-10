@@ -50,7 +50,7 @@ public sealed class PatternBindingOwnershipTests
     public void Structural_inspection_remains_borrowed_after_cutover()
     {
         Lowering lowering = LowerProgram("""
-            let recursive contains target values =
+            let recursive contains : Str -> List(Str) -> Bool = given (target) -> given (values) ->
                 match values with
                     | [] -> false
                     | value :: tail ->

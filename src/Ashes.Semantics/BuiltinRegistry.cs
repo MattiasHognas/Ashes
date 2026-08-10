@@ -385,6 +385,10 @@ public static class BuiltinRegistry
                 "Ashes",
                 null,
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.Trait"] = new(
+                "Ashes.Trait",
+                "Ashes.Semantics.StdLib.Ashes.Trait.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.IO"] = new(
                 "Ashes.IO",
                 null,

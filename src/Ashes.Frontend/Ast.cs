@@ -133,6 +133,8 @@ public abstract record Expr
         public IReadOnlyList<string> SugarParams { get; init; } = [];
         /// <summary>Optional user-supplied type annotation, e.g. <c>let x : Int = 42</c> or <c>let f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
+        /// <summary>Written trait constraints on the complete annotated type scheme.</summary>
+        public IReadOnlyList<TraitConstraintSyntax> Requires { get; init; } = [];
     }
     /// <summary>A result-unwrapping binding, <c>let? Name = Value in Body</c>: binds the ok value of
     /// <paramref name="Value"/>, short-circuiting the whole expression on error.</summary>
@@ -151,6 +153,8 @@ public abstract record Expr
         public IReadOnlyList<string> SugarParams { get; init; } = [];
         /// <summary>Optional user-supplied type annotation: <c>let rec f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
+        /// <summary>Written trait constraints on the complete annotated type scheme.</summary>
+        public IReadOnlyList<TraitConstraintSyntax> Requires { get; init; } = [];
     }
 
     /// <summary>A conditional, <c>if Cond then Then else Else</c>.</summary>
@@ -291,6 +295,10 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
 {
     /// <summary>True when this was declared with record syntax: <c>type T = { field: Type, ... }</c>.</summary>
     public bool IsRecord { get; init; }
+
+    /// <summary>The standard traits requested by a trailing <c>deriving {Trait, ...}</c> clause,
+    /// in written order.</summary>
+    public IReadOnlyList<string> Deriving { get; init; } = [];
 }
 
 /// <summary>One operation of a <c>capability</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
@@ -307,6 +315,29 @@ public sealed record ProvideBinding(string OperationName, Expr Implementation);
 /// concrete capability instance (<see cref="CapabilityName"/> applied to <see cref="TypeArgs"/>).
 /// </summary>
 public sealed record ProvideDecl(string CapabilityName, IReadOnlyList<TypeExpr> TypeArgs, IReadOnlyList<ProvideBinding> Bindings);
+
+/// <summary>A written static trait requirement such as <c>Eq(a)</c>.</summary>
+public sealed record TraitConstraintSyntax(string TraitName, IReadOnlyList<TypeExpr> TypeArgs);
+
+/// <summary>One method declared by a trait, with an optional ordinary-expression default.</summary>
+public sealed record TraitMethodDecl(string Name, TypeExpr Signature, Expr? DefaultImplementation);
+
+/// <summary>A top-level trait declaration.</summary>
+public sealed record TraitDecl(
+    string Name,
+    IReadOnlyList<TypeParameter> TypeParameters,
+    IReadOnlyList<TraitConstraintSyntax> Supertraits,
+    IReadOnlyList<TraitMethodDecl> Methods);
+
+/// <summary>One method implementation or default override in a trait implementation declaration.</summary>
+public sealed record TraitImplementationMethodBinding(string MethodName, Expr Implementation);
+
+/// <summary>A top-level coherent trait implementation declaration.</summary>
+public sealed record TraitImplementationDecl(
+    string TraitName,
+    IReadOnlyList<TypeExpr> TypeArgs,
+    IReadOnlyList<TraitConstraintSyntax> Requirements,
+    IReadOnlyList<TraitImplementationMethodBinding> Bindings);
 
 /// <summary>A single capability reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
 public sealed record CapabilityRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
@@ -408,6 +439,12 @@ public abstract record TopLevelItem
     /// <summary>A top-level <c>provide</c> declaration (static capability satisfaction).</summary>
     public sealed record Provide(ProvideDecl Decl) : TopLevelItem;
 
+    /// <summary>A top-level static trait declaration.</summary>
+    public sealed record Trait(TraitDecl Decl) : TopLevelItem;
+
+    /// <summary>A top-level coherent trait implementation declaration.</summary>
+    public sealed record Implementation(TraitImplementationDecl Decl) : TopLevelItem;
+
     /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
     public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem
     {
@@ -420,6 +457,8 @@ public abstract record TopLevelItem
 
         /// <summary>Optional user-supplied type annotation: <c>let f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
+        /// <summary>Written trait constraints on the complete annotated type scheme.</summary>
+        public IReadOnlyList<TraitConstraintSyntax> Requires { get; init; } = [];
     }
 
     /// <summary>
@@ -435,6 +474,10 @@ public abstract record TopLevelItem
         /// lowering, which consumes <see cref="Bindings"/> directly.
         /// </summary>
         public IReadOnlyList<IReadOnlyList<string>> SugarParams { get; init; } = [];
+        /// <summary>Optional written type annotation for each binding, parallel to <see cref="Bindings"/>.</summary>
+        public IReadOnlyList<TypeExpr?> TypeAnnotations { get; init; } = [];
+        /// <summary>Written trait constraints for each binding, parallel to <see cref="Bindings"/>.</summary>
+        public IReadOnlyList<IReadOnlyList<TraitConstraintSyntax>> Requires { get; init; } = [];
     }
 }
 

@@ -195,7 +195,8 @@ public sealed partial class Lowering
         TopLevelItem.LetDecl transformed = let with
         {
             Value = TransformDictFnValue(let.Value, info, let.Name, let.IsRecursive),
-            TypeAnnotation = null
+            TypeAnnotation = null,
+            Requires = let.Requires,
         };
         AstSpans.Set(transformed, AstSpans.GetOrDefault(let));
         return transformed;
@@ -218,7 +219,8 @@ public sealed partial class Lowering
                 {
                     var transformed = new Expr.Let(l.Name, l.Value, TransformBody(l.Body))
                     {
-                        TypeAnnotation = l.TypeAnnotation
+                        TypeAnnotation = l.TypeAnnotation,
+                        Requires = l.Requires,
                     };
                     AstSpans.SetLetName(transformed, AstSpans.GetLetNameOrDefault(l));
                     return transformed;
@@ -236,7 +238,8 @@ public sealed partial class Lowering
                 {
                     var transformed = new Expr.LetRecursive(lr.Name, lr.Value, TransformBody(lr.Body))
                     {
-                        TypeAnnotation = lr.TypeAnnotation
+                        TypeAnnotation = lr.TypeAnnotation,
+                        Requires = lr.Requires,
                     };
                     AstSpans.SetLetRecursiveName(transformed, AstSpans.GetLetRecursiveNameOrDefault(lr));
                     return transformed;
@@ -258,13 +261,18 @@ public sealed partial class Lowering
         // free-variable capture and would loop on a self-call whose type is still being inferred.
         body = RewriteDictFnCalls(body, info);
 
-        for (int i = info.Ops.Count - 1; i >= 0; i--)
+        string[] parameterNames = info.Ops
+            .Select(operation => OpParamName(operation.Cap.Name, operation.Op))
+            .ToArray();
+        foreach ((CapabilitySymbol Cap, string Op) operation in info.Ops)
         {
-            var (cap, op) = info.Ops[i];
-            body = new Expr.Lambda(OpParamName(cap.Name, op), body);
+            _opParamMeta[OpParamName(operation.Cap.Name, operation.Op)] =
+                (operation.Cap.Name, operation.Op);
         }
-
-        return body;
+        return PrependStaticEvidenceParameters(
+            body,
+            parameterNames,
+            (_, _, inner) => inner);
     }
 
     /// <summary>
@@ -279,10 +287,12 @@ public sealed partial class Lowering
 
         Expr Rewrite(Expr e)
         {
-            if (e is Expr.Var v && _dictFunctions.TryGetValue(v.Name, out var callee)
+            string? calleeName = ResolveSpecializableCalleeName(e);
+            if (calleeName is not null
+                && _dictFunctions.TryGetValue(calleeName, out var callee)
                 && callee.Ops.All(o => have.Contains((o.Cap.Name, o.Op))))
             {
-                Expr applied = v;
+                Expr applied = e;
                 foreach (var (cap, op) in callee.Ops)
                 {
                     applied = new Expr.Call(applied, new Expr.Var(OpParamName(cap.Name, op)));
@@ -331,14 +341,12 @@ public sealed partial class Lowering
         var (realTemps, currentType) = loweredArgs.Value;
 
         // Synthesize each op-argument now that the instance is pinned, then apply the function.
-        int applied = fnTemp;
+        List<int> operationTemps = [];
         for (int i = 0; i < info.Ops.Count; i++)
         {
-            int opTemp = SynthesizeOpArg(info.Ops[i].Cap, info.Ops[i].Op, opTypes[i], span);
-            int next = NewTemp();
-            Emit(new IrInst.CallClosure(next, applied, opTemp));
-            applied = next;
+            operationTemps.Add(SynthesizeOpArg(info.Ops[i].Cap, info.Ops[i].Op, opTypes[i], span));
         }
+        int applied = ApplyStaticEvidenceArguments(fnTemp, operationTemps);
 
         foreach (var realTemp in realTemps)
         {
@@ -448,8 +456,7 @@ public sealed partial class Lowering
                 return EmitDummyTemp();
             }
 
-            var (implTemp, _) = LowerExpr(provider.Operations[op]);
-            return implTemp;
+            return LowerProviderOperationImplementation(provider, op).Temp;
         }
 
         // Abstract instance: thread the enclosing function's own op-parameter.
@@ -543,6 +550,8 @@ public sealed partial class Lowering
             case Expr.If x: return new Expr.If(f(x.Cond), f(x.Then), f(x.Else));
             case Expr.Await x: return new Expr.Await(f(x.Task));
             case Expr.Perform x: return new Expr.Perform(f(x.Operation));
+            case CapabilityPostExpr x:
+                return new CapabilityPostExpr(f(x.Value), f(x.PostLambda), x.HandleResultType);
             case Expr.Call x: return new Expr.Call(f(x.Func), f(x.Arg)) { IsWhitespaceApplication = x.IsWhitespaceApplication };
             case Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive:
                 return MapBindingExpression(e, f);
@@ -574,7 +583,9 @@ public sealed partial class Lowering
                 x,
                 new Expr.Let(x.Name, map(x.Value), map(x.Body))
                 {
-                    TypeAnnotation = x.TypeAnnotation
+                    TypeAnnotation = x.TypeAnnotation,
+                    Requires = x.Requires,
+                    SugarParams = x.SugarParams,
                 }),
             Expr.LetResult x => CopyLetResultSpans(
                 x,
@@ -583,7 +594,9 @@ public sealed partial class Lowering
                 x,
                 new Expr.LetRecursive(x.Name, map(x.Value), map(x.Body))
                 {
-                    TypeAnnotation = x.TypeAnnotation
+                    TypeAnnotation = x.TypeAnnotation,
+                    Requires = x.Requires,
+                    SugarParams = x.SugarParams,
                 }),
             _ => throw new InvalidOperationException("Expected a binding expression."),
         };

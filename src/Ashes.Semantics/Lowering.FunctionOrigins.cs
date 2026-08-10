@@ -104,6 +104,10 @@ public sealed partial class Lowering
         TextSpan nameSpan,
         SourceFunctionOrigin? enclosingSource)
     {
+        if (name.StartsWith("__trait_validate_", StringComparison.Ordinal))
+        {
+            return null;
+        }
         if (FindInnermostLambdaUnderLets(value) is not { } lambda)
         {
             return null;
@@ -133,6 +137,17 @@ public sealed partial class Lowering
 
         if (_sourceFunctionOriginsByLambda.TryGetValue(lambda, out SourceFunctionOrigin? source))
         {
+            if (source.SourceName.StartsWith("__trait_validate_", StringComparison.Ordinal))
+            {
+                return new IrFunctionOrigin(
+                    label,
+                    IrFunctionOriginKind.ClosureHelper,
+                    CompilerOwner: new CompilerFunctionOwner(
+                        CompilerFunctionOwnerKind.Program,
+                        "trait declaration validation"),
+                    StableDiscriminator: source.SourceName,
+                    GenerationLocation: ResolveSourceLocation(AstSpans.GetOrDefault(lambda)));
+            }
             return new IrFunctionOrigin(
                 label,
                 IrFunctionOriginKind.SourceFunction,
@@ -256,6 +271,20 @@ public sealed partial class Lowering
         string cacheKey)
         => LowerSpecializationLambda(
             IrFunctionOriginKind.ParallelSpecialization,
+            lambda,
+            name,
+            functionType,
+            label,
+            cacheKey);
+
+    private void LowerTraitOperatorSpecializationLambda(
+        Expr.Lambda lambda,
+        string name,
+        TypeRef functionType,
+        string label,
+        string cacheKey)
+        => LowerSpecializationLambda(
+            IrFunctionOriginKind.TraitOperatorSpecialization,
             lambda,
             name,
             functionType,

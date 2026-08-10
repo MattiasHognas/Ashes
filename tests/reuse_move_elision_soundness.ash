@@ -25,14 +25,14 @@ let cmp a b =
         else 1
 
 let getv m k =
-    match Ashes.Collection.Map.get(cmp)(k)(m) with
+    match Ashes.Collection.Map.getWith(cmp)(k)(m) with
         | None -> -1
         | Some(v) -> v
 
 let recursive setFold i lim m =
     if i > lim
     then m
-    else setFold(i + 1)(lim)(Ashes.Collection.Map.set(cmp)(i)(i * 3)(m))
+    else setFold(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(i)(i * 3)(m))
 
 let recursive outer b nb m =
     if b >= nb
@@ -42,7 +42,7 @@ let recursive outer b nb m =
 let recursive bumpKey5 b nb m =
     if b >= nb
     then m
-    else bumpKey5(b + 1)(nb)(Ashes.Collection.Map.set(cmp)(5)(900 + b)(m))
+    else bumpKey5(b + 1)(nb)(Ashes.Collection.Map.setWith(cmp)(5)(900 + b)(m))
 
 let nestedResult = outer(0)(5)(Ashes.Collection.Map.empty)
 

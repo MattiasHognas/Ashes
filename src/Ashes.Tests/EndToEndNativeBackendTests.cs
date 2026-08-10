@@ -579,7 +579,7 @@ public sealed class EndToEndNativeBackendTests
         // exactly 4096 bytes. Both a directly-captured closure and a curried partial application
         // (`f(seq)("xy")`, whose capture happens inside `f`) must survive.
         var direct = """
-            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let recursive grow : Str -> Int -> Str = given (s) -> given (n) -> if n == 0 then s else grow(s + s)(n - 1)
             let seq = grow("acgt")(10)
             let g = (given b -> Ashes.Text.byteLength(seq) + Ashes.Text.byteLength(b))
             Ashes.IO.print(Ashes.Text.fromInt(g("xy")))
@@ -587,7 +587,7 @@ public sealed class EndToEndNativeBackendTests
         (await CompileRunCaptureProgramAsync(direct).ConfigureAwait(false)).ShouldBe("4098\n");
 
         var curried = """
-            let recursive grow s n = if n == 0 then s else grow(s + s)(n - 1)
+            let recursive grow : Str -> Int -> Str = given (s) -> given (n) -> if n == 0 then s else grow(s + s)(n - 1)
             let f a b = Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b)
             let seq = grow("acgt")(10)
             Ashes.IO.print(Ashes.Text.fromInt(f(seq)("xy")))

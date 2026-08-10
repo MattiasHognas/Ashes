@@ -102,7 +102,8 @@ public sealed class CoverageExpansionTests
         int templateIndex = 0;
         foreach (ICombinationTemplate template in fixture.Combinations.Templates.OrderBy(template => template.Id, StringComparer.Ordinal))
         {
-            AshesType compatibleType = candidateTypes.First(type => template.CanApply(type, GenerationContext.Empty, GenerationBudget.Create(120)));
+            GenerationContext templateContext = TestFixture.ContextFor(template);
+            AshesType compatibleType = candidateTypes.First(type => template.CanApply(type, templateContext, GenerationBudget.Create(120)));
             FuzzProfile profile = new(
                 "test-" + template.Id,
                 fixture.Rules.Rules.Select(rule => rule.Id).ToHashSet(StringComparer.Ordinal),
@@ -111,7 +112,8 @@ public sealed class CoverageExpansionTests
                 [compatibleType],
                 0,
                 ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
-                ResourceTypes: GenerationContext.Empty.ResourceTypes);
+                ResourceTypes: GenerationContext.Empty.ResourceTypes,
+                GenerateTraits: template.Id.StartsWith("trait.", StringComparison.Ordinal));
             GeneratedFuzzCase? exercised = null;
             for (int caseIndex = 0; caseIndex < 50 && exercised is null; caseIndex++)
             {
@@ -123,10 +125,8 @@ public sealed class CoverageExpansionTests
             }
 
             exercised.ShouldNotBeNull($"Template '{template.Id}' was not selected.");
-            Diagnostics diagnostics = new();
-            Ashes.Frontend.Program parsed = new Parser(exercised.Source, diagnostics).ParseProgram();
-            _ = new Lowering(diagnostics).Lower(parsed);
-            diagnostics.Errors.ShouldBeEmpty($"Template '{template.Id}':\n{exercised.Source}");
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(exercised.Source);
+            compilation.Diagnostics.Errors.ShouldBeEmpty($"Template '{template.Id}':\n{exercised.Source}");
             foreach (GeneratedFeature feature in template.AdvertisedFeatures)
             {
                 exercised.Features.Contains(feature).ShouldBeTrue($"Template '{template.Id}' omitted '{feature}'.");
@@ -191,16 +191,19 @@ public sealed class CoverageExpansionTests
             "compile",
             "cross-target",
             "differential",
+            "invalid-semantics",
             "invalid-source",
             "perceus",
             "resources",
             "semantics",
             "syntax",
+            "traits",
+            "traits-differential",
         ];
 
         cycle.Select(profile => profile.Id).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
             .ShouldBe(expected);
-        cycle.Count(profile => profile.Native).ShouldBe(3);
+        cycle.Count(profile => profile.Native).ShouldBe(4);
         all.EnabledCombinations.ShouldContain("resource.deterministic-file-handle");
         all.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
         campaign.ResolveProfile(all, 50).Id.ShouldBe(campaign.ResolveProfile(all, 0).Id);
@@ -415,14 +418,20 @@ public sealed class CoverageExpansionTests
             Directory.CreateDirectory(corpus);
             string checkedIn = Path.Combine(corpus, "regression.ash");
             await File.WriteAllTextAsync(checkedIn, "42");
+            string traitSeed = Path.Combine(root, "tests", "trait_generated.ash");
+            await File.WriteAllTextAsync(traitSeed, "trait Render(a) = | render : a -> Str");
 
             GeneratedFuzzCase generatedSeed = InvalidSourceSeedSelector.Select(generated, root, 0);
             GeneratedFuzzCase corpusSeed = InvalidSourceSeedSelector.Select(generated, root, 1);
+            GeneratedFuzzCase traitSeedCase = InvalidSourceSeedSelector.Select(generated, root, 2);
 
             generatedSeed.Source.ShouldBe(generated.Source);
             generatedSeed.Trace.Entries.ShouldContain("invalid-seed:generated");
             corpusSeed.Source.ShouldBe("42");
             corpusSeed.Trace.Entries.ShouldContain(entry => entry.StartsWith("invalid-seed:corpus:", StringComparison.Ordinal));
+            traitSeedCase.Source.ShouldStartWith("trait Render");
+            traitSeedCase.Trace.Entries.ShouldContain(entry =>
+                entry.StartsWith("invalid-seed:trait-tests:", StringComparison.Ordinal));
             InvalidSourceSeedSelector.Select(generated, root, 1).Source.ShouldBe(corpusSeed.Source);
         }
         finally

@@ -91,6 +91,7 @@ public sealed class ExplainReportCliTests
                 ("ownership", "Ownership report"),
                 ("rc", "RC report"),
                 ("reuse", "Reuse report"),
+                ("traits", "Trait evidence report"),
                 ("memory", "Memory report"),
             })
             {

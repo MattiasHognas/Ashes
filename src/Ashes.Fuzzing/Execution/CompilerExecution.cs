@@ -11,7 +11,8 @@ internal sealed class CompilerExecution
         TimeSpan programTimeout,
         int maximumOutputBytes,
         CancellationToken cancellationToken,
-        bool disableReuse = false)
+        bool disableReuse = false,
+        bool disableTraitSpecialization = false)
     {
         string temporaryRoot = Directory.CreateTempSubdirectory("ashes-fuzz-").FullName;
         try
@@ -23,8 +24,8 @@ internal sealed class CompilerExecution
             string effectiveTarget = string.Equals(target, "host", StringComparison.Ordinal) ? HostTarget() : target;
             string cliDll = Path.Combine(repositoryRoot, "src", "Ashes.Cli", "bin", "Release", "net10.0", "ashes.dll");
             IReadOnlyList<string> arguments = File.Exists(cliDll)
-                ? CompileArguments([cliDll, "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse)
-                : CompileArguments(["run", "--project", Path.Combine(repositoryRoot, "src", "Ashes.Cli", "Ashes.Cli.csproj"), "--configuration", "Release", "--", "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse);
+                ? CompileArguments([cliDll, "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse, disableTraitSpecialization)
+                : CompileArguments(["run", "--project", Path.Combine(repositoryRoot, "src", "Ashes.Cli", "Ashes.Cli.csproj"), "--configuration", "Release", "--", "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse, disableTraitSpecialization);
             ProcessResult compile = await ProcessTimeout.RunAsync("dotnet", arguments, repositoryRoot, compilerTimeout, maximumOutputBytes, cancellationToken).ConfigureAwait(false);
             if (compile.ExitCode != 0 || compile.TimedOut || !File.Exists(executablePath) || !CanExecute(effectiveTarget))
             {
@@ -39,12 +40,23 @@ internal sealed class CompilerExecution
         }
     }
 
-    private static IReadOnlyList<string> CompileArguments(IReadOnlyList<string> prefix, string optimization, string target, string sourcePath, string executablePath, bool disableReuse)
+    private static IReadOnlyList<string> CompileArguments(
+        IReadOnlyList<string> prefix,
+        string optimization,
+        string target,
+        string sourcePath,
+        string executablePath,
+        bool disableReuse,
+        bool disableTraitSpecialization)
     {
         List<string> arguments = [.. prefix, optimization, "--target", target];
         if (disableReuse)
         {
             arguments.Add("--debug-disable-reuse");
+        }
+        if (disableTraitSpecialization)
+        {
+            arguments.Add("--debug-disable-trait-specialization");
         }
         arguments.Add(sourcePath);
         arguments.Add("-o");

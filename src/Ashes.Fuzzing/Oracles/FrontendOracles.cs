@@ -73,10 +73,8 @@ internal sealed class SemanticOracle : IFuzzOracle
     {
         try
         {
-            Diagnostics diagnostics = new();
-            FrontendProgram parsed = new Parser(testCase.Source, diagnostics).ParseProgram();
-            _ = new Lowering(diagnostics).Lower(parsed);
-            diagnostics.ThrowIfAny();
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            compilation.Diagnostics.ThrowIfAny();
             return ValueTask.FromResult(FuzzOracleResult.Passed(Id));
         }
         catch (Exception exception)
@@ -93,10 +91,9 @@ internal sealed class IrVerificationOracle : IFuzzOracle
     {
         try
         {
-            Diagnostics diagnostics = new();
-            FrontendProgram parsed = new Parser(testCase.Source, diagnostics).ParseProgram();
-            IrProgram ir = new Lowering(diagnostics).Lower(parsed);
-            diagnostics.ThrowIfAny();
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            compilation.Diagnostics.ThrowIfAny();
+            IrProgram ir = compilation.Ir;
             IrInvariantVerifier verifier = new();
             IReadOnlyList<string> loweringErrors = verifier.Verify(ir);
             if (loweringErrors.Count != 0)
@@ -110,6 +107,57 @@ internal sealed class IrVerificationOracle : IFuzzOracle
                 return ValueTask.FromResult(FuzzOracleResult.Failed(Id, string.Join(Environment.NewLine, optimizationErrors)));
             }
             return ValueTask.FromResult(FuzzOracleResult.Passed(Id));
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+        }
+    }
+}
+
+internal sealed class InvalidSemanticOracle : IFuzzOracle
+{
+    public string Id => "invalid-semantic";
+
+    public ValueTask<FuzzOracleResult> EvaluateAsync(
+        GeneratedFuzzCase testCase,
+        FuzzExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (testCase.ExpectedDiagnosticCodes.Count == 0)
+            {
+                return ValueTask.FromResult(FuzzOracleResult.Failed(
+                    Id,
+                    "Invalid-semantic case did not declare an expected diagnostic code."));
+            }
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            IReadOnlyList<DiagnosticEntry> errors = compilation.Diagnostics.StructuredErrors;
+            if (errors.Count == 0)
+            {
+                return ValueTask.FromResult(FuzzOracleResult.Failed(
+                    Id,
+                    "Invalid-semantic case was unexpectedly accepted."));
+            }
+            if (errors.Count > 64)
+            {
+                return ValueTask.FromResult(FuzzOracleResult.Failed(
+                    Id,
+                    $"Invalid-semantic case produced an unbounded diagnostic cascade ({errors.Count})."));
+            }
+            string[] actualCodes = errors
+                .Select(error => error.Code ?? "<uncoded>")
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            string? missing = testCase.ExpectedDiagnosticCodes.FirstOrDefault(expected =>
+                !actualCodes.Contains(expected, StringComparer.Ordinal));
+            return ValueTask.FromResult(missing is null
+                ? FuzzOracleResult.Passed(Id)
+                : FuzzOracleResult.Failed(
+                    Id,
+                    $"Expected diagnostic '{missing}', got: {string.Join(", ", actualCodes)}."));
         }
         catch (Exception exception)
         {

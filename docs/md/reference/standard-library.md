@@ -19,10 +19,10 @@ These types are always available without imports:
 
 ## Module Overview
 
-The standard library is organized under ten top-level namespaces: `Ashes.IO` (console, file, and
+The standard library is organized under eleven top-level namespaces: `Ashes.IO` (console, file, and
 process I/O), `Ashes.Net` (networking and wire protocols), `Ashes.Number` (numeric helpers),
 `Ashes.Collection` (containers), `Ashes.Text` (strings and text formats), `Ashes.Byte` (binary
-data), `Ashes.Task` (concurrency), `Ashes.Core` (core value helpers), `Ashes.Test` (assertions),
+data), `Ashes.Task` (concurrency), `Ashes.Core` (core value helpers), `Ashes.Trait` (standard traits), `Ashes.Test` (assertions),
 and the internal-only `Ashes.Internal`. Some modules are compiler intrinsics, some are shipped
 Ashes code from `lib/Ashes/`, and some are both; that distinction is an implementation detail —
 imports work identically for all of them.
@@ -110,7 +110,8 @@ Supported on Linux x64, Linux arm64, and Windows x64.
 ### `Ashes.IO.Process`
 
 Synchronous subprocess control with piped stdin/stdout/stderr.
-`Process` is a resource type; it is automatically closed when it goes out of scope.
+`Process` is a resource type; when it goes out of scope, Ashes closes its pipes, terminates the child
+if it is still running, and reaps the child or releases its process handle.
 
 - `spawn(exe)(args)` returning `Result(Str, Process)` — launch `exe` with argument list `args`
 - `writeStdin(proc)(text)` returning `Unit` — write bytes to the process's stdin pipe
@@ -423,10 +424,12 @@ Ashes.IO.print(Ashes.Text.fromBigInt(squared))
 - `length` — `List(a) -> Int`, number of elements
 - `map` — `(a -> b) -> List(a) -> List(b)`, apply `f` to each element
 - `reverse` — `List(a) -> List(a)`, the elements in reverse order
+- `sort` — `List(a) -> List(a) requires {Ord(a)}`, a stable `O(n log n)` ascending merge sort using
+  the standard ordering implementation
 - `sortBy` — `(a -> a -> Bool) -> List(a) -> List(a)`, a stable `O(n log n)` merge sort ordered by the
   comparator `before`: `before(x)(y)` is `true` when `x` should not come after `y` (e.g. `given (a) ->
-  given (b) -> a <= b` for ascending). Provide your own comparator since the language has no built-in
-  ordering typeclass
+  given (b) -> a <= b` for ascending). Use this variant for a custom ordering that differs from the
+  type's `Ord` implementation
 - `tail` — `List(a) -> Maybe(List(a))`, all but the first element, or `None` if empty
 
 ### `Ashes.Collection.Array`
@@ -446,26 +449,31 @@ Immutable indexed array backed by a persistent balanced tree.
 
 - `empty` — empty immutable map
 - `isEmpty(map)` returning `Bool` — whether the map has no entries
-- `get(compare)(key)(map)` returning `Maybe(V)`
+- `get(key)(map)` returning `Maybe(V)` — uses `Ord(K)`
+- `getWith(compare)(key)(map)` returning `Maybe(V)` — uses an explicit integer comparator
 - `getStr(key)(map)` returning `Maybe(V)` — `Str`-keyed lookup ordered by UTF-8 byte order
   (`Ashes.Byte.compare` inline; no comparator closure, so it is markedly faster than
-  `get(Ashes.Text.compare)`)
-- `contains(compare)(key)(map)` returning `Bool`
-- `set(compare)(key)(value)(map)` returning a new map value
+  `getWith(Ashes.Text.compare)`)
+- `contains(key)(map)` returning `Bool` — uses `Ord(K)`
+- `containsWith(compare)(key)(map)` returning `Bool`
+- `set(key)(value)(map)` returning a new map value — uses `Ord(K)`
+- `setWith(compare)(key)(value)(map)` returning a new map value
 - `setStr(key)(value)(map)` returning a new map value — `Str`-keyed `set`, same ordering and
   performance rationale as `getStr`
 - `upsertStr(key)(missValue)(onHit)(map)` returning a new map value — single-traversal
   insert-or-update: inserts `missValue` when `key` is absent, else replaces the stored value with
   `onHit(oldValue)`. Halves the tree work of a `getStr`-then-`setStr` pair in accumulation loops.
 - `insert` — alias for `set`
+- `insertWith` — alias for `setWith`
 - `size(map)` returning `Int`
 - `foldLeft(folder)(state)(map)` returning the folded state in key order
 - `toList(map)` returning `List((K, V))` in key order
-- `fromList(compare)(entries)` returning a new map value
+- `fromList(entries)` returning a new map value — uses `Ord(K)`
+- `fromListWith(compare)(entries)` returning a new map value
 
-`Ashes.Collection.Map` is implemented as a persistent AVL tree. Because Ashes does not yet
-have a built-in ordering abstraction, callers supply a total ordering function
-`(K -> K -> Int)` to lookup and update helpers.
+`Ashes.Collection.Map` is implemented as a persistent AVL tree. Canonical lookup and update helpers
+require `Ord(K)`. The `With` variants retain custom-order support through a total comparator
+`(K -> K -> Int)` whose result is negative, zero, or positive.
 
 ### `Ashes.Collection.HashMap`
 
@@ -715,6 +723,38 @@ when the scope returns.
   `reduceGrainedWithWorkers(count)(grain)(combine)(identity)(f)(list)` — convenience wrappers, each
   equal to `withWorkers(count)` around the corresponding operation.
 
+## `Ashes.Trait` — standard traits
+
+`Ashes.Trait` is linked into every program so operator constraints and implementations are always
+available. Import the module when referring to trait names or methods directly:
+
+```ash
+import Ashes.Trait
+
+Show.show(Eq.equal([1, 2])([1, 2]))
+```
+
+- `Ordering = Less | Equal | Greater | Unordered` represents total and IEEE-partial ordering results.
+- `Eq(a)` supplies `equal(a)(a)` and the default `notEqual`; equality should be reflexive, symmetric,
+  and transitive except where the represented primitive contract already differs, notably IEEE NaN.
+- `Ord(a)` extends `Eq(a)`, supplies `compare(a)(a)`, and derives `less`, `lessOrEqual`, `greater`, and
+  `greaterOrEqual`; comparisons must agree with equality, while `Unordered` preserves Float NaN behavior.
+- `Show(a)` supplies deterministic developer-facing `show(a) : Str`; it is not a locale-sensitive or
+  round-trip serialization format.
+- `Hash(a)` supplies deterministic `hash(a) : Int`; equal values must have equal hashes.
+- `Default(a)` supplies `default(Unit) : a` only when the type has a documented canonical value.
+- `Add`, `Subtract`, `Multiply`, `Divide`, `Remainder`, `Negate`, `Not`, `BitAnd`, `BitOr`, `BitXor`,
+  `ShiftLeft`, `ShiftRight`, and `BitwiseNot` each supply the same-named operation used by the
+  corresponding source operator.
+
+Primitive implementations preserve the established behavior for `Int`, `Float`, `BigInt`, `u8`,
+`u16`, `u32`, `u64`, `Bool`, and `Str` wherever an operation is meaningful. Conditional `Eq`, `Ord`,
+`Show`, and `Hash` implementations are supplied for lists, `Maybe`, `Result`, and supported tuple
+shapes when their contained types supply the same evidence. Lists, `Maybe`, and tuples also have
+canonical `Default` implementations where defined. Functions, tasks, capabilities, handlers,
+resources, and opaque external values deliberately receive no invented equality, ordering, hashing,
+display, or default behavior.
+
 ## `Ashes.Core` — core value helpers
 
 ### `Ashes.Core.Maybe`
@@ -742,7 +782,9 @@ when the scope returns.
 
 ### `Ashes.Test`
 
-- `assertEqual(expected, actual)` returning `Unit` — panic with an assertion failure unless `expected == actual`. Works at `Str`, `Int`, `Float`, and `Bool`, and different types may be asserted within the same program.
+- `assertEqual : a -> a -> Unit requires {Eq(a)}` — panic with an assertion failure unless the values
+  are equal. It works for every type with an `Eq` implementation, including conditional collection
+  and nominal implementations.
 - `fail(message)` returning `a` — abort with `message`; never returns, so it is usable at any type
 
 `assertEqual(expected, actual)` is the preferred surface form. Like other

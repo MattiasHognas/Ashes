@@ -11,7 +11,7 @@ let cmp a b =
         then -1
         else 1
 
-let m = Ashes.Collection.Map.set(cmp)(3)("three")(Ashes.Collection.Map.set(cmp)(1)("one")(Ashes.Collection.Map.set(cmp)(2)("two")(Ashes.Collection.Map.empty)))
+let m = Ashes.Collection.Map.setWith(cmp)(3)("three")(Ashes.Collection.Map.setWith(cmp)(1)("one")(Ashes.Collection.Map.setWith(cmp)(2)("two")(Ashes.Collection.Map.empty)))
 
 let copy = Ashes.Internal.deepCopy(m)
 

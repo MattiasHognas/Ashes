@@ -7,6 +7,57 @@ namespace Ashes.Tests;
 public sealed class ReuseTokenTests
 {
     [Test]
+    public void Tail_self_call_precedes_reuse_specialization_and_remains_a_loop_back_edge()
+    {
+        IrProgram program = LowerProgramWithImports("""
+            import Ashes.IO as io
+            import Ashes.Text as text
+
+            let recursive bumpAll values =
+                match values with
+                    | [] -> []
+                    | value :: rest -> value + 1 :: bumpAll(rest)
+
+            let recursive repeat turns values =
+                if turns == 0
+                then values
+                else repeat(turns - 1)(bumpAll(values))
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | value :: rest -> sum(rest)(total + value)
+
+            io.print(text.fromInt(sum(repeat(10)([1, 2, 3]))(0)))
+            """);
+
+        IrFunction loopBody = program.Functions.Single(function =>
+            function.Instructions.Any(instruction =>
+                instruction is IrInst.Label label
+                && label.Name.EndsWith("_body", StringComparison.Ordinal))
+            && string.Equals(
+                function.Origin?.Source?.SourceName,
+                "repeat",
+                StringComparison.Ordinal)
+            && function.Origin?.Kind == IrFunctionOriginKind.ClosureHelper);
+        string bodyLabel = loopBody.Instructions
+            .OfType<IrInst.Label>()
+            .Single(label => label.Name.EndsWith("_body", StringComparison.Ordinal))
+            .Name;
+
+        loopBody.Instructions.Any(instruction =>
+            instruction is IrInst.Jump jump
+            && string.Equals(jump.Target, bodyLabel, StringComparison.Ordinal)).ShouldBeTrue();
+        program.Functions.Any(function =>
+            function.Origin is { Kind: IrFunctionOriginKind.ReuseSpecialization }
+            && string.Equals(
+                function.Origin.Source?.SourceName,
+                "repeat",
+                StringComparison.Ordinal)).ShouldBeFalse(
+                    "a tail self-call must not recursively specialize its own function");
+    }
+
+    [Test]
     public void Fresh_record_list_result_is_rewritten_in_place_before_escape()
     {
         IrProgram program = LowerProgram("""
@@ -754,6 +805,26 @@ public sealed class ReuseTokenTests
         Program program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
         IrProgram ir = new Lowering(diagnostics).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    private static IrProgram LowerProgramWithImports(string source)
+    {
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames);
+        HashSet<string> importedStandardModules = parsed.ImportNames
+            .Where(ProjectSupport.IsStdModule)
+            .ToHashSet(StringComparer.Ordinal);
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        IrProgram ir = new Lowering(
+            diagnostics,
+            importedStandardModules,
+            parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
         diagnostics.ThrowIfAny();
         return ir;
     }

@@ -145,6 +145,10 @@ internal static class Program
                 HandleDefinition(parameters, output, id);
                 break;
 
+            case "textDocument/references":
+                HandleReferences(parameters, output, id);
+                break;
+
             default:
                 SendResponse(output, id, (object?)null);
                 break;
@@ -161,6 +165,7 @@ internal static class Program
                 documentFormattingProvider = true,
                 hoverProvider = true,
                 definitionProvider = true,
+                referencesProvider = true,
                 semanticTokensProvider = new
                 {
                     legend = new
@@ -409,6 +414,71 @@ internal static class Program
                 end = new { line = endLine, character = endCharacter }
             }
         });
+    }
+
+    private static void HandleReferences(JsonElement parameters, Stream output, JsonElement id)
+    {
+        JsonElement textDocument = parameters.GetProperty("textDocument");
+        string? uri = textDocument.GetProperty("uri").GetString();
+        if (uri is null || !Documents.TryGetValue(uri, out string? source))
+        {
+            SendResponse(output, id, Array.Empty<object>());
+            return;
+        }
+
+        JsonElement position = parameters.GetProperty("position");
+        int[] lineStarts = LspTextUtils.GetLineStarts(source);
+        int absolutePosition = LspTextUtils.FromLineCharacter(
+            lineStarts,
+            source.Length,
+            position.GetProperty("line").GetInt32(),
+            position.GetProperty("character").GetInt32());
+        bool includeDeclaration = !parameters.TryGetProperty("context", out JsonElement context)
+            || !context.TryGetProperty("includeDeclaration", out JsonElement include)
+            || include.GetBoolean();
+        string? currentFilePath = UriToFilePath(uri);
+        object[] locations = DocumentService.GetReferences(
+                source,
+                absolutePosition,
+                currentFilePath,
+                includeDeclaration)
+            .Select(reference => CreateLocation(reference, uri, source, currentFilePath))
+            .ToArray();
+        SendResponse(output, id, locations);
+    }
+
+    private static object CreateLocation(
+        DocumentService.ReferenceItem reference,
+        string currentUri,
+        string currentSource,
+        string? currentFilePath)
+    {
+        string targetUri = reference.FilePath is null
+            ? currentUri
+            : new Uri(reference.FilePath).AbsoluteUri;
+        string targetSource = reference.FilePath is not null
+            && !string.Equals(reference.FilePath, currentFilePath, StringComparison.OrdinalIgnoreCase)
+            && File.Exists(reference.FilePath)
+                ? File.ReadAllText(reference.FilePath)
+                : currentSource;
+        int[] lineStarts = LspTextUtils.GetLineStarts(targetSource);
+        (int startLine, int startCharacter) = LspTextUtils.ToLineCharacter(
+            lineStarts,
+            targetSource.Length,
+            reference.Start);
+        (int endLine, int endCharacter) = LspTextUtils.ToLineCharacter(
+            lineStarts,
+            targetSource.Length,
+            reference.End);
+        return new
+        {
+            uri = targetUri,
+            range = new
+            {
+                start = new { line = startLine, character = startCharacter },
+                end = new { line = endLine, character = endCharacter }
+            }
+        };
     }
 
     private static int[] EncodeSemanticTokens(IReadOnlyList<DocumentService.SemanticTokenItem> tokens)

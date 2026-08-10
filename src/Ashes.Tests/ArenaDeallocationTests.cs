@@ -2427,9 +2427,8 @@ public sealed class ArenaDeallocationTests
     [Test]
     public void Call_returning_int_emits_SaveArenaState_and_RestoreArenaState()
     {
-        // mul(10)(32) returns Int — per-call watermark should save+restore. (A `+`/`==`-of-two-
-        // parameters helper would instead be inlined as an overload-generic function, so this uses
-        // `*`, which is monomorphic and stays a real call.)
+        // mul(10)(32) returns Int — per-call watermark should save+restore around the ordinary
+        // closure call independently of trait-backed operator lowering inside the callee.
         var ir = LowerProgram(
             """
             let mul = given (x) -> given (y) -> x * y

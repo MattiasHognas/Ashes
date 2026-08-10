@@ -20,6 +20,14 @@ internal readonly record struct AstCoverageMetrics(int Nodes, int Depth)
                 case TopLevelItem.Provide provide:
                     roots.AddRange(provide.Decl.Bindings.Select(binding => binding.Implementation));
                     break;
+                case TopLevelItem.Trait trait:
+                    roots.AddRange(trait.Decl.Methods
+                        .Where(method => method.DefaultImplementation is not null)
+                        .Select(method => method.DefaultImplementation!));
+                    break;
+                case TopLevelItem.Implementation instance:
+                    roots.AddRange(instance.Decl.Bindings.Select(binding => binding.Implementation));
+                    break;
             }
         }
         AstCoverageMetrics[] metrics = roots.Select(Measure).ToArray();

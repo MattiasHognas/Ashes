@@ -116,6 +116,21 @@ public sealed class LspHarness : IAsyncDisposable
         return result.ValueKind == JsonValueKind.Null ? null : result.Clone();
     }
 
+    public async Task<JsonElement> ReferencesAsync(
+        string uri,
+        int line,
+        int character,
+        bool includeDeclaration = true)
+    {
+        var response = await SendRequestAsync("textDocument/references", new
+        {
+            textDocument = new { uri },
+            position = new { line, character },
+            context = new { includeDeclaration }
+        }).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+
     public async Task<IReadOnlyList<string>> CompletionAsync(string uri, int line, int character)
     {
         var response = await SendRequestAsync("textDocument/completion", new
@@ -208,6 +223,7 @@ public sealed class LspHarness : IAsyncDisposable
         capabilities.GetProperty("textDocumentSync").GetInt32().ShouldBe(1);
         capabilities.GetProperty("hoverProvider").GetBoolean().ShouldBeTrue();
         capabilities.GetProperty("definitionProvider").GetBoolean().ShouldBeTrue();
+        capabilities.GetProperty("referencesProvider").GetBoolean().ShouldBeTrue();
     }
 
     private async Task<JsonElement> SendRequestAsync(string method, object? parameters)

@@ -7,11 +7,36 @@ namespace Ashes.Semantics;
 /// <param name="Name">Human-readable name retained for diagnostics and formatting.</param>
 public sealed record TypeVar(int Id, string Name);
 
-// Type scheme: forall [Quantified]. Body (polytype representation for let-polymorphism).
-/// <summary>A polytype for let-polymorphism: <c>forall Quantified. Body</c>.</summary>
-/// <param name="Quantified">The type variables universally quantified over <paramref name="Body"/>.</param>
-/// <param name="Body">The quantified monotype instantiated afresh at each use site.</param>
-public sealed record TypeScheme(IReadOnlyList<TypeVar> Quantified, TypeRef Body);
+// Type scheme: forall [Quantified]. Body requires Constraints.
+/// <summary>A constrained polytype for let-polymorphism.</summary>
+public sealed record TypeScheme
+{
+    /// <summary>Constructs an unconstrained scheme.</summary>
+    public TypeScheme(IReadOnlyList<TypeVar> quantified, TypeRef body)
+        : this(quantified, body, [])
+    {
+    }
+
+    /// <summary>Constructs a scheme with a canonical immutable constraint set.</summary>
+    public TypeScheme(
+        IReadOnlyList<TypeVar> quantified,
+        TypeRef body,
+        IReadOnlyList<TraitConstraint> constraints)
+    {
+        Quantified = quantified.ToArray();
+        Body = body;
+        Constraints = TraitConstraint.Canonicalize(constraints);
+    }
+
+    /// <summary>The type variables universally quantified by this scheme.</summary>
+    public IReadOnlyList<TypeVar> Quantified { get; }
+
+    /// <summary>The quantified ordinary type.</summary>
+    public TypeRef Body { get; }
+
+    /// <summary>Static trait evidence required by this scheme, separate from capability rows.</summary>
+    public IReadOnlyList<TraitConstraint> Constraints { get; }
+}
 
 /// <summary>Base of the resolved type representation used throughout semantics, lowering, and the
 /// backend. Concrete cases model primitive, aggregate, function, capability, and type-variable
@@ -132,6 +157,8 @@ public enum IrFunctionOriginKind
     ReuseSpecialization,
     /// <summary>A monomorphic parallel-combinator specialization.</summary>
     ParallelSpecialization,
+    /// <summary>A concrete primitive specialization of a constrained operator function.</summary>
+    TraitOperatorSpecialization,
     /// <summary>The shared dispatch loop for a mutual-recursion group.</summary>
     MutualRecursionDispatch,
     /// <summary>A source-member wrapper around a mutual-recursion dispatch loop.</summary>
@@ -288,50 +315,21 @@ public abstract record IrInst
     /// <param name="OffsetBytes">Constant byte offset from the base.</param>
     public sealed record LoadMemOffset(int Target, int BasePtr, int OffsetBytes) : IrInst;  // tgt=[base+off]
 
-    // DeferredType is non-null only for a provisional '+' whose operand type was still unresolved at
-    // lowering time; ResolveDeferredAdds patches such adds to ConcatStr/AddFloat (or a plain AddInt)
-    // once inference finishes. It is carried on the record so the TCO `with`-based remap preserves it.
-    /// <summary>Integer addition <c>Target = Left + Right</c>, or a provisional <c>+</c> whose operand type
-    /// was still unresolved (see <paramref name="DeferredType"/>).</summary>
+    /// <summary>Integer addition <c>Target = Left + Right</c>.</summary>
     /// <param name="Target">Temp receiving the sum.</param>
     /// <param name="Left">Temp holding the left operand.</param>
     /// <param name="Right">Temp holding the right operand.</param>
-    /// <param name="DeferredType">Non-null only for a provisional <c>+</c>; once inference finishes
-    /// <c>ResolveDeferredAdds</c> patches this to <see cref="ConcatStr"/>/<see cref="AddFloat"/> or a plain
-    /// integer add.</param>
-    public sealed record AddInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst
-    {
-        /// <summary>When >= 0 (both): this deferred `+` was armed as an affine accumulator append;
-        /// if it resolves to Str, ResolveDeferredAdds patches it to ConcatStrTip carrying the
-        /// loop's reservation slots instead of a plain ConcatStr.</summary>
-        public int AffineResvStartSlot { get; init; } = -1;
-
-        /// <summary>The reservation's end-cursor local slot paired with <see cref="AffineResvStartSlot"/>;
-        /// -1 when this add was not armed as an affine append.</summary>
-        public int AffineResvEndSlot { get; init; } = -1;
-
-        /// <summary>
-        /// Runtime representation requested for a provisional heap-producing addition. This is
-        /// consulted only if <see cref="DeferredType"/> later resolves to Str or BigInt.
-        /// </summary>
-        internal LoweredValueRuntimeRepresentation RequestedRuntimeRepresentation { get; init; }
-    }
+    public sealed record AddInt(int Target, int Left, int Right) : IrInst;
     /// <summary>Integer subtraction <c>Target = Left - Right</c>.</summary>
     /// <param name="Target">Temp receiving the difference.</param>
     /// <param name="Left">Temp holding the minuend.</param>
     /// <param name="Right">Temp holding the subtrahend.</param>
     public sealed record SubInt(int Target, int Left, int Right) : IrInst;
-    // DeferredType mirrors AddInt: non-null only for a provisional '*' whose operand type was still
-    // unresolved at lowering time; ResolveDeferredMuls patches such muls to MulFloat / BigIntBinary
-    // (or a plain MulInt) once inference finishes.
-    /// <summary>Integer multiplication <c>Target = Left * Right</c>, or a provisional <c>*</c> whose operand
-    /// type was still unresolved (see <paramref name="DeferredType"/>).</summary>
+    /// <summary>Integer multiplication <c>Target = Left * Right</c>.</summary>
     /// <param name="Target">Temp receiving the product.</param>
     /// <param name="Left">Temp holding the left operand.</param>
     /// <param name="Right">Temp holding the right operand.</param>
-    /// <param name="DeferredType">Non-null only for a provisional <c>*</c>; <c>ResolveDeferredMuls</c> later
-    /// patches this to <see cref="MulFloat"/>/<see cref="BigIntBinary"/> or a plain integer multiply.</param>
-    public sealed record MulInt(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
+    public sealed record MulInt(int Target, int Left, int Right) : IrInst;
     /// <summary>Signed integer division <c>Target = Left / Right</c>.</summary>
     /// <param name="Target">Temp receiving the quotient.</param>
     /// <param name="Left">Temp holding the dividend.</param>
@@ -427,25 +425,16 @@ public abstract record IrInst
     /// <param name="Left">Temp holding the left operand.</param>
     /// <param name="Right">Temp holding the right operand.</param>
     public sealed record CmpUIntLe(int Target, int Left, int Right) : IrInst;
-    // DeferredType is non-null only for a provisional '==' / '!=' whose operand type was still
-    // unresolved at lowering time; ResolveDeferredEqs patches such comparisons to CmpStrEq/CmpStrNe
-    // or CmpFloatEq/CmpFloatNe (or leaves a plain CmpIntEq/CmpIntNe) once inference finishes.
-    /// <summary>Integer equality <c>Target = Left == Right</c>, or a provisional <c>==</c> whose operand type
-    /// was still unresolved (see <paramref name="DeferredType"/>).</summary>
+    /// <summary>Integer equality <c>Target = Left == Right</c>.</summary>
     /// <param name="Target">Temp receiving the boolean result.</param>
     /// <param name="Left">Temp holding the left operand.</param>
     /// <param name="Right">Temp holding the right operand.</param>
-    /// <param name="DeferredType">Non-null only for a provisional <c>==</c>; <c>ResolveDeferredEqs</c> later
-    /// patches this to <see cref="CmpStrEq"/>/<see cref="CmpFloatEq"/> or leaves a plain integer compare.</param>
-    public sealed record CmpIntEq(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
-    /// <summary>Integer inequality <c>Target = Left != Right</c>, or a provisional <c>!=</c> whose operand type
-    /// was still unresolved (see <paramref name="DeferredType"/>).</summary>
+    public sealed record CmpIntEq(int Target, int Left, int Right) : IrInst;
+    /// <summary>Integer inequality <c>Target = Left != Right</c>.</summary>
     /// <param name="Target">Temp receiving the boolean result.</param>
     /// <param name="Left">Temp holding the left operand.</param>
     /// <param name="Right">Temp holding the right operand.</param>
-    /// <param name="DeferredType">Non-null only for a provisional <c>!=</c>; <c>ResolveDeferredEqs</c> later
-    /// patches this to <see cref="CmpStrNe"/>/<see cref="CmpFloatNe"/> or leaves a plain integer compare.</param>
-    public sealed record CmpIntNe(int Target, int Left, int Right, TypeRef? DeferredType = null) : IrInst;
+    public sealed record CmpIntNe(int Target, int Left, int Right) : IrInst;
     /// <summary>Floating-point "greater than" comparison <c>Target = Left &gt; Right</c>.</summary>
     /// <param name="Target">Temp receiving the boolean result.</param>
     /// <param name="Left">Temp holding the left operand.</param>
@@ -2000,6 +1989,45 @@ public sealed record IrFunction(
     public bool LifetimesPlaced { get; init; }
 }
 
+/// <summary>A stable description of one hidden trait dictionary parameter in the evidence ABI.</summary>
+/// <param name="Function">Source binding whose lowered ABI accepts the dictionary.</param>
+/// <param name="FunctionSource">Stable source path containing the binding.</param>
+/// <param name="FunctionOffset">Binding offset in the combined source layout.</param>
+/// <param name="ParameterIndex">Zero-based dictionary parameter index before ordinary arguments.</param>
+/// <param name="Trait">Stable qualified trait name.</param>
+/// <param name="Methods">Method fields in dictionary layout order.</param>
+/// <param name="Supertraits">Direct supertrait dictionary fields in layout order.</param>
+public sealed record TraitDictionaryAbiAnnotation(
+    string Function,
+    string FunctionSource,
+    int FunctionOffset,
+    int ParameterIndex,
+    string Trait,
+    IReadOnlyList<string> Methods,
+    IReadOnlyList<string> Supertraits);
+
+/// <summary>A stable description of one concrete trait goal and the implementation selected for it.</summary>
+/// <param name="Requirement">Canonical concrete trait requirement.</param>
+/// <param name="ImplementationModule">Module owning the selected implementation.</param>
+/// <param name="ImplementationSource">Stable source path or synthetic source identity.</param>
+/// <param name="ImplementationOffset">Declaration offset within the implementation source.</param>
+public sealed record TraitResolutionAnnotation(
+    string Requirement,
+    string ImplementationModule,
+    string ImplementationSource,
+    int ImplementationOffset);
+
+/// <summary>Reportable trait evidence retained alongside IR without exposing inference objects.</summary>
+/// <param name="DictionaryParameters">Hidden dictionary ABI parameters.</param>
+/// <param name="ResolvedImplementations">Concrete resolution results.</param>
+public sealed record TraitEvidenceAnnotations(
+    IReadOnlyList<TraitDictionaryAbiAnnotation> DictionaryParameters,
+    IReadOnlyList<TraitResolutionAnnotation> ResolvedImplementations)
+{
+    /// <summary>No dictionary parameters and no concrete resolutions.</summary>
+    public static TraitEvidenceAnnotations Empty { get; } = new([], []);
+}
+
 /// <summary>The whole lowered program handed to the backend: the entry function, every other function,
 /// interned string literals, external declarations, and feature flags telling codegen which runtime
 /// facilities to link.</summary>
@@ -2034,6 +2062,9 @@ public sealed record IrProgram(
     /// handler frame for that capability (0 when none).
     /// </summary>
     public int CapabilityHandlerGlobals { get; init; }
+
+    /// <summary>Stable hidden-ABI and resolution facts used by IR dumps and explain reports.</summary>
+    public TraitEvidenceAnnotations TraitEvidence { get; init; } = TraitEvidenceAnnotations.Empty;
 
     /// <summary>Convenience constructor for a program with no external functions or opaque types, defaulting
     /// those to empty collections.</summary>

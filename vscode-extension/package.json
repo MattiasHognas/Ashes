@@ -48,6 +48,12 @@
         "path": "./syntaxes/ashes.tmLanguage.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "ashes",
+        "path": "./snippets/ashes.json"
+      }
+    ],
     "configurationDefaults": {
       "[ashes]": {
         "editor.defaultFormatter": "mattiashognas.ashes-vscode",

@@ -18,14 +18,14 @@ public sealed class FlatModuleExportTests
     public void Flat_module_exports_top_level_let_names()
     {
         var dir = WriteModules(
-            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double : a -> a requires {Add(a)} = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(6))\n"));
 
         var source = BuildProjectSource(dir, "Main");
 
         // Each exported binding is stitched under its module-qualified generated name.
         source.ShouldContain("B_inc = ");
-        source.ShouldContain("B_double = ");
+        source.ShouldContain("B_double : a -> a requires {Add(a)} = ");
     }
 
     [Test]
@@ -51,7 +51,7 @@ public sealed class FlatModuleExportTests
     public async Task Flat_module_qualified_use_compiles_and_runs()
     {
         var dir = WriteModules(
-            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double : a -> a requires {Add(a)} = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(B.inc(6))\n"));
 
         var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
@@ -63,7 +63,7 @@ public sealed class FlatModuleExportTests
     public async Task Flat_module_unqualified_use_compiles_and_runs()
     {
         var dir = WriteModules(
-            ("B", "let inc = given (x) -> x + 1\nlet double = given (x) -> x + x\n"),
+            ("B", "let inc = given (x) -> x + 1\nlet double : a -> a requires {Add(a)} = given (x) -> x + x\n"),
             ("Main", "import B\nAshes.IO.print(double(6))\n"));
 
         var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);

@@ -10,7 +10,7 @@ internal sealed record GeneratedProgramPrelude(
 
 internal static class ProgramPreludeGenerator
 {
-    internal static GeneratedProgramPrelude Generate(int caseIndex)
+    internal static GeneratedProgramPrelude Generate(int caseIndex, bool generateTraits = false)
     {
         List<TopLevelItem> items = [];
         GenerationContext context = GenerationContext.Empty;
@@ -18,6 +18,14 @@ internal static class ProgramPreludeGenerator
         List<string> trace = [];
 
         AddStableGenerationTypes(items, ref context);
+        if (generateTraits)
+        {
+            GeneratedProgramPrelude traits = TraitPreludeGenerator.Generate(caseIndex, context);
+            items.AddRange(traits.Items);
+            context = traits.Context;
+            features.UnionWith(traits.Features);
+            trace.AddRange(traits.Trace.Entries);
+        }
         AddTopLevelFunction(caseIndex, items, ref context, features, trace);
 
         switch (caseIndex % 3)

@@ -112,6 +112,16 @@ public sealed partial class Lowering
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 
+    private static TextSpan GetSpan(TraitDecl declaration) => AstSpans.GetOrDefault(declaration);
+
+    private static TextSpan GetSpan(TraitMethodDecl method) => AstSpans.GetOrDefault(method);
+
+    private static TextSpan GetSpan(TraitImplementationDecl declaration) => AstSpans.GetOrDefault(declaration);
+
+    private static TextSpan GetSpan(TraitImplementationMethodBinding binding) => AstSpans.GetOrDefault(binding);
+
+    private static TextSpan GetSpan(TraitConstraintSyntax constraint) => AstSpans.GetOrDefault(constraint);
+
     private static TextSpan GetSpan(ExternalDecl externalDecl)
     {
         var span = AstSpans.GetOrDefault(externalDecl);

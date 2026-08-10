@@ -124,7 +124,8 @@
     UsesPrintBool: false,
     UsesConcatStr: true,
     UsesClosures: false,
-    UsesAsync: false
+    UsesAsync: false,
+    TraitEvidence: {}
   },
   ElfSha256: 0074BE715AD0F23CDA13F0C557FAEB4938E2FFEF40387C4EE07C24E1F559ECE4
 }

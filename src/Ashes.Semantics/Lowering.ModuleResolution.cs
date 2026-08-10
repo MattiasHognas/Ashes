@@ -15,9 +15,14 @@ public sealed partial class Lowering
         Expr.QualifiedVar qv,
         LoweredValueRequest request)
     {
-        if (_capabilitySymbols.TryGetValue(qv.Module, out var bareCapabilitySym))
+        if (TryGetTraitMethod(qv, out TraitSymbol trait, out TraitMethodSymbol method))
         {
-            return LowerBareCapabilityOperationReference(qv, bareCapabilitySym);
+            return LowerBareTraitMethodReference(trait, method, GetSpan(qv));
+        }
+
+        if (_capabilitySymbols.TryGetValue(qv.Module, out CapabilitySymbol? declaredCapability))
+        {
+            return LowerBareCapabilityOperationReference(qv, declaredCapability);
         }
 
         var resolvedModule = ResolveModuleAlias(qv.Module);

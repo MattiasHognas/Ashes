@@ -21,7 +21,7 @@ public sealed class NestedTcoPatternAliasTests
 
             let table = [("=", 1), ("+", 2)]
 
-            let recursive lookup ch tbl =
+            let recursive lookup : Str -> List((Str, Int)) -> Maybe(Entry) = given (ch) -> given (tbl) ->
                 match tbl with
                     | [] -> None
                     | pair :: rest ->
@@ -64,7 +64,7 @@ public sealed class NestedTcoPatternAliasTests
 
             let table = [("=", 1), ("+", 2)]
 
-            let recursive lookup ch tbl =
+            let recursive lookup : Str -> List((Str, Int)) -> Maybe(Entry) = given (ch) -> given (tbl) ->
                 match tbl with
                     | [] -> None
                     | pair :: rest ->
@@ -112,7 +112,7 @@ public sealed class NestedTcoPatternAliasTests
 
             let table = ["a", "b", "c", "d"]
 
-            let recursive findFirst target tbl =
+            let recursive findFirst : Str -> List(Str) -> Maybe(Box) = given (target) -> given (tbl) ->
                 match tbl with
                     | [] -> None
                     | s :: rest ->
@@ -325,7 +325,7 @@ public sealed class NestedTcoPatternAliasTests
 
             let table = ["a", "b", "c", "d"]
 
-            let recursive findFirst target tbl =
+            let recursive findFirst : Str -> List(Str) -> Maybe(Box) = given (target) -> given (tbl) ->
                 match tbl with
                     | [] -> None
                     | s :: rest ->

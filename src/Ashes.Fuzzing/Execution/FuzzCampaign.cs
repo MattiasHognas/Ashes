@@ -107,6 +107,9 @@ internal sealed class FuzzCampaign
             4 => "async",
             5 => "capabilities",
             6 => "resources",
+            7 => "traits",
+            8 => "invalid-semantics",
+            9 => "traits-differential",
             _ => null,
         };
         if (focused is not null)
@@ -114,7 +117,7 @@ internal sealed class FuzzCampaign
             return _profiles.Get(focused);
         }
         string[] stable = ["syntax", "semantics", "perceus", "combinations"];
-        return _profiles.Get(stable[(slot - 7) % stable.Length]);
+        return _profiles.Get(stable[(slot - 10) % stable.Length]);
     }
 
     internal async Task<int> RunCorpusAsync(FuzzConfiguration configuration, string repositoryRoot, CancellationToken cancellationToken)

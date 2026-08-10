@@ -17,13 +17,13 @@ let cmp a b =
 let recursive loop i lim m =
     if i > lim
     then m
-    else loop(i + 1)(lim)(Ashes.Collection.Map.set(cmp)(0)((i, i + 1))(m))
+    else loop(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(0)((i, i + 1))(m))
 
-let seeded = Ashes.Collection.Map.set(cmp)(0)((0, 0))(Ashes.Collection.Map.empty)
+let seeded = Ashes.Collection.Map.setWith(cmp)(0)((0, 0))(Ashes.Collection.Map.empty)
 
 let final = loop(0)(100)(seeded)
 in
-    match Ashes.Collection.Map.get(cmp)(0)(final) with
+    match Ashes.Collection.Map.getWith(cmp)(0)(final) with
         | None -> Ashes.IO.print("none")
         | Some(pair) ->
             match pair with

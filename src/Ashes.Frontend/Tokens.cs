@@ -135,6 +135,14 @@ public enum TokenKind
     Perform,
     /// <summary>The <c>handle</c> keyword installing a handler.</summary>
     Handle,
+    /// <summary>The <c>trait</c> keyword introducing a static trait declaration.</summary>
+    Trait,
+    /// <summary>The <c>implement</c> keyword introducing a coherent trait implementation.</summary>
+    Implement,
+    /// <summary>The <c>requires</c> keyword introducing static trait constraints.</summary>
+    Requires,
+    /// <summary>The <c>deriving</c> keyword requesting generated coherent trait implementations.</summary>
+    Deriving,
 }
 
 /// <summary>

@@ -3120,6 +3120,10 @@ public sealed partial class Lowering
     {
         foreach (var (name, type) in patternBindings)
         {
+            if (_borrowedTraitDictionaryBindings.Contains(name))
+            {
+                continue;
+            }
             var prunedType = Prune(type);
             var ownedTypeName = GetOwnedTypeName(prunedType);
             if (ownedTypeName is not null)

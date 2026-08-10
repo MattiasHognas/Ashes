@@ -63,8 +63,8 @@ public sealed class ImportTests
         expected.ShouldNotBeNull($"Test in {testDir} must have a // expect: or // expect-compile-error: annotation");
 
         var compilationPlan = ProjectSupport.BuildCompilationPlan(project);
-        var combinedSource = ProjectSupport.BuildCompilationSource(compilationPlan);
-        var stdout = await CompileRunCaptureAsync(combinedSource, compilationPlan.ImportedStdModules).ConfigureAwait(false);
+        CombinedCompilationLayout layout = ProjectSupport.BuildCompilationLayout(compilationPlan);
+        var stdout = await CompileRunCaptureAsync(layout, compilationPlan.ImportedStdModules).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe(expected);
     }
 
@@ -105,13 +105,17 @@ public sealed class ImportTests
         return (expected, compileError);
     }
 
-    private static async Task<string> CompileRunCaptureAsync(string source, IReadOnlySet<string>? importedStdModules = null)
+    private static async Task<string> CompileRunCaptureAsync(
+        CombinedCompilationLayout layout,
+        IReadOnlySet<string>? importedStdModules = null)
     {
         var diag = new Diagnostics();
-        var ast = new Parser(source, diag).ParseExpression();
+        Program ast = new Parser(layout.Source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(diag, importedStdModules).Lower(ast);
+        var lowering = new Lowering(diag, importedStdModules);
+        lowering.SetSourceContext(layout);
+        var ir = lowering.Lower(ast);
         diag.ThrowIfAny();
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-import-tests");

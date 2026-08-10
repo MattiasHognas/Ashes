@@ -32,6 +32,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="..\..\lib\Ashes\Trait.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Trait.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Collection.Array.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Collection.Array.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Collection.List.ash"

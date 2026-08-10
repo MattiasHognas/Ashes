@@ -129,10 +129,10 @@ let advanceBall (state: State) =
                         else state with ballX = nx, ballY = ny, velY = vy
                     else
                         if nx < 0.0 - 1.0
-                        then serveBall(state with cpuScore = state.cpuScore + 1)(-1)
+                        then serveBall((state with cpuScore = state.cpuScore + 1))(-1)
                         else
                             if nx > math.toFloat(courtWidth) + 1.0
-                            then serveBall(state with playerScore = state.playerScore + 1)(1)
+                            then serveBall((state with playerScore = state.playerScore + 1))(1)
                             else state with ballX = nx, ballY = ny, velY = vy)
 
 let step state events = advanceBall(moveCpu(applyEvents(state)(events)))

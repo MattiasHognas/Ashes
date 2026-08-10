@@ -49,6 +49,13 @@ public static partial class DocumentService
         public TextSpan Span => TextSpan.FromBounds(Start, End);
     }
 
+    /// <summary>One source reference to a resolved declaration.</summary>
+    public readonly record struct ReferenceItem(string? FilePath, int Start, int End)
+    {
+        /// <summary>The referenced identifier's source span.</summary>
+        public TextSpan Span => TextSpan.FromBounds(Start, End);
+    }
+
     /// <summary>One semantic-highlighting token, positioned by zero-based <paramref name="Line"/> and
     /// <paramref name="Character"/> and classified by <paramref name="TokenType"/>.</summary>
     /// <param name="Line">Zero-based line of the token.</param>
@@ -107,10 +114,14 @@ public static partial class DocumentService
     public const int TokenTypeTypeParameter = 1;
     /// <summary>Semantic token type index for an enum/constructor member; indexes <see cref="SemanticTokenTypes"/>.</summary>
     public const int TokenTypeEnumMember = 2;
+    /// <summary>Semantic token type index for a trait name; indexes <see cref="SemanticTokenTypes"/>.</summary>
+    public const int TokenTypeTrait = 3;
+    /// <summary>Semantic token type index for a trait method; indexes <see cref="SemanticTokenTypes"/>.</summary>
+    public const int TokenTypeTraitMethod = 4;
 
     /// <summary>The semantic-token type legend, in the index order the <c>TokenType*</c> constants
     /// reference and the client is registered with.</summary>
-    public static IReadOnlyList<string> SemanticTokenTypes { get; } = ["type", "typeParameter", "enumMember"];
+    public static IReadOnlyList<string> SemanticTokenTypes { get; } = ["type", "typeParameter", "enumMember", "interface", "method"];
 
     [GeneratedRegex(@"'([^']+)'", RegexOptions.Compiled)]
     private static partial Regex QuotedValueRegex();
@@ -410,7 +421,9 @@ public static partial class DocumentService
         IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModules = null;
 
         if (standaloneImportDiagnostics.Count == 0
-            && (header.Imports.Count > 0 || ProjectSupport.ContainsInlineModule(header.StrippedSource)))
+            && (header.Imports.Count > 0
+                || ProjectSupport.ContainsInlineModule(header.StrippedSource)
+                || ContainsTraitSurface(header.StrippedSource)))
         {
             var layout = ProjectSupport.BuildStandaloneCompilationLayout(
                 header.StrippedSource,
@@ -419,6 +432,12 @@ public static partial class DocumentService
             entryOffset = layout.EntryOffset;
             bodyStart = layout.BodyStart;
             constructorModules = layout.ConstructorModules;
+            if (layout.ModuleProvenanceByPath is not null)
+            {
+                importedStdModules!.UnionWith(layout.ModuleProvenanceByPath.Values
+                    .Select(provenance => provenance.ModuleName)
+                    .Where(ProjectSupport.IsStdModule));
+            }
         }
 
         return new AnalysisContext(
@@ -431,6 +450,24 @@ public static partial class DocumentService
             BuildModuleAliases(header.Imports),
             standaloneImportDiagnostics,
             constructorModules);
+    }
+
+    private static bool ContainsTraitSurface(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var lexer = new Lexer(source, diagnostics);
+        while (true)
+        {
+            Token token = lexer.Next();
+            if (token.Kind is TokenKind.Trait or TokenKind.Implement or TokenKind.Requires or TokenKind.Deriving)
+            {
+                return true;
+            }
+            if (token.Kind == TokenKind.EOF)
+            {
+                return false;
+            }
+        }
     }
 
     private static IReadOnlyDictionary<string, string>? BuildModuleAliases(IReadOnlyList<ImportItem> imports)
@@ -478,14 +515,13 @@ public static partial class DocumentService
         return diagnostics;
     }
 
-    private static IReadOnlySet<string>? BuildImportedStdModules(IReadOnlyList<ImportItem> imports)
+    private static HashSet<string> BuildImportedStdModules(IReadOnlyList<ImportItem> imports)
     {
         var importedStdModules = imports
             .Select(x => x.ModuleName)
             .Where(ProjectSupport.IsStdModule)
             .ToHashSet(StringComparer.Ordinal);
-
-        return importedStdModules.Count == 0 ? null : importedStdModules;
+        return importedStdModules;
     }
 
     private static DiagnosticItem CreateProjectDiagnostic(Exception ex, IReadOnlyList<ImportItem> imports)
@@ -602,13 +638,29 @@ public static partial class DocumentService
 
         var typeNames = lowering.TypeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
         var ctorNames = lowering.ConstructorSymbols.Keys.ToHashSet(StringComparer.Ordinal);
+        var traitNames = lowering.TraitSymbols.Values
+            .SelectMany(trait => new[] { trait.Name, trait.QualifiedName })
+            .ToHashSet(StringComparer.Ordinal);
+        var traitMethodNames = lowering.TraitSymbols.Values
+            .SelectMany(trait => trait.Methods.Keys)
+            .ToHashSet(StringComparer.Ordinal);
         // Collect unique type-parameter names used in constructor parameter lists
         var typeParamNames = program.TypeDecls
             .SelectMany(d => d.TypeParameters.Select(tp => tp.Name)
                 .Concat(d.Constructors.SelectMany(c => c.Parameters).SelectMany(fieldType => fieldType.MentionedNames())))
+            .Concat(program.Items.OfType<TopLevelItem.Trait>()
+                .SelectMany(item => item.Decl.TypeParameters.Select(parameter => parameter.Name)))
             .ToHashSet(StringComparer.Ordinal);
 
-        return ScanSemanticTokens(source, context.StrippedSource, context.HeaderOffset, typeNames, ctorNames, typeParamNames);
+        return ScanSemanticTokens(
+            source,
+            context.StrippedSource,
+            context.HeaderOffset,
+            typeNames,
+            ctorNames,
+            typeParamNames,
+            traitNames,
+            traitMethodNames);
     }
 
     private static List<SemanticTokenItem> ScanSemanticTokens(
@@ -617,7 +669,9 @@ public static partial class DocumentService
         int headerOffset,
         HashSet<string> typeNames,
         HashSet<string> ctorNames,
-        HashSet<string> typeParamNames)
+        HashSet<string> typeParamNames,
+        HashSet<string> traitNames,
+        HashSet<string> traitMethodNames)
     {
         // Scan the stripped source (user's code without import header) for tokens.
         // Positions are adjusted by headerOffset to match original file positions.
@@ -640,7 +694,15 @@ public static partial class DocumentService
             }
 
             int tokenType;
-            if (typeNames.Contains(tok.Text))
+            if (traitNames.Contains(tok.Text))
+            {
+                tokenType = TokenTypeTrait;
+            }
+            else if (traitMethodNames.Contains(tok.Text))
+            {
+                tokenType = TokenTypeTraitMethod;
+            }
+            else if (typeNames.Contains(tok.Text))
             {
                 tokenType = TokenTypeType;
             }
@@ -682,7 +744,8 @@ public static partial class DocumentService
     public static IReadOnlyList<string> GetCompletions(string source, int? position, string? filePath = null)
     {
         var header = StripImportHeader(source);
-        if (position is not null && TryGetModuleCompletions(source, position.Value, header.Imports, out var moduleCompletions))
+        if (position is not null
+            && TryGetQualifiedCompletions(source, position.Value, filePath, header.Imports, out var moduleCompletions))
         {
             return moduleCompletions;
         }
@@ -699,6 +762,7 @@ public static partial class DocumentService
         lowering.Lower(program);
 
         var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
+        completionNames.UnionWith(lowering.TraitSymbols.Values.Select(trait => trait.Name));
 
         var strippedDiag = new Diagnostics();
         var strippedProgram = new Parser(header.StrippedSource, strippedDiag).ParseProgram();
@@ -1047,7 +1111,12 @@ public static partial class DocumentService
         return position == span.End;
     }
 
-    private static bool TryGetModuleCompletions(string source, int position, IReadOnlyList<ImportItem> imports, out IReadOnlyList<string> completions)
+    private static bool TryGetQualifiedCompletions(
+        string source,
+        int position,
+        string? filePath,
+        IReadOnlyList<ImportItem> imports,
+        out IReadOnlyList<string> completions)
     {
         completions = Array.Empty<string>();
 
@@ -1064,12 +1133,48 @@ public static partial class DocumentService
 
         var qualifier = prefix[..^1];
         var moduleName = ResolveCompletionModuleName(qualifier, imports);
-        if (moduleName is null)
+        if (moduleName is not null)
+        {
+            completions = GetModuleCompletionItems(moduleName);
+            if (completions.Count > 0)
+            {
+                return true;
+            }
+        }
+
+        int prefixStart = position - prefix.Length;
+        string sourceWithoutIncompleteReference = source.Remove(prefixStart, prefix.Length);
+        AnalysisContext context = PrepareAnalysisContext(sourceWithoutIncompleteReference, filePath);
+        if (context.Diagnostics.Count > 0)
         {
             return false;
         }
 
-        completions = GetModuleCompletionItems(moduleName);
+        var diagnostics = new Diagnostics();
+        Frontend.Program program = new Parser(context.AnalysisSource, diagnostics).ParseProgram();
+        var lowering = new Lowering(
+            diagnostics,
+            context.ImportedStdModules,
+            context.ModuleAliases,
+            context.ConstructorModules);
+        lowering.Lower(program);
+        if (diagnostics.StructuredErrors.Count > 0)
+        {
+            return false;
+        }
+
+        TraitSymbol[] traits = lowering.TraitSymbols.Values
+            .Where(trait => string.Equals(trait.Name, qualifier, StringComparison.Ordinal)
+                || string.Equals(trait.QualifiedName, qualifier, StringComparison.Ordinal)
+                || trait.QualifiedName.EndsWith($".{qualifier}", StringComparison.Ordinal))
+            .DistinctBy(trait => trait.QualifiedName)
+            .ToArray();
+        if (traits.Length != 1)
+        {
+            return false;
+        }
+
+        completions = traits[0].Methods.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
         return completions.Count > 0;
     }
 
@@ -1184,6 +1289,12 @@ public static partial class DocumentService
         var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
+        HoverItem? traitHover = GetMappedTraitHover(context, position, lowering);
+        if (traitHover is not null)
+        {
+            return traitHover;
+        }
+
         var hover = lowering.GetTypeAtPosition(analysisPosition.Value);
         if (hover is null)
         {
@@ -1201,14 +1312,201 @@ public static partial class DocumentService
             return null;
         }
 
+        TypeScheme hoverScheme = new([], hover.Value.Type, hover.Value.Constraints ?? []);
+        string formattedType = lowering.FormatTypeScheme(hoverScheme);
         var displayText = string.IsNullOrEmpty(hover.Value.Name)
-            ? lowering.FormatType(hover.Value.Type)
-            : $"{hover.Value.Name} : {lowering.FormatType(hover.Value.Type)}";
+            ? formattedType
+            : $"{hover.Value.Name} : {formattedType}";
 
         return new HoverItem(
             mappedSpan.Value.Start + context.HeaderOffset,
             mappedSpan.Value.End + context.HeaderOffset,
             displayText);
+    }
+
+    private static HoverItem? GetMappedTraitHover(
+        AnalysisContext context,
+        int originalPosition,
+        Lowering lowering)
+    {
+        int strippedPosition = originalPosition - context.HeaderOffset;
+        var diagnostics = new Diagnostics();
+        Frontend.Program program = new Parser(context.StrippedSource, diagnostics).ParseProgram();
+        Lowering.HoverTypeInfo? hover = TryGetTraitHover(
+            context.StrippedSource,
+            strippedPosition,
+            program,
+            lowering);
+        if (hover is null)
+        {
+            return null;
+        }
+        return new HoverItem(
+            hover.Value.Span.Start + context.HeaderOffset,
+            hover.Value.Span.End + context.HeaderOffset,
+            hover.Value.Name ?? string.Empty);
+    }
+
+    private static Lowering.HoverTypeInfo? TryGetTraitHover(
+        string analysisSource,
+        int position,
+        Frontend.Program program,
+        Lowering lowering)
+    {
+        (Token Token, TextSpan Span)? identifier = FindIdentifierAtPosition(analysisSource, position);
+        if (identifier is null)
+        {
+            return null;
+        }
+
+        TraitSymbol[] traits = lowering.TraitSymbols.Values
+            .DistinctBy(trait => trait.QualifiedName)
+            .ToArray();
+        if (TryCreateNamedTraitHover(identifier.Value, traits, lowering) is { } namedHover)
+        {
+            return namedHover;
+        }
+
+        TraitSymbol[] methodTraits = traits
+            .Where(trait => trait.Methods.ContainsKey(identifier.Value.Token.Text))
+            .ToArray();
+        string? qualifier = FindQualifierBeforeIdentifier(analysisSource, identifier.Value.Span.Start);
+        if (qualifier is not null)
+        {
+            methodTraits = methodTraits
+                .Where(trait => string.Equals(trait.Name, qualifier, StringComparison.Ordinal)
+                    || string.Equals(trait.QualifiedName, qualifier, StringComparison.Ordinal)
+                    || trait.QualifiedName.EndsWith($".{qualifier}", StringComparison.Ordinal))
+                .ToArray();
+        }
+        else
+        {
+            string? declarationTrait = FindContainingTraitMethodOwner(program, position, identifier.Value.Token.Text);
+            if (declarationTrait is not null)
+            {
+                methodTraits = methodTraits
+                    .Where(trait => string.Equals(trait.Name, declarationTrait, StringComparison.Ordinal)
+                        || string.Equals(trait.QualifiedName, declarationTrait, StringComparison.Ordinal)
+                        || trait.QualifiedName.EndsWith($".{declarationTrait}", StringComparison.Ordinal))
+                    .ToArray();
+            }
+        }
+        return TryCreateTraitMethodHover(identifier.Value, methodTraits, lowering);
+    }
+
+    private static Lowering.HoverTypeInfo? TryCreateNamedTraitHover(
+        (Token Token, TextSpan Span) identifier,
+        IReadOnlyList<TraitSymbol> traits,
+        Lowering lowering)
+    {
+        TraitSymbol[] matches = traits
+            .Where(trait => string.Equals(trait.Name, identifier.Token.Text, StringComparison.Ordinal)
+                || string.Equals(trait.QualifiedName, identifier.Token.Text, StringComparison.Ordinal))
+            .ToArray();
+        if (matches.Length != 1)
+        {
+            return null;
+        }
+        TraitSymbol trait = matches[0];
+        string parameters = string.Join(", ", trait.TypeParameters.Select(parameter => parameter.Name));
+        string requirements = trait.Supertraits.Count == 0
+            ? string.Empty
+            : $" requires {{{string.Join(", ", trait.Supertraits.Select(requirement => FormatTraitConstraintForTooling(lowering, requirement)))}}}";
+        return new Lowering.HoverTypeInfo(
+            identifier.Span,
+            $"trait {trait.QualifiedName}({parameters}){requirements}",
+            new TypeRef.TNever());
+    }
+
+    private static Lowering.HoverTypeInfo? TryCreateTraitMethodHover(
+        (Token Token, TextSpan Span) identifier,
+        IReadOnlyList<TraitSymbol> traits,
+        Lowering lowering)
+    {
+        if (traits.Count != 1)
+        {
+            return null;
+        }
+        TraitSymbol owner = traits[0];
+        TraitMethodSymbol method = owner.Methods[identifier.Token.Text];
+        TypeRef[] traitArguments = owner.TypeParameters
+            .Select(parameter => (TypeRef)new TypeRef.TTypeParam(parameter))
+            .ToArray();
+        var scheme = new TypeScheme(
+            method.Scheme.Quantified,
+            method.Scheme.Body,
+            [.. method.Scheme.Constraints, new TraitConstraint(owner, traitArguments)]);
+        return new Lowering.HoverTypeInfo(
+            identifier.Span,
+            $"{owner.QualifiedName}.{method.Name} : {lowering.FormatTypeScheme(scheme)}",
+            method.Scheme.Body,
+            scheme.Constraints);
+    }
+
+    private static string FormatTraitConstraintForTooling(Lowering lowering, TraitConstraint constraint) =>
+        $"{constraint.Trait.QualifiedName}({string.Join(", ", constraint.TypeArgs.Select(lowering.FormatType))})";
+
+    private static string? FindContainingTraitMethodOwner(
+        Frontend.Program program,
+        int position,
+        string methodName)
+    {
+        foreach (TopLevelItem.Trait item in program.Items.OfType<TopLevelItem.Trait>())
+        {
+            if (item.Decl.Methods.Any(method => string.Equals(method.Name, methodName, StringComparison.Ordinal)
+                    && ContainsPosition(AstSpans.GetOrDefault(method), position)))
+            {
+                return item.Decl.Name;
+            }
+        }
+        foreach (TopLevelItem.Implementation item in program.Items.OfType<TopLevelItem.Implementation>())
+        {
+            if (item.Decl.Bindings.Any(binding => string.Equals(binding.MethodName, methodName, StringComparison.Ordinal)
+                    && ContainsPosition(AstSpans.GetOrDefault(binding), position)))
+            {
+                return item.Decl.TraitName;
+            }
+        }
+        return null;
+    }
+
+    private static (Token Token, TextSpan Span)? FindIdentifierAtPosition(string source, int position)
+    {
+        var diagnostics = new Diagnostics();
+        var lexer = new Lexer(source, diagnostics);
+        while (true)
+        {
+            Token token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                return null;
+            }
+            TextSpan span = TextSpan.FromStartLength(token.Position, token.Text.Length);
+            if (token.Kind == TokenKind.Ident && ContainsPosition(span, position))
+            {
+                return (token, span);
+            }
+        }
+    }
+
+    private static string? FindQualifierBeforeIdentifier(string source, int identifierStart)
+    {
+        int end = identifierStart;
+        if (end == 0 || source[end - 1] != '.')
+        {
+            return null;
+        }
+        int start = end - 1;
+        while (start > 0)
+        {
+            char character = source[start - 1];
+            if (!char.IsLetterOrDigit(character) && character != '_' && character != '.')
+            {
+                break;
+            }
+            start--;
+        }
+        return source[start..(end - 1)];
     }
 
     /// <summary>
@@ -1237,7 +1535,12 @@ public static partial class DocumentService
             return null;
         }
 
-        var definition = ResolveDefinitionInProgram(program, strippedPosition, filePath, header.Imports);
+        var definition = ResolveDefinitionInProgram(
+            program,
+            header.StrippedSource,
+            strippedPosition,
+            filePath,
+            header.Imports);
         if (definition is null)
         {
             return null;
@@ -1249,6 +1552,115 @@ public static partial class DocumentService
         }
 
         return new DefinitionItem(definition.Value.FilePath, definition.Value.Span.Start, definition.Value.Span.End);
+    }
+
+    /// <summary>
+    /// Returns references in the current document that resolve to the declaration at
+    /// <paramref name="position"/>. Trait names and methods use the same identity-aware resolver as
+    /// go-to-definition, so unrelated traits with identically named methods are not mixed.
+    /// </summary>
+    public static IReadOnlyList<ReferenceItem> GetReferences(
+        string source,
+        int position,
+        string? filePath = null,
+        bool includeDeclaration = true)
+    {
+        ImportHeaderInfo header = StripImportHeader(source);
+        int strippedPosition = position - header.HeaderOffset;
+        if (header.Diagnostics.Count > 0
+            || strippedPosition < 0
+            || strippedPosition > header.StrippedSource.Length)
+        {
+            return [];
+        }
+
+        var diagnostics = new Diagnostics();
+        Frontend.Program program = new Parser(header.StrippedSource, diagnostics).ParseProgram();
+        DefinitionLocation? target = ResolveDefinitionInProgram(
+            program,
+            header.StrippedSource,
+            strippedPosition,
+            filePath,
+            header.Imports);
+        (Token Token, TextSpan Span)? selected = FindIdentifierAtPosition(header.StrippedSource, strippedPosition);
+        if (target is null || selected is null || diagnostics.StructuredErrors.Count > 0)
+        {
+            return [];
+        }
+
+        var references = new List<ReferenceItem>();
+        var lexer = new Lexer(header.StrippedSource, new Diagnostics());
+        while (true)
+        {
+            Token token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                break;
+            }
+            if (token.Kind != TokenKind.Ident
+                || !string.Equals(token.Text, selected.Value.Token.Text, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            DefinitionLocation? candidate = ResolveDefinitionInProgram(
+                program,
+                header.StrippedSource,
+                token.Position,
+                filePath,
+                header.Imports);
+            if (!DefinitionLocationsEqual(candidate, target))
+            {
+                continue;
+            }
+            TextSpan span = TextSpan.FromStartLength(token.Position, token.Text.Length);
+            if (!includeDeclaration && IsDeclarationIdentifier(header.StrippedSource, span, target.Value))
+            {
+                continue;
+            }
+            references.Add(new ReferenceItem(
+                filePath,
+                span.Start + header.HeaderOffset,
+                span.End + header.HeaderOffset));
+        }
+        return references;
+    }
+
+    private static bool DefinitionLocationsEqual(
+        DefinitionLocation? left,
+        DefinitionLocation? right) =>
+        left is not null
+        && right is not null
+        && string.Equals(left.Value.FilePath, right.Value.FilePath, StringComparison.OrdinalIgnoreCase)
+        && left.Value.Span == right.Value.Span;
+
+    private static bool IsDeclarationIdentifier(
+        string source,
+        TextSpan candidate,
+        DefinitionLocation definition)
+    {
+        if (candidate.Start < definition.Span.Start || candidate.End > definition.Span.End)
+        {
+            return false;
+        }
+        (Token Token, TextSpan Span)? first = FindFirstIdentifierInSpan(source, definition.Span);
+        return first is not null && first.Value.Span == candidate;
+    }
+
+    private static (Token Token, TextSpan Span)? FindFirstIdentifierInSpan(string source, TextSpan outer)
+    {
+        var lexer = new Lexer(source, new Diagnostics());
+        while (true)
+        {
+            Token token = lexer.Next();
+            if (token.Kind == TokenKind.EOF || token.Position >= outer.End)
+            {
+                return null;
+            }
+            if (token.Kind == TokenKind.Ident && token.Position >= outer.Start)
+            {
+                return (token, TextSpan.FromStartLength(token.Position, token.Text.Length));
+            }
+        }
     }
 
     /// <summary>
@@ -1285,7 +1697,7 @@ public static partial class DocumentService
                 bodyStart + (end - entryOffset));
         }
 
-        if (start == bodyEnd && end == bodyEnd)
+        if (start == bodyEnd && end >= bodyEnd)
         {
             return TextSpan.FromBounds(strippedLength, strippedLength);
         }
@@ -1316,10 +1728,22 @@ public static partial class DocumentService
 
     private static DefinitionLocation? ResolveDefinitionInProgram(
         Frontend.Program program,
+        string source,
         int position,
         string? currentFilePath,
         IReadOnlyList<ImportItem> imports)
     {
+        DefinitionLocation? traitDefinition = ResolveTraitDefinitionInProgram(
+            program,
+            source,
+            position,
+            currentFilePath,
+            imports);
+        if (traitDefinition is not null)
+        {
+            return traitDefinition;
+        }
+
         // Resolve through the top-level items first (Model-A): a binding declared earlier is visible
         // to the values of later declarations and to the trailing expression. Top-level binding names
         // have no dedicated span, so a reference resolves to the bound value.
@@ -1365,6 +1789,216 @@ public static partial class DocumentService
 
         Expr? body = program.Body;
         return body is null ? null : ResolveDefinitionInExpr(body, position, currentFilePath, imports, scope);
+    }
+
+    private static DefinitionLocation? ResolveTraitDefinitionInProgram(
+        Frontend.Program program,
+        string source,
+        int position,
+        string? currentFilePath,
+        IReadOnlyList<ImportItem> imports)
+    {
+        (Token Token, TextSpan Span)? identifier = FindIdentifierAtPosition(source, position);
+        if (identifier is null)
+        {
+            return null;
+        }
+
+        TopLevelItem.Trait? localTrait = program.Items
+            .OfType<TopLevelItem.Trait>()
+            .SingleOrDefault(item => string.Equals(item.Decl.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
+        if (localTrait is not null)
+        {
+            return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(localTrait.Decl));
+        }
+
+        if (char.IsUpper(identifier.Value.Token.Text[0])
+            && ResolveImportedTraitDefinition(
+                imports,
+                identifier.Value.Token.Text,
+                methodName: null,
+                currentFilePath) is { } importedTrait)
+        {
+            return importedTrait;
+        }
+
+        string? ownerName = FindQualifierBeforeIdentifier(source, identifier.Value.Span.Start)
+            ?? FindContainingTraitMethodOwner(program, position, identifier.Value.Token.Text);
+        if (ownerName is null)
+        {
+            return null;
+        }
+        TopLevelItem.Trait? owner = program.Items
+            .OfType<TopLevelItem.Trait>()
+            .SingleOrDefault(item => string.Equals(item.Decl.Name, ownerName, StringComparison.Ordinal)
+                || ownerName.EndsWith($".{item.Decl.Name}", StringComparison.Ordinal));
+        TraitMethodDecl? method = owner?.Decl.Methods
+            .SingleOrDefault(candidate => string.Equals(candidate.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
+        if (method is not null)
+        {
+            return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(method));
+        }
+
+        return ResolveImportedTraitDefinition(
+            imports,
+            ownerName,
+            identifier.Value.Token.Text,
+            currentFilePath);
+    }
+
+    private static DefinitionLocation? ResolveImportedTraitDefinition(
+        IReadOnlyList<ImportItem> imports,
+        string traitReference,
+        string? methodName,
+        string? currentFilePath)
+    {
+        if (currentFilePath is null)
+        {
+            return null;
+        }
+
+        string? projectPath = ProjectSupport.DiscoverProjectFile(
+            Path.GetDirectoryName(Path.GetFullPath(currentFilePath)) ?? currentFilePath);
+        if (projectPath is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return ResolveImportedTraitDefinitionInProject(
+                imports,
+                traitReference,
+                methodName,
+                currentFilePath,
+                projectPath);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static DefinitionLocation? ResolveImportedTraitDefinitionInProject(
+        IReadOnlyList<ImportItem> imports,
+        string traitReference,
+        string? methodName,
+        string currentFilePath,
+        string projectPath)
+    {
+        AshesProject project = ProjectSupport.LoadProject(projectPath);
+        string currentFullPath = Path.GetFullPath(currentFilePath);
+        ProjectCompilationPlan plan = ProjectSupport.BuildCompilationPlan(project with
+        {
+            EntryPath = currentFullPath,
+            EntryModuleName = Path.GetFileNameWithoutExtension(currentFullPath),
+        });
+        DefinitionLocation? match = null;
+        foreach (ImportItem import in imports)
+        {
+            ProjectModule? module = plan.OrderedModules
+                .Where(candidate => string.Equals(candidate.ModuleName, import.ModuleName, StringComparison.Ordinal)
+                    || import.ModuleName.StartsWith(candidate.ModuleName + ".", StringComparison.Ordinal))
+                .OrderByDescending(candidate => candidate.ModuleName.Length)
+                .FirstOrDefault();
+            if (module is null || !File.Exists(module.FilePath))
+            {
+                continue;
+            }
+
+            string selectedTrait = import.ModuleName.Length == module.ModuleName.Length
+                ? string.Empty
+                : import.ModuleName[(module.ModuleName.Length + 1)..];
+            DefinitionLocation? candidate = FindModuleTraitDefinition(
+                module,
+                import,
+                selectedTrait,
+                traitReference,
+                methodName);
+            if (candidate is null)
+            {
+                continue;
+            }
+            if (match is not null && !DefinitionLocationsEqual(match, candidate))
+            {
+                return null;
+            }
+            match = candidate;
+        }
+        return match;
+    }
+
+    private static DefinitionLocation? FindModuleTraitDefinition(
+        ProjectModule module,
+        ImportItem import,
+        string selectedTrait,
+        string traitReference,
+        string? methodName)
+    {
+        string originalSource = File.ReadAllText(module.FilePath);
+        ImportHeaderInfo header = StripImportHeader(originalSource);
+        if (header.Diagnostics.Count > 0)
+        {
+            return null;
+        }
+
+        var diagnostics = new Diagnostics();
+        Frontend.Program program = new Parser(header.StrippedSource, diagnostics).ParseProgram();
+        if (diagnostics.StructuredErrors.Count > 0)
+        {
+            return null;
+        }
+
+        foreach (TopLevelItem.Trait item in program.Items.OfType<TopLevelItem.Trait>())
+        {
+            if (selectedTrait.Length > 0
+                && !string.Equals(selectedTrait, item.Decl.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string leaf = GetLeafQualifier(module.ModuleName);
+            string[] references = selectedTrait.Length > 0
+                ? [import.Alias ?? item.Decl.Name, item.Decl.Name]
+                : [
+                    item.Decl.Name,
+                    $"{module.ModuleName}.{item.Decl.Name}",
+                    $"{leaf}.{item.Decl.Name}",
+                    import.Alias is null ? string.Empty : $"{import.Alias}.{item.Decl.Name}",
+                ];
+            if (!references.Contains(traitReference, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            TextSpan span;
+            if (methodName is null)
+            {
+                span = AstSpans.GetOrDefault(item.Decl);
+            }
+            else
+            {
+                TraitMethodDecl? method = item.Decl.Methods.SingleOrDefault(candidate =>
+                    string.Equals(candidate.Name, methodName, StringComparison.Ordinal));
+                if (method is null)
+                {
+                    continue;
+                }
+                span = AstSpans.GetOrDefault(method);
+            }
+            return new DefinitionLocation(
+                module.FilePath,
+                TextSpan.FromBounds(span.Start + header.HeaderOffset, span.End + header.HeaderOffset));
+        }
+        return null;
     }
 
     private static DefinitionLocation? ResolveDefinitionInExpr(
@@ -1888,6 +2522,10 @@ public static partial class DocumentService
 
                 case TopLevelItem.Type type when string.Equals(type.Decl.Name, exportName, StringComparison.Ordinal):
                     definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(type.Decl));
+                    return true;
+
+                case TopLevelItem.Trait trait when string.Equals(trait.Decl.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(trait.Decl));
                     return true;
             }
         }

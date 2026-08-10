@@ -56,7 +56,7 @@ let balance map =
                                 else rotateLeft(makeNode(left)(key)(value)(rotateRight(right)))
                     else normalized
 
-let get compare searchKey =
+let getWith compare searchKey =
     (let recursive go map =
         match map with
             | Empty -> None
@@ -86,12 +86,30 @@ let getStr searchKey =
                         else go(right)
     in go)
 
-let contains compare searchKey map =
-    match get(compare)(searchKey)(map) with
+let get searchKey =
+    (let recursive go map =
+        match map with
+            | Empty -> None
+            | Node(_height, left, key, value, right) ->
+                if searchKey == key
+                then Some(value)
+                else
+                    if searchKey < key
+                    then go(left)
+                    else go(right)
+    in go)
+
+let containsWith compare searchKey map =
+    match getWith(compare)(searchKey)(map) with
         | None -> false
         | Some(_) -> true
 
-let set compare newKey newValue =
+let contains searchKey map =
+    match get(searchKey)(map) with
+        | None -> false
+        | Some(_) -> true
+
+let setWith compare newKey newValue =
     (let recursive go map =
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
@@ -136,7 +154,22 @@ let upsertStr newKey missValue onHit =
                         else balance(makeNode(left)(key)(value)(go(right)))
     in go)
 
+let set newKey newValue =
+    (let recursive go map =
+        match map with
+            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
+            | Node(_height, left, key, value, right) ->
+                if newKey == key
+                then makeNode(left)(key)(newValue)(right)
+                else
+                    if newKey < key
+                    then balance(makeNode(go(left))(key)(value)(right))
+                    else balance(makeNode(left)(key)(value)(go(right)))
+    in go)
+
 let insert = set
+
+let insertWith = setWith
 
 let recursive size map =
     match map with
@@ -158,10 +191,17 @@ let toList map =
     (let prepend rest key value = (key, value) :: rest
     in foldLeft(prepend)([])(map))
 
-let fromList compare =
+let fromListWith compare =
     (let recursive go entries map =
         match entries with
             | [] -> map
-            | (key, value) :: tail -> go(tail)(set(compare)(key)(value)(map))
+            | (key, value) :: tail -> go(tail)(setWith(compare)(key)(value)(map))
     in
         given (entries) -> go(entries)(empty))
+
+let fromList entries =
+    (let recursive go entries map =
+        match entries with
+            | [] -> map
+            | (key, value) :: tail -> go(tail)(set(key)(value)(map))
+    in go(entries)(empty))

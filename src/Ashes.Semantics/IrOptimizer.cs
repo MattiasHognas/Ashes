@@ -704,6 +704,10 @@ public static class IrOptimizer
             IrInst.CmpIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntLt c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntLe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpUIntGt c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpUIntGe c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpUIntLt c => c with { Left = R(c.Left), Right = R(c.Right) },
+            IrInst.CmpUIntLe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntEq c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpIntNe c => c with { Left = R(c.Left), Right = R(c.Right) },
             IrInst.CmpFloatGt c => c with { Left = R(c.Left), Right = R(c.Right) },
@@ -1923,6 +1927,7 @@ public static class IrOptimizer
 
     private static void CollectComparisonUsedTemps(IrInst inst, HashSet<int> usedTemps)
     {
+        CollectUnsignedComparisonUsedTemps(inst, usedTemps);
         switch (inst)
         {
             case IrInst.CmpIntGt c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
@@ -1937,6 +1942,17 @@ public static class IrOptimizer
             case IrInst.CmpFloatLe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatEq c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
             case IrInst.CmpFloatNe c: usedTemps.Add(c.Left); usedTemps.Add(c.Right); break;
+        }
+    }
+
+    private static void CollectUnsignedComparisonUsedTemps(IrInst inst, HashSet<int> usedTemps)
+    {
+        switch (inst)
+        {
+            case IrInst.CmpUIntGt comparison: usedTemps.Add(comparison.Left); usedTemps.Add(comparison.Right); break;
+            case IrInst.CmpUIntGe comparison: usedTemps.Add(comparison.Left); usedTemps.Add(comparison.Right); break;
+            case IrInst.CmpUIntLt comparison: usedTemps.Add(comparison.Left); usedTemps.Add(comparison.Right); break;
+            case IrInst.CmpUIntLe comparison: usedTemps.Add(comparison.Left); usedTemps.Add(comparison.Right); break;
         }
     }
 

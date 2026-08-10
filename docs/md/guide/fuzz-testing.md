@@ -80,15 +80,27 @@ dotnet run --project src/Ashes.Fuzzing -- list
 ```
 
 Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `differential`,
-`invalid-source`, `async`, `capabilities`, `resources`, `cross-target`, and `all`. The resource
+`invalid-source`, `invalid-semantics`, `traits`, `traits-differential`, `async`, `capabilities`,
+`resources`, `cross-target`, and `all`. The `traits` profile generates coherent user trait
+declarations, concrete and conditional implementations, constrained generic functions,
+multi-parameter traits, derived implementations, concrete resolution sites, and generic
+trait/closure and derived-operator/sharing combinations. Its trace records every generated
+declaration, implementation, constraint, and selected resolution. The `invalid-semantics` profile
+keeps syntax parseable while rotating overlap, orphan, ambiguity, missing-implementation,
+implementation-shape, and supertrait-cycle failures with an exact expected diagnostic code.
+`traits-differential` compiles and executes the same generated case with normal primitive
+specialization and with specialization disabled, while retaining identical dictionary elaboration
+and ownership behavior. The resource
 profile is deliberately separate from smoke runs, explicitly enables the `FileHandle` generation
 type, and uses deterministic file-handle shapes. `Socket` and `TlsSocket` are represented by the
 immutable generation type model but stay disabled until deterministic network-resource templates
 are added.
 The `all` profile deterministically covers every stable profile in each 50-case cycle while limiting
-native compile, differential, and cross-target work to one case each per cycle.
+compile, optimization/reuse differential, trait-evidence differential, and cross-target work to one
+case each per cycle.
 Invalid-source fuzzing deterministically mutates valid generated source
-and rotates through checked-in corpus cases, compiler tests, examples, and parser fixtures. It uses
+and rotates through checked-in corpus cases, trait declaration tests, general compiler tests,
+examples, and parser fixtures. It uses
 token deletion and duplication, delimiter replacement, keyword insertion, truncation,
 malformed literals, indentation changes, and Unicode insertion. Each mutated parse runs in a
 killable child process and asserts bounded diagnostics and crash-free lexer/parser behavior. Native
@@ -101,6 +113,9 @@ is capped at 4 MiB. Long runs can stop successfully after a whole-campaign time 
 public `-O0` and `-O2` builds and
 also compares normal lowering with the internal debug configuration that disables only in-place
 reuse while retaining Perceus ownership. It compares exit status, stdout, and stderr byte-for-byte.
+The trait-evidence differential uses the internal
+`--debug-disable-trait-specialization` compiler switch solely from the fuzz harness; normal users do
+not need this switch, and disabling specialization never removes or changes the selected evidence.
 The non-required `fuzz` GitHub workflow runs larger multi-seed campaigns only when manually
 dispatched and uploads `artifacts/fuzz` when a case fails; long fuzzing is not a pull-request gate.
 

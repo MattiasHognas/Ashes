@@ -12,6 +12,8 @@ internal static class InvalidSourceSeedSelector
         SeedCategory[] categories =
         [
             new("corpus", Path.Combine(repositoryRoot, "tests", "fuzz", "corpus")),
+            new("trait-tests", Path.Combine(repositoryRoot, "tests"), path =>
+                Path.GetFileName(path).StartsWith("trait_", StringComparison.Ordinal)),
             new("tests", Path.Combine(repositoryRoot, "tests"), path =>
                 !path.StartsWith(Path.Combine(repositoryRoot, "tests", "fuzz", "corpus") + Path.DirectorySeparatorChar, StringComparison.Ordinal)),
             new("examples", Path.Combine(repositoryRoot, "examples")),

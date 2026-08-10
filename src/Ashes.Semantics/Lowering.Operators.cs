@@ -35,21 +35,36 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        var (affineResvStart, affineResvEnd) = ResolveAffineAppendReservation(add);
-
-        if (TryLowerDeferredAdd(
-                leftTemp,
-                rightTemp,
-                leftPruned,
-                rightPruned,
-                affineResvStart,
-                affineResvEnd,
-                request) is { } deferredAdd)
+        if (RecordMappedBinaryTrait("Add", "add", leftTemp, rightTemp, leftType, rightType, false, GetSpan(add)) is { } traitAdd)
         {
-            return deferredAdd;
+            return traitAdd;
         }
 
+        var (affineResvStart, affineResvEnd) = ResolveAffineAppendReservation(add);
+
         (leftPruned, rightPruned) = ResolveAddOperandTypes(leftPruned, rightPruned);
+
+        return LowerResolvedAdd(
+            add,
+            request,
+            leftTemp,
+            rightTemp,
+            leftPruned,
+            rightPruned,
+            affineResvStart,
+            affineResvEnd);
+    }
+
+    private (int, TypeRef) LowerResolvedAdd(
+        Expr.Add add,
+        LoweredValueRequest request,
+        int leftTemp,
+        int rightTemp,
+        TypeRef leftPruned,
+        TypeRef rightPruned,
+        int affineResvStart,
+        int affineResvEnd)
+    {
 
         if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
         {
@@ -147,41 +162,6 @@ public sealed partial class Lowering
         }
 
         return (-1, -1);
-    }
-
-    // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
-    // (kept out of generalization via _addConstrainedTvars) so a later use resolves it — e.g.
-    // the seed in `go("")(xs)` makes a `go(acc + x)` accumulator Str. Emit a provisional AddInt,
-    // patched to ConcatStr/AddFloat in ResolveDeferredAdds once the operand type is known. If it
-    // never resolves (an unused generic '+'), it defaults to Int there, matching the old result.
-    private (int, TypeRef)? TryLowerDeferredAdd(
-        int leftTemp,
-        int rightTemp,
-        TypeRef leftPruned,
-        TypeRef rightPruned,
-        int affineResvStart,
-        int affineResvEnd,
-        LoweredValueRequest request)
-    {
-        if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
-        {
-            Unify(leftPruned, rightPruned);
-            if (Prune(leftPruned) is TypeRef.TVar sharedVar)
-            {
-                _addConstrainedVars.Add(sharedVar);
-                _hasDeferredAdds = true;
-                int deferredTarget = NewTemp();
-                Emit(new IrInst.AddInt(deferredTarget, leftTemp, rightTemp, sharedVar)
-                {
-                    AffineResvStartSlot = affineResvStart,
-                    AffineResvEndSlot = affineResvEnd,
-                    RequestedRuntimeRepresentation = request.RuntimeRepresentation,
-                });
-                return (deferredTarget, sharedVar);
-            }
-        }
-
-        return null;
     }
 
     // Resolve type variables: prefer the other side's concrete type, defaulting to Int
@@ -320,6 +300,19 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(sub.Left);
         var (rightTemp, rightType) = LowerExpr(sub.Right);
 
+        string subtractTrait = sub.Left is Expr.IntLit { Value: 0 } ? "Negate" : "Subtract";
+        if (string.Equals(subtractTrait, "Negate", StringComparison.Ordinal))
+        {
+            if (RecordMappedUnaryTrait(subtractTrait, "negate", rightTemp, rightType, GetSpan(sub)) is { } traitNegate)
+            {
+                return traitNegate;
+            }
+        }
+        else if (RecordMappedBinaryTrait(subtractTrait, "subtract", leftTemp, rightTemp, leftType, rightType, false, GetSpan(sub)) is { } traitSubtract)
+        {
+            return traitSubtract;
+        }
+
         // Unary negation `-x` desugars to `0 - x`; the synthesized 0 is an Int literal, which would
         // force the subtraction to Int and reject `-floatVar`. A literal 0 is the identity of every
         // numeric type (0 == 0.0 == 0N == 0u), so when the other operand is a concrete Float/BigInt/UInt
@@ -348,22 +341,9 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(mul.Left);
         var (rightTemp, rightType) = LowerExpr(mul.Right);
 
-        // Both operands unconstrained: don't eagerly pick Int (as ResolveNumericOperandTypes would).
-        // Unify them into one monomorphic var (kept out of generalization via _mulConstrainedVars) so a
-        // later use resolves it — e.g. a `dot xs ys acc = … x * y + acc` fold used at Float. Emit a
-        // provisional MulInt, patched to MulFloat/BigIntBinary in ResolveDeferredMuls once the operand
-        // type is known. If it never resolves (an unused generic '*'), it defaults to Int there.
-        if (Prune(leftType) is TypeRef.TVar && Prune(rightType) is TypeRef.TVar)
+        if (RecordMappedBinaryTrait("Multiply", "multiply", leftTemp, rightTemp, leftType, rightType, false, GetSpan(mul)) is { } traitMultiply)
         {
-            Unify(Prune(leftType), Prune(rightType));
-            if (Prune(leftType) is TypeRef.TVar sharedVar)
-            {
-                _mulConstrainedVars.Add(sharedVar);
-                _hasDeferredMuls = true;
-                int deferredTarget = NewTemp();
-                Emit(new IrInst.MulInt(deferredTarget, leftTemp, rightTemp, sharedVar));
-                return (deferredTarget, sharedVar);
-            }
+            return traitMultiply;
         }
 
         return LowerNumericBinaryOp(mul, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.MulInt(target, left, right), (target, left, right) => new IrInst.MulFloat(target, left, right), "'*'", bigIntOp: "mul");
@@ -375,6 +355,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(div.Left);
         var (rightTemp, rightType) = LowerExpr(div.Right);
 
+        if (RecordMappedBinaryTrait("Divide", "divide", leftTemp, rightTemp, leftType, rightType, false, GetSpan(div)) is { } traitDivide)
+        {
+            return traitDivide;
+        }
+
         return LowerNumericBinaryOp(div, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.DivInt(target, left, right), (target, left, right) => new IrInst.DivFloat(target, left, right), "'/'", (target, left, right) => new IrInst.DivUInt(target, left, right), bigIntOp: "div");
     }
 
@@ -385,6 +370,10 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(mod);
         var (leftTemp, leftType) = LowerExpr(mod.Left);
         var (rightTemp, rightType) = LowerExpr(mod.Right);
+        if (RecordMappedBinaryTrait("Remainder", "remainder", leftTemp, rightTemp, leftType, rightType, false, GetSpan(mod)) is { } traitRemainder)
+        {
+            return traitRemainder;
+        }
         var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
 
         if (resolvedLeft is TypeRef.TBigInt && resolvedRight is TypeRef.TBigInt)
@@ -433,6 +422,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(bitAnd.Left);
         var (rightTemp, rightType) = LowerExpr(bitAnd.Right);
 
+        if (RecordMappedBinaryTrait("BitAnd", "bitAnd", leftTemp, rightTemp, leftType, rightType, false, GetSpan(bitAnd)) is { } traitBitAnd)
+        {
+            return traitBitAnd;
+        }
+
         return LowerIntBinaryOp(bitAnd, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.AndInt(target, left, right), "'&'");
     }
 
@@ -441,6 +435,11 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(bitOr);
         var (leftTemp, leftType) = LowerExpr(bitOr.Left);
         var (rightTemp, rightType) = LowerExpr(bitOr.Right);
+
+        if (RecordMappedBinaryTrait("BitOr", "bitOr", leftTemp, rightTemp, leftType, rightType, false, GetSpan(bitOr)) is { } traitBitOr)
+        {
+            return traitBitOr;
+        }
 
         return LowerIntBinaryOp(bitOr, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.OrInt(target, left, right), "'|'");
     }
@@ -451,6 +450,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(bitXor.Left);
         var (rightTemp, rightType) = LowerExpr(bitXor.Right);
 
+        if (RecordMappedBinaryTrait("BitXor", "bitXor", leftTemp, rightTemp, leftType, rightType, false, GetSpan(bitXor)) is { } traitBitXor)
+        {
+            return traitBitXor;
+        }
+
         return LowerIntBinaryOp(bitXor, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.XorInt(target, left, right), "'^'");
     }
 
@@ -459,6 +463,11 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(shiftLeft);
         var (leftTemp, leftType) = LowerExpr(shiftLeft.Left);
         var (rightTemp, rightType) = LowerExpr(shiftLeft.Right);
+
+        if (RecordMappedBinaryTrait("ShiftLeft", "shiftLeft", leftTemp, rightTemp, leftType, rightType, false, GetSpan(shiftLeft)) is { } traitShiftLeft)
+        {
+            return traitShiftLeft;
+        }
 
         return LowerIntBinaryOp(shiftLeft, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.ShlInt(target, left, right), "'<<'");
     }
@@ -469,6 +478,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(shiftRight.Left);
         var (rightTemp, rightType) = LowerExpr(shiftRight.Right);
 
+        if (RecordMappedBinaryTrait("ShiftRight", "shiftRight", leftTemp, rightTemp, leftType, rightType, false, GetSpan(shiftRight)) is { } traitShiftRight)
+        {
+            return traitShiftRight;
+        }
+
         return LowerIntBinaryOp(shiftRight, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.ShrInt(target, left, right), "'>>'");
     }
 
@@ -476,6 +490,10 @@ public sealed partial class Lowering
     {
         using var diagnosticSpan = PushDiagnosticSpan(bitwiseNot);
         var (operandTemp, operandType) = LowerExpr(bitwiseNot.Operand);
+        if (RecordMappedUnaryTrait("BitwiseNot", "bitwiseNot", operandTemp, operandType, GetSpan(bitwiseNot)) is { } traitBitwiseNot)
+        {
+            return traitBitwiseNot;
+        }
         var prunedOperandType = Prune(operandType);
         if (prunedOperandType is TypeRef.TVar)
         {
@@ -512,6 +530,10 @@ public sealed partial class Lowering
     {
         using var diagnosticSpan = PushDiagnosticSpan(logicalNot);
         (int operandTemp, TypeRef operandType) = LowerExpr(logicalNot.Operand);
+        if (RecordMappedUnaryTrait("Not", "not", operandTemp, operandType, GetSpan(logicalNot)) is { } traitNot)
+        {
+            return traitNot;
+        }
         TypeRef prunedOperandType = Prune(operandType);
         if (prunedOperandType is TypeRef.TVar)
         {
@@ -541,6 +563,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(gt.Left);
         var (rightTemp, rightType) = LowerExpr(gt.Right);
 
+        if (RecordMappedBinaryTrait("Ord", "greater", leftTemp, rightTemp, leftType, rightType, true, GetSpan(gt)) is { } traitGreater)
+        {
+            return traitGreater;
+        }
+
         return LowerNumericComparisonOp(gt, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGt(target, left, right), (target, left, right) => new IrInst.CmpFloatGt(target, left, right), (target, left, right) => new IrInst.CmpUIntGt(target, left, right), "'>'");
     }
 
@@ -549,6 +576,11 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(ge);
         var (leftTemp, leftType) = LowerExpr(ge.Left);
         var (rightTemp, rightType) = LowerExpr(ge.Right);
+
+        if (RecordMappedBinaryTrait("Ord", "greaterOrEqual", leftTemp, rightTemp, leftType, rightType, true, GetSpan(ge)) is { } traitGreaterEqual)
+        {
+            return traitGreaterEqual;
+        }
 
         return LowerNumericComparisonOp(ge, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntGe(target, left, right), (target, left, right) => new IrInst.CmpFloatGe(target, left, right), (target, left, right) => new IrInst.CmpUIntGe(target, left, right), "'>='");
     }
@@ -559,6 +591,11 @@ public sealed partial class Lowering
         var (leftTemp, leftType) = LowerExpr(lt.Left);
         var (rightTemp, rightType) = LowerExpr(lt.Right);
 
+        if (RecordMappedBinaryTrait("Ord", "less", leftTemp, rightTemp, leftType, rightType, true, GetSpan(lt)) is { } traitLess)
+        {
+            return traitLess;
+        }
+
         return LowerNumericComparisonOp(lt, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLt(target, left, right), (target, left, right) => new IrInst.CmpFloatLt(target, left, right), (target, left, right) => new IrInst.CmpUIntLt(target, left, right), "'<'");
     }
 
@@ -567,6 +604,11 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(le);
         var (leftTemp, leftType) = LowerExpr(le.Left);
         var (rightTemp, rightType) = LowerExpr(le.Right);
+
+        if (RecordMappedBinaryTrait("Ord", "lessOrEqual", leftTemp, rightTemp, leftType, rightType, true, GetSpan(le)) is { } traitLessEqual)
+        {
+            return traitLessEqual;
+        }
 
         return LowerNumericComparisonOp(le, leftTemp, leftType, rightTemp, rightType, (target, left, right) => new IrInst.CmpIntLe(target, left, right), (target, left, right) => new IrInst.CmpFloatLe(target, left, right), (target, left, right) => new IrInst.CmpUIntLe(target, left, right), "'<='");
     }
@@ -730,9 +772,9 @@ public sealed partial class Lowering
         var leftPruned = Prune(leftType);
         var rightPruned = Prune(rightType);
 
-        if (TryLowerDeferredEq(leftTemp, rightTemp, leftPruned, rightPruned, negate) is { } deferredEq)
+        if (RecordMappedBinaryTrait("Eq", negate ? "notEqual" : "equal", leftTemp, rightTemp, leftType, rightType, true, CombineSpans(left, right)) is { } traitEquality)
         {
-            return deferredEq;
+            return traitEquality;
         }
 
         (leftPruned, rightPruned) = ResolveEqualityOperandTypes(leftPruned, rightPruned);
@@ -777,32 +819,6 @@ public sealed partial class Lowering
         }
 
         return ReportEqualityTypeMismatch(leftPruned, rightPruned, negate);
-    }
-
-    // Both operands unconstrained: don't eagerly pick Int. Unify them into one monomorphic var
-    // (kept out of generalization via _eqConstrainedVars) so a later use resolves it — e.g.
-    // `assertEqual expected actual = expected == actual` called with two Strs. Emit a
-    // provisional CmpIntEq/CmpIntNe, patched to CmpStrEq/CmpFloatEq (or their Ne counterparts)
-    // in ResolveDeferredEqs once the operand type is known. If it never resolves (an unused
-    // generic '=='), it defaults to Int there, matching the old result. Mirrors LowerAdd.
-    private (int, TypeRef)? TryLowerDeferredEq(int leftTemp, int rightTemp, TypeRef leftPruned, TypeRef rightPruned, bool negate)
-    {
-        if (leftPruned is TypeRef.TVar && rightPruned is TypeRef.TVar)
-        {
-            Unify(leftPruned, rightPruned);
-            if (Prune(leftPruned) is TypeRef.TVar sharedVar)
-            {
-                _eqConstrainedVars.Add(sharedVar);
-                _hasDeferredEqs = true;
-                int deferredTarget = NewTemp();
-                Emit(negate
-                    ? new IrInst.CmpIntNe(deferredTarget, leftTemp, rightTemp, sharedVar)
-                    : new IrInst.CmpIntEq(deferredTarget, leftTemp, rightTemp, sharedVar));
-                return (deferredTarget, new TypeRef.TBool());
-            }
-        }
-
-        return null;
     }
 
     // Resolve type variables: prefer the other side's concrete type, defaulting to Int

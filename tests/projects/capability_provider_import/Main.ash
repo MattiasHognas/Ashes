@@ -1,4 +1,4 @@
-// expect: 1|3
+// expect: 1|3|1
 import Ordering
 let localMin : a -> List(a) -> a needs {Ord(a)} =
     given (seed) ->
@@ -10,4 +10,8 @@ let localMin : a -> List(a) -> a needs {Ord(a)} =
                     then h
                     else seed
 
-Ashes.IO.print(Ashes.Text.fromInt(Ordering.minOf(100)([5, 3, 9, 1, 7])) + "|" + Ashes.Text.fromInt(localMin(3)([8, 6])))
+let forwardedMin : a -> List(a) -> a needs {Ord(a)} =
+    given (seed) ->
+        given (items) -> Ordering.minOf(seed)(items)
+
+Ashes.IO.print(Ashes.Text.fromInt(Ordering.minOf(100)([5, 3, 9, 1, 7])) + "|" + Ashes.Text.fromInt(localMin(3)([8, 6])) + "|" + Ashes.Text.fromInt(forwardedMin(100)([5, 3, 9, 1, 7])))

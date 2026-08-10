@@ -70,7 +70,11 @@ public sealed record ProjectModule(
     IReadOnlyList<string> Imports,
     IReadOnlyDictionary<string, string> Aliases,
     IReadOnlyList<ImportSelector> Selectors
-);
+)
+{
+    /// <summary>The manifest-derived package identity used by coherence and orphan checks.</summary>
+    public string PackageId { get; init; } = "standalone";
+}
 
 /// <summary>
 /// A selector import (<c>import M.name</c> / <c>import M.Type</c>, optionally <c>as alias</c>) that
@@ -131,6 +135,7 @@ public readonly record struct ParsedImportHeader(
 /// <param name="ConstructorModules">Maps each module name to the ADT constructor names its own <c>type</c> declarations introduce, so a qualified reference (<c>alias.Ctor</c>) can be scoped to the module the alias actually names.</param>
 /// <param name="FunctionSourceNames">Maps compiler binding names in the stitched source back to the
 /// original source and module-qualified declaration names.</param>
+/// <param name="ModuleProvenanceByPath">Maps stitched source paths to manifest package and module identities.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
@@ -138,8 +143,12 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets,
     IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null,
     IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null,
-    IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null
+    IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null,
+    IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null
 );
+
+/// <summary>Manifest package and module identity for one stitched source path.</summary>
+public sealed record ModuleProvenance(string PackageId, string ModuleName);
 
 /// <summary>
 /// Original declaration names retained while project modules are stitched into compiler bindings.
@@ -246,7 +255,7 @@ public static class ProjectSupport
     {
         "let", "recursive", "in", "if", "then", "else", "match", "with",
         "given", "true", "false", "type", "await", "external",
-        "capability", "needs", "perform", "handle"
+        "capability", "needs", "perform", "handle", "trait", "implement", "requires"
     };
 
     /// <summary>The names of every standard-library module recognized when resolving imports.</summary>
@@ -786,6 +795,9 @@ public static class ProjectSupport
         var entryModule = LoadProjectModule(
             project.EntryModuleName, project.EntryPath, project, searchRoots,
             resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+        VisitPlanImport(
+            "Ashes.Trait", project, searchRoots, resolvedByModuleName, resolvedByPath,
+            states, traversal, ordered, importedStdModules, inlineChildrenByPath);
         VisitModuleForPlan(
             entryModule, project, searchRoots, resolvedByModuleName, resolvedByPath,
             states, traversal, ordered, importedStdModules, inlineChildrenByPath);
@@ -805,7 +817,40 @@ public static class ProjectSupport
             }
         }
 
-        return new ProjectCompilationPlan(project, ordered, entryModule, importedStdModules, mergedAliases);
+        ProjectModule[] identifiedModules = ordered.Select(module => WithPackageIdentity(project, module)).ToArray();
+        ProjectModule identifiedEntry = identifiedModules.Single(module =>
+            string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase));
+        return new ProjectCompilationPlan(project, identifiedModules, identifiedEntry, importedStdModules, mergedAliases);
+    }
+
+    private static ProjectModule WithPackageIdentity(AshesProject project, ProjectModule module)
+    {
+        if (module.FilePath.StartsWith("<std:", StringComparison.Ordinal))
+        {
+            return module with { PackageId = "ashes-core" };
+        }
+
+        string fullPath = module.FilePath.Split('#', 2)[0];
+        foreach (ResolvedDependency dependency in project.Dependencies.OrderBy(item => item.Name, StringComparer.Ordinal))
+        {
+            if (dependency.SourceRoots.Any(root => IsPathWithin(fullPath, root)))
+            {
+                return module with { PackageId = dependency.Name };
+            }
+        }
+
+        string projectIdentity = string.IsNullOrWhiteSpace(project.Name)
+            ? Path.GetFullPath(project.ProjectFilePath)
+            : project.Name;
+        return module with { PackageId = projectIdentity };
+    }
+
+    private static bool IsPathWithin(string path, string directory)
+    {
+        string normalizedPath = Path.GetFullPath(path);
+        string normalizedDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        return normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void VisitModuleForPlan(
@@ -1290,7 +1335,8 @@ public static class ProjectSupport
                         inline.Source,
                         [],
                         new Dictionary<string, string>(StringComparer.Ordinal),
-                        []));
+                        [])
+                    { PackageId = plan.EntryModule.PackageId });
                 }
 
                 orderedModules.Add(entryModule);
@@ -1337,7 +1383,8 @@ public static class ProjectSupport
                 inline.Source,
                 [],
                 new Dictionary<string, string>(StringComparer.Ordinal),
-                []));
+                [])
+            { PackageId = "standalone" });
         }
 
         var entryModule = new ProjectModule(
@@ -1346,9 +1393,14 @@ public static class ProjectSupport
             ApplySelectorRenames(entryOuter, entrySelectors),
             importNames.ToList(),
             new Dictionary<string, string>(StringComparer.Ordinal),
-            entrySelectors);
+            entrySelectors)
+        { PackageId = "standalone" };
         orderedModules.Add(entryModule);
 
+        if (TryLoadStandardLibraryModule("Ashes.Trait", out ProjectModule traitModule))
+        {
+            VisitStandaloneModule(traitModule, states, traversal, seenModules, orderedModules);
+        }
         ResolveStandaloneImports(importNames, inlineModuleNames, states, traversal, seenModules, orderedModules);
 
         // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
@@ -1611,21 +1663,15 @@ public static class ProjectSupport
         ProjectModule entryModule,
         string? entrySourceOverride)
     {
-        var shapes = new Dictionary<string, ModuleSourceShape>(StringComparer.Ordinal);
-        foreach (var module in orderedModules)
-        {
-            var source = string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase)
-                ? entrySourceOverride ?? module.Source
-                : module.Source;
-            shapes[module.ModuleName] = ShapeModuleSource(source);
-        }
+        Dictionary<string, ModuleSourceShape> shapes = BuildModuleShapes(
+            orderedModules,
+            entryModule,
+            entrySourceOverride);
 
-        var exportedNames = orderedModules.ToDictionary(
-            module => module.ModuleName,
-            module => GetExportNames(shapes[module.ModuleName]),
-            StringComparer.Ordinal);
-
-        ValidateSelectorExports(orderedModules, exportedNames);
+        (IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+            IReadOnlyDictionary<string, string> exportAnnotations) = BuildExportMetadata(
+                orderedModules,
+                shapes);
 
         var entryShape = shapes[entryModule.ModuleName];
         var nonEntryModules = orderedModules
@@ -1641,8 +1687,16 @@ public static class ProjectSupport
 
         var constructorModules = BuildConstructorModuleNames(orderedModules, entryModule, entrySourceOverride);
         var functionSourceNames = BuildFunctionSourceNames(orderedModules, entryModule, shapes);
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath =
+            BuildModuleProvenance(orderedModules);
 
-        var legacyBindingEmitted = AppendModuleBindingPrefixes(prefix, moduleOffsets, nonEntryModules, shapes, exportedNames);
+        var legacyBindingEmitted = AppendModuleBindingPrefixes(
+            prefix,
+            moduleOffsets,
+            nonEntryModules,
+            shapes,
+            exportedNames,
+            exportAnnotations);
 
         // A hoisted flat declaration (a flat `let` value, or a `provide` whose implementation is an
         // expression) ends with a newline, not an `in`. Without a following legacy nested-let binding
@@ -1651,13 +1705,13 @@ public static class ProjectSupport
         // `y(entry)`), so introduce a boundary binding whose `in` makes the entry a proper let body.
         // The `let` boundary is safe because flat-value/provider parsing suppresses `let` as an
         // argument. This is needed whenever any module content precedes the entry with no legacy `in`.
-        bool moduleContentPrecedesEntry = prefix.Length > entryShape.TypeDeclarationsSource.Length;
-        if (moduleContentPrecedesEntry && !legacyBindingEmitted)
-        {
-            prefix.Append("let __ashes_module_boundary = 0 in ");
-        }
+        bool appendFlatEntryBare = ApplyEntryBoundary(prefix, entryShape, legacyBindingEmitted);
 
-        var entryExpression = BuildEntryExpression(entryModule, entryShape, exportedNames);
+        var entryExpression = BuildEntryExpression(
+            entryModule,
+            entryShape,
+            exportedNames,
+            exportAnnotations);
         return ComposeEntryLayout(
             entryModule,
             entryShape,
@@ -1665,7 +1719,68 @@ public static class ProjectSupport
             prefix,
             moduleOffsets,
             constructorModules,
-            functionSourceNames);
+            functionSourceNames,
+            moduleProvenanceByPath,
+            appendFlatEntryBare);
+    }
+
+    private static Dictionary<string, ModuleSourceShape> BuildModuleShapes(
+        IReadOnlyList<ProjectModule> modules,
+        ProjectModule entryModule,
+        string? entrySourceOverride)
+    {
+        var shapes = new Dictionary<string, ModuleSourceShape>(StringComparer.Ordinal);
+        foreach (ProjectModule module in modules)
+        {
+            string source = string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase)
+                ? entrySourceOverride ?? module.Source
+                : module.Source;
+            shapes[module.ModuleName] = ShapeModuleSource(source);
+        }
+
+        return shapes;
+    }
+
+    private static (IReadOnlyDictionary<string, IReadOnlyList<string>> Names,
+        IReadOnlyDictionary<string, string> Annotations) BuildExportMetadata(
+        IReadOnlyList<ProjectModule> modules,
+        IReadOnlyDictionary<string, ModuleSourceShape> shapes)
+    {
+        IReadOnlyDictionary<string, IReadOnlyList<string>> names = modules.ToDictionary(
+            module => module.ModuleName,
+            module => GetExportNames(shapes[module.ModuleName]),
+            StringComparer.Ordinal);
+        ValidateSelectorExports(modules, names);
+        return (names, BuildExportAnnotationLookup(modules, shapes));
+    }
+
+    private static bool ApplyEntryBoundary(
+        StringBuilder prefix,
+        ModuleSourceShape entryShape,
+        bool legacyBindingEmitted)
+    {
+        bool moduleContentPrecedesEntry = prefix.Length > entryShape.TypeDeclarationsSource.Length;
+        bool appendFlatEntryBare = moduleContentPrecedesEntry
+            && !legacyBindingEmitted
+            && entryShape.IsFlat
+            && entryShape.TopLevelBindings.Count > 0;
+        if (moduleContentPrecedesEntry && !legacyBindingEmitted && !appendFlatEntryBare)
+        {
+            prefix.Append("let __ashes_module_boundary = 0 in ");
+        }
+
+        return appendFlatEntryBare;
+    }
+
+    private static IReadOnlyDictionary<string, ModuleProvenance> BuildModuleProvenance(
+        IReadOnlyList<ProjectModule> modules)
+    {
+        return modules
+            .OrderBy(module => module.ModuleName, StringComparer.Ordinal)
+            .ToDictionary(
+                module => module.FilePath,
+                module => new ModuleProvenance(module.PackageId, module.ModuleName),
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyDictionary<string, SourceFunctionName> BuildFunctionSourceNames(
@@ -1761,7 +1876,8 @@ public static class ProjectSupport
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         IReadOnlyList<ProjectModule> nonEntryModules,
         Dictionary<string, ModuleSourceShape> shapes,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations)
     {
         var usedBindingNames = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -1770,7 +1886,13 @@ public static class ProjectSupport
         foreach (var module in nonEntryModules.Where(module => shapes[module.ModuleName].IsFlat))
         {
             var start = prefix.Length;
-            prefix.Append(BuildModuleBindingPrefix(module, shapes[module.ModuleName], exportedNames, usedBindingNames, flat: true));
+            prefix.Append(BuildModuleBindingPrefix(
+                module,
+                shapes[module.ModuleName],
+                exportedNames,
+                exportAnnotations,
+                usedBindingNames,
+                flat: true));
             if (prefix.Length > start)
             {
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
@@ -1781,7 +1903,12 @@ public static class ProjectSupport
         foreach (var module in nonEntryModules.Where(module => !shapes[module.ModuleName].IsFlat))
         {
             var start = prefix.Length;
-            prefix.Append(BuildModuleBindingPrefix(module, shapes[module.ModuleName], exportedNames, usedBindingNames));
+            prefix.Append(BuildModuleBindingPrefix(
+                module,
+                shapes[module.ModuleName],
+                exportedNames,
+                exportAnnotations,
+                usedBindingNames));
             if (prefix.Length > start)
             {
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
@@ -1799,34 +1926,34 @@ public static class ProjectSupport
         StringBuilder prefix,
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
-        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames)
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
+        bool appendFlatEntryBare)
     {
+        if (appendFlatEntryBare)
+        {
+            return AppendBareEntryLayout(
+                entryModule,
+                entryShape,
+                entryExpression,
+                prefix,
+                moduleOffsets,
+                constructorModules,
+                functionSourceNames,
+                moduleProvenanceByPath);
+        }
+
         if (prefix.Length > entryShape.TypeDeclarationsSource.Length)
         {
-            // A declarations-only entry (e.g. a module file compiled directly) has no trailing
-            // expression, but the parenthesized flat entry block below must end in one — otherwise
-            // the parser reports ASH003 at the closing paren. Synthesize an inert trailing value;
-            // a program's trailing value is discarded, so this is unobservable.
-            entryExpression = EnsureTrailingEntryExpression(entryShape, entryExpression);
-
-            // Module bindings precede the entry body, so the body must be parenthesized: a flat
-            // entry block (declarations + trailing expression) is only recognized inside parens
-            // (ParseParenthesizedBody), and after a legacy binding chain's trailing `in` a bare
-            // flat block would not parse at all. This holds whether or not the entry contributed
-            // hoisted type declarations (they sit at the very top, before every module binding).
-            prefix.Append('(');
-            var entryOffset = prefix.Length;
-            prefix.Append(entryExpression);
-            prefix.Append(')');
-            moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
-            return CreateCombinedCompilationLayout(
-                prefix.ToString(),
-                entryOffset,
-                entryShape.TypeDeclarationsSource.Length,
+            return AppendParenthesizedEntryLayout(
+                entryModule,
+                entryShape,
+                entryExpression,
+                prefix,
                 moduleOffsets,
-                entryShape.TypeDeclFragments,
                 constructorModules,
-                functionSourceNames);
+                functionSourceNames,
+                moduleProvenanceByPath);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
@@ -1839,13 +1966,63 @@ public static class ProjectSupport
                 moduleOffsets,
                 entryTypeDeclFragments: null,
                 constructorModules,
-                functionSourceNames);
+                functionSourceNames,
+                moduleProvenanceByPath);
         }
 
         // Only the entry's own (hoisted) type declarations precede the body: append it bare — the
         // combined source is then an ordinary flat program (type declarations, then the body), and
         // the type-declaration region keeps its exact original offsets for span mapping.
-        var offset = prefix.Length;
+        return AppendBareEntryLayout(
+            entryModule,
+            entryShape,
+            entryExpression,
+            prefix,
+            moduleOffsets,
+            constructorModules,
+            functionSourceNames,
+            moduleProvenanceByPath);
+    }
+
+    private static CombinedCompilationLayout AppendParenthesizedEntryLayout(
+        ProjectModule entryModule,
+        ModuleSourceShape entryShape,
+        string entryExpression,
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath)
+    {
+        // A declarations-only entry needs an inert trailing value because its result is discarded.
+        entryExpression = EnsureTrailingEntryExpression(entryShape, entryExpression);
+        prefix.Append('(');
+        int entryOffset = prefix.Length;
+        prefix.Append(entryExpression);
+        prefix.Append(')');
+        moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
+        return CreateCombinedCompilationLayout(
+            prefix.ToString(),
+            entryOffset,
+            entryShape.TypeDeclarationsSource.Length,
+            moduleOffsets,
+            entryShape.TypeDeclFragments,
+            constructorModules,
+            functionSourceNames,
+            moduleProvenanceByPath);
+    }
+
+    private static CombinedCompilationLayout AppendBareEntryLayout(
+        ProjectModule entryModule,
+        ModuleSourceShape entryShape,
+        string entryExpression,
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath)
+    {
+        int offset = prefix.Length;
         prefix.Append(entryExpression);
         moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
         return CreateCombinedCompilationLayout(
@@ -1855,7 +2032,8 @@ public static class ProjectSupport
             moduleOffsets,
             entryShape.TypeDeclFragments,
             constructorModules,
-            functionSourceNames);
+            functionSourceNames,
+            moduleProvenanceByPath);
     }
 
     private static string EnsureTrailingEntryExpression(
@@ -1877,7 +2055,8 @@ public static class ProjectSupport
         IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
-        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames)
+        IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath)
         => new(
             source,
             entryOffset,
@@ -1885,7 +2064,8 @@ public static class ProjectSupport
             moduleOffsets,
             entryTypeDeclFragments,
             constructorModules,
-            functionSourceNames);
+            functionSourceNames,
+            moduleProvenanceByPath);
 
     /// <summary>
     /// Verifies every selector import names an export the target module actually provides, resolving
@@ -1990,7 +2170,7 @@ public static class ProjectSupport
 
     /// <summary>
     /// The full export set of a module — top-level <c>let</c>/<c>let rec</c> bindings <em>and</em>
-    /// <c>type</c> declarations, plus legacy pyramid bindings — used to validate selector imports
+    /// <c>type</c> and <c>trait</c> declarations, plus legacy pyramid bindings — used to validate selector imports
     /// (mirrors the built-in export tables). Returns an empty set for sources the parser rejects.
     /// </summary>
     private static IReadOnlySet<string> CollectAllExportNames(string source) => CollectAllExportNames(source, out _);
@@ -2035,6 +2215,9 @@ public static class ProjectSupport
                     }
 
                     break;
+                case TopLevelItem.Trait traitDecl:
+                    names.Add(traitDecl.Decl.Name);
+                    break;
             }
         }
 
@@ -2062,22 +2245,33 @@ public static class ProjectSupport
     private static string BuildEntryExpression(
         ProjectModule entryModule,
         ModuleSourceShape entryShape,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations)
     {
         var referencedNames = CollectReferencedNames(entryShape.RawExpressionSource);
-        var aliases = BuildVisibleAliases(
-            entryModule,
-            [],
-            [],
-            referencedNames,
-            exportedNames);
+        HashSet<string> entryBindings = entryShape.TopLevelBindings
+            .SelectMany(group => group.Bindings)
+            .Select(binding => binding.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        IReadOnlyList<KeyValuePair<string, string>> aliases = BuildVisibleAliases(
+                entryModule,
+                [],
+                [],
+                referencedNames,
+                exportedNames)
+            .Where(alias => !entryBindings.Contains(alias.Key))
+            .ToArray();
 
         // A flat top-level entry parses as a flat-declaration block (`decl decl ... trailingExpr`,
         // folded into nested lets by the parser inside the stitched parentheses). Wrapping it in the
         // ordinary `let alias = value in <body>` prelude would make the alias body an ordinary
         // expression, so the following flat declarations would no longer be folded and parsing fails.
         // Emit the alias prelude as flat declarations instead so the whole entry stays one flat block.
-        return ApplyEntryAliases(entryShape.RawExpressionSource, aliases, entryShape.IsFlat);
+        return ApplyEntryAliases(
+            entryShape.RawExpressionSource,
+            aliases,
+            entryShape.IsFlat,
+            exportAnnotations);
     }
 
     /// <summary>
@@ -2087,7 +2281,11 @@ public static class ProjectSupport
     /// line info and span mapping for the entry file stay 1:1 with what the user sees. Falls back
     /// to the prepending strategies when there are not enough blank lines to fill.
     /// </summary>
-    private static string ApplyEntryAliases(string source, IReadOnlyList<KeyValuePair<string, string>> aliases, bool flat)
+    private static string ApplyEntryAliases(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> aliases,
+        bool flat,
+        IReadOnlyDictionary<string, string> exportAnnotations)
     {
         if (aliases.Count == 0)
         {
@@ -2104,17 +2302,16 @@ public static class ProjectSupport
         if (aliases.Count > blankCount)
         {
             return flat
-                ? ApplyAliasesAsFlatDeclarations(source, aliases)
-                : ApplyAliases(source, aliases);
+                ? ApplyAliasesAsFlatDeclarations(source, aliases, exportAnnotations)
+                : ApplyAliases(source, aliases, exportAnnotations);
         }
 
         for (var index = 0; index < aliases.Count; index++)
         {
             // A flat entry block folds bare `let` declarations; a nested-let entry needs the
             // `in` so the chain wraps the trailing expression.
-            lines[index] = flat
-                ? $"let {aliases[index].Key} = {aliases[index].Value}"
-                : $"let {aliases[index].Key} = {aliases[index].Value} in";
+            string declaration = FormatAliasBinding(aliases[index], exportAnnotations);
+            lines[index] = flat ? declaration : declaration + " in";
         }
 
         return string.Join('\n', lines).TrimEnd();
@@ -2128,7 +2325,8 @@ public static class ProjectSupport
     /// </summary>
     private static string ApplyAliasesAsFlatDeclarations(
         string source,
-        IReadOnlyList<KeyValuePair<string, string>> aliases)
+        IReadOnlyList<KeyValuePair<string, string>> aliases,
+        IReadOnlyDictionary<string, string> exportAnnotations)
     {
         var trimmed = source.Trim();
         if (aliases.Count == 0)
@@ -2139,7 +2337,7 @@ public static class ProjectSupport
         var builder = new StringBuilder();
         foreach (var alias in aliases)
         {
-            builder.Append("let ").Append(alias.Key).Append(" = ").Append(alias.Value).Append('\n');
+            builder.Append(FormatAliasBinding(alias, exportAnnotations)).Append('\n');
         }
 
         builder.Append(trimmed);
@@ -2150,6 +2348,7 @@ public static class ProjectSupport
         ProjectModule module,
         ModuleSourceShape shape,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations,
         IDictionary<string, string> usedBindingNames,
         bool flat = false)
     {
@@ -2169,7 +2368,7 @@ public static class ProjectSupport
         {
             AppendModuleBindingGroup(
                 prefix, module, group, moduleBindingName, flat,
-                exportedNames, usedBindingNames, availableLocalBindings);
+                exportedNames, exportAnnotations, usedBindingNames, availableLocalBindings);
         }
 
         // Flat modules drop their trailing expression and bind no whole-module value, so the
@@ -2187,7 +2386,7 @@ public static class ProjectSupport
             prefix.Append("let ")
                 .Append(moduleBindingName)
                 .Append(" = (")
-                .Append(ApplyAliases(shape.ExpressionBodySource, bodyAliases))
+                .Append(ApplyAliases(shape.ExpressionBodySource, bodyAliases, exportAnnotations))
                 .Append(") in ");
         }
 
@@ -2201,6 +2400,7 @@ public static class ProjectSupport
         string moduleBindingName,
         bool flat,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations,
         IDictionary<string, string> usedBindingNames,
         List<string> availableLocalBindings)
     {
@@ -2218,9 +2418,10 @@ public static class ProjectSupport
 
         // Within a `let rec ... and ...` group every member is visible to the others, so each
         // member value resolves sibling references to the group's generated names.
-        var recursiveBindings = group.IsRecursiveGroup
-            ? group.Bindings.Select(binding => binding.Name).ToArray()
-            : [];
+        string[] recursiveBindings = group.Bindings
+            .Where(binding => group.IsRecursiveGroup || binding.IsRecursive)
+            .Select(binding => binding.Name)
+            .ToArray();
 
         prefix.Append("let ");
         if (group.IsRecursiveGroup)
@@ -2231,8 +2432,8 @@ public static class ProjectSupport
         for (var i = 0; i < group.Bindings.Count; i++)
         {
             AppendModuleGroupBinding(
-                prefix, module, group.Bindings[i], moduleBindingName, flat, group.IsRecursiveGroup,
-                recursiveBindings, availableLocalBindings, exportedNames, appendSeparator: i > 0);
+                prefix, module, group.Bindings[i], moduleBindingName, flat,
+                recursiveBindings, availableLocalBindings, exportedNames, exportAnnotations, appendSeparator: i > 0);
         }
 
         // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
@@ -2252,10 +2453,10 @@ public static class ProjectSupport
         ModuleBindingFragment binding,
         string moduleBindingName,
         bool flat,
-        bool isRecursiveGroup,
         IReadOnlyList<string> recursiveBindings,
         IReadOnlyList<string> availableLocalBindings,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations,
         bool appendSeparator)
     {
         var referencedNames = CollectReferencedNames(binding.ValueSource);
@@ -2271,16 +2472,14 @@ public static class ProjectSupport
             prefix.Append(" and ");
         }
 
-        // A flat `let rec ... and ...` group is stitched as a genuine top-level declaration, so
-        // each member value must stay a bare function literal; its aliases are resolved by
-        // renaming identifiers in place rather than wrapping them in `let ... in` (which would
-        // make the value a non-function expression and force eager sibling evaluation). The
-        // legacy nested form keeps the original wrapping path so its codegen is unchanged — in
-        // particular wrapping is what resolves synthetic cross-module/qualified alias names that
-        // never appear as bare identifier tokens.
-        var renderedValue = flat && isRecursiveGroup
+        // Flat modules are stitched as genuine top-level declarations, so resolve every visible
+        // alias by renaming identifiers in place. Wrapping a value in `let alias = generated in ...`
+        // changes the identity of exported functions and, for inferred constrained functions, can
+        // detach the alias scheme from the hidden trait-evidence ABI. The legacy nested form keeps
+        // its wrapping path because it is already represented as an expression pyramid.
+        var renderedValue = flat
             ? ApplyAliasesByRenaming(binding.ValueSource, aliases)
-            : ApplyAliases(binding.ValueSource, aliases);
+            : ApplyAliases(binding.ValueSource, aliases, exportAnnotations);
 
         prefix.Append($"{moduleBindingName}_{binding.Name}");
         // Keep a `needs {Cap(a)}` annotation on the stitched binding: it is what marks a generic
@@ -2467,15 +2666,28 @@ public static class ProjectSupport
         return lastDot >= 0 ? moduleName[(lastDot + 1)..] : moduleName;
     }
 
-    private static string ApplyAliases(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
+    private static string ApplyAliases(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> aliases,
+        IReadOnlyDictionary<string, string> exportAnnotations)
     {
         var wrapped = source.Trim();
         foreach (var alias in aliases)
         {
-            wrapped = $"let {alias.Key} = {alias.Value} in {wrapped}";
+            wrapped = $"{FormatAliasBinding(alias, exportAnnotations)} in {wrapped}";
         }
 
         return wrapped;
+    }
+
+    private static string FormatAliasBinding(
+        KeyValuePair<string, string> alias,
+        IReadOnlyDictionary<string, string> exportAnnotations)
+    {
+        string annotation = exportAnnotations.TryGetValue(alias.Value, out string? value)
+            ? " : " + value
+            : string.Empty;
+        return $"let {alias.Key}{annotation} = {alias.Value}";
     }
 
     /// <summary>
@@ -2543,6 +2755,26 @@ public static class ProjectSupport
         return string.IsNullOrWhiteSpace(shape.LegacyExportName)
             ? []
             : [shape.LegacyExportName];
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildExportAnnotationLookup(
+        IReadOnlyList<ProjectModule> modules,
+        IReadOnlyDictionary<string, ModuleSourceShape> shapes)
+    {
+        var annotations = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (ProjectModule module in modules)
+        {
+            foreach (ModuleBindingFragment binding in shapes[module.ModuleName].TopLevelBindings.SelectMany(group => group.Bindings))
+            {
+                if (!string.IsNullOrWhiteSpace(binding.Annotation))
+                {
+                    annotations[$"{SanitizeModuleBindingName(module.ModuleName)}_{binding.Name}"] = binding.Annotation;
+                    annotations[$"{module.ModuleName}.{binding.Name}"] = binding.Annotation;
+                }
+            }
+        }
+
+        return annotations;
     }
 
     private static ModuleSourceShape ShapeModuleSource(string source)
@@ -2680,38 +2912,33 @@ public static class ProjectSupport
                     typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
 
             case TopLevelItem.Capability capabilityItem:
-                // Capability declarations hoist exactly like type declarations: they are
-                // program-wide (operations resolve as qualified Capability.op from any module)
-                // and carry no value binding.
-                if (!TryHoistDeclarationSpan(
-                        source, AstSpans.GetOrDefault(capabilityItem.Decl),
-                        typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor))
-                {
-                    return false;
-                }
-
-                hoistedCapabilityOrProvide = true;
-                return true;
+                return TryHoistGlobalDeclaration(
+                    source, AstSpans.GetOrDefault(capabilityItem.Decl), typeDeclarations,
+                    typeDeclFragments, hoistedSpans, ref hoistedCapabilityOrProvide, ref cursor);
 
             case TopLevelItem.Provide provideItem:
-                // Providers are program-wide static evidence, hoisted like capabilities.
-                if (!TryHoistDeclarationSpan(
-                        source, AstSpans.GetOrDefault(provideItem.Decl),
-                        typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor))
-                {
-                    return false;
-                }
+                return TryHoistGlobalDeclaration(
+                    source, AstSpans.GetOrDefault(provideItem.Decl), typeDeclarations,
+                    typeDeclFragments, hoistedSpans, ref hoistedCapabilityOrProvide, ref cursor);
 
-                hoistedCapabilityOrProvide = true;
-                return true;
+            case TopLevelItem.Trait traitItem:
+                return TryHoistGlobalDeclaration(
+                    source, AstSpans.GetOrDefault(traitItem.Decl), typeDeclarations,
+                    typeDeclFragments, hoistedSpans, ref hoistedCapabilityOrProvide, ref cursor);
+
+            case TopLevelItem.Implementation instanceItem:
+                return TryHoistGlobalDeclaration(
+                    source, AstSpans.GetOrDefault(instanceItem.Decl), typeDeclarations,
+                    typeDeclFragments, hoistedSpans, ref hoistedCapabilityOrProvide, ref cursor);
 
             case TopLevelItem.External externalItem:
                 // `external` is never exported, but it is program-wide and must be visible to
                 // lowering so direct FFI calls bind. Hoist it with the other global declarations
                 // while still removing it from the entry expression.
-                return TryHoistDeclarationSpan(
+                return TryHoistGlobalDeclaration(
                     source, AstSpans.GetOrDefault(externalItem.Decl),
-                    typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
+                    typeDeclarations, typeDeclFragments, hoistedSpans,
+                    ref hoistedCapabilityOrProvide, ref cursor);
 
             case TopLevelItem.LetDecl letDecl:
                 return TryShapeFlatLetDecl(source, letDecl, groups, ref hasFlatBinding, ref cursor);
@@ -2722,6 +2949,24 @@ public static class ProjectSupport
             default:
                 return false;
         }
+    }
+
+    private static bool TryHoistGlobalDeclaration(
+        string source,
+        TextSpan span,
+        StringBuilder declarations,
+        List<(int FragmentStart, int OriginalStart, int Length)> fragments,
+        List<(int Start, int End)> hoistedSpans,
+        ref bool hoistedGlobalDeclaration,
+        ref int cursor)
+    {
+        if (!TryHoistDeclarationSpan(source, span, declarations, fragments, hoistedSpans, ref cursor))
+        {
+            return false;
+        }
+
+        hoistedGlobalDeclaration = true;
+        return true;
     }
 
     private static bool TryHoistDeclarationSpan(
@@ -2773,14 +3018,20 @@ public static class ProjectSupport
         ref int cursor)
     {
         var members = new List<ModuleBindingFragment>();
-        foreach (var (name, value) in recursiveGroup.Bindings)
+        for (int index = 0; index < recursiveGroup.Bindings.Count; index++)
         {
-            if (!TryExtractFlatBindingValue(source, value, ref cursor, out var valueSource))
+            (string name, Expr value) = recursiveGroup.Bindings[index];
+            if (!TryExtractFlatBindingValue(
+                    source,
+                    value,
+                    ref cursor,
+                    out string valueSource,
+                    out string? annotation))
             {
                 return false;
             }
 
-            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true));
+            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true, annotation));
         }
 
         groups.Add(new ModuleBindingGroup(members, IsRecursiveGroup: true));
@@ -3236,12 +3487,7 @@ public static class ProjectSupport
             tok = lexer.Next();
             if (tok.Kind == TokenKind.LParen)
             {
-                while (tok.Kind != TokenKind.RParen && tok.Kind != TokenKind.EOF)
-                {
-                    tok = lexer.Next();
-                }
-
-                tok = lexer.Next();
+                tok = AdvancePastBalancedParentheses(lexer);
             }
 
             tok = lexer.Next();
@@ -3253,17 +3499,80 @@ public static class ProjectSupport
 
                 if (tok.Kind == TokenKind.LParen)
                 {
-                    while (tok.Kind != TokenKind.RParen && tok.Kind != TokenKind.EOF)
-                    {
-                        tok = lexer.Next();
-                    }
-
-                    tok = lexer.Next();
+                    tok = AdvancePastBalancedParentheses(lexer);
                 }
+                else if (tok.Kind == TokenKind.Colon)
+                {
+                    tok = AdvancePastRecordFieldType(lexer);
+                }
+            }
+
+            if (tok.Kind == TokenKind.Deriving)
+            {
+                tok = AdvancePastDerivingClause(lexer);
             }
         }
 
         return tok.Kind == TokenKind.EOF ? source.Length : tok.Position;
+    }
+
+    private static Token AdvancePastBalancedParentheses(Lexer lexer)
+    {
+        int depth = 1;
+        while (depth > 0)
+        {
+            Token token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                return token;
+            }
+            if (token.Kind == TokenKind.LParen)
+            {
+                depth++;
+            }
+            else if (token.Kind == TokenKind.RParen)
+            {
+                depth--;
+            }
+        }
+        return lexer.Next();
+    }
+
+    private static Token AdvancePastRecordFieldType(Lexer lexer)
+    {
+        // Type expressions contain neither a bare branch pipe nor a deriving keyword, so either one
+        // safely terminates this field in the legacy declaration-prefix scanner.
+        Token token;
+        do
+        {
+            token = lexer.Next();
+        }
+        while (token.Kind is not TokenKind.Pipe
+            and not TokenKind.Deriving
+            and not TokenKind.EOF
+            and not TokenKind.Type
+            and not TokenKind.External
+            and not TokenKind.Let
+            and not TokenKind.Capability
+            and not TokenKind.Provide
+            and not TokenKind.Trait
+            and not TokenKind.Implement);
+        return token;
+    }
+
+    private static Token AdvancePastDerivingClause(Lexer lexer)
+    {
+        Token token = lexer.Next();
+        if (token.Kind != TokenKind.LBrace)
+        {
+            return token;
+        }
+        do
+        {
+            token = lexer.Next();
+        }
+        while (token.Kind != TokenKind.RBrace && token.Kind != TokenKind.EOF);
+        return token.Kind == TokenKind.RBrace ? lexer.Next() : token;
     }
 
     private static bool TryLoadStandardLibraryModule(string moduleName, out ProjectModule module)
@@ -3286,7 +3595,8 @@ public static class ProjectSupport
             ApplySelectorRenames(parsed.SourceWithoutImports, parsed.ImportSelectors),
             parsed.ImportNames,
             parsed.ImportAliases,
-            parsed.ImportSelectors);
+            parsed.ImportSelectors)
+        { PackageId = "ashes-core" };
         return true;
     }
 

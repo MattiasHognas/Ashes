@@ -43,9 +43,11 @@ internal sealed class FuzzOracleRegistry
         registry.Register(new SemanticOracle());
         registry.Register(new IrVerificationOracle());
         registry.Register(new InvalidSourceOracle());
+        registry.Register(new InvalidSemanticOracle());
         registry.Register(new ExecutionOracle());
         registry.Register(new DifferentialOptimizationOracle());
         registry.Register(new DifferentialReuseOracle());
+        registry.Register(new DifferentialTraitEvidenceOracle());
         registry.Register(new CrossTargetOracle());
         return registry;
     }

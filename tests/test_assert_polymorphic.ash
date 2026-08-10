@@ -1,7 +1,6 @@
 // expect: ok
-// assertEqual works across the basic types (Str, Int, Float, Bool) within one program: an
-// overload-generic function (it compares two of its parameters) is inlined and type-resolved at
-// each concrete call site. A user-defined function with the same shape is polymorphic the same way.
+// assertEqual works across the basic types (Str, Int, Float, Bool) within one program through Eq
+// evidence. A user-defined function with the same inferred Eq constraint is polymorphic too.
 import Ashes.Test
 let sameShape a b =
     if a == b

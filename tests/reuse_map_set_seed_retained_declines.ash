@@ -21,16 +21,16 @@ let cmp a b =
         else 1
 
 let valOf d k m =
-    match Ashes.Collection.Map.get(cmp)(k)(m) with
+    match Ashes.Collection.Map.getWith(cmp)(k)(m) with
         | None -> d
         | Some(v) -> v
 
 let recursive bump n acc =
     if n <= 0
     then acc
-    else bump(n - 1)(Ashes.Collection.Map.set(cmp)(0)(999)(acc))
+    else bump(n - 1)(Ashes.Collection.Map.setWith(cmp)(0)(999)(acc))
 
-let w = Ashes.Collection.Map.set(cmp)(0)(100)(Ashes.Collection.Map.empty)
+let w = Ashes.Collection.Map.setWith(cmp)(0)(100)(Ashes.Collection.Map.empty)
 
 let keep = w
 

@@ -806,7 +806,7 @@ public static class Runner
         {
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
             var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, filePath, parsed.ImportSelectors);
-            return CompileToImage(layout.Source, targetId, backendOptions, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules);
+            return CompileToImage(layout.Source, targetId, backendOptions, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
         }
 
         return CompileToImage(source, targetId, backendOptions);
@@ -829,7 +829,7 @@ public static class Runner
         if (sourceOverride is null)
         {
             var compilationLayout = ProjectSupport.BuildCompilationLayout(plan);
-            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules);
+            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
         }
 
         var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -848,7 +848,7 @@ public static class Runner
 
             mergedAliases.TryAdd(alias, moduleName);
         }
-        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases, layout.ConstructorModules);
+        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases, layout.ConstructorModules, layout);
     }
 
     private static byte[] CompileImportsTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, string source, string? sourceOverride)
@@ -870,7 +870,7 @@ public static class Runner
             );
             var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
             var compilationLayout = ProjectSupport.BuildCompilationLayout(plan);
-            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules);
+            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
         }
 
         var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -878,7 +878,14 @@ public static class Runner
         var importedStdModules = parsed.ImportNames
             .Where(ProjectSupport.IsStdModule)
             .ToHashSet(StringComparer.Ordinal);
-        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules);
+        importedStdModules.Add("Ashes.Trait");
+        if (layout.ModuleProvenanceByPath is not null)
+        {
+            importedStdModules.UnionWith(layout.ModuleProvenanceByPath.Values
+                .Select(provenance => provenance.ModuleName)
+                .Where(ProjectSupport.IsStdModule));
+        }
+        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
     }
 
     private static byte[] CompileToImage(
@@ -887,13 +894,22 @@ public static class Runner
         BackendCompileOptions backendOptions,
         IReadOnlySet<string>? importedStdModules = null,
         IReadOnlyDictionary<string, string>? moduleAliases = null,
-        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null)
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null,
+        CombinedCompilationLayout? sourceLayout = null)
     {
         var diag = new Diagnostics();
-        var program = new Parser(StripLeadingCommentLines(source), diag).ParseProgram();
+        // Parse the exact source represented by sourceLayout. Comments are valid Ashes input, and
+        // deleting leading test-directive comments here shifts every AST span away from the layout's
+        // module offsets. That corrupts source provenance for hoisted declarations (including trait
+        // orphan/coherence ownership) whenever the entry begins with directives or documentation.
+        var program = new Parser(source, diag).ParseProgram();
         diag.ThrowIfAny();
 
         var lowering = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName);
+        if (sourceLayout is { } layout)
+        {
+            lowering.SetSourceContext(layout);
+        }
         var ir = lowering.Lower(program);
         diag.ThrowIfAny();
 
@@ -910,32 +926,6 @@ public static class Runner
 
         var backend = BackendFactory.Create(targetId);
         return backend.Compile(ir, backendOptions);
-    }
-
-    private static string StripLeadingCommentLines(string source)
-    {
-        using var reader = new StringReader(source);
-        var lines = new List<string>();
-        var skipping = true;
-        string? line;
-
-        while ((line = reader.ReadLine()) is not null)
-        {
-            if (skipping)
-            {
-                var trimmed = line.Trim();
-                if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                skipping = false;
-            }
-
-            lines.Add(line);
-        }
-
-        return string.Join('\n', lines);
     }
 
     private static (int ExitCode, string Stdout, string Stderr) RunImageCapture(

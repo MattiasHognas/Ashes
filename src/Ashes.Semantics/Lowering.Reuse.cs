@@ -646,7 +646,8 @@ public sealed partial class Lowering
         string name,
         TypeRef funcType,
         IReadOnlyList<TypeRef> concreteParamTypes,
-        Expr generationExpression)
+        Expr generationExpression,
+        TraitDictionaryFunctionInfo? traitInfo = null)
     {
         // Cache per concrete instantiation: the spec is monomorphized to the call's argument types, so a
         // function used at two element types gets two specializations.
@@ -656,10 +657,25 @@ public sealed partial class Lowering
             return cached;
         }
 
-        (Expr.Lambda Lambda, string LinearParam, int ArgCount) spec =
+        (Expr.Lambda Lambda, string LinearParam, int ArgCount) registeredSpec =
             _specializableFunctions[name];
+        Expr.Lambda specializationLambda = traitInfo is null
+            ? registeredSpec.Lambda
+            : (Expr.Lambda)TransformTraitDictionaryValue(
+                registeredSpec.Lambda,
+                traitInfo,
+                threadRecursiveSelf: true,
+                threadDictionaryFunctions: true);
+        var spec = (
+            Lambda: specializationLambda,
+            registeredSpec.LinearParam,
+            ArgCount: concreteParamTypes.Count,
+            FreshInputNames: (IReadOnlyList<string>)CollectLambdaParams(registeredSpec.Lambda));
         string label = _reuseSpecializations.Count == 0 ? $"{name}__reuse" : $"{name}__reuse${_reuseSpecializations.Count}";
         _reuseSpecializations[cacheKey] = label;
+        _reuseSpecializationCaptures[label] = CollectReuseSpecializationCaptures(
+            spec.Lambda,
+            name);
 
         string? reuseLabel = LowerReuseSpecializationBody(
             name,
@@ -676,13 +692,25 @@ public sealed partial class Lowering
         return label;
     }
 
+    private IReadOnlyList<string> CollectReuseSpecializationCaptures(
+        Expr.Lambda lambda,
+        string selfName)
+    {
+        HashSet<string> free = LowerLambdaCoreCollectFreeVariables(lambda, selfName);
+        return free
+            .Where(name => Lookup(name) is Binding.Local or Binding.Env or Binding.EnvScheme
+                or Binding.Self or Binding.Scheme)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private string? LowerReuseSpecializationBody(
         string name,
         TypeRef funcType,
         IReadOnlyList<TypeRef> concreteParamTypes,
         string cacheKey,
         string label,
-        (Expr.Lambda Lambda, string LinearParam, int ArgCount) spec)
+        (Expr.Lambda Lambda, string LinearParam, int ArgCount, IReadOnlyList<string> FreshInputNames) spec)
     {
         string? savedLinear = _specializingLinearParam;
         string? savedReuseLabel = _specializingReuseLabel;
@@ -690,12 +718,14 @@ public sealed partial class Lowering
         IReadOnlyList<TypeRef>? savedConcrete = _specializationConcreteParamTypes;
         int savedCursor = _specializationParamCursor;
         HashSet<string>? savedFreshInputs = _specFreshInputNames;
+        TcoContext? savedTco = _tcoCtx;
         _specializingLinearParam = spec.LinearParam;
         _specializingReuseLabel = null;
         _inSpecialization = true;
         _specializationConcreteParamTypes = concreteParamTypes;
         _specializationParamCursor = 0;
-        _specFreshInputNames = new HashSet<string>(CollectLambdaParams(spec.Lambda), StringComparer.Ordinal);
+        _specFreshInputNames = new HashSet<string>(spec.FreshInputNames, StringComparer.Ordinal);
+        _tcoCtx = CreateReuseSpecializationTcoContext(spec.Lambda, name);
         try
         {
             // LowerLambdaCore emits an incidental closure after registering the function. Calls
@@ -720,7 +750,21 @@ public sealed partial class Lowering
             _specializationConcreteParamTypes = savedConcrete;
             _specializationParamCursor = savedCursor;
             _specFreshInputNames = savedFreshInputs;
+            _tcoCtx = savedTco;
         }
+    }
+
+    private TcoContext? CreateReuseSpecializationTcoContext(
+        Expr.Lambda lambda,
+        string selfName)
+    {
+        int parameterCount = CountLambdaChain(lambda);
+        return HasTailSelfCalls(GetInnermostBody(lambda), selfName, parameterCount)
+            ? new TcoContext(selfName, parameterCount, CollectLambdaParams(lambda))
+            {
+                InTailPosition = false,
+            }
+            : null;
     }
 
     private void RecordReuseSpecializationDecisions(
@@ -797,7 +841,7 @@ public sealed partial class Lowering
     /// result is built solely from reused cells, scrutinee fields, and recursive self-results — all
     /// below the watermark — while the env/closure scaffolding is dead after the call and reclaimable.
     /// </summary>
-    private static FullyReusingResult IsFullyReusing(IrFunction f, string selfLabel)
+    private FullyReusingResult IsFullyReusing(IrFunction f, string selfLabel)
     {
         if (IsFullyReusingFindForbiddenAllocation(f) is { } forbidden)
         {
@@ -975,13 +1019,20 @@ public sealed partial class Lowering
         return true;
     }
 
-    private static FullyReusingResult IsFullyReusingAllocationsConsumed(
+    private FullyReusingResult IsFullyReusingAllocationsConsumed(
         IrFunction f,
         Dictionary<int, List<IrInst>> readers,
         Dictionary<int, int> slotStores, Dictionary<int, List<int>> slotLoads)
     {
         foreach (IrInst instruction in f.Instructions)
         {
+            // Compiler-generated evidence is temporary call support and is never part of a source
+            // value's reconstructed graph. Its allocations live inside the same loop arena window,
+            // so they must not make an otherwise fully in-place specialization fail reset safety.
+            if (_traitEvidenceConstructionInstructions.Contains(instruction))
+            {
+                continue;
+            }
             switch (instruction)
             {
                 case IrInst.Alloc alloc when !IsFullyReusingSafelyConsumed(alloc.Target, 0, readers, slotStores, slotLoads):
@@ -1146,6 +1197,31 @@ public sealed partial class Lowering
             && !IsActiveSourceFunction(targetFunction);
     }
 
+    private bool CannotAttemptHigherOrderReuse(IReadOnlyList<Expr> arguments)
+    {
+        foreach (Expr argument in arguments)
+        {
+            if (ResolveSpecializableCalleeName(argument) is not { } name)
+            {
+                continue;
+            }
+            Binding? binding = Lookup(name);
+            TypeRef? type = TryGetKnownBindingType(binding);
+            if (type is not null
+                && Prune(type) is TypeRef.TFun
+                && (binding is Binding.Local or Binding.Env
+                    || BindingHasTraitConstraints(binding)
+                    || _traitDictionaryFunctions.ContainsKey(name)
+                    || binding is Binding.Scheme scheme && ValueTypeRemainsAbstract(scheme.S.Body)
+                    || binding is Binding.EnvScheme environment
+                        && ValueTypeRemainsAbstract(environment.S.Body)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private bool IsActiveSourceFunction(string targetFunction)
     {
         SourceFunctionOrigin? source = _activeFunctionOrigin?.Source;
@@ -1193,7 +1269,20 @@ public sealed partial class Lowering
                 candidate,
                 ReuseDecisionReason.AccumulatorNotProvenUnique);
         }
-
+        TypeRef? accumulatorType = TryGetKnownBindingType(Lookup(variable.Name));
+        TypeRef? targetType = TryGetKnownBindingType(binding);
+        if (accumulatorType is not null
+            && Prune(accumulatorType) is TypeRef.TNamedType
+            && ValueTypeRemainsAbstract(accumulatorType)
+            && targetType is TypeRef.TFun { Arg: not TypeRef.TFun }
+            && _specializableFunctions.TryGetValue(targetFunction, out var specialization)
+            && ExpressionContainsMappedTraitOperator(specialization.Lambda))
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.FreshAccumulatorLayoutUnsupported);
+        }
         return QualifyResolvedReuseSpecialization(
             targetFunction,
             candidate,
@@ -1249,7 +1338,11 @@ public sealed partial class Lowering
                 ReuseDecisionReason.CalleeBindingUnavailable);
         }
 
-        TypeRef functionType = Prune(binding.Type);
+        // A polymorphic binding's Body belongs to its reusable scheme. Specialization unifies the
+        // function type with concrete call arguments, so it must operate on a fresh instantiation;
+        // otherwise the first specialization monomorphizes the shared scheme and later Int/Str uses
+        // leak into one another.
+        TypeRef functionType = Prune(TryGetKnownBindingType(binding) ?? binding.Type);
         return SpecializationRebuildsAccumulator(functionType, argumentCount)
             ? new ReuseSpecializationQualification(
                 targetFunction,
@@ -1361,62 +1454,231 @@ public sealed partial class Lowering
         };
     }
 
-    private (int, TypeRef) LowerReuseSpecializedCall(string name, TypeRef funcType, List<Expr> args, Expr callExpr)
+    private (int, TypeRef) LowerReuseSpecializedCall(
+        string name,
+        TypeRef funcType,
+        List<Expr> args,
+        Expr callExpr,
+        TraitDictionaryFunctionInfo? traitInfo = null,
+        IReadOnlyList<TraitConstraint>? traitConstraints = null,
+        int? unspecializedFunctionTemp = null)
     {
-        // Lower the arguments first to learn their concrete types: the generic funcType does not say
-        // whether the key/value are heap (Str) or copy (Int), and the specialization must be
-        // monomorphized to those types so heap fields are materialized into the persistent to-space.
-        var argTemps = new int[args.Count];
-        var concreteParamTypes = new List<TypeRef>(args.Count);
-        var curType = Prune(funcType);
-        for (int i = 0; i < args.Count; i++)
-        {
-            var (argTemp, argType) = LowerExpr(args[i]);
-            argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun nestedFunType)
-            {
-                Unify(nestedFunType.Arg, argType);
-                curType = Prune(nestedFunType.Ret);
-            }
+        PreparedReuseArguments prepared = PrepareReuseSpecializationArguments(
+            name,
+            funcType,
+            args,
+            callExpr,
+            traitInfo,
+            traitConstraints);
 
-            concreteParamTypes.Add(Prune(argType));
+        // Reuse specialization currently proves uniqueness and layout only for data arguments; it
+        // does not prove that an abstract or dictionary-bearing closure's captured evidence remains
+        // valid in the generated environment. Keep those calls on their ordinary ownership-correct
+        // path while retaining specialization for concrete evidence-free function arguments.
+        if (CannotSpecializeAbstractEvidenceCall(name, args, prepared.SourceTypes))
+        {
+            if (unspecializedFunctionTemp is not null)
+            {
+                return ApplyLoweredArgs(
+                    unspecializedFunctionTemp.Value,
+                    prepared.AppliedTemps,
+                    prepared.ResultType);
+            }
+            (int sourceTemp, TypeRef sourceType) = TryLowerTraitDictionaryFunctionValue(new Expr.Var(name), funcType)
+                ?? LowerVar(new Expr.Var(name));
+            Unify(sourceType, funcType);
+            return ApplyLoweredArgs(sourceTemp, prepared.SourceTemps, prepared.ResultType);
         }
 
         string label = GetOrCreateReuseSpecialization(
             name,
-            funcType,
-            concreteParamTypes,
-            callExpr);
+            BuildReuseSpecializationFunctionType(
+                funcType,
+                prepared.SpecializationTypes,
+                traitInfo?.Dictionaries.Count ?? 0),
+            prepared.SpecializationTypes,
+            callExpr,
+            traitInfo);
         // If the specialization fully reuses, its result is the accumulator (the last argument)
         // rewritten in place — address-stable exactly when that argument was. Record the call node so a
         // back-edge stability check can trace through it, and (when the argument is a bare accumulator
         // name) mark that name reset-safe. The reset itself still requires the back-edge argument to be
         // proven address-stable — this marking is necessary, not sufficient.
-        if (_fullyReusingLabels.Contains(label)
-            && AccumulatorIsFullyPersistent(concreteParamTypes[^1]))
-        {
-            _inPlaceReuseCallExprs.Add(callExpr);
-            if (args[^1] is Expr.Var accVar)
-            {
-                _resetSafeAccumulators.Add(accVar.Name);
-            }
-        }
+        RecordFullyReusingCall(label, callExpr, args[^1], prepared.SourceTypes[^1]);
 
-        int envPtr = NewTemp();
-        Emit(new IrInst.Alloc(envPtr, 8));
-        int closureTemp = NewTemp();
-        Emit(new IrInst.MakeClosure(closureTemp, label, envPtr, 0));
+        int closureTemp = LowerReuseSpecializationClosure(label);
 
         // Apply the specialized closure to each (already-lowered) argument in turn.
         int current = closureTemp;
-        foreach (var argTemp in argTemps)
+        foreach (int argTemp in prepared.AppliedTemps)
         {
             int next = NewTemp();
             Emit(new IrInst.CallClosure(next, current, argTemp));
             current = next;
         }
 
-        return (current, curType);
+        return (current, prepared.ResultType);
+    }
+
+    private void RecordFullyReusingCall(
+        string label,
+        Expr call,
+        Expr accumulator,
+        TypeRef accumulatorType)
+    {
+        if (!_fullyReusingLabels.Contains(label)
+            || !AccumulatorIsFullyPersistent(accumulatorType))
+        {
+            return;
+        }
+        _inPlaceReuseCallExprs.Add(call);
+        if (accumulator is Expr.Var variable)
+        {
+            _resetSafeAccumulators.Add(variable.Name);
+        }
+    }
+
+    private static TypeRef BuildReuseSpecializationFunctionType(
+        TypeRef exposedFunctionType,
+        IReadOnlyList<TypeRef> specializationTypes,
+        int dictionaryCount)
+    {
+        TypeRef runtimeFunctionType = exposedFunctionType;
+        for (int index = dictionaryCount - 1; index >= 0; index--)
+        {
+            runtimeFunctionType = new TypeRef.TFun(
+                specializationTypes[index],
+                runtimeFunctionType);
+        }
+        return runtimeFunctionType;
+    }
+
+    private sealed record PreparedReuseArguments(
+        int[] SourceTemps,
+        List<TypeRef> SourceTypes,
+        int[] AppliedTemps,
+        List<TypeRef> SpecializationTypes,
+        TypeRef ResultType);
+
+    private PreparedReuseArguments PrepareReuseSpecializationArguments(
+        string name,
+        TypeRef functionType,
+        IReadOnlyList<Expr> arguments,
+        Expr call,
+        TraitDictionaryFunctionInfo? traitInfo,
+        IReadOnlyList<TraitConstraint>? traitConstraints)
+    {
+        (int[] sourceTemps, List<TypeRef> sourceTypes) =
+            LowerTypedSpecializationArguments(arguments, functionType);
+        TypeRef resultType = Prune(functionType);
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            resultType = Prune(((TypeRef.TFun)Prune(resultType)).Ret);
+        }
+        List<(int Temp, TypeRef Type)> dictionaries = traitInfo is null
+            ? []
+            : BuildResolvedTraitDictionaryValues(
+                name,
+                traitInfo,
+                traitConstraints ?? [],
+                GetSpan(call));
+        return new PreparedReuseArguments(
+            sourceTemps,
+            sourceTypes,
+            dictionaries.Select(dictionary => dictionary.Temp).Concat(sourceTemps).ToArray(),
+            dictionaries.Select(dictionary => dictionary.Type).Concat(sourceTypes).ToList(),
+            resultType);
+    }
+
+    private bool CannotSpecializeAbstractEvidenceCall(
+        string name,
+        IReadOnlyList<Expr> arguments,
+        IReadOnlyList<TypeRef> types)
+    {
+        bool registered = _traitDictionaryFunctions.ContainsKey(name)
+            || TryGetTraitDictionaryInfo(name, Lookup(name), out _)
+            || BindingHasTraitConstraints(Lookup(name))
+            || _specializableFunctions.TryGetValue(name, out var specialization)
+            && ExpressionContainsMappedTraitOperator(specialization.Lambda);
+        bool abstractValue = types.Any(ValueTypeRemainsAbstract);
+        bool constrainedFunctionArgument = arguments.Any(argument =>
+            IsTraitDictionaryFunctionValue(argument, out _)
+            || ResolveSpecializableCalleeName(argument) is { } argumentName
+            && (_traitDictionaryFunctions.ContainsKey(argumentName)
+                || BindingHasTraitConstraints(Lookup(argumentName))));
+        bool localFunctionArgument = arguments.Select((argument, index) => (argument, index))
+            .Any(item => Prune(types[item.index]) is TypeRef.TFun
+                && ResolveSpecializableCalleeName(item.argument) is { } argumentName
+                && Lookup(argumentName) switch
+                {
+                    Binding.Local or Binding.Env => true,
+                    Binding.Scheme scheme => ValueTypeRemainsAbstract(scheme.S.Body),
+                    Binding.EnvScheme environment => ValueTypeRemainsAbstract(environment.S.Body),
+                    _ => false,
+                });
+        return constrainedFunctionArgument
+            || localFunctionArgument
+            || types.Any(type => Prune(type) is TypeRef.TFun && ValueTypeRemainsAbstract(type))
+            || registered && abstractValue;
+    }
+
+    private static bool ExpressionContainsMappedTraitOperator(Expr expression)
+    {
+        if (GetMappedOperatorTraitName(expression) is not null)
+        {
+            return true;
+        }
+        bool found = false;
+        _ = MapChildExpressions(expression, child =>
+        {
+            found |= ExpressionContainsMappedTraitOperator(child);
+            return child;
+        });
+        return found;
+    }
+
+    private static bool BindingHasTraitConstraints(Binding? binding) => binding switch
+    {
+        Binding.Scheme scheme => scheme.S.Constraints.Count > 0,
+        Binding.EnvScheme environment => environment.S.Constraints.Count > 0,
+        Binding.Self self => self.Requirements?.Count > 0,
+        _ => false,
+    };
+
+    private bool ValueTypeRemainsAbstract(TypeRef type) => Prune(type) switch
+    {
+        TypeRef.TVar or TypeRef.TTypeParam => true,
+        TypeRef.TFun function =>
+            ValueTypeRemainsAbstract(function.Arg) || ValueTypeRemainsAbstract(function.Ret),
+        TypeRef.TList list => ValueTypeRemainsAbstract(list.Element),
+        TypeRef.TTuple tuple => tuple.Elements.Any(ValueTypeRemainsAbstract),
+        TypeRef.TNamedType named => named.TypeArgs.Any(ValueTypeRemainsAbstract),
+        TypeRef.TPtr pointer => ValueTypeRemainsAbstract(pointer.Pointee),
+        _ => false,
+    };
+
+    private int LowerReuseSpecializationClosure(string label)
+    {
+        IReadOnlyList<string> captures = _reuseSpecializationCaptures[label];
+        int envSizeBytes = captures.Count * 8;
+        int envPtr = NewTemp();
+        if (captures.Count == 0)
+        {
+            Emit(new IrInst.LoadConstInt(envPtr, 0));
+        }
+        else
+        {
+            Emit(new IrInst.Alloc(envPtr, envSizeBytes));
+            for (int index = 0; index < captures.Count; index++)
+            {
+                (int captureTemp, _) = LowerVar(new Expr.Var(captures[index]));
+                Emit(new IrInst.StoreMemOffset(envPtr, index * 8, captureTemp));
+            }
+        }
+
+        int closureTemp = NewTemp();
+        Emit(new IrInst.MakeClosure(closureTemp, label, envPtr, envSizeBytes));
+        return closureTemp;
     }
 
     /// <summary>
@@ -1488,22 +1750,7 @@ public sealed partial class Lowering
     private (int, TypeRef) TryLowerParallelSpecializedCall(string name, Expr.Lambda lambda, List<Expr> args)
     {
         var (funcType, resultType) = BuildParallelCombinatorType(name);
-
-        var argTemps = new int[args.Count];
-        var concreteParamTypes = new List<TypeRef>(args.Count);
-        var curType = Prune(funcType);
-        for (int i = 0; i < args.Count; i++)
-        {
-            var (argTemp, argType) = LowerExpr(args[i]);
-            argTemps[i] = argTemp;
-            if (curType is TypeRef.TFun nestedFunType)
-            {
-                Unify(nestedFunType.Arg, argType);
-                curType = Prune(nestedFunType.Ret);
-            }
-
-            concreteParamTypes.Add(Prune(argType));
-        }
+        (int[] argTemps, List<TypeRef> concreteParamTypes) = LowerTypedSpecializationArguments(args, funcType);
 
         resultType = Prune(resultType);
 
@@ -1525,6 +1772,57 @@ public sealed partial class Lowering
 
         var (combinatorTemp, _) = LowerVar(new Expr.Var(name));
         return ApplyLoweredArgs(combinatorTemp, argTemps, resultType);
+    }
+
+    private (int[] Temps, List<TypeRef> Types) LowerTypedSpecializationArguments(
+        IReadOnlyList<Expr> arguments,
+        TypeRef functionType)
+    {
+        int[] temps = new int[arguments.Count];
+        TypeRef[] expectedTypes = new TypeRef[arguments.Count];
+        TypeRef cursor = Prune(functionType);
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            TypeRef.TFun function = (TypeRef.TFun)Prune(cursor);
+            expectedTypes[index] = function.Arg;
+            cursor = function.Ret;
+        }
+
+        bool[] deferred = arguments.Select(argument =>
+            argument is Expr.Lambda || IsTraitDictionaryFunctionValue(argument, out _)).ToArray();
+        TypeRef[] actualTypes = new TypeRef[arguments.Count];
+        LowerTypedSpecializationArgumentPass(arguments, expectedTypes, deferred, deferTraitValues: true, temps, actualTypes);
+        LowerTypedSpecializationArgumentPass(arguments, expectedTypes, deferred, deferTraitValues: false, temps, actualTypes);
+        return (temps, actualTypes.Select(type => Prune(type)).ToList());
+    }
+
+    private void LowerTypedSpecializationArgumentPass(
+        IReadOnlyList<Expr> arguments,
+        IReadOnlyList<TypeRef> expectedTypes,
+        IReadOnlyList<bool> deferred,
+        bool deferTraitValues,
+        int[] temps,
+        TypeRef[] actualTypes)
+    {
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            if (deferred[index] == deferTraitValues)
+            {
+                continue;
+            }
+
+            (int temp, TypeRef type) = deferred[index]
+                ? TryLowerTraitDictionaryFunctionValue(arguments[index], expectedTypes[index])
+                    ?? LowerExpr(
+                        arguments[index],
+                        default(LoweredValueRequest).WithExpectedType(expectedTypes[index])).AsPair()
+                : LowerExpr(
+                    arguments[index],
+                    default(LoweredValueRequest).WithExpectedType(expectedTypes[index])).AsPair();
+            temps[index] = temp;
+            actualTypes[index] = type;
+            Unify(expectedTypes[index], type);
+        }
     }
 
     // Applies a sequence of already-lowered argument temps to a callable closure temp, returning the
@@ -1568,17 +1866,7 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var argTemps = new int[args.Count];
-        for (int i = 0; i < args.Count; i++)
-        {
-            var (argTemp, argType) = LowerExpr(args[i]);
-            argTemps[i] = argTemp;
-            if (Prune(curType) is TypeRef.TFun nestedFunType)
-            {
-                Unify(nestedFunType.Arg, argType);
-                curType = Prune(nestedFunType.Ret);
-            }
-        }
+        (int[] argTemps, _) = LowerTypedSpecializationArguments(args, curType);
 
         var resultType = Prune(acc);
 

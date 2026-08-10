@@ -238,6 +238,36 @@ production or a frozen one in tests. Capability rows are inferred and appear in
 types as `needs {Clock, Log}`; see
 [LANGUAGE_SPEC.md](docs/md/reference/language.md) section 20.
 
+### Traits & Implementations
+
+Traits provide coherent, type-directed behavior selected entirely at compile time.
+Constraints can be inferred or written explicitly, and implementations may be generic:
+
+```ash
+import Ashes.Trait
+
+type Point =
+    | x: Int
+    | y: Int
+
+implement Eq(Point) =
+    | equal =
+        given (left) ->
+            given (right) ->
+                if left.x == right.x then left.y == right.y else false
+
+let expected = [Point(x = 2, y = 3), Point(x = 5, y = 8)]
+let actual = [Point(x = 2, y = 3), Point(x = 5, y = 8)]
+
+Ashes.IO.print(Show.show(actual == expected))
+```
+
+The same `==` syntax uses primitive `Eq(Int)` inside the implementation, the
+user-defined `Eq(Point)` for each point, and the generic `Eq(List(a))` for both
+lists. The standard `Ashes.Trait` module also supplies `Ord`, `Show`, `Hash`, and
+the remaining operator traits. Unlike capabilities, traits are static evidence:
+they cannot be installed or replaced by a runtime handler.
+
 ### Polymorphism
 
 Hindley-Milner let-polymorphism - use the same function at different types:

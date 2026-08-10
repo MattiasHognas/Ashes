@@ -385,6 +385,10 @@ public sealed class Lexer
             "provide" => TokenKind.Provide,
             "perform" => TokenKind.Perform,
             "handle" => TokenKind.Handle,
+            "trait" => TokenKind.Trait,
+            "implement" => TokenKind.Implement,
+            "requires" => TokenKind.Requires,
+            "deriving" => TokenKind.Deriving,
             _ => TokenKind.Ident
         };
     }

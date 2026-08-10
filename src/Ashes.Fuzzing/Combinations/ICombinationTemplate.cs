@@ -67,6 +67,8 @@ internal sealed class CombinationRegistry
         registry.Register(new CapabilityRecursiveListTemplate());
         registry.Register(new NestedAdtMatchTemplate());
         registry.Register(new LoopCarriedAdtTemplate());
+        registry.Register(new TraitConstrainedClosureTemplate());
+        registry.Register(new TraitDerivedOperatorSharingTemplate());
         return registry;
     }
 }

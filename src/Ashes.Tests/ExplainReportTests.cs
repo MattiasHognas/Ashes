@@ -42,6 +42,47 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void Traits_kind_parses_and_reports_stable_dictionary_evidence()
+    {
+        ExplainRequest.TryParseValue("traits", out ExplainKind kind, out string? filter, out string? error)
+            .ShouldBeTrue();
+        kind.ShouldBe(ExplainKind.Traits);
+        filter.ShouldBeNull();
+        error.ShouldBeNull();
+
+        const string source = """
+            trait Render(a) =
+                | render : a -> Str
+
+            implement Render(Int) =
+                | render = given (value) -> Ashes.Text.fromInt(value)
+
+            let show : a -> Str requires {Render(a)} =
+                given (value) -> Render.render(value)
+
+            show(42)
+            """;
+        var request = new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Traits });
+        CompilationExplainReport report = Report(source, request);
+        TraitDictionaryAbiAnnotation parameter = report.TraitEvidence.DictionaryParameters
+            .Single(candidate => string.Equals(candidate.Function, "show", StringComparison.Ordinal));
+        parameter.ParameterIndex.ShouldBe(0);
+        parameter.Trait.ShouldBe("Render");
+        parameter.Methods.ShouldBe(["render"]);
+        report.TraitEvidence.ResolvedImplementations
+            .ShouldContain(candidate => string.Equals(candidate.Requirement, "Render(Int)", StringComparison.Ordinal));
+
+        IReadOnlyList<string> first = ExplainReportFormatter.Format(report, request);
+        IReadOnlyList<string> second = ExplainReportFormatter.Format(Report(source, request), request);
+        first.ShouldBe(second);
+        string text = string.Join('\n', first);
+        text.ShouldContain("Trait evidence report");
+        text.ShouldContain("dictionary parameter 0: Render");
+        text.ShouldContain("Resolved: Render(Int)");
+        text.ShouldNotContain("0x");
+    }
+
+    [Test]
     public void Reported_parameter_ownership_mirrors_the_analysis_partition()
     {
         // Borrowed and consumed partition the parameter list, and the report derives one from the
@@ -282,6 +323,7 @@ public sealed class ExplainReportTests
             ExplainKind.Ownership,
             ExplainKind.Rc,
             ExplainKind.Reuse,
+            ExplainKind.Traits,
             ExplainKind.Memory,
         });
         IReadOnlyList<string> lines = ExplainReportFormatter.Format(

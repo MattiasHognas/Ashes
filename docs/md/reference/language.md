@@ -33,7 +33,7 @@ The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `recursive`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `when`, `given`,
 `true`, `false`, `type`, `external`, `await`, `import`, `as`,
-`capability`, `needs`, `perform`, `handle`
+`capability`, `needs`, `perform`, `handle`, `trait`, `implement`, `requires`
 
 Two principles govern the keyword set:
 
@@ -113,13 +113,14 @@ optional trailing expression:
 
 ```text
 file        ::= import* declaration* expr?
-declaration ::= let | letrec | type | external
+declaration ::= let | letrec | type | external | capability | provide | trait | implement
 letrec      ::= "let" "recursive" binding ("and" binding)*
 ```
 
 - `import` lines come first (see §13.1).
 - `declaration` is a top-level `let`, a `let recursive ... and ...` group, a `type`
-  declaration, or an `external` declaration. Top-level `let`/`let recursive` declarations
+  declaration, an `external` declaration, a capability/provider declaration, or a trait/implementation
+  declaration. Top-level `let`/`let recursive` declarations
   do **not** take a trailing `in`; their scope is the rest of the file.
 - The optional trailing `expr` is the program's entry point.
 
@@ -451,23 +452,22 @@ falsey conversion for other values. Unary `!` is right-associative and has the s
 unary `-` and bitwise `~`. The lexer treats `!=` as one inequality operator, not as unary `!`
 followed by `=`.
 
-### 3.4 Overloaded operators across types
+### 3.4 Trait-backed operators across types
 
-`+`, `==`, and `!=` are overloaded (they pick a concrete operation from the operand type). A
-function that applies one of them directly to two of its own parameters is **overload-generic**: it
-can be used at `Int`, `Float`, `Str`, and (for `==`/`!=`) `Bool` at different call sites **within one
-program**. Each concrete call site gets a copy specialized to its operand type.
+Operators select their standard trait implementation from the operand type. A function using an
+operator at an abstract type therefore infers the corresponding ordinary trait constraint and may
+be used at every type with a coherent implementation:
 
 ```ash
-let eq = given (a) -> given (b) -> a == b
+let eq : a -> a -> Bool requires {Eq(a)} = given (a) -> given (b) -> a == b
 let x = eq(3)(3)          // Int
 let y = eq("hi")("hi")    // Str
 let z = eq(true)(true)    // Bool
 ```
 
-This is what lets `Ashes.Test.assertEqual` be used at several basic types in the same test. The
-function must be applied to arguments (called), not used as an unapplied first-class value at more
-than one type.
+Primitive implementations keep their specialized IR instructions. Nominal implementations use the
+same statically selected dictionary evidence as an explicit trait-method call. See
+[Traits and Implementations](#21-traits-and-implementations) for the complete operator mapping.
 
 ### 3.5 Bitwise
 
@@ -1887,17 +1887,23 @@ Stable helper surfaces:
 
 - `Ashes.Collection.Map.empty : MapTree(k, v)`
 - `Ashes.Collection.Map.isEmpty : MapTree(k, v) -> Bool`
-- `Ashes.Collection.Map.get : (k -> k -> Int) -> k -> MapTree(k, v) -> Maybe(v)`
-- `Ashes.Collection.Map.contains : (k -> k -> Int) -> k -> MapTree(k, v) -> Bool`
-- `Ashes.Collection.Map.set : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
-- `Ashes.Collection.Map.insert : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Collection.Map.get : k -> MapTree(k, v) -> Maybe(v) requires {Ord(k)}`
+- `Ashes.Collection.Map.getWith : (k -> k -> Int) -> k -> MapTree(k, v) -> Maybe(v)`
+- `Ashes.Collection.Map.contains : k -> MapTree(k, v) -> Bool requires {Ord(k)}`
+- `Ashes.Collection.Map.containsWith : (k -> k -> Int) -> k -> MapTree(k, v) -> Bool`
+- `Ashes.Collection.Map.set : k -> v -> MapTree(k, v) -> MapTree(k, v) requires {Ord(k)}`
+- `Ashes.Collection.Map.setWith : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
+- `Ashes.Collection.Map.insert : k -> v -> MapTree(k, v) -> MapTree(k, v) requires {Ord(k)}`
+- `Ashes.Collection.Map.insertWith : (k -> k -> Int) -> k -> v -> MapTree(k, v) -> MapTree(k, v)`
 - `Ashes.Collection.Map.size : MapTree(k, v) -> Int`
 - `Ashes.Collection.Map.foldLeft : (s -> k -> v -> s) -> s -> MapTree(k, v) -> s`
 - `Ashes.Collection.Map.toList : MapTree(k, v) -> List<(k, v)>`
-- `Ashes.Collection.Map.fromList : (k -> k -> Int) -> List<(k, v)> -> MapTree(k, v)`
+- `Ashes.Collection.Map.fromList : List<(k, v)> -> MapTree(k, v) requires {Ord(k)}`
+- `Ashes.Collection.Map.fromListWith : (k -> k -> Int) -> List<(k, v)> -> MapTree(k, v)`
 
-`Ashes.Collection.Map` is a persistent AVL tree. Callers provide a total ordering
-function because the language does not yet have a built-in ordering abstraction.
+`Ashes.Collection.Map` is a persistent AVL tree. Its canonical operations use `Ord(k)`; the `With`
+variants preserve explicit custom orderings and take a comparator returning a negative integer,
+zero, or a positive integer.
 
 #### `Ashes.Core.Maybe`
 
@@ -1935,7 +1941,7 @@ function because the language does not yet have a built-in ordering abstraction.
 
 `Ashes.Test` currently exports:
 
-- `assertEqual(expected, actual)` — succeeds when the two values are equal and
+- `assertEqual : a -> a -> Unit requires {Eq(a)}` — succeeds when the two values are equal and
     aborts via `Ashes.IO.panic` when they are not.
 - `fail(message)` — always aborts via `Ashes.IO.panic`.
 
@@ -2525,8 +2531,10 @@ production and fixed in tests, with no `Clock`/`Logger` parameter polluting ever
 A capability requirement is satisfied in one of two ways: by a **handler** (`handle ... with`) — a
 scoped, dynamic implementation — or by a static **provider** (`provide Capability(args) = ...`, §20.6)
 that supplies a fixed implementation for a concrete instance, resolved at compile time. Providers
-resolve concrete instances (`Clock`, `Ord(Str)`) directly, and generic requirements (`needs {Ord(a)}`)
-by monomorphization or dictionary passing (§20.6); providers are program-global across modules.
+resolve concrete instances (`Clock`, `Render(Str)`) directly, and generic requirements
+(`needs {Render(a)}`) by monomorphization or dictionary passing (§20.6); providers are program-global
+across modules. Traits (§21) use separate `requires` constraints and coherent instances; a capability
+provider never satisfies a trait.
 
 Implementation status: the full surface is implemented — capability declarations, `needs` rows,
 capability typing, the unsatisfied-capability diagnostic, `handle`/`perform` with
@@ -2679,16 +2687,25 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   an ambiguity error (`ASH027`) — there is no hidden precedence.
 - **Duplicates.** Two providers for the same concrete instance are an error (`ASH026`).
 - **Generic resolution (monomorphization).** A provider resolves a call whose instance is concrete
-  at the call site — `provide Clock`, or `Ord(Str)` on `Str` values. It also resolves a call inside
+  at the call site — `provide Clock`, or `Render(Str)` on `Str` values. It also resolves a call inside
   a **generic function** that is *specialized* per concrete use: a non-recursive `let`-bound
   function whose body performs `Cap.op` is **inlined at each concrete call site**, so the operation
   resolves against the caller's type. The same generic function used at two types is monomorphized
   to both:
 
   ```ash
-  let display = given (x) -> Show.show(x)
-  display(42)      // resolves to provide Show(Int)
-  display(true)    // resolves to provide Show(Bool)  — same function, two instances
+  capability Render(a) =
+      | render : a -> Str
+
+  provide Render(Int) =
+      | render = Ashes.Text.fromInt
+
+  provide Render(Bool) =
+      | render = given (value) -> if value then "true" else "false"
+
+  let display = given (x) -> Render.render(x)
+  display(42)      // resolves to provide Render(Int)
+  display(true)    // resolves to provide Render(Bool) — same function, two instances
   ```
 
 - **Generic resolution (dictionary passing).** A function that uses a capability operation at a
@@ -2700,20 +2717,23 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   **recursive** and **higher-order** generics.
 
   ```ash
-  let min : List(a) -> a needs {Ord(a)} =
+  capability Select(a) =
+      | less : a -> a -> Bool
+
+  let min : List(a) -> a needs {Select(a)} =
       given (items) ->
           match items with
               | [] -> io.panic("empty")
               | x :: xs ->
-                  list.foldLeft(given (best) -> given (next) ->     // Ord.compare inside a closure
-                      if Ord.compare(next)(best) < 0 then next else best)(x)(xs)
+                  list.foldLeft(given (best) -> given (next) ->
+                      if Select.less(next)(best) then next else best)(x)(xs)
 
-  min([5, 3, 1])   // Ord(Int) provider threaded in — no handler needed
+  min([5, 3, 1])   // Select(Int) provider threaded in — no handler needed
   ```
 
-  A `needs` row may mix dynamic and static capabilities (`needs {Clock, Ord(a)}`): the
+  A `needs` row may mix dynamic and static capabilities (`needs {Clock, Select(a)}`): the
   unparameterized ones (`Clock`) are still satisfied by a handler or provider dynamically, while the
-  parameterized ones (`Ord(a)`) are dictionary-passed. A generic use with **no** `needs` annotation
+  parameterized ones (`Select(a)`) are dictionary-passed. A generic use with **no** `needs` annotation
   is not dictionary-passed; the compiler reports a diagnostic suggesting the annotation (or a
   concrete call site / handler).
 
@@ -2725,10 +2745,8 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   are global, a duplicate `provide` for the same concrete instance is a program-wide error (`ASH026`),
   which is what keeps resolution coherent — the same instance always resolves the same way.
 
-  One case is not yet supported across modules: a dictionary-passing function that itself calls an
-  *imported* dictionary-passing function through a qualified reference (`Other.f`) at a still-generic
-  type — the caller's dictionary is not threaded across the module boundary. Define such a wrapper in
-  the module that provides the function, or call it at a concrete type.
+  Dictionary evidence is threaded through imported qualified calls as well as unqualified calls, so a
+  generic wrapper may call `Other.f` at a still-generic type without an in-module adapter.
 
 ### 20.7 Worked Example
 
@@ -2810,11 +2828,11 @@ passing a capability-performing function to it is accepted.
 ### 20.9 Design Notes
 
 Ashes uses **lexical handler injection** (the OCaml 5 / Koka / Eff / Frank / Unison family):
-the nearest enclosing handler interprets an operation. The two other ML/FP injection routes are
-deliberately not used because the language lacks their prerequisites: typeclass/monad-transformer
-injection (Haskell `mtl`, tagless-final; Scala ZIO environments) needs typeclasses, and functor
-injection (SML/OCaml functors) needs module functors — Ashes has neither. Relative to OCaml 5,
-Ashes adds what OCaml deliberately omitted: capabilities are tracked in the type system, so an
+the nearest enclosing handler interprets an operation. Traits (§21) deliberately do not replace this
+mechanism: trait evidence is selected statically and coherently by type, so it cannot provide a
+different clock, logger, or environment for one lexical scope. Module functors are likewise a
+different abstraction and are not part of Ashes. Relative to OCaml 5, Ashes adds what OCaml
+deliberately omitted: capabilities are tracked in the type system, so an
 unhandled capability is a *compile-time* error, not a runtime crash. Relative to Koka, Ashes
 restricts continuations to one-shot/tail-resumptive: multi-shot `resume` would require copying a
 captured slice of stack and heap — GC-style reachability — which collides with the no-GC memory
@@ -2832,7 +2850,591 @@ and `ASH027` (a capability satisfied by both a provider and a handler) cover thi
 
 ---
 
-## 21. Unsupported (Future)
+## 21. Traits and Implementations
+
+A **trait** is a named set of operations selected statically from types. An **implementation** supplies
+those operations for one type shape. Trait requirements are compile-time evidence and are distinct
+from capabilities (§20): traits use `requires`, capabilities use `needs`; implementations are selected
+program-wide, while handlers interpret capabilities over a dynamic scope.
+
+Traits support ordinary generic APIs as well as operator dispatch. They are not restricted to
+operators and they are not runtime objects in the initial language.
+
+### 21.1 Grammar
+
+The grammar below extends the top-level declaration and annotated-type grammar. `UPPER_IDENT` and
+`LOWER_IDENT` follow the existing type/value naming conventions.
+
+```text
+declaration       ::= trait-declaration
+                    | implementation-declaration
+                    | existing-declaration
+
+type-declaration  ::= "type" UPPER_IDENT type-parameters? "=" type-branches
+                      deriving-clause?
+deriving-clause   ::= "deriving" "{" derivable-trait
+                      ("," derivable-trait)* "}"
+derivable-trait   ::= "Eq" | "Ord" | "Show" | "Hash"
+
+trait-declaration ::= "trait" UPPER_IDENT type-parameters supertraits? "="
+                      trait-method+
+type-parameters   ::= "(" type-variable ("," type-variable)* ")"
+supertraits       ::= "requires" constraint-set
+trait-method      ::= "|" LOWER_IDENT ":" type ("=" expr)?
+
+implementation-declaration
+                  ::= "implement" trait-application implementation-requirements? "="
+                      implementation-method+
+implementation-requirements
+                  ::= "requires" constraint-set
+implementation-method   ::= "|" LOWER_IDENT "=" expr
+
+type-scheme       ::= type ("requires" constraint-set)?
+constraint-set    ::= "{" constraint ("," constraint)* "}"
+constraint        ::= trait-application
+trait-application ::= qualified-trait-name "(" type ("," type)* ")"
+```
+
+A trait or implementation is a top-level declaration. Neither may appear inside an expression. A trait
+body contains at least one method, and an implementation body contains at least one method implementation or
+override. Method signatures are mandatory. The formatter preserves declaration and method order;
+semantic dictionary order is canonical and does not depend on source order.
+
+`requires` after a binding annotation belongs to the complete rank-1 type scheme and has lower
+precedence than every type constructor, arrow, and `needs` row. For example:
+
+```ash
+let render : a -> Str needs {Log} requires {Show(a)} = ...
+```
+
+means that the complete type `a -> Str needs {Log}` requires static `Show(a)` evidence. The
+`needs {Log}` row remains attached to the innermost arrow as specified in §20.3. Parentheses scope
+function types but do not move a trailing `requires` clause into a nested parameter type:
+
+```ash
+let apply : (a -> Str needs {Log}) -> Str requires {Show(a)} = ...
+```
+
+Trait constraints are rank-1. A nested function parameter cannot introduce its own independently
+quantified `requires` clause. Higher-rank constrained values are deferred.
+
+Empty constraint sets, open trait rows, bare trait-constraint variables, and a `| e` tail inside
+`requires` are invalid. Unlike capability effects, a trait requirement set is closed and unordered.
+
+### 21.2 Trait declarations
+
+A trait declares one or more type parameters and one or more methods:
+
+```ash
+trait Eq(a) =
+    | equal : a -> a -> Bool
+    | notEqual : a -> a -> Bool =
+        given (left) ->
+            given (right) ->
+                !Eq.equal(left)(right)
+```
+
+The type parameters after the trait name are in scope throughout its supertrait list, method
+signatures, and default bodies. Every method signature must mention at least one trait parameter,
+directly or through another type. This prevents a method whose implementation cannot be selected
+from its ordinary argument/result types.
+
+A method without `=` is required. A method with `= expr` has a default implementation. Inside a
+default body:
+
+- all methods of the same trait are available through the trait-qualified name;
+- inherited supertrait methods are available through their own qualified names;
+- the declared trait parameters and method signature determine the body's types;
+- calls dispatch through the dictionary currently being constructed, not through a second implementation
+  search;
+- a default may perform only capabilities present in its declared method type.
+
+Defaults are ordinary strictly evaluated Ashes expressions. A dependency cycle made only of defaults,
+with no supplied implementation method breaking the cycle, is rejected.
+
+Traits may have multiple parameters:
+
+```ash
+trait Convert(source, destination) =
+    | convert : source -> destination
+```
+
+Associated types, higher-kinded parameters, existential dictionaries, and heterogeneous operator
+outputs are not part of this version.
+
+### 21.3 Supertraits
+
+`requires` on a trait declaration lists its supertraits:
+
+```ash
+trait Ord(a) requires {Eq(a)} =
+    | compare : a -> a -> Ordering
+```
+
+Evidence for `Ord(T)` always contains evidence for `Eq(T)`. A constrained function that requires
+`Ord(a)` may call `Eq.equal` without separately writing `Eq(a)`. Canonicalization removes a written
+`Eq(a)` when the same scheme already contains `Ord(a)`.
+
+The supertrait graph must be acyclic. A direct cycle (`A` requires `A`) and an indirect cycle
+(`A` requires `B`, `B` requires `A`) are declaration errors. Diamond inheritance is legal; the
+shared ancestor is represented once in canonical evidence.
+
+### 21.4 Implementation declarations
+
+An implementation supplies a trait for a concrete or generic type shape:
+
+```ash
+type Point =
+    | Point(Int, Int)
+
+implement Eq(Point) =
+    | equal =
+        given (left) ->
+            given (right) ->
+                match (left, right) with
+                    | (Point(lx, ly), Point(rx, ry)) ->
+                        if lx == rx then ly == ry else false
+
+implement Eq(List(a)) requires {Eq(a)} =
+    | equal =
+        given (left) ->
+            given (right) ->
+                match (left, right) with
+                    | ([], []) -> true
+                    | (x :: xs, y :: ys) ->
+                        if Eq.equal(x)(y) then Eq.equal(xs)(ys) else false
+                    | _ -> false
+```
+
+Every implementation method is written `| method = expr`; its signature comes from the trait after
+substituting the implementation head. An implementation:
+
+- supplies every method without a default exactly once;
+- may override a default method exactly once;
+- may not supply unknown methods;
+- may not repeat a method;
+- must match each substituted method type and capability row;
+- may perform fewer capabilities than the declared method, but never additional ones;
+- automatically contains evidence for every supertrait, resolved from the same program-global
+  registry.
+
+An implementation requirement introduces the evidence needed to construct a generic implementation. Every type
+variable in an implementation requirement must occur in the implementation head. Implementation declarations do not
+bind values and are not callable or first-class.
+
+### 21.5 Namespaces, qualification, and imports
+
+Trait names occupy the type-level declaration namespace together with nominal types and capability
+names. A module cannot declare a type, capability, or trait with the same name. This namespace is
+separate from ordinary values, so a value may have the same final segment as a trait.
+
+Method names are local to their declaring trait and do not enter the unqualified value namespace.
+Trait methods are always referenced as `Trait.method` or `Module.Trait.method`. Two traits may both
+declare `show` without conflict. Constructors remain in the existing constructor/value namespace.
+
+Traits are exported declarations and follow the same sequential module visibility and selector-import
+rules as types. Importing a trait makes the trait name available; it does not import its methods as
+unqualified values. Implementations are different: every legal implementation in the resolved package graph is
+visible to resolution whether or not its defining module was imported explicitly. This global rule is
+what makes implementation selection coherent.
+
+Trait names and module names may share a segment only when the complete qualified reference remains
+unambiguous. A qualified expression ending in a method is resolved as a trait method only when the
+prefix names a trait; otherwise existing module/value resolution applies.
+
+Capabilities and traits may use the same method/operation spelling because both remain qualified.
+`Clock.now` is a capability operation and `Show.show` is a trait method. A trait implementation cannot be
+installed with `handle`, and a capability provider cannot satisfy a trait constraint.
+
+### 21.6 Constrained type schemes and inference
+
+A trait-using expression produces ordinary type equations plus trait constraints. Constraints are
+part of a generalized type scheme but remain separate from capability rows:
+
+```ash
+let equal = given (left) -> given (right) -> left == right
+```
+
+has the conceptual principal scheme:
+
+```text
+forall a. a -> a -> Bool requires {Eq(a)}
+```
+
+At a non-recursive `let`, Ashes generalizes type variables, capability-row variables, and constraints
+together. Instantiating the binding freshens every quantified variable in both its ordinary type and
+its constraints. Constraints propagate through calls, closures, partial application, higher-order
+arguments, matches, async bodies, and capability-performing functions.
+
+A written `requires` clause states the complete external trait requirement of that scheme after
+supertrait simplification. Missing inferred constraints and written constraints that the body does not
+justify are errors; annotations do not silently add or discard evidence. Non-recursive bindings,
+including exported bindings, recursive bindings, and mutually recursive groups, may infer constraints.
+Recursive members are inferred against one shared monomorphic boundary and generalized together after
+every body has been checked. Their canonical constraint order defines stable module metadata and a
+deterministic hidden evidence ABI. Written annotations remain optional documentation and an explicit
+contract checked against the inferred requirements.
+
+Constraints use a deterministic canonical order: fully qualified trait name first, then the canonical
+printed form of each argument from left to right. Exact duplicates are removed and supertraits implied
+by a stronger constraint are omitted. This order is used by diagnostics, formatter output, hover text,
+module metadata, and dictionary parameters.
+
+A constraint is **ambiguous** when one of its variables cannot be determined from the scheme's
+ordinary argument/result type, its expected type, or another resolved constraint. Ashes does not use
+numeric defaulting to hide ambiguity. Numeric literals retain their existing concrete types and suffix
+rules.
+
+Rejected ambiguous declaration:
+
+```ash
+// `a` occurs only in the constraint, so callers cannot choose it.
+let invalid : Bool requires {Default(a)} = true
+```
+
+### 21.7 Coherence and package ownership
+
+For a complete resolved program, every trait goal has at most one applicable implementation. Implementation
+selection never depends on declaration order, import order, dependency traversal order, or a
+"most specific" rule.
+
+Two implementation heads overlap when ordinary type unification can make their trait names and all arguments
+equal after freshening their variables. Overlap is rejected even if no current call uses the overlap:
+
+```ash
+implement Eq(List(a)) requires {Eq(a)} = ...
+implement Eq(List(Int)) = ... // rejected: overlaps the generic head
+```
+
+Exact duplicate heads are the same coherence error with a more specific diagnostic. The diagnostic
+names both package identities, modules, source files, and declaration spans.
+
+An implementation is legal only when its defining package owns the trait or owns at least one outer nominal
+type constructor in the implementation head. Ownership is based on the resolved package identity, never on
+directory layout:
+
+- a registry dependency is identified by its locked package namespace and version;
+- a path dependency is identified by its resolved manifest and package namespace;
+- the root project is identified by its selected `ashes.json` manifest and declared/default package
+  namespace;
+- single-file compilation is one anonymous root package;
+- primitive types and compiler-shipped traits are owned by the core Ashes package.
+
+Modules in one package may cooperate on implementations. A package may define `Eq(LocalType)` or
+`LocalTrait(Str)`, but not `Eq(ForeignType)` when both names belong to dependencies. A nominal wrapper
+is the supported way to choose different behavior for a foreign type.
+
+Implementations are program-global across the complete resolved dependency graph, including dependencies not
+directly imported by the entry module. Adding a dependency can therefore reveal a coherence error, but
+cannot silently change which of two implementations wins because overlapping programs are rejected.
+
+### 21.8 Resolution and termination
+
+To resolve a required constraint, the compiler:
+
+1. freshens and unifies the goal with every registered implementation head without mutating caller inference
+   state speculatively;
+2. reports a missing-implementation error when no head matches;
+3. reports a coherence error when more than one head matches;
+4. recursively resolves the selected implementation requirements and its supertraits;
+5. threads an existing dictionary parameter when the goal remains abstract inside a constrained
+   function;
+6. otherwise constructs or specializes the unique concrete implementation.
+
+Resolution of conditional implementations must terminate. Define the structural size of a type as the count
+of its concrete type-constructor nodes; type variables contribute zero. The size of a constraint is
+one plus the sum of its argument sizes. Every requirement on a generic implementation must be strictly
+smaller than the implementation head after the head variables are treated consistently. For example,
+`Eq(a)` is smaller than `Eq(List(a))`, but `Eq(List(List(a)))` is not.
+
+Supertraits use their separately checked acyclic graph and are not implementation requirements for this
+size test. During resolution, repeating a goal or encountering a non-decreasing requirement is an
+error with the complete requirement trace. A finite compiler depth limit is a final safety bound and
+produces a diagnostic rather than an exception or hang.
+
+Resolved concrete goals may be cached, but cache keys and traversal are canonical and independent of
+process hash ordering.
+
+### 21.9 Evidence and evaluation
+
+An abstract constrained function receives hidden immutable dictionary parameters in canonical
+constraint order. A dictionary contains method values and inherited evidence in canonical declaration
+order. Dictionaries are compiler-generated implementation values: source code cannot construct,
+inspect, compare, store as an existential, or test their identity.
+
+Nested and escaping closures capture required dictionaries through the ordinary closure environment.
+Recursive and mutually recursive functions pass them on every recursive edge. Partial applications and
+constrained functions stored in ordinary aggregates retain their evidence. Dictionary values
+participate in ordinary ownership analysis, Perceus duplication/drop insertion, async frame capture,
+and tail-call lowering.
+
+When the unique implementation is concrete, the compiler may specialize a method call to a direct function
+call. This is an optimization only: disabling inlining, specialization, reuse, or other optimizations
+must not change whether a trait program compiles or what it observes.
+
+Trait method arguments and bodies retain Ashes's strict left-to-right evaluation behavior. Operator
+desugaring evaluates each operand once in source order before invoking the selected method.
+
+### 21.10 Capabilities in trait methods
+
+A trait method may declare a capability row in its function type:
+
+```ash
+trait Audit(a) =
+    | audit : a -> Str needs {Log}
+```
+
+An implementation may be pure or may use a subset of `Log`, but may not introduce an undeclared
+capability. Calling `Audit.audit` propagates its declared `needs` row independently of the static
+`Audit(a)` constraint. Handlers and providers satisfy the capability exactly as in §20; implementation
+selection satisfies the trait. Trait dictionaries never use dynamic capability-handler globals for
+method selection.
+
+### 21.11 Standard traits
+
+The core Ashes package exports the initial standard traits and `Ordering` from `Ashes.Trait`.
+Operators can resolve these traits without an import. Direct method use must either qualify the full
+name (`Ashes.Trait.Eq.equal`) or import the trait selector (`import Ashes.Trait.Eq`) and use
+`Eq.equal`. Importing the whole module permits `Trait.Eq.equal` through the chosen module alias in
+the usual way.
+
+The required primitive methods are:
+
+```text
+Eq(a)          equal      : a -> a -> Bool
+Ord(a)         compare    : a -> a -> Ordering       requires Eq(a)
+Show(a)        show       : a -> Str
+Hash(a)        hash       : a -> Int
+Default(a)     default    : Unit -> a
+Add(a)         add        : a -> a -> a
+Subtract(a)    subtract   : a -> a -> a
+Multiply(a)    multiply   : a -> a -> a
+Divide(a)      divide     : a -> a -> a
+Remainder(a)   remainder  : a -> a -> a
+Negate(a)      negate     : a -> a
+Not(a)         not        : a -> a
+BitAnd(a)      bitAnd     : a -> a -> a
+BitOr(a)       bitOr      : a -> a -> a
+BitXor(a)      bitXor     : a -> a -> a
+ShiftLeft(a)   shiftLeft  : a -> a -> a
+ShiftRight(a)  shiftRight : a -> a -> a
+BitwiseNot(a)  bitwiseNot : a -> a
+```
+
+`Eq` additionally declares `notEqual : a -> a -> Bool`, defaulted to logical negation of `equal`.
+`Ord` additionally declares `less`, `lessOrEqual`, `greater`, and `greaterOrEqual`, each with type
+`a -> a -> Bool` and a default derived from `compare`. These defaults produce false for
+`Ordering.Unordered`.
+
+`Ordering` is the compiler-shipped ADT:
+
+```ash
+type Ordering =
+    | Less
+    | Equal
+    | Greater
+    | Unordered
+```
+
+`Unordered` is required to preserve IEEE Float behavior. `compare(left)(right)` returns `Unordered`
+when either Float operand is NaN. For that result, `<`, `<=`, `>`, and `>=` are all false. Float
+`Eq.equal` remains IEEE equality: NaN is unequal to every value including itself, while `0.0` and
+`-0.0` are equal.
+
+The source operators map as follows:
+
+| Operators | Trait method |
+|---|---|
+| `==`, `!=` | `Eq.equal`, `Eq.notEqual` |
+| `<`, `<=`, `>`, `>=` | `Ord.less`, `Ord.lessOrEqual`, `Ord.greater`, `Ord.greaterOrEqual` |
+| `+` | `Add.add` |
+| binary `-` | `Subtract.subtract` |
+| `*` | `Multiply.multiply` |
+| `/` | `Divide.divide` |
+| `%` | `Remainder.remainder` |
+| unary `-` | `Negate.negate` |
+| `!` | `Not.not` |
+| `&` | `BitAnd.bitAnd` |
+| `\|` | `BitOr.bitOr` |
+| `^` | `BitXor.bitXor` |
+| `<<` | `ShiftLeft.shiftLeft` |
+| `>>` | `ShiftRight.shiftRight` |
+| `~` | `BitwiseNot.bitwiseNot` |
+
+Function application, pipelines, Result pipelines, list construction, patterns, record access, and
+record updates remain dedicated language operations.
+
+### 21.12 Primitive and structural implementations
+
+Core implementations preserve the existing primitive behavior exactly:
+
+- `Eq`: `Int`, `Float`, `BigInt`, every `uN`, `Bool`, and `Str`;
+- `Ord`: `Int`, `Float`, `BigInt`, every `uN`, and `Str` using existing byte ordering;
+- `Add`: `Int`, `Float`, `BigInt`, every `uN`, and `Str`;
+- `Subtract`, `Multiply`, and `Divide`: `Int`, `Float`, `BigInt`, and every `uN`;
+- `Remainder`: `Int`, `BigInt`, and every `uN`;
+- `Negate`: `Int`, `Float`, `BigInt`, and every `uN`, preserving unsigned wrapping;
+- `Not`: `Bool` only;
+- bitwise operations and shifts: `Int` and every supported unsigned width where the current operator
+  is defined;
+- `Show`: primitive textual forms use invariant culture; `Str` is escaped and quoted;
+- `Hash`: equal primitive values have equal stable hashes; Float normalizes both signed zero encodings
+  before hashing and does not rely on process-randomized hashing;
+- `Default`: `0`, `0.0`, `0N`, width-correct unsigned zero, `false`, and `""` respectively where
+  defined.
+
+Division by zero, remainder by zero, integer overflow/wrapping, unsigned masking, shift validation,
+BigInt behavior, Float arithmetic, string concatenation, and byte-for-byte string equality retain the
+semantics documented for the existing operators. Traits do not introduce numeric coercions.
+
+Conditional structural implementations are supplied for:
+
+- `Eq(List(a))`, `Ord(List(a))`, `Show(List(a))`, and `Hash(List(a))` when the element evidence exists;
+- `Eq`, `Ord`, `Show`, `Hash`, and `Default` for every supported tuple arity when each component has
+  the corresponding evidence;
+- `Eq`, `Ord`, `Show`, and `Hash` for `Maybe(a)` when the payload evidence exists;
+- `Eq`, `Ord`, `Show`, and `Hash` for `Result(e, a)` when evidence exists for both parameters;
+- `Default(List(a))` as `[]` without requiring element evidence;
+- `Default(Maybe(a))` as `None` without requiring payload evidence.
+
+Structural ordering is lexicographic. Lists compare element-by-element, then the shorter equal-prefix
+list is less. Tuples compare fields from left to right. `None < Some(_)`; `Error(_) < Ok(_)`.
+`Unordered` propagates immediately from any nested comparison.
+
+Structural display is canonical and source-shaped: lists use `[a, b]`, tuples use `(a, b)`, `Maybe`
+uses `None`/`Some(value)`, and `Result` uses `Error(value)`/`Ok(value)`. Structural hashing includes
+stable constructor/position tags so distinct shapes do not collapse merely because payload hashes
+match.
+
+No core `Eq`, `Ord`, `Show`, `Hash`, or `Default` implementation exists for functions, tasks, capabilities,
+handlers, resources, or opaque external values. Nominal user ADTs and records require a manual implementation
+or an explicit `deriving` clause; there is no implicit structural implementation.
+
+### 21.13 Derived implementations
+
+A nominal ADT or record may request ordinary coherent implementations directly after its constructor
+or field branches:
+
+```ash
+type Color =
+    | Red
+    | Green
+    | Blue
+    deriving {Eq, Ord, Show, Hash}
+
+type Box(a) =
+    | value: a
+    deriving {Eq, Show}
+```
+
+The `deriving` clause is part of the type declaration. It is written once, after every `|` branch,
+and contains a non-empty comma-separated set drawn from `Eq`, `Ord`, `Show`, and `Hash`. Duplicate or
+unknown entries are errors. The formatter preserves the written order and emits the clause indented
+at the same level as the branches. `deriving` is a reserved keyword.
+
+Deriving generates ordinary `implement` declarations before coherence checking. Generated
+implementations have the type declaration's package, module, source path, and source span, obey the
+same orphan and overlap rules as handwritten implementations, use the same dictionary ABI, and may
+conflict with a handwritten implementation. There is no implicit fallback or second dispatch path.
+
+For a parameterized declaration, the generated implementation requires the corresponding trait for
+each type parameter whose occurrences contribute to a constructor payload or record field. Nested
+supported containers resolve through their ordinary conditional implementations. A direct or nested
+regular recursive occurrence of the type being derived reuses the implementation currently being
+constructed and does not add a cyclic external requirement. Deriving is rejected when a compared,
+displayed, or hashed field contains a function, task, capability, handler, resource, opaque external
+type, an unbound type variable, or unsupported non-regular recursion.
+
+The generated methods are deterministic:
+
+- `Eq` first compares constructors and then compares payloads or fields from left to right;
+- `Ord` orders constructors by declaration order, compares equal-constructor payloads or fields
+  lexicographically from left to right, and propagates `Unordered`;
+- `Show` renders `Constructor`, `Constructor(value1, value2)`, or
+  `Record(field1 = value1, field2 = value2)` using declaration order;
+- `Hash` starts with the zero-based constructor ordinal plus one and folds each payload or field in
+  declaration order as `state * 16777619 + Hash.hash(value)`.
+
+For records, field declaration order is the ordering, display, and hash order even though record
+construction accepts named arguments in any order. Empty-payload constructors compare equal to the
+same constructor, display as their constructor name, and hash from their constructor tag alone.
+
+### 21.14 Accepted and rejected examples
+
+Constraint inference and explicit constraints:
+
+```ash
+let inferred = given (x) -> given (y) -> Eq.equal(x)(y)
+
+let recursive contains : a -> List(a) -> Bool requires {Eq(a)} =
+    given (needle) ->
+        given (items) ->
+            match items with
+                | [] -> false
+                | item :: rest ->
+                    if Eq.equal(item)(needle) then true else contains(needle)(rest)
+```
+
+Generic implementation and supertrait use:
+
+```ash
+implement Eq(List(a)) requires {Eq(a)} = ...
+
+let orderedEqual : a -> a -> Bool requires {Ord(a)} =
+    given (left) -> given (right) -> Eq.equal(left)(right)
+```
+
+Effectful method:
+
+```ash
+capability Log =
+    | write : Str -> Unit
+
+trait Report(a) =
+    | report : a -> Unit needs {Log}
+
+implement Report(Point) =
+    | report = given (point) -> Log.write(Show.show(point))
+```
+
+The implementation above is accepted only if its body requires no capabilities beyond `Log` and any static
+trait requirements are declared or resolvable.
+
+Rejected forms:
+
+```ash
+implement Eq(List(a)) requires {Eq(List(a))} = ... // non-decreasing requirement
+implement Eq(List(a)) requires {Eq(b)} = ...       // b absent from the head
+implement Eq(Foreign.Point) = ...                  // orphan if Eq and Point are foreign
+
+trait First(a) requires {Second(a)} = ...
+trait Second(a) requires {First(a)} = ...          // supertrait cycle
+
+let ambiguous : Bool requires {Default(a)} = true // a cannot be selected by a caller
+
+type Callback =
+    | Callback(Int -> Int)
+    deriving {Eq} // rejected: functions have no Eq implementation
+```
+
+Declaring both `Eq(List(a))` and `Eq(List(Int))` is rejected as overlap. Calling a constrained
+function at a concrete type with no matching implementation is a missing-implementation error. Calling it while
+the type remains abstract is accepted only when the enclosing scheme carries and threads the same
+constraint.
+
+### 21.15 Source compatibility and deferred extensions
+
+`trait`, `implement`, `requires`, and `deriving` are reserved keywords. Programs that previously used
+them as identifiers must rename those bindings. This is an intentional source-compatibility change;
+the formatter never escapes keywords as identifiers.
+
+The initial trait system does not include associated types, higher-kinded parameters, local implementations,
+overlapping/incoherent selection, runtime trait objects, user-defined operator tokens, overloaded
+numeric literals, numeric defaulting, or heterogeneous operator outputs.
+
+---
+
+## 22. Unsupported (Future)
 
 See [future/FUTURE_FEATURES.md](../future/FUTURE_FEATURES.md) for the list of planned but not yet supported features.
 

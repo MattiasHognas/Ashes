@@ -35,6 +35,7 @@ suite("Command Execution — mock tools", () => {
   let savedCompilerPath: string | undefined;
   let savedLspPath: string | undefined;
   let savedDapPath: string | undefined;
+  let savedAutoStart: boolean | undefined;
   let sentinelPath: string | undefined;
 
   suiteSetup(async () => {
@@ -42,9 +43,17 @@ suite("Command Execution — mock tools", () => {
     savedCompilerPath = config.get<string>("compilerPath");
     savedLspPath = config.get<string>("lspServerPath");
     savedDapPath = config.get<string>("dapServerPath");
+    savedAutoStart = config.get<boolean>("autoStartLanguageServer");
 
     // Override at Workspace level so they take precedence over
     // any paths configured in the .code-workspace file by the test runner.
+    // The mock LSP only implements tool acquisition's --version contract, so
+    // it must not be launched as a protocol server when the fixture is opened.
+    await config.update(
+      "autoStartLanguageServer",
+      false,
+      vscode.ConfigurationTarget.Workspace,
+    );
     await config.update(
       "compilerPath",
       path.join(mockToolsPath, "mock-compiler"),
@@ -95,6 +104,11 @@ suite("Command Execution — mock tools", () => {
     await config.update(
       "dapServerPath",
       savedDapPath || undefined,
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await config.update(
+      "autoStartLanguageServer",
+      savedAutoStart,
       vscode.ConfigurationTarget.Workspace,
     );
   });
