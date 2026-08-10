@@ -2316,9 +2316,14 @@ public sealed partial class Lowering
             return helperValue;
         }
 
+        // A bare trait-method reference eta-expands to a lambda (LowerBareTraitMethodReference) and
+        // needs the same early expected-type unification an ordinary Expr.Lambda argument gets
+        // below, so its parameter type is pinned before its body's constraint is resolved instead of
+        // staying an unconstrained variable that can never be discharged.
         bool forwardsExpectedType = e is Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
             or RecursiveGroupExpr or Expr.If or Expr.Match or Expr.Handle or Expr.Call
-            or Expr.ListLit or Expr.Cons;
+            or Expr.ListLit or Expr.Cons
+            || e is Expr.QualifiedVar qualifiedTraitMethod && TryGetTraitMethod(qualifiedTraitMethod, out _, out _);
         TypeRef? expectedType = request.ExpectedType;
         var lowered = LowerExprDispatch(
             e,

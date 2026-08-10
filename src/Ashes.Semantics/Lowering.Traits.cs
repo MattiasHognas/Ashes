@@ -21,6 +21,7 @@ public sealed partial class Lowering
     private readonly Stack<TraitConstraintScope> _traitConstraintScopes = new();
     private int _traitImplementationValidationDepth;
     private bool _suppressTraitConstraintCollection;
+    private int _nextTraitEtaSiteId;
 
     /// <summary>The residual constraints inferred for the complete trailing expression.</summary>
     public IReadOnlyList<TraitConstraint> LastTraitConstraints { get; private set; } = [];
@@ -465,27 +466,68 @@ public sealed partial class Lowering
         };
     }
 
+    // A bare (uncalled) trait-method reference. Direct application is handled by
+    // TryLowerTraitDirectCall/LowerTraitMethodCall; a first-class method value used as an ordinary
+    // value (for example passed to List.map) eta-expands to a lambda that applies the method,
+    // mirroring BuildOperationEtaLambda for capability operations, so evidence resolution happens
+    // through the normal call path at the eventual application site instead of being fabricated
+    // here. A zero-arity method (Default.default is not itself a function) has nothing to
+    // eta-expand over and resolves directly.
     private (int, TypeRef) LowerBareTraitMethodReference(
+        Expr.QualifiedVar reference,
         TraitSymbol trait,
         TraitMethodSymbol method,
-        TextSpan span)
-    {
-        (TypeRef signature, TraitConstraint constraint) = InstantiateTraitMethod(trait, method);
-        RequireTraitConstraint(constraint);
-        int placeholder = NewTemp();
-        Emit(new IrInst.LoadConstInt(placeholder, 0));
-        RecordHoverScheme(span, $"{trait.QualifiedName}.{method.Name}", new TypeScheme([], signature, [constraint]));
-        return (placeholder, signature);
-    }
-
-    private (int, TypeRef) LowerTraitMethodCall(
-        TraitSymbol trait,
-        TraitMethodSymbol method,
-        IReadOnlyList<Expr> arguments,
-        TextSpan span,
         LoweredValueRequest request)
     {
-        (TypeRef signature, TraitConstraint constraint) = InstantiateTraitMethod(trait, method);
+        TextSpan span = GetSpan(reference);
+        (TypeRef signature, TraitConstraint hoverConstraint) = InstantiateTraitMethod(trait, method);
+        RecordHoverScheme(
+            span,
+            $"{trait.QualifiedName}.{method.Name}",
+            new TypeScheme([], signature, [hoverConstraint]));
+
+        int arity = CountArrows(method.Scheme.Body);
+        return arity == 0
+            ? LowerTraitMethodCall(trait, method, [], span, request)
+            : LowerExpr(BuildTraitMethodEtaLambda(reference, arity), request).AsPair();
+    }
+
+    private Expr BuildTraitMethodEtaLambda(Expr.QualifiedVar reference, int arity)
+    {
+        TextSpan span = GetSpan(reference);
+        string[] parameterNames = Enumerable.Range(0, arity)
+            .Select(index => $"__trait_method_arg_{_nextTraitEtaSiteId++}_{index}")
+            .ToArray();
+
+        Expr body = new Expr.QualifiedVar(reference.Module, reference.Name);
+        AstSpans.Set(body, span);
+        foreach (string parameterName in parameterNames)
+        {
+            Expr argument = new Expr.Var(parameterName);
+            AstSpans.Set(argument, span);
+            body = new Expr.Call(body, argument);
+            AstSpans.Set(body, span);
+        }
+
+        for (int index = parameterNames.Length - 1; index >= 0; index--)
+        {
+            body = new Expr.Lambda(parameterNames[index], body);
+            AstSpans.Set(body, span);
+        }
+
+        return body;
+    }
+
+    // Applies each call argument to the method's curried signature, one arrow at a time, reporting
+    // an over-application diagnostic (and a Never-typed sentinel) instead of unifying past the last
+    // arrow. Returns null once that diagnostic has been reported, so the caller can stop immediately.
+    private (TypeRef Current, List<int> ArgumentTemps)? ConsumeTraitMethodCallArguments(
+        TraitSymbol trait,
+        TraitMethodSymbol method,
+        TypeRef signature,
+        IReadOnlyList<Expr> arguments,
+        TextSpan span)
+    {
         TypeRef current = signature;
         List<int> argumentTemps = [];
         foreach (Expr argument in arguments)
@@ -502,7 +544,7 @@ public sealed partial class Lowering
                     span,
                     $"Trait method '{trait.Name}.{method.Name}' is applied to too many arguments.",
                     DiagnosticCodes.TypeMismatch);
-                return ReturnNeverWithDummyTemp();
+                return null;
             }
             (int argumentTemp, TypeRef argumentType) = LowerExpr(argument);
             argumentTemps.Add(argumentTemp);
@@ -510,6 +552,23 @@ public sealed partial class Lowering
             SubsumeCalleeRow(function.Row, span);
             current = function.Ret;
         }
+        return (current, argumentTemps);
+    }
+
+    private (int, TypeRef) LowerTraitMethodCall(
+        TraitSymbol trait,
+        TraitMethodSymbol method,
+        IReadOnlyList<Expr> arguments,
+        TextSpan span,
+        LoweredValueRequest request)
+    {
+        (TypeRef signature, TraitConstraint constraint) = InstantiateTraitMethod(trait, method);
+        if (ConsumeTraitMethodCallArguments(trait, method, signature, arguments, span) is not
+            { } consumed)
+        {
+            return ReturnNeverWithDummyTemp();
+        }
+        (TypeRef current, List<int> argumentTemps) = consumed;
         ApplyExpectedTraitMethodType(current, request.ExpectedType);
         RequireTraitConstraint(constraint);
         TraitConstraint prunedConstraint = PruneTraitConstraint(constraint);
@@ -526,12 +585,19 @@ public sealed partial class Lowering
             return (ApplyTraitMethodArguments(activeMethodTemp, argumentTemps), Prune(current));
         }
         TraitEvidencePlan? plan = ResolveTraitEvidence(prunedConstraint, span, [], 0);
-        if (plan is null or TraitEvidencePlan.Parameter)
+        if (plan is null)
         {
-            if (plan is TraitEvidencePlan.Parameter
-                && !_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
+            return ReturnNeverWithDummyTemp();
+        }
+        if (plan is TraitEvidencePlan.Parameter)
+        {
+            if (!_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
             {
                 RequireLateTraitTypeHint();
+                if (_emitTraitDictionaries)
+                {
+                    return ReportUnresolvableTraitConstraint(prunedConstraint, span);
+                }
             }
             int placeholder = NewTemp();
             Emit(new IrInst.LoadConstInt(placeholder, 0));
@@ -636,6 +702,10 @@ public sealed partial class Lowering
             && !_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
         {
             RequireLateTraitTypeHint();
+            if (_emitTraitDictionaries)
+            {
+                return ReportUnresolvableTraitConstraint(constraint, span);
+            }
             int placeholder = NewTemp();
             Emit(new IrInst.LoadConstInt(placeholder, 0));
             return (placeholder, returnsBool ? new TypeRef.TBool() : operandType);
@@ -682,6 +752,10 @@ public sealed partial class Lowering
             && !_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
         {
             RequireLateTraitTypeHint();
+            if (_emitTraitDictionaries)
+            {
+                return ReportUnresolvableTraitConstraint(constraint, span);
+            }
             int placeholder = NewTemp();
             Emit(new IrInst.LoadConstInt(placeholder, 0));
             return (placeholder, pruned);

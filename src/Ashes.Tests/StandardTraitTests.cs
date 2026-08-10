@@ -22,7 +22,8 @@ public sealed class StandardTraitTests
     public void PrimitiveBootstrapImplementationsResolve()
     {
         Lower(
-            "(Ashes.Trait.Eq.equal(1)(1), Ashes.Trait.Show.show(1), Ashes.Trait.Default.default(Unit))",
+            "let defaultInt : Int = Ashes.Trait.Default.default(Unit) "
+                + "in (Ashes.Trait.Eq.equal(1)(1), Ashes.Trait.Show.show(1), defaultInt)",
             out Lowering lowering,
             out Diagnostics diagnostics);
 

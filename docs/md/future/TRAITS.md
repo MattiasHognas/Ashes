@@ -9,6 +9,14 @@ regression in a previously-fixed benchmark, and a set of smaller coherence/tooli
 Tasks 16-21 below capture that work; the branch is not ready for a PR until at least Task 16 and Task 17
 are closed.
 
+Task 16 update: the two confirmed miscompiles (the segfault and the silent-wrong-answer) are fixed, with
+regression tests, and the full C#/LSP/e2e gate is green including two pre-existing test bugs the new
+diagnostic uncovered (see Task 16's third checkbox). Task 16's third item — a same-trait,
+multiple-type-variable dictionary collision — was investigated in depth and deliberately deferred: it is
+confirmed always safe (never a silent wrong value, only a correct result or an honest if confusing compile
+error), and a real fix needs a multi-call-site plumbing change to the dictionary-registration pipeline that
+is out of scope for a quick pass. Task 17 (the fannkuch-redux memory regression) has not been started.
+
 The normative source-visible design is now in
 [`docs/md/reference/language.md`](../reference/language.md#21-traits-and-implementations). This document is
 the ordered implementation checklist; if its prose differs from the language reference, the language
@@ -528,49 +536,73 @@ and continuing as if nothing were wrong, instead of either constructing real evi
 diagnostic. Both are reachable from ordinary, idiomatic source and were reproduced against the built
 compiler, not just read from source.
 
-- [ ] Fix `LowerBareTraitMethodReference` (`Lowering.Traits.cs:468-479`, reached via
-      `LowerQualifiedVar` in `Lowering.ModuleResolution.cs:14-21`) so a trait method used as a first-class
-      value (not immediately applied, not itself the direct right-hand side of a `requires`-annotated
-      binding) either constructs a real dictionary-backed closure or is rejected with a focused
-      diagnostic. Confirmed repro (segfaults, exit 139, on the built CLI):
-      ```ash
-      import Ashes.Trait
-      import Ashes.Collection.List
-      import Ashes.IO
+- [x] Fix `LowerBareTraitMethodReference` (`Lowering.Traits.cs`, reached via `LowerQualifiedVar` in
+      `Lowering.ModuleResolution.cs`) so a trait method used as a first-class value eta-expands to a
+      lambda that applies the method (mirroring the existing `BuildOperationEtaLambda` pattern already
+      used for bare capability-operation references), routing evidence resolution through the normal,
+      already-correct `LowerTraitMethodCall` path at the eventual application site instead of fabricating
+      a placeholder. A zero-arity method (nothing in the shipped standard library has one, but a
+      user-declared `trait Foo(a) = | bar : a` does) resolves directly with no arguments instead of
+      eta-expanding over zero parameters. Getting the eta-expanded lambda's parameter type pinned early
+      (matching what an ordinary hand-written lambda argument gets) required also extending `LowerExpr`'s
+      `forwardsExpectedType` set to cover a bare trait-method reference specifically, not qualified-var
+      references generally, since the expected-type propagation that makes a hand-written lambda argument
+      resolve correctly does not otherwise reach a `Expr.QualifiedVar` node at all. Verified against the
+      confirmed segfault repro (now correct output) and against the previously-working bare-reference
+      cases (a non-recursive top-level `let f = Eq.equal`, a partially-applied `Eq.equal(3)`, and a
+      legitimately-deferred higher-order case) to confirm none regressed.
+- [x] Fix the matching fallback in `Lowering.Traits.cs` (the operator-desugaring path, plus the equivalent
+      fallback inside `LowerTraitMethodCall` itself, which had the identical gap for explicit
+      `Trait.method(...)` calls) so a constraint that remains a `TraitEvidencePlan.Parameter` with no
+      enclosing `_activeTraitDictionaryParameters` entry raises a diagnostic (`ASH010`, ambiguous
+      constraint — `ResolveTraitEvidence` only ever returns `Parameter` for a goal that still contains a
+      free type variable, so reaching this fallback means that variable is never going to be pinned down
+      by anything else in the program) instead of emitting the placeholder constant, gated on
+      `_emitTraitDictionaries` so the throwaway discovery/validation sub-lowerings — which legitimately
+      hit this same shape for every abstract constraint since they never thread real dictionaries at all —
+      keep behaving exactly as before. Verified against the confirmed repro (now a clear diagnostic
+      instead of silently printing the wrong answer) and against legitimately-deferred higher-order cases
+      (still correct). This fix also surfaced two **pre-existing, genuine type ambiguities** that the old
+      placeholder was silently papering over — not regressions, but real bugs this diagnostic was designed
+      to catch: `tests/trait_standard_bootstrap.ash` compared two `Result` values whose error type was
+      never pinned anywhere (the same "ambiguous type variable" a Hitchhiker's-Hindley-Milner language
+      like Haskell would also reject for `Right 1 == Right 1` with no annotation), and
+      `StandardTraitTests.PrimitiveBootstrapImplementationsResolve` called `Default.default(Unit)` with its
+      result type never used anywhere. Both were fixed by adding the type annotation the ambiguity was
+      always asking for, not by weakening the diagnostic.
+- [ ] Fix the same-trait, multiple-type-variable dictionary collision: `BuildResolvedTraitDictionaryValues`,
+      `TryMapTraitDictionaries`, `CollectTraitMethodParameterNames`, and `TryLowerActiveTraitMethod` (all in
+      `Lowering.TraitEvidence.cs`) key dictionary lookup/threading by trait qualified name alone. A function
+      such as `let f : a -> b -> Bool requires {Eq(a), Eq(b)}` has its two `Eq` constraints alias onto one
+      dictionary — confirmed via a minimal repro (`bothEqual : a -> b -> Bool requires {Eq(a), Eq(b)}`
+      called as `bothEqual(3)("hello")`). **Investigated in depth; deliberately deferred rather than
+      landed, for a concrete reason.** The collision is confirmed **always safe** — it never produces a
+      silently wrong value. `Unify`'s occurs/consistency checking means it either resolves correctly (when
+      the two constrained positions happen to be instantiated at the same concrete type in a given call,
+      so the dictionary choice is moot) or fails as an honest, if confusingly-worded, `ASH002 Type
+      mismatch` deep in the body — never a wrong runtime answer. A real fix requires threading each
+      dictionary's *originating type argument* (not just its trait name and source-order ordinal) from
+      registration (`RegisterTraitDictionaryFunction`, which runs in an early, syntax-only pre-pass before
+      any per-binding type scope exists) through to every dispatch site, so a use can be matched to the
+      correct one of several same-trait dictionaries by comparing pruned type identity — a genuine,
+      multi-call-site plumbing change to the registration pipeline, not a local fix. A first attempt at a
+      *cheaper* fix — flagging "same trait, distinct resolved type variables" as an error at the point
+      `ResolveBindingSignature` resolves a `requires` clause — was implemented, then reverted: it produced
+      false positives against the standard library's own trait defaults and implementation validation
+      bindings (`RunTraitValidationPass`'s synthesized validation bindings re-resolve a trait's own type
+      parameter fresh per validation pass in a way that isn't safely distinguishable, with a cheap check,
+      from a genuinely-distinct second type variable). Left as a known, narrow, safe-failure-mode
+      limitation for a follow-up pass.
+- [x] Add regression tests for the two landed fixes: `tests/trait_bare_method_reference_value.ash` (an
+      unapplied trait method passed as a higher-order-function argument, matching the segfault shape, plus
+      a partially-applied and a fully-applied bare reference in the same file) and
+      `tests/trait_ambiguous_operator_constraint_diagnostic.ash` (`expect-compile-error` for the `f == f`
+      shape). No regression test was added for the deferred multi-constraint fix since no fix landed.
 
-      let results = List.map(Show.show)([1, 2, 3])
-      match results with
-          | first :: _ -> print(first)
-          | [] -> print("empty")
-      ```
-- [ ] Fix the matching fallback in `Lowering.Traits.cs:635-642` and `:681-688` (the operator-desugaring
-      path) so a constraint that remains a `TraitEvidencePlan.Parameter` with no enclosing
-      `_activeTraitDictionaryParameters` entry raises a diagnostic (ambiguous constraint, `ASH010`, or
-      no-implementation, `ASH036`, as appropriate) instead of emitting the same placeholder constant.
-      Confirmed repro (compiles clean, prints the wrong answer, no diagnostic):
-      ```
-      ashes run --expr 'let f x = x in Ashes.IO.print(if f == f then "y" else "n")'
-      ```
-      prints `n` (should be a compile error: functions have no `Eq` implementation). Verify the
-      previously-correct cases stay correct: concrete nominal/function-type constraints still resolve via
-      `ASH036`, and legitimately-deferred higher-order constraints (a constraint resolvable once a caller
-      supplies a concrete type, e.g. through a generic `apply` wrapper) still work.
-- [ ] Fix the same-trait, multiple-type-variable dictionary collision: `BuildResolvedTraitDictionaryValues`
-      (`Lowering.TraitEvidence.cs:1755-1767`), `TryMapTraitDictionaries` (`:1030-1047`),
-      `CollectTraitMethodParameterNames` (`:947-961`), and `TryLowerActiveTraitMethod` (`:1137-1146`) all
-      key dictionary lookup/threading by trait qualified name alone. A function such as
-      `let f : a -> b -> Bool requires {Eq(a), Eq(b)}` therefore has its two `Eq` constraints alias onto
-      one dictionary. Re-key by `(trait qualified name, canonical type-argument position)` so distinct
-      constraints on the same trait never collide, or reject the shape at the `requires` boundary with a
-      diagnostic if disambiguation is out of scope for this pass.
-- [ ] Add regression tests for all three fixes: an unapplied trait method passed as a higher-order-function
-      argument (the `List.map(Show.show)` shape above), an operator on a type with no possible
-      implementation used both in an unannotated `let` and inside a constrained function body, and a
-      function with two same-trait constraints over different type variables exercised at two different
-      concrete types in the same program.
-
-Acceptance: no source program causes a trait constraint to silently resolve to a placeholder constant;
-every unresolvable-at-lowering-time constraint is either constructed correctly or reported as a diagnostic.
+Acceptance (partial): no source program causes a trait constraint to silently resolve to a placeholder
+constant when the constraint is genuinely unresolvable, and a first-class trait-method value builds real,
+correct evidence instead of crashing. The same-trait multi-constraint collision remains open, tracked
+above with its own acceptance note.
 
 ### Task 17: Restore constant-memory recognition through trait-dispatched operators
 

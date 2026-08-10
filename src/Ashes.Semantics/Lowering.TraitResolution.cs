@@ -486,6 +486,31 @@ public sealed partial class Lowering
         }
     }
 
+    /// <summary>
+    /// A use site reached <see cref="TraitEvidencePlan.Parameter"/> with no enclosing dictionary
+    /// parameter to supply it. Trait-goal resolution only returns <c>Parameter</c> for a
+    /// goal that still contains a free type variable (a concrete goal either resolves or reports its
+    /// own no-implementation/coherence diagnostic), so reaching here means that variable is never going
+    /// to be pinned down by anything else in the program: the requirement is genuinely ambiguous, not
+    /// merely deferred. Reports that and returns a <see cref="TypeRef.TNever"/> sentinel instead of
+    /// silently fabricating a value, mirroring <see cref="ReturnNeverWithDummyTemp"/>'s use after every
+    /// other trait-resolution failure. Callers must only take this branch when
+    /// <see cref="_emitTraitDictionaries"/> is set — the throwaway discovery and validation
+    /// sub-lowerings legitimately hit this same shape for every abstract constraint (they never thread
+    /// real dictionaries at all) and must keep silently continuing, since their IR is discarded and only
+    /// their inferred constraint sets are read back.
+    /// </summary>
+    private (int, TypeRef) ReportUnresolvableTraitConstraint(TraitConstraint constraint, TextSpan span)
+    {
+        ReportTraitResolutionFailure(
+            TraitConstraint.StableKey(constraint),
+            span,
+            $"Trait requirement '{FormatTraitConstraint(constraint)}' is ambiguous: its type cannot be "
+                + "determined from context, so no evidence can be supplied for it.",
+            InvalidTraitDeclarationCode);
+        return ReturnNeverWithDummyTemp();
+    }
+
     private string FormatResolutionTrace(
         IReadOnlyList<TraitConstraint> trace,
         TraitConstraint goal)

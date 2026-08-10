@@ -17,7 +17,7 @@ public sealed partial class Lowering
     {
         if (TryGetTraitMethod(qv, out TraitSymbol trait, out TraitMethodSymbol method))
         {
-            return LowerBareTraitMethodReference(trait, method, GetSpan(qv));
+            return LowerBareTraitMethodReference(qv, trait, method, request);
         }
 
         if (_capabilitySymbols.TryGetValue(qv.Module, out CapabilitySymbol? declaredCapability))
