@@ -647,7 +647,8 @@ public sealed partial class Lowering
         TypeRef funcType,
         IReadOnlyList<TypeRef> concreteParamTypes,
         Expr generationExpression,
-        TraitDictionaryFunctionInfo? traitInfo = null)
+        TraitDictionaryFunctionInfo? traitInfo = null,
+        IReadOnlyList<TraitConstraint>? traitConstraints = null)
     {
         // Cache per concrete instantiation: the spec is monomorphized to the call's argument types, so a
         // function used at two element types gets two specializations.
@@ -659,13 +660,22 @@ public sealed partial class Lowering
 
         (Expr.Lambda Lambda, string LinearParam, int ArgCount) registeredSpec =
             _specializableFunctions[name];
-        Expr.Lambda specializationLambda = traitInfo is null
-            ? registeredSpec.Lambda
-            : (Expr.Lambda)TransformTraitDictionaryValue(
+        Expr.Lambda specializationLambda;
+        if (traitInfo is null)
+        {
+            specializationLambda = registeredSpec.Lambda;
+        }
+        else
+        {
+            specializationLambda = (Expr.Lambda)TransformTraitDictionaryValue(
                 registeredSpec.Lambda,
                 traitInfo,
                 threadRecursiveSelf: true,
                 threadDictionaryFunctions: true);
+            BindTraitDictionaryParameterConstraintsInAbiOrder(
+                traitInfo,
+                traitConstraints ?? []);
+        }
         var spec = (
             Lambda: specializationLambda,
             registeredSpec.LinearParam,
@@ -1498,7 +1508,8 @@ public sealed partial class Lowering
                 traitInfo?.Dictionaries.Count ?? 0),
             prepared.SpecializationTypes,
             callExpr,
-            traitInfo);
+            traitInfo,
+            traitConstraints);
         // If the specialization fully reuses, its result is the accumulator (the last argument)
         // rewritten in place — address-stable exactly when that argument was. Record the call node so a
         // back-edge stability check can trace through it, and (when the argument is a bare accumulator

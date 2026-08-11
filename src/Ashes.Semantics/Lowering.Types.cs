@@ -732,7 +732,8 @@ public sealed partial class Lowering
         ConstructorSymbol? runtimeConstructor = null,
         bool runtimeDeepUnique = false,
         IReadOnlySet<int>? excludedDropFieldIndices = null,
-        bool perceusPatternOwner = false)
+        bool perceusPatternOwner = false,
+        int perceusRootParameterSlot = -1)
     {
         public int Slot { get; } = slot;
         public string TypeName { get; } = typeName;
@@ -755,6 +756,10 @@ public sealed partial class Lowering
         /// Its physical RC representation is resolved after the enclosing TCO parameter types settle.
         /// </summary>
         public bool PerceusPatternOwner { get; } = perceusPatternOwner;
+
+        /// <summary>The TCO root parameter whose finalized placement decides whether this pattern
+        /// owner's protective duplicate is a real RC retain or an arena identity marker.</summary>
+        public int PerceusRootParameterSlot { get; } = perceusRootParameterSlot;
 
         /// <summary>
         /// Statically known constructor for a directly-bound runtime-managed ADT value. Allows its

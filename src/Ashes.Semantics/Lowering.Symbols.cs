@@ -1036,7 +1036,16 @@ public sealed partial class Lowering
                 fieldType,
                 runtimeManagedCandidate,
                 childRequest);
-            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(arguments[i], argumentTemp);
+            // Runtime-RC aggregates own their RC children. An arena aggregate also needs a retained
+            // child when an owning consumer may normalize the aggregate after its pattern root has
+            // been released (for example a TCO function result). Purely local arena aggregates borrow
+            // instead: retaining those would leave no arena-shell drop site.
+            if (runtimeManagedCandidate
+                || request.ConsumerCanOwn
+                || _tcoCtx?.InTailPosition == true)
+            {
+                argumentTemp = DuplicatePerceusPatternOwnerForAggregate(arguments[i], argumentTemp);
+            }
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);

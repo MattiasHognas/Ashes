@@ -411,6 +411,11 @@ public sealed partial class Lowering
     // unconditionally (folding helpers down to constructors rather than leaving uncaptured calls).
     private bool _inSpecialization;
 
+    // Trait-operator specializations may be requested while lowering a reuse specialization, but
+    // generating one trait specialization must not recursively specialize its own helper calls.
+    // Those calls retain their already-resolved static dictionaries.
+    private bool _inTraitOperatorSpecialization;
+
     // True only while evaluating a tail self-call's successor arguments. A fresh-result,
     // non-recursive helper can be inlined here so its arena graph stays inside the loop window
     // instead of crossing an intermediate call boundary before the back-edge copy/reset.
@@ -969,6 +974,7 @@ public sealed partial class Lowering
         TcoParamPlacementDecision?[] ParamPlacements,
         int[] RuntimeManagedParamActiveSlots,
         int[] RuntimeManagedClosureActiveSlots,
+        IReadOnlyList<OwnershipInfo> IterationOwnedDrops,
         int[] ParamSlots,
         int FixedCursorSlot,
         int FixedEndSlot,
@@ -1009,6 +1015,11 @@ public sealed partial class Lowering
         {
             return;
         }
+
+        // The RC-normalizing path above must establish successor ownership before releasing these
+        // locals. Every other reset path preserves the historical ordering and releases them before
+        // deciding whether an arena reset can run.
+        EmitDeferredTcoBackEdgeOwnedDrops(info);
 
         if (TcoBackEdgeTryEmitPlainReset(info, tcoPreRestoreEndSlot))
         {
@@ -1177,7 +1188,20 @@ public sealed partial class Lowering
             }
         }
 
+        // Arena successor aggregates borrow their RC children. Keep iteration-local owners alive
+        // until every successor has normalized its own RC graph, then release them before the arena
+        // reset invalidates the borrowed shells.
+        EmitDeferredTcoBackEdgeOwnedDrops(info);
+
         return normalizedTemps;
+    }
+
+    private void EmitDeferredTcoBackEdgeOwnedDrops(PendingTcoReset info)
+    {
+        foreach (OwnershipInfo owned in info.IterationOwnedDrops)
+        {
+            EmitOwnedValueDrop(owned);
+        }
     }
 
     /// <summary>
@@ -1823,7 +1847,6 @@ public sealed partial class Lowering
         {
             return false;
         }
-
         // All copy types and/or in-place-reused accumulators: plain reset. Skipped
         // while a one-shot capability post pushed this iteration is still pending — the
         // post (and its captures) lives in the iteration's allocations.
@@ -3201,6 +3224,12 @@ public sealed partial class Lowering
                 let,
                 traitDictionaryInfo!)
             : let.Value;
+        if (usesTraitDictionary)
+        {
+            BindTraitDictionaryParameterConstraints(
+                traitDictionaryInfo!,
+                signature.SourceOrderedRequirements);
+        }
         SeedLetAnnotationParameterTypes(
             inferenceSeedType,
             loweredValue,
@@ -5000,7 +5029,7 @@ public sealed partial class Lowering
         Expr.LetRecursive binding,
         RecursiveTraitEvidenceElaboration evidence) =>
         _generatedTraitRecursiveTypes.TryGetValue(binding.Name, out TypeRef? generatedTraitType)
-            ? new ResolvedBindingSignature(generatedTraitType, [])
+            ? new ResolvedBindingSignature(generatedTraitType, [], [])
             : evidence.Signature;
 
     private static (IReadOnlyList<TraitConstraint> Requirements, bool NeedsLateTypeHint)
@@ -5052,6 +5081,10 @@ public sealed partial class Lowering
                     TransformTraitDictionaryValue(binding.Value, info!, threadRecursiveSelf: true),
                     binding.Body))
             : binding;
+        if (usesDictionary)
+        {
+            BindTraitDictionaryParameterConstraints(info!, signature.SourceOrderedRequirements);
+        }
         return new RecursiveTraitEvidenceElaboration(runtimeBinding, signature, info, usesDictionary);
     }
 
@@ -6291,7 +6324,8 @@ public sealed partial class Lowering
         free.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(lam.Body));
         foreach (string parameter in _activeTraitDictionaryParameters
                      .OrderBy(item => item.Key, StringComparer.Ordinal)
-                     .SelectMany(item => item.Value))
+                     .SelectMany(item => item.Value)
+                     .Select(active => active.ParameterName))
         {
             if (!bound.Contains(parameter))
             {
@@ -8159,7 +8193,8 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
         }
 
-        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot =
+        (List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot,
+            List<OwnershipInfo> iterationOwnedDrops) =
             LowerCallTcoPrepareOwnedDrops(tco, collectedArgs);
 
         // Arena reset: restore heap state to loop-iteration watermark before
@@ -8173,11 +8208,13 @@ public sealed partial class Lowering
         // argument out to the fresh watermark position, then overwrite its param slot
         // with the copy pointer.  The previous iteration's cells lie BELOW the saved
         // watermark and are therefore never reclaimed.
-        if (tco.ArenaCursorSlot >= 0)
-        {
-            var facts = LowerCallTcoGatherResetFacts(tco, collectedArgs, newArgTypes);
-            LowerCallTcoEmitReset(tco, collectedArgs, newArgTemps, newArgTypes, oldRuntimeParamTemps, facts);
-        }
+        LowerCallTcoScheduleReset(
+            tco,
+            collectedArgs,
+            newArgTemps,
+            newArgTypes,
+            oldRuntimeParamTemps,
+            iterationOwnedDrops);
 
         // Free any dynamic stack allocations made in the loop body this iteration (restore the stack
         // pointer to the loop-body-entry watermark). The next-iteration arguments live in param slots
@@ -8196,6 +8233,34 @@ public sealed partial class Lowering
         tco.InTailPosition = savedTail;
 
         return LowerCallTcoBackEdgeDummy();
+    }
+
+    private void LowerCallTcoScheduleReset(
+        TcoContext tco,
+        List<Expr> collectedArgs,
+        int[] newArgTemps,
+        TypeRef[] newArgTypes,
+        int[] oldRuntimeParamTemps,
+        IReadOnlyList<OwnershipInfo> iterationOwnedDrops)
+    {
+        if (tco.ArenaCursorSlot >= 0)
+        {
+            var facts = LowerCallTcoGatherResetFacts(tco, collectedArgs, newArgTypes);
+            LowerCallTcoEmitReset(
+                tco,
+                collectedArgs,
+                newArgTemps,
+                newArgTypes,
+                oldRuntimeParamTemps,
+                iterationOwnedDrops,
+                facts);
+            return;
+        }
+
+        foreach (OwnershipInfo owned in iterationOwnedDrops)
+        {
+            EmitOwnedValueDrop(owned);
+        }
     }
 
     /// <summary>
@@ -8358,7 +8423,9 @@ public sealed partial class Lowering
         }
     }
 
-    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> LowerCallTcoPrepareOwnedDrops(
+    private (
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> Snapshot,
+        List<OwnershipInfo> Drops) LowerCallTcoPrepareOwnedDrops(
         TcoContext tco,
         List<Expr> collectedArgs)
     {
@@ -8367,8 +8434,8 @@ public sealed partial class Lowering
         List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot =
             SnapshotOwnershipReleaseKinds();
         LowerCallTcoMarkMovedArgs(collectedArgs);
-        EmitTcoBackEdgeOwnedDrops(tco);
-        return snapshot;
+        List<OwnershipInfo> drops = CollectTcoBackEdgeOwnedDrops(tco);
+        return (snapshot, drops);
     }
 
     private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> SnapshotOwnershipReleaseKinds()
@@ -8604,7 +8671,14 @@ public sealed partial class Lowering
         return (passThrough, singleFreshCons, freshListRebuild, stableAccArg);
     }
 
-    private void LowerCallTcoEmitReset(TcoContext tco, List<Expr> collectedArgs, int[] newArgTemps, TypeRef[] newArgTypes, int[] oldRuntimeParamTemps, (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
+    private void LowerCallTcoEmitReset(
+        TcoContext tco,
+        List<Expr> collectedArgs,
+        int[] newArgTemps,
+        TypeRef[] newArgTypes,
+        int[] oldRuntimeParamTemps,
+        IReadOnlyList<OwnershipInfo> iterationOwnedDrops,
+        (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
         var resetInfo = new PendingTcoReset(
             tco,
@@ -8623,6 +8697,7 @@ public sealed partial class Lowering
             tco.ParamSlots.Select(slot => tco.ParamPlacements[slot].Current).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedParamActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
             tco.ParamSlots.Select(slot => tco.RuntimeManagedClosureActiveSlots.GetValueOrDefault(slot, -1)).ToArray(),
+            iterationOwnedDrops,
             tco.ParamSlots.ToArray(),
             tco.FixedCursorSlot,
             tco.FixedEndSlot,
@@ -8655,6 +8730,7 @@ public sealed partial class Lowering
         AddPendingTcoResetSlots(slots, info.ParamSlots);
         AddPendingTcoResetSlots(slots, info.RuntimeManagedParamActiveSlots);
         AddPendingTcoResetSlots(slots, info.RuntimeManagedClosureActiveSlots);
+        AddPendingTcoResetSlots(slots, info.IterationOwnedDrops.Select(owned => owned.Slot));
         AddPendingTcoResetSlots(slots, info.ArgResvStartSlots);
         AddPendingTcoResetSlots(slots, info.ArgResvEndSlots);
         AddPendingTcoResetSlots(slots,
@@ -9551,10 +9627,6 @@ public sealed partial class Lowering
             && argument is not Expr.Var
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
             && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
-        if (!borrowsOnly)
-        {
-            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
-        }
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
             argumentType,
@@ -9669,6 +9741,20 @@ public sealed partial class Lowering
             || argument is Expr.Var variable
                 && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
         {
+            return true;
+        }
+
+        if (argument is Expr.Var patternVariable
+            && LookupOwnedValue(patternVariable.Name) is
+            { PerceusPatternOwner: true, IsDropped: false, PerceusRootParameterSlot: >= 0 } patternOwner
+            && _tcoCtx is { } patternTco)
+        {
+            if (patternTco.IsRuntimeManagedSlot(patternOwner.PerceusRootParameterSlot))
+            {
+                return true;
+            }
+
+            pendingParameterSlot = patternOwner.PerceusRootParameterSlot;
             return true;
         }
 
@@ -10960,12 +11046,13 @@ public sealed partial class Lowering
         {
             if (!_activeTraitDictionaryParameters.TryGetValue(
                     needed.Trait.QualifiedName,
-                    out List<string>? activeParameters))
+                    out List<ActiveTraitDictionaryParameter>? activeParameters))
             {
                 continue;
             }
-            foreach (string parameterName in activeParameters)
+            foreach (ActiveTraitDictionaryParameter active in activeParameters)
             {
+                string parameterName = active.ParameterName;
                 if (!bound.Contains(parameterName))
                 {
                     result.Add(parameterName);

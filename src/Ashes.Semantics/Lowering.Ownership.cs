@@ -178,7 +178,8 @@ public sealed partial class Lowering
         ConstructorSymbol? runtimeConstructor = null,
         bool runtimeDeepUnique = false,
         IReadOnlySet<int>? excludedDropFieldIndices = null,
-        bool perceusPatternOwner = false)
+        bool perceusPatternOwner = false,
+        int perceusRootParameterSlot = -1)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -196,7 +197,8 @@ public sealed partial class Lowering
                 runtimeConstructor,
                 runtimeDeepUnique,
                 excludedDropFieldIndices,
-                perceusPatternOwner);
+                perceusPatternOwner,
+                perceusRootParameterSlot);
         }
     }
 
@@ -312,11 +314,12 @@ public sealed partial class Lowering
     /// next iteration (passed as a self-call argument) are marked dropped by the caller and skipped.
     /// Accumulators are loop parameters, not ownership-scope entries, so they are unaffected.
     /// </summary>
-    private void EmitTcoBackEdgeOwnedDrops(TcoContext tco)
+    private List<OwnershipInfo> CollectTcoBackEdgeOwnedDrops(TcoContext tco)
     {
+        var drops = new List<OwnershipInfo>();
         if (tco.OwnershipDepthAtEntry < 0)
         {
-            return;
+            return drops;
         }
 
         int scopesAboveEntry = _ownershipScopes.Count - tco.OwnershipDepthAtEntry;
@@ -339,13 +342,15 @@ public sealed partial class Lowering
                         || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
                     && !info.IsDropped)
                 {
-                    EmitOwnedValueDrop(info);
+                    drops.Add(info);
                     info.ReleaseKind = ResourceReleaseKind.AutoDropped;
                 }
             }
 
             index++;
         }
+
+        return drops;
     }
 
     /// <summary>
