@@ -2,7 +2,7 @@
   "name": "ashes-vscode",
   "displayName": "Ashes Programming Language",
   "description": "Ashes programming language support",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "publisher": "mattiashognas",
   "packageManager": "pnpm@11.18.0",
   "repository": {
